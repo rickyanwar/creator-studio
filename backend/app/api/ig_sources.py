@@ -65,3 +65,16 @@ def assign_burner(source_id: int, body: AssignBurnerRequest, db: DB, _: CurrentU
     source.burner_account_id = body.burner_id
     db.commit()
     return {"ok": True}
+
+
+@router.delete("/{source_id}")
+def delete_ig_source(source_id: int, db: DB, _: CurrentUser):
+    from app.models.ig_sources import IGSource
+
+    source = db.query(IGSource).filter_by(id=source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    db.delete(source)
+    db.commit()
+    return {"ok": True}

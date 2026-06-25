@@ -90,6 +90,8 @@ export const listIGSources = (orphanOnly?: boolean) =>
   api.get("/ig-sources", { params: { orphan_only: orphanOnly } });
 export const assignBurnerToSource = (sourceId: number, burnerId: number | null) =>
   api.patch(`/ig-sources/${sourceId}/assign-burner`, { burner_id: burnerId });
+export const deleteIGSource = (sourceId: number) =>
+  api.delete(`/ig-sources/${sourceId}`);
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get("/settings");

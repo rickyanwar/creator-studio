@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { listIGSources, listBurners, assignBurnerToSource } from "@/lib/api";
+import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource } from "@/lib/api";
 import { format } from "date-fns";
 import { useState } from "react";
 import { Icon } from "@iconify/react";
@@ -38,7 +38,19 @@ export default function SourcesPage() {
   const activeBurners = burners.filter((b) => b.status === "active");
 
   const [assigning, setAssigning] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<number | null>(null);
   const orphans = sources.filter((s) => s.active_fanpage_count === 0);
+
+  async function handleDelete(sourceId: number, username: string) {
+    if (!confirm(`Delete @${username}? This cannot be undone.`)) return;
+    setDeleting(sourceId);
+    try {
+      await deleteIGSource(sourceId);
+      mutate();
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   async function handleAssign(sourceId: number, burnerId: string) {
     setAssigning(sourceId);
@@ -90,6 +102,7 @@ export default function SourcesPage() {
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Fanpages</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Checked</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
+                <th className="px-5 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
@@ -136,11 +149,23 @@ export default function SourcesPage() {
                       {s.is_active ? "Active" : "Inactive"}
                     </span>
                   </td>
+                  <td className="px-5 py-3">
+                    <button
+                      onClick={() => handleDelete(s.id, s.ig_username)}
+                      disabled={deleting === s.id}
+                      className="text-ink-48 hover:text-red-500 transition-colors"
+                      title="Delete source"
+                    >
+                      {deleting === s.id
+                        ? <Icon icon="svg-spinners:ring-resize" width={14} />
+                        : <Icon icon="solar:trash-bin-trash-bold-duotone" width={16} />}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {sources.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-10 text-center text-ink-48">
+                  <td colSpan={6} className="px-5 py-10 text-center text-ink-48">
                     No IG sources yet. Add them via the{" "}
                     <a href="/fanpages" className="text-primary">Fanpages</a> configure page.
                   </td>
