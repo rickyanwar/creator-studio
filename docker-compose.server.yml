@@ -81,10 +81,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
     restart: always
-    command: node server.js
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
     depends_on:
       - api
 
