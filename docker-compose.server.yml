@@ -79,7 +79,7 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.prod
     restart: always
     command: node server.js
     environment:
