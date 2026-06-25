@@ -79,18 +79,20 @@ def crawl_single_source(self, source_id: int):
         if not source or not source.is_active:
             return
 
-        if not source.burner_account_id:
-            logger.warning("No burner assigned to @%s — skipping", source.ig_username)
+        # Pick a random active burner that hasn't hit the daily limit
+        available = (
+            db.query(BurnerAccount)
+            .filter(
+                BurnerAccount.status == BurnerStatus.active,
+                BurnerAccount.requests_today < 200,
+            )
+            .all()
+        )
+        if not available:
+            logger.warning("No available burners to crawl @%s — all busy or at limit", source.ig_username)
             return
 
-        burner = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
-        if not burner or burner.status != BurnerStatus.active:
-            logger.warning("Burner unavailable for @%s — skipping", source.ig_username)
-            return
-
-        if burner.requests_today >= 200:
-            logger.warning("Burner @%s hit 200 req/day limit", burner.ig_username)
-            return
+        burner = random.choice(available)
 
         manager = IGSessionManager(burner, db)
         medias = manager.fetch_recent_posts(source.ig_username, amount=12)
