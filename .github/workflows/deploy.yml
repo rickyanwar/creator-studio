@@ -30,13 +30,13 @@ jobs:
             git pull origin main
 
             echo "── Rebuilding images ──"
-            docker compose -f docker-compose.prod.yml build --no-cache
+            docker compose -f docker-compose.server.yml build --no-cache
 
             echo "── Restarting services ──"
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker compose -f docker-compose.server.yml up -d --remove-orphans
 
             echo "── Running migrations ──"
-            docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
+            docker compose -f docker-compose.server.yml exec -T api alembic upgrade head
 
             echo "── Cleaning unused images ──"
             docker image prune -f
