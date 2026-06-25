@@ -1,0 +1,37 @@
+version: "3.9"
+
+# Production overrides — use with:
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    volumes:
+      - /var/www/media:/var/www/media   # bind-mount real VPS path
+    restart: always
+
+  worker:
+    volumes:
+      - /var/www/media:/var/www/media
+    restart: always
+
+  beat:
+    restart: always
+
+  frontend:
+    command: node server.js
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://yourdomain.com/api
+    volumes: []   # no bind-mount in prod; use built image
+    restart: always
+
+  nginx:
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /var/www/media:/var/www/media:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: always

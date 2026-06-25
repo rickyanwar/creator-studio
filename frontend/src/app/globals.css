@@ -1,0 +1,249 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Inter Variable font ───────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+@layer base {
+  /* ── Light mode (default) ──────────────────────── */
+  :root {
+    --bg-default:     #F4F6F8;
+    --bg-paper:       #FFFFFF;
+    --bg-paper-hover: #F0F2F5;
+    --text-primary:   #1C252E;
+    --text-secondary: #637381;
+    --text-disabled:  #919EAB;
+    --divider-soft:   rgba(145, 158, 171, 0.24);
+    color-scheme: light;
+
+    /* ── Primary (default green) ──────────────────── */
+    --primary-lighter: #C8FAD6;
+    --primary-light:   #5BE49B;
+    --primary-main:    #00A76F;
+    --primary-dark:    #007867;
+    --primary-darker:  #004B50;
+  }
+
+  /* ── Dark mode ─────────────────────────────────── */
+  .dark {
+    --bg-default:     #0C111B;
+    --bg-paper:       #1C252E;
+    --bg-paper-hover: #28323D;
+    --text-primary:   #FFFFFF;
+    --text-secondary: #919EAB;
+    --text-disabled:  #637381;
+    --divider-soft:   rgba(145, 158, 171, 0.12);
+    color-scheme: dark;
+  }
+
+  /* ── Presets ───────────────────────────────────── */
+  [data-preset="cyan"] {
+    --primary-lighter: #CAFDF5;
+    --primary-light:   #61F3F3;
+    --primary-main:    #00B8D9;
+    --primary-dark:    #006C9C;
+    --primary-darker:  #003768;
+  }
+  [data-preset="purple"] {
+    --primary-lighter: #EBD6FD;
+    --primary-light:   #B985F4;
+    --primary-main:    #7635DC;
+    --primary-dark:    #431A9E;
+    --primary-darker:  #200A69;
+  }
+  [data-preset="blue"] {
+    --primary-lighter: #D1E9FF;
+    --primary-light:   #6EB6FF;
+    --primary-main:    #1877F2;
+    --primary-dark:    #0C52CC;
+    --primary-darker:  #061B64;
+  }
+  [data-preset="orange"] {
+    --primary-lighter: #FFF5CC;
+    --primary-light:   #FFD666;
+    --primary-main:    #FFAB00;
+    --primary-dark:    #B76E00;
+    --primary-darker:  #7A4100;
+  }
+  [data-preset="red"] {
+    --primary-lighter: #FFE9D5;
+    --primary-light:   #FFAC82;
+    --primary-main:    #FF5630;
+    --primary-dark:    #B71D18;
+    --primary-darker:  #7A0916;
+  }
+
+  /* ── Nav color — default first, apparent overrides after ── */
+  :root, .dark {
+    --sidebar-bg: var(--bg-default);
+  }
+  [data-nav-color="apparent"] {
+    --sidebar-bg: var(--bg-paper);
+  }
+
+  /* ── Compact density ───────────────────────────── */
+  .compact .card    { padding: 1rem; }
+  .compact .card-sm { padding: 0.75rem; }
+
+  html {
+    font-family: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: var(--bg-default);
+    color: var(--text-primary);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(145,158,171,0.24);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(145,158,171,0.40);
+  }
+}
+
+@layer components {
+  /* ── Buttons ─────────────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5
+           bg-primary-main text-white text-sm font-semibold rounded-md
+           transition-all duration-150
+           hover:bg-primary-dark
+           active:scale-[0.97]
+           disabled:opacity-48 disabled:cursor-not-allowed
+           shadow-primary-btn;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5
+           bg-transparent text-primary-main text-sm font-semibold rounded-md
+           border border-primary-main
+           transition-all duration-150
+           hover:bg-[rgba(0,167,111,0.08)]
+           active:scale-[0.97]
+           disabled:opacity-48;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-4 py-2.5
+           bg-bg-paper-hover text-text-secondary text-sm font-medium rounded-md
+           transition-all duration-150
+           hover:bg-grey-700 hover:text-text-primary
+           active:scale-[0.97];
+  }
+
+  .btn-error {
+    @apply inline-flex items-center gap-2 px-5 py-2.5
+           bg-error-main text-white text-sm font-semibold rounded-md
+           transition-all duration-150
+           hover:bg-error-dark
+           active:scale-[0.97]
+           shadow-error-btn;
+  }
+
+  /* ── Cards ───────────────────────────────────────── */
+  .card {
+    @apply bg-bg-paper rounded-lg p-6 dark:shadow-card;
+  }
+
+  .card-sm {
+    @apply bg-bg-paper rounded-lg p-4 dark:shadow-card;
+  }
+
+  /* ── Tinted KPI cards ────────────────────────────── */
+  .kpi-green {
+    @apply rounded-lg p-5 shadow-card;
+    background: #C8FAD6;
+    color: #004B50;
+  }
+  .kpi-blue {
+    @apply rounded-lg p-5 shadow-card;
+    background: #CAFDF5;
+    color: #003768;
+  }
+  .kpi-amber {
+    @apply rounded-lg p-5 shadow-card;
+    background: #FFF5CC;
+    color: #7A4100;
+  }
+  .kpi-red {
+    @apply rounded-lg p-5 shadow-card;
+    background: #FFE9D5;
+    color: #7A0916;
+  }
+  .kpi-purple {
+    @apply rounded-lg p-5 shadow-card;
+    background: #EFD6FF;
+    color: #27097A;
+  }
+
+  /* ── Inputs ──────────────────────────────────────── */
+  .input {
+    @apply w-full px-4 py-3 text-sm text-text-primary bg-bg-paper
+           border border-transparent rounded-md
+           focus:outline-none focus:border-primary-main focus:ring-2 focus:ring-[rgba(0,167,111,0.20)]
+           placeholder:text-text-disabled transition;
+  }
+
+  .input-rect {
+    @apply w-full px-4 py-3 text-sm text-text-primary bg-bg-paper-hover
+           border border-grey-700 rounded-md
+           focus:outline-none focus:border-primary-main focus:ring-2 focus:ring-[rgba(0,167,111,0.20)]
+           placeholder:text-text-disabled transition;
+  }
+
+  .label {
+    @apply block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide;
+  }
+
+  /* ── Status badges ───────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold;
+  }
+
+  .badge-green  { @apply badge bg-primary-lighter  text-primary-darker; }
+  .badge-yellow { @apply badge bg-warning-lighter  text-warning-darker; }
+  .badge-red    { @apply badge bg-error-lighter    text-error-darker; }
+  .badge-blue   { @apply badge bg-info-lighter     text-info-darker; }
+  .badge-gray   { @apply badge bg-bg-paper-hover   text-text-secondary; }
+
+  /* ── Nav divider ─────────────────────────────────── */
+  .divider {
+    @apply border-t border-divider-soft my-2;
+  }
+
+  /* ── Page section wrapper ────────────────────────── */
+  .section {
+    @apply space-y-6;
+  }
+
+  /* ── Table ───────────────────────────────────────── */
+  .table-row-hover {
+    @apply transition-colors hover:bg-bg-paper-hover;
+  }
+}
+
+/* ── Utility: subtle opacity-48 ─────────────────────── */
+@layer utilities {
+  .opacity-48 { opacity: 0.48; }
+  .opacity-32 { opacity: 0.32; }
+  .opacity-16 { opacity: 0.16; }
+  .opacity-8  { opacity: 0.08; }
+
+  .text-gradient-green {
+    background: linear-gradient(135deg, #00A76F 0%, #5BE49B 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}
