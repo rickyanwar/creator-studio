@@ -39,7 +39,7 @@ yarn-error.log*
 
 # Logs
 *.log
-logs/
+/logs/
 
 # DB / migration temp
 *.sqlite3
