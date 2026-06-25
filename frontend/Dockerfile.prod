@@ -4,7 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build && ls -la .next/standalone/
+RUN npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app
@@ -14,7 +14,5 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
-RUN ls -la /app && echo "server.js exists:" && test -f /app/server.js && echo "YES" || echo "NO"
 EXPOSE 3000
 CMD ["node", "server.js"]
