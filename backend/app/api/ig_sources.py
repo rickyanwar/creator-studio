@@ -1,9 +1,14 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
+from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/ig-sources", tags=["ig-sources"])
+
+
+class AssignBurnerRequest(BaseModel):
+    burner_id: Optional[int] = None
 
 
 @router.get("")
@@ -31,8 +36,9 @@ def list_ig_sources(
             "id": s.id,
             "ig_username": s.ig_username,
             "ig_user_id": s.ig_user_id,
+            "burner_id": s.burner_account_id,
             "burner_username": burner.ig_username if burner else None,
-            "burner_status": burner.status if burner else None,
+            "burner_status": burner.status.value if burner else None,
             "is_active": s.is_active,
             "last_checked_at": s.last_checked_at,
             "last_seen_post_id": s.last_seen_post_id,
@@ -40,3 +46,22 @@ def list_ig_sources(
         })
 
     return result
+
+
+@router.patch("/{source_id}/assign-burner")
+def assign_burner(source_id: int, body: AssignBurnerRequest, db: DB, _: CurrentUser):
+    from app.models.ig_sources import IGSource
+    from app.models.burner_accounts import BurnerAccount
+
+    source = db.query(IGSource).filter_by(id=source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if body.burner_id is not None:
+        burner = db.query(BurnerAccount).filter_by(id=body.burner_id).first()
+        if not burner:
+            raise HTTPException(status_code=404, detail="Burner not found")
+
+    source.burner_account_id = body.burner_id
+    db.commit()
+    return {"ok": True}

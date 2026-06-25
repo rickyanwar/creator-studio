@@ -88,6 +88,8 @@ export const skipJob = (id: number) => api.post(`/publish-jobs/${id}/skip`);
 // ── IG Sources ───────────────────────────────────────────────────────────────
 export const listIGSources = (orphanOnly?: boolean) =>
   api.get("/ig-sources", { params: { orphan_only: orphanOnly } });
+export const assignBurnerToSource = (sourceId: number, burnerId: number | null) =>
+  api.patch(`/ig-sources/${sourceId}/assign-burner`, { burner_id: burnerId });
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get("/settings");

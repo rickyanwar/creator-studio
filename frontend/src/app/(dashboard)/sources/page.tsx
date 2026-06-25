@@ -1,17 +1,54 @@
 "use client";
 
 import useSWR from "swr";
-import { listIGSources } from "@/lib/api";
+import { listIGSources, listBurners, assignBurnerToSource } from "@/lib/api";
 import { format } from "date-fns";
+import { useState } from "react";
+import { Icon } from "@iconify/react";
 
-const fetcher = () => listIGSources().then((r) => r.data);
+type IGSourceRow = {
+  id: number;
+  ig_username: string;
+  burner_id: number | null;
+  burner_username: string | null;
+  burner_status: string | null;
+  is_active: boolean;
+  last_checked_at: string | null;
+  active_fanpage_count: number;
+};
+
+type Burner = {
+  id: number;
+  ig_username: string;
+  status: string;
+};
 
 export default function SourcesPage() {
-  const { data: sources = [], isLoading } = useSWR("ig-sources", fetcher, {
-    refreshInterval: 30000,
-  });
+  const { data: sources = [], isLoading, mutate } = useSWR<IGSourceRow[]>(
+    "ig-sources",
+    () => listIGSources().then((r) => r.data as IGSourceRow[]),
+    { refreshInterval: 30000 }
+  );
+  const { data: burnersData } = useSWR<{ burners: Burner[] }>(
+    "burners-list",
+    () => listBurners().then((r) => r.data)
+  );
 
-  const orphans = (sources as Record<string, unknown>[]).filter((s) => (s.active_fanpage_count as number) === 0);
+  const burners: Burner[] = burnersData?.burners ?? (Array.isArray(burnersData) ? burnersData as Burner[] : []);
+  const activeBurners = burners.filter((b) => b.status === "active");
+
+  const [assigning, setAssigning] = useState<number | null>(null);
+  const orphans = sources.filter((s) => s.active_fanpage_count === 0);
+
+  async function handleAssign(sourceId: number, burnerId: string) {
+    setAssigning(sourceId);
+    try {
+      await assignBurnerToSource(sourceId, burnerId ? parseInt(burnerId) : null);
+      mutate();
+    } finally {
+      setAssigning(null);
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -23,12 +60,23 @@ export default function SourcesPage() {
           Instagram Sources
         </h1>
         <p className="text-caption text-ink-48 mt-1">
-          {(sources as unknown[]).length} total sources
+          {sources.length} total sources
           {orphans.length > 0 && (
             <span className="ml-2 text-amber-600">{orphans.length} orphaned (not linked to any fanpage)</span>
           )}
         </p>
       </div>
+
+      {activeBurners.length === 0 && !isLoading && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+          <Icon icon="solar:danger-triangle-bold-duotone" className="text-amber-500 mt-0.5 shrink-0" width={18} />
+          <p className="text-sm text-amber-800">
+            No active burner accounts found. Go to{" "}
+            <a href="/burners" className="font-semibold underline">Burners</a>{" "}
+            and import a session first, then come back to assign burners to sources.
+          </p>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-caption text-ink-48">Loading…</div>
@@ -38,48 +86,59 @@ export default function SourcesPage() {
             <thead className="bg-parchment border-b border-hairline">
               <tr>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">IG Username</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Burner</th>
+                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Assigned Burner</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Fanpages</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Checked</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
-              {(sources as Record<string, unknown>[]).map((s) => (
-                <tr key={s.id as number} className="hover:bg-parchment/50 transition-colors">
-                  <td className="px-5 py-3 text-ink font-medium">@{s.ig_username as string}</td>
-                  <td className="px-5 py-3 text-ink-48">
-                    {s.burner_username ? (
-                      <span>
-                        @{s.burner_username as string}
-                        <span className={`ml-1.5 badge ${s.burner_status === "active" ? "badge-green" : "badge-yellow"}`}>
-                          {s.burner_status as string}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="text-amber-600">No burner</span>
-                    )}
+              {sources.map((s) => (
+                <tr key={s.id} className="hover:bg-parchment/50 transition-colors">
+                  <td className="px-5 py-3 text-ink font-medium">@{s.ig_username}</td>
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="input-rect py-1 text-xs min-w-[160px]"
+                        value={s.burner_id ?? ""}
+                        disabled={assigning === s.id}
+                        onChange={(e) => handleAssign(s.id, e.target.value)}
+                      >
+                        <option value="">— No burner —</option>
+                        {activeBurners.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            @{b.ig_username}
+                          </option>
+                        ))}
+                      </select>
+                      {assigning === s.id && (
+                        <Icon icon="svg-spinners:ring-resize" className="text-primary-main" width={14} />
+                      )}
+                      {s.burner_status && s.burner_status !== "active" && (
+                        <span className="badge badge-yellow text-[10px]">{s.burner_status}</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3">
-                    {(s.active_fanpage_count as number) > 0 ? (
-                      <span className="badge-green">{s.active_fanpage_count as number} active</span>
+                    {s.active_fanpage_count > 0 ? (
+                      <span className="badge-green">{s.active_fanpage_count} active</span>
                     ) : (
                       <span className="badge-yellow">Orphaned</span>
                     )}
                   </td>
                   <td className="px-5 py-3 text-ink-48">
                     {s.last_checked_at
-                      ? format(new Date(s.last_checked_at as string), "MMM d HH:mm")
+                      ? format(new Date(s.last_checked_at), "MMM d HH:mm")
                       : "Never"}
                   </td>
                   <td className="px-5 py-3">
-                    <span className={(s.is_active as boolean) ? "badge-green" : "badge-gray"}>
-                      {(s.is_active as boolean) ? "Active" : "Inactive"}
+                    <span className={s.is_active ? "badge-green" : "badge-gray"}>
+                      {s.is_active ? "Active" : "Inactive"}
                     </span>
                   </td>
                 </tr>
               ))}
-              {(sources as unknown[]).length === 0 && (
+              {sources.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-5 py-10 text-center text-ink-48">
                     No IG sources yet. Add them via the{" "}
