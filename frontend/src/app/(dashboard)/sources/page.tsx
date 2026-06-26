@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource } from "@/lib/api";
+import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners } from "@/lib/api";
 import { format } from "date-fns";
 import { useState } from "react";
 import { Icon } from "@iconify/react";
@@ -39,6 +39,7 @@ export default function SourcesPage() {
 
   const [assigning, setAssigning] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [autoAssigning, setAutoAssigning] = useState(false);
   const orphans = sources.filter((s) => s.active_fanpage_count === 0);
 
   async function handleDelete(sourceId: number, username: string) {
@@ -49,6 +50,20 @@ export default function SourcesPage() {
       mutate();
     } finally {
       setDeleting(null);
+    }
+  }
+
+  async function handleAutoAssign() {
+    setAutoAssigning(true);
+    try {
+      const res = await autoAssignBurners();
+      mutate();
+      const count = res.data?.reassigned?.length ?? 0;
+      alert(count > 0 ? `Reassigned ${count} source(s) to active burners.` : "All sources already have active burners.");
+    } catch {
+      alert("Auto-assign failed.");
+    } finally {
+      setAutoAssigning(false);
     }
   }
 
@@ -64,19 +79,33 @@ export default function SourcesPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1
-          className="text-display-md text-ink"
-          style={{ fontFamily: "'SF Pro Display', system-ui, sans-serif" }}
-        >
-          Instagram Sources
-        </h1>
-        <p className="text-caption text-ink-48 mt-1">
-          {sources.length} total sources
-          {orphans.length > 0 && (
-            <span className="ml-2 text-amber-600">{orphans.length} orphaned (not linked to any fanpage)</span>
-          )}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1
+            className="text-display-md text-ink"
+            style={{ fontFamily: "'SF Pro Display', system-ui, sans-serif" }}
+          >
+            Instagram Sources
+          </h1>
+          <p className="text-caption text-ink-48 mt-1">
+            {sources.length} total sources
+            {orphans.length > 0 && (
+              <span className="ml-2 text-amber-600">{orphans.length} orphaned (not linked to any fanpage)</span>
+            )}
+          </p>
+        </div>
+        {activeBurners.length > 0 && (
+          <button
+            onClick={handleAutoAssign}
+            disabled={autoAssigning}
+            className="btn btn-secondary flex items-center gap-2 shrink-0"
+          >
+            {autoAssigning
+              ? <Icon icon="svg-spinners:ring-resize" width={14} />
+              : <Icon icon="solar:refresh-bold-duotone" width={14} />}
+            Auto-assign Burners
+          </button>
+        )}
       </div>
 
       {activeBurners.length === 0 && !isLoading && (

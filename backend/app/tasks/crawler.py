@@ -56,11 +56,11 @@ def crawl_all_sources(self, manual: bool = False):
 
         for source in sources:
             if not manual:
-                # Jitter between sources to avoid bot detection
                 delay = random.uniform(30, 90)
                 logger.debug("Waiting %.1fs before crawling @%s", delay, source.ig_username)
                 time.sleep(delay)
             crawl_single_source.delay(source.id)
+
 
     finally:
         db.close()
@@ -80,20 +80,30 @@ def crawl_single_source(self, source_id: int):
         if not source or not source.is_active:
             return
 
-        # Pick a random active burner that hasn't hit the daily limit
-        available = (
-            db.query(BurnerAccount)
-            .filter(
-                BurnerAccount.status == BurnerStatus.active,
-                BurnerAccount.requests_today < 200,
-            )
-            .all()
-        )
-        if not available:
-            logger.warning("No available burners to crawl @%s — all busy or at limit", source.ig_username)
-            return
+        # Use assigned burner if it's still active, otherwise pick a new one
+        burner = None
+        if source.burner_account_id:
+            assigned = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
+            if assigned and assigned.status == BurnerStatus.active and assigned.requests_today < 200:
+                burner = assigned
 
-        burner = random.choice(available)
+        if burner is None:
+            available = (
+                db.query(BurnerAccount)
+                .filter(
+                    BurnerAccount.status == BurnerStatus.active,
+                    BurnerAccount.requests_today < 200,
+                )
+                .all()
+            )
+            if not available:
+                logger.warning("No available burners to crawl @%s — all busy or at limit", source.ig_username)
+                return
+            burner = random.choice(available)
+            # Save the new assignment so the UI reflects the change
+            source.burner_account_id = burner.id
+            db.commit()
+            logger.info("Re-assigned @%s to burner @%s", source.ig_username, burner.ig_username)
 
         manager = IGSessionManager(burner, db)
         medias = manager.fetch_recent_posts(source.ig_username, amount=12)

@@ -110,6 +110,40 @@ def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: Cur
     return {"ok": True}
 
 
+@router.post("/auto-assign-burners")
+def auto_assign_burners(db: DB, _: CurrentUser):
+    """Reassign all sources whose burner is challenged/missing to a random active burner."""
+    from app.models.ig_sources import IGSource
+    from app.models.burner_accounts import BurnerAccount, BurnerStatus
+    import random
+
+    active_burners = (
+        db.query(BurnerAccount)
+        .filter(BurnerAccount.status == BurnerStatus.active)
+        .all()
+    )
+    if not active_burners:
+        raise HTTPException(status_code=400, detail="No active burners available")
+
+    sources = db.query(IGSource).all()
+    reassigned = []
+
+    for source in sources:
+        needs_reassign = True
+        if source.burner_account_id:
+            assigned = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
+            if assigned and assigned.status == BurnerStatus.active:
+                needs_reassign = False
+
+        if needs_reassign:
+            new_burner = random.choice(active_burners)
+            source.burner_account_id = new_burner.id
+            reassigned.append({"source": source.ig_username, "burner": new_burner.ig_username})
+
+    db.commit()
+    return {"ok": True, "reassigned": reassigned}
+
+
 @router.delete("/{source_id}")
 def delete_ig_source(source_id: int, db: DB, _: CurrentUser):
     from app.models.ig_sources import IGSource

@@ -57,11 +57,14 @@ def update_burner(burner_id: int, body: BurnerUpdate, db: DB, _: CurrentUser):
 @router.delete("/{burner_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_burner(burner_id: int, db: DB, _: CurrentUser):
     from app.models.burner_accounts import BurnerAccount
+    from app.models.ig_sources import IGSource
 
     burner = db.query(BurnerAccount).filter_by(id=burner_id).first()
     if not burner:
         raise HTTPException(status_code=404, detail="Burner not found")
 
+    # Clear FK references before delete to avoid constraint violation
+    db.query(IGSource).filter_by(burner_account_id=burner_id).update({"burner_account_id": None})
     db.delete(burner)
     db.commit()
 

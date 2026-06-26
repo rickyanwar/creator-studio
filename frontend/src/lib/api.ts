@@ -96,6 +96,8 @@ export const updateIGSource = (sourceId: number, data: { ig_username?: string; i
   api.patch(`/ig-sources/${sourceId}`, data);
 export const deleteIGSource = (sourceId: number) =>
   api.delete(`/ig-sources/${sourceId}`);
+export const autoAssignBurners = () =>
+  api.post("/ig-sources/auto-assign-burners");
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get("/settings");
