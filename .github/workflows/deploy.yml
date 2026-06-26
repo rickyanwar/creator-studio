@@ -35,6 +35,9 @@ jobs:
             echo "── Restarting services ──"
             docker compose -f docker-compose.server.yml up -d --remove-orphans
 
+            echo "── Reloading nginx ──"
+            docker compose -f docker-compose.server.yml restart nginx
+
             echo "── Running migrations ──"
             docker compose -f docker-compose.server.yml exec -T api alembic upgrade head
 
