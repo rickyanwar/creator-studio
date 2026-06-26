@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import useSWR from "swr";
 import {
   getFanpage,
@@ -138,10 +138,13 @@ export default function FanpageEditPage() {
   const { id } = useParams<{ id: string }>();
   const fanpageId = parseInt(id);
   const router = useRouter();
-  const { data: fp, mutate } = useSWR(`fanpage-${fanpageId}`, () => fetcher(fanpageId));
+  const { data: fp, mutate } = useSWR(`fanpage-${fanpageId}`, () => fetcher(fanpageId), {
+    revalidateOnFocus: false,
+  });
 
   const [form, setForm] = useState<Partial<FanpageDetail>>({});
   const [saving, setSaving] = useState(false);
+  const formInitialized = useRef(false);
   const [newSource, setNewSource] = useState("");
   const [previewSrc, setPreviewSrc] = useState("");
   const [previewOrig, setPreviewOrig] = useState("");
@@ -151,7 +154,10 @@ export default function FanpageEditPage() {
   const [mustAvoidInput, setMustAvoidInput] = useState("");
 
   useEffect(() => {
-    if (fp) setForm({ ...fp });
+    if (fp && !formInitialized.current) {
+      setForm({ ...fp });
+      formInitialized.current = true;
+    }
   }, [fp]);
 
   function set(key: string, value: unknown) {
@@ -162,7 +168,10 @@ export default function FanpageEditPage() {
     setSaving(true);
     try {
       await updateFanpage(fanpageId, form);
-      mutate();
+      // Revalidate without overwriting the local form — ig_sources may have changed
+      mutate(undefined, { revalidate: true });
+    } catch {
+      alert("Save failed. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -172,12 +181,14 @@ export default function FanpageEditPage() {
     if (!newSource.trim()) return;
     await addIGSource(fanpageId, newSource.trim());
     setNewSource("");
-    mutate();
+    const fresh = await mutate();
+    if (fresh) setForm((prev) => ({ ...prev, ig_sources: fresh.ig_sources, ig_source_usernames: fresh.ig_source_usernames }));
   }
 
   async function handleRemoveSource(username: string) {
     await removeIGSourceByUsername(fanpageId, username);
-    mutate();
+    const fresh = await mutate();
+    if (fresh) setForm((prev) => ({ ...prev, ig_sources: fresh.ig_sources, ig_source_usernames: fresh.ig_source_usernames }));
   }
 
   async function handlePreview() {
