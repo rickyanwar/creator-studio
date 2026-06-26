@@ -11,7 +11,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 def trigger_crawl(_: CurrentUser):
     """Manually trigger a full crawl cycle."""
     from app.tasks.crawler import crawl_all_sources
-    task = crawl_all_sources.delay()
+    task = crawl_all_sources.delay(manual=True)
     return {"ok": True, "task_id": task.id}
 
 

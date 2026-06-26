@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from instagrapi import Client
 from instagrapi.exceptions import (
     ChallengeRequired,
+    ChallengeUnknownStep,
     LoginRequired,
     PleaseWaitFewMinutes,
     BadPassword,
@@ -65,7 +66,7 @@ class IGSessionManager:
         except LoginRequired:
             logger.warning("Session expired for @%s, doing fresh login", username)
             cl = self._fresh_login(username, password)
-        except ChallengeRequired:
+        except (ChallengeRequired, ChallengeUnknownStep):
             self._mark_challenged()
             raise
         except PleaseWaitFewMinutes:
@@ -85,7 +86,7 @@ class IGSessionManager:
         except PleaseWaitFewMinutes:
             self._mark_rate_limited()
             raise
-        except ChallengeRequired:
+        except (ChallengeRequired, ChallengeUnknownStep):
             self._mark_challenged()
             raise
 
@@ -99,7 +100,7 @@ class IGSessionManager:
             cl.set_proxy(self.burner.proxy_url)
         try:
             cl.login(username, password)
-        except ChallengeRequired:
+        except (ChallengeRequired, ChallengeUnknownStep):
             self._mark_challenged()
             raise
         except BadPassword:
@@ -121,10 +122,10 @@ class IGSessionManager:
     def _mark_challenged(self):
         from app.models.burner_accounts import BurnerStatus
         self.burner.status = BurnerStatus.challenged
-        self.burner.last_error = "ChallengeRequired — needs OTP"
+        self.burner.last_error = "Challenged by Instagram (Bloks/OTP) — re-import session from browser"
         self.db.add(self.burner)
         self.db.commit()
-        logger.error("Burner @%s is CHALLENGED — waiting for OTP", self.burner.ig_username)
+        logger.error("Burner @%s is CHALLENGED — re-import session via ig_session_from_browser.py", self.burner.ig_username)
 
     def _mark_rate_limited(self):
         from app.models.burner_accounts import BurnerStatus

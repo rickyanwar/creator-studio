@@ -41,9 +41,9 @@ class Settings(BaseSettings):
     ai_fallback_reset_after_minutes: int = 15
 
     # ── Crawl ─────────────────────────────────────
-    crawl_interval_minutes: int = 30
-    crawl_sleep_start_wib: int = 1   # 01:00 WIB — no crawling
-    crawl_sleep_end_wib: int = 6     # 06:00 WIB — resume
+    crawl_interval_minutes: int = 10
+    crawl_sleep_start_wib: int = 5   # 05:00 WIB — UK sleeping (BST 23:00)
+    crawl_sleep_end_wib: int = 13    # 13:00 WIB — UK waking up (BST 07:00)
 
     # ── Notifications ─────────────────────────────
     telegram_bot_token: str = ""

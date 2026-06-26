@@ -31,9 +31,9 @@ def _in_sleep_window() -> bool:
 
 
 @celery_app.task(name="app.tasks.crawler.crawl_all_sources", bind=True, max_retries=0)
-def crawl_all_sources(self):
+def crawl_all_sources(self, manual: bool = False):
     """Main crawler task — iterates all active IG sources."""
-    if _in_sleep_window():
+    if not manual and _in_sleep_window():
         logger.info("Crawler skipped: sleep window active (WIB %02d:00-%02d:00)",
                     settings.crawl_sleep_start_wib, settings.crawl_sleep_end_wib)
         return
@@ -52,13 +52,14 @@ def crawl_all_sources(self):
             .all()
         )
 
-        logger.info("Crawling %d active IG sources", len(sources))
+        logger.info("Crawling %d active IG sources (manual=%s)", len(sources), manual)
 
         for source in sources:
-            # Jitter between sources
-            delay = random.uniform(30, 90)
-            logger.debug("Waiting %.1fs before crawling @%s", delay, source.ig_username)
-            time.sleep(delay)
+            if not manual:
+                # Jitter between sources to avoid bot detection
+                delay = random.uniform(30, 90)
+                logger.debug("Waiting %.1fs before crawling @%s", delay, source.ig_username)
+                time.sleep(delay)
             crawl_single_source.delay(source.id)
 
     finally:
