@@ -11,6 +11,11 @@ class AssignBurnerRequest(BaseModel):
     burner_id: Optional[int] = None
 
 
+class UpdateIGSourceRequest(BaseModel):
+    ig_username: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 @router.get("")
 def list_ig_sources(
     db: DB,
@@ -63,6 +68,27 @@ def assign_burner(source_id: int, body: AssignBurnerRequest, db: DB, _: CurrentU
             raise HTTPException(status_code=404, detail="Burner not found")
 
     source.burner_account_id = body.burner_id
+    db.commit()
+    return {"ok": True}
+
+
+@router.patch("/{source_id}")
+def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: CurrentUser):
+    from app.models.ig_sources import IGSource
+
+    source = db.query(IGSource).filter_by(id=source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if body.ig_username is not None:
+        username = body.ig_username.lstrip("@").strip()
+        if not username:
+            raise HTTPException(status_code=400, detail="Username cannot be empty")
+        source.ig_username = username
+
+    if body.is_active is not None:
+        source.is_active = body.is_active
+
     db.commit()
     return {"ok": True}
 

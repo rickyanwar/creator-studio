@@ -37,7 +37,13 @@ export interface Fanpage {
   created_at: string;
 }
 
+export interface IGSourceRef {
+  id: number;
+  ig_username: string;
+}
+
 export interface FanpageDetail extends Fanpage {
+  ig_sources: IGSourceRef[];
   ig_source_usernames: string[];
 }
 

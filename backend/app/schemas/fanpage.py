@@ -46,8 +46,14 @@ class FanpageOut(FanpageBase):
     model_config = {"from_attributes": True}
 
 
+class IGSourceRef(BaseModel):
+    id: int
+    ig_username: str
+
+
 class FanpageDetailOut(FanpageOut):
-    ig_source_usernames: list[str] = []
+    ig_sources: list[IGSourceRef] = []
+    ig_source_usernames: list[str] = []  # kept for backward compat
 
 
 class PreviewCaptionRequest(BaseModel):

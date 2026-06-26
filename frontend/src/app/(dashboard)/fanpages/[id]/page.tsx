@@ -7,7 +7,7 @@ import {
   getFanpage,
   updateFanpage,
   addIGSource,
-  removeIGSource,
+  removeIGSourceByUsername,
   previewCaption,
 } from "@/lib/api";
 import type { FanpageDetail } from "@/lib/types";
@@ -57,7 +57,7 @@ export default function FanpageEditPage() {
   }
 
   async function handleRemoveSource(username: string) {
-    alert(`Remove @${username} — implement via source ID in production`);
+    await removeIGSourceByUsername(fanpageId, username);
     mutate();
   }
 
@@ -118,9 +118,10 @@ export default function FanpageEditPage() {
               @{uname}
               <button
                 onClick={() => handleRemoveSource(uname)}
-                className="text-text-secondary hover:text-error-main transition-colors"
+                className="ml-1 w-4 h-4 flex items-center justify-center rounded-full bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold leading-none transition-colors flex-shrink-0"
+                title={`Remove @${uname}`}
               >
-                <Icon icon="solar:close-bold" width={12} />
+                ×
               </button>
             </span>
           ))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { listFanpages, updateFanpage, triggerFanpageSync } from "@/lib/api";
@@ -9,14 +9,100 @@ import { Icon } from "@iconify/react";
 
 const fetcher = () => listFanpages().then((r) => r.data as Fanpage[]);
 
+function FanpageMenu({ fp, onToggleActive, onTogglePublishMode, togglingId }: {
+  fp: Fanpage;
+  onToggleActive: (fp: Fanpage) => void;
+  onTogglePublishMode: (fp: Fanpage) => void;
+  togglingId: number | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-8 h-8 flex items-center justify-center rounded-full text-text-secondary hover:text-text-primary hover:bg-bg-paper-hover transition-colors"
+        title="More options"
+      >
+        <Icon icon="solar:menu-dots-bold-duotone" width={18} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-9 z-50 w-52 rounded-xl border border-divider-soft bg-bg-paper shadow-lg py-1.5 text-sm">
+          <Link
+            href={`/fanpages/${fp.id}`}
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2.5 px-4 py-2 text-text-primary hover:bg-bg-paper-hover transition-colors"
+          >
+            <Icon icon="solar:tuning-2-bold-duotone" width={16} className="text-text-secondary" />
+            Configure
+          </Link>
+
+          <button
+            onClick={() => { onTogglePublishMode(fp); setOpen(false); }}
+            disabled={togglingId === fp.id}
+            className="flex items-center gap-2.5 px-4 py-2 w-full text-left text-text-primary hover:bg-bg-paper-hover transition-colors disabled:opacity-50"
+          >
+            <Icon
+              icon={fp.publish_mode === "auto"
+                ? "solar:eye-bold-duotone"
+                : "solar:send-square-bold-duotone"}
+              width={16}
+              className="text-text-secondary"
+            />
+            Switch to {fp.publish_mode === "auto" ? "Manual Review" : "Auto-publish"}
+          </button>
+
+          <div className="border-t border-divider-soft my-1" />
+
+          <button
+            onClick={() => { onToggleActive(fp); setOpen(false); }}
+            disabled={togglingId === fp.id}
+            className="flex items-center gap-2.5 px-4 py-2 w-full text-left hover:bg-bg-paper-hover transition-colors disabled:opacity-50"
+          >
+            <Icon
+              icon={fp.is_active ? "solar:pause-circle-bold-duotone" : "solar:play-circle-bold-duotone"}
+              width={16}
+              className={fp.is_active ? "text-warning-main" : "text-success-main"}
+            />
+            <span className={fp.is_active ? "text-warning-main" : "text-success-main"}>
+              {fp.is_active ? "Deactivate" : "Activate"}
+            </span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FanpagesPage() {
   const { data: fanpages = [], isLoading, mutate } = useSWR("fanpages", fetcher);
-  const [loadingSync, setLoadingSync]   = useState(false);
-  const [togglingId,  setTogglingId]    = useState<number | null>(null);
+  const [loadingSync, setLoadingSync] = useState(false);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
 
   async function toggleActive(fp: Fanpage) {
     setTogglingId(fp.id);
     try { await updateFanpage(fp.id, { is_active: !fp.is_active }); mutate(); }
+    finally { setTogglingId(null); }
+  }
+
+  async function togglePublishMode(fp: Fanpage) {
+    setTogglingId(fp.id);
+    try {
+      await updateFanpage(fp.id, {
+        publish_mode: fp.publish_mode === "auto" ? "manual_review" : "auto",
+      });
+      mutate();
+    }
     finally { setTogglingId(null); }
   }
 
@@ -72,39 +158,28 @@ export default function FanpagesPage() {
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-text-secondary mt-0.5">
-                    {fp.publish_mode === "auto" ? (
-                      <span className="text-primary-main">Auto-publish</span>
-                    ) : (
-                      <span className="text-warning-main">Manual review</span>
-                    )}
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className={`text-xs ${fp.is_active ? "text-green-600" : "text-text-disabled"}`}>
+                      {fp.is_active ? "Active" : "Inactive"}
+                    </span>
+                    <span className="text-text-disabled text-xs">·</span>
+                    <span className={`text-xs ${fp.publish_mode === "auto" ? "text-primary-main" : "text-warning-main"}`}>
+                      {fp.publish_mode === "auto" ? "Auto-publish" : "Manual review"}
+                    </span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 flex-shrink-0">
-                <button
-                  onClick={() => toggleActive(fp)}
-                  disabled={togglingId === fp.id}
-                  className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
-                  title={fp.is_active ? "Deactivate" : "Activate"}
-                >
-                  {togglingId === fp.id ? (
-                    <Icon icon="solar:refresh-bold-duotone" width={20} className="animate-spin text-text-disabled" />
-                  ) : (
-                    <Icon
-                      icon={fp.is_active ? "solar:toggle-on-bold-duotone" : "solar:toggle-off-bold-duotone"}
-                      width={24}
-                      className={fp.is_active ? "text-primary-main" : "text-text-disabled"}
-                    />
-                  )}
-                  {fp.is_active ? "Active" : "Inactive"}
-                </button>
-
-                <Link href={`/fanpages/${fp.id}`} className="btn-ghost flex items-center gap-1.5">
-                  <Icon icon="solar:tuning-2-bold-duotone" width={14} />
-                  Configure
-                </Link>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {togglingId === fp.id && (
+                  <Icon icon="svg-spinners:ring-resize" width={16} className="text-text-secondary" />
+                )}
+                <FanpageMenu
+                  fp={fp}
+                  onToggleActive={toggleActive}
+                  onTogglePublishMode={togglePublishMode}
+                  togglingId={togglingId}
+                />
               </div>
             </div>
           ))}

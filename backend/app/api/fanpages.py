@@ -30,7 +30,9 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
     source_ids = [l.ig_source_id for l in links]
     sources = db.query(IGSource).filter(IGSource.id.in_(source_ids)).all() if source_ids else []
 
+    from app.schemas.fanpage import IGSourceRef
     out = FanpageDetailOut.model_validate(fp)
+    out.ig_sources = [IGSourceRef(id=s.id, ig_username=s.ig_username) for s in sources]
     out.ig_source_usernames = [s.ig_username for s in sources]
     return out
 
@@ -94,6 +96,25 @@ def remove_ig_source(fanpage_id: int, ig_source_id: int, db: DB, _: CurrentUser)
     from app.models.fanpage_sources import FanpageSource
 
     link = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, ig_source_id=ig_source_id).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Source link not found")
+
+    link.is_active = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{fanpage_id}/sources/by-username/{username}")
+def remove_ig_source_by_username(fanpage_id: int, username: str, db: DB, _: CurrentUser):
+    from app.models.ig_sources import IGSource
+    from app.models.fanpage_sources import FanpageSource
+
+    clean = username.lstrip("@").lower()
+    source = db.query(IGSource).filter_by(ig_username=clean).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    link = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, ig_source_id=source.id).first()
     if not link:
         raise HTTPException(status_code=404, detail="Source link not found")
 
