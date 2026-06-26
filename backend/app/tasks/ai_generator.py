@@ -1,6 +1,8 @@
 """AI Caption Generator task."""
 
 import logging
+import random
+from datetime import datetime, timezone
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
@@ -41,8 +43,19 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
         if fanpage.publish_mode == PublishMode.auto:
             job.status = PublishJobStatus.pending_publish
             db.commit()
+
             from app.tasks.publisher import publish_job
-            publish_job.delay(job.id)
+
+            # If this fanpage has published before, add a random 2–3 min gap
+            # so Repliz/Facebook doesn't see uploads arriving too close together.
+            countdown = _gap_since_last_publish(db, job.fanpage_id)
+            publish_job.apply_async(args=[job.id], countdown=countdown)
+
+            if countdown:
+                logger.info(
+                    "Job %d queued for auto-publish in %ds (fanpage=%s)",
+                    job.id, countdown, fanpage.name,
+                )
         else:
             job.status = PublishJobStatus.pending_review
             db.commit()
@@ -64,3 +77,29 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
         raise self.retry(exc=exc, countdown=120)
     finally:
         db.close()
+
+
+def _gap_since_last_publish(db, fanpage_id: int) -> int:
+    """
+    Return a countdown in seconds before the next publish for this fanpage.
+    - First-ever upload for this fanpage → 0 (publish immediately).
+    - Fanpage has published before → random 2–3 min delay.
+    """
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+    last = (
+        db.query(PublishJob.published_at)
+        .filter(
+            PublishJob.fanpage_id == fanpage_id,
+            PublishJob.status == PublishJobStatus.published,
+            PublishJob.published_at.isnot(None),
+        )
+        .order_by(PublishJob.published_at.desc())
+        .first()
+    )
+
+    if last is None:
+        # Never published before — no delay needed
+        return 0
+
+    return random.randint(2 * 60, 3 * 60)  # 120–180 seconds
