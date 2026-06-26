@@ -138,10 +138,18 @@ def crawl_single_source(self, source_id: int):
             if not source.last_seen_post_id:
                 source.last_seen_post_id = ig_media_id
 
-            # Enqueue image download
+            # Enqueue image download, filtering by per-source album_image_indices
             from app.tasks.image_saver import save_post_images
+            all_urls = _extract_image_urls(media)
+            if media_type_enum == MediaType.album:
+                indices = source.album_image_indices or [1]
+                image_urls = [all_urls[i - 1] for i in indices if 1 <= i <= len(all_urls)]
+                if not image_urls:
+                    image_urls = all_urls[:1]
+            else:
+                image_urls = all_urls
             db.commit()
-            save_post_images.delay(post.id, _extract_image_urls(media))
+            save_post_images.delay(post.id, image_urls)
 
         source.last_checked_at = datetime.now(timezone.utc)
         burner.requests_today = (burner.requests_today or 0) + 1

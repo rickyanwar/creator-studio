@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, List
+from pydantic import BaseModel, field_validator
 
 from app.api.deps import CurrentUser, DB
 
@@ -14,6 +14,19 @@ class AssignBurnerRequest(BaseModel):
 class UpdateIGSourceRequest(BaseModel):
     ig_username: Optional[str] = None
     is_active: Optional[bool] = None
+    album_image_indices: Optional[List[int]] = None
+
+    @field_validator("album_image_indices")
+    @classmethod
+    def validate_indices(cls, v):
+        if v is None:
+            return v
+        if not v:
+            raise ValueError("album_image_indices cannot be empty")
+        for i in v:
+            if i < 1 or i > 10:
+                raise ValueError("Each index must be between 1 and 10")
+        return sorted(set(v))
 
 
 @router.get("")
@@ -48,6 +61,7 @@ def list_ig_sources(
             "last_checked_at": s.last_checked_at,
             "last_seen_post_id": s.last_seen_post_id,
             "active_fanpage_count": active_links,
+            "album_image_indices": s.album_image_indices or [1],
         })
 
     return result
@@ -88,6 +102,9 @@ def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: Cur
 
     if body.is_active is not None:
         source.is_active = body.is_active
+
+    if body.album_image_indices is not None:
+        source.album_image_indices = body.album_image_indices
 
     db.commit()
     return {"ok": True}

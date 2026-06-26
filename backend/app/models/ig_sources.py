@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -13,6 +14,7 @@ class IGSource(Base):
     last_checked_at = Column(DateTime, nullable=True)
     last_seen_post_id = Column(String(128), nullable=True)  # ig_media_id of most recent seen post
     is_active = Column(Boolean, default=True, nullable=False)
+    album_image_indices = Column(ARRAY(Integer), nullable=False, server_default="{1}")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

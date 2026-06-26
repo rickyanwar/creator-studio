@@ -49,6 +49,7 @@ class FanpageOut(FanpageBase):
 class IGSourceRef(BaseModel):
     id: int
     ig_username: str
+    album_image_indices: list[int] = [1]
 
 
 class FanpageDetailOut(FanpageOut):

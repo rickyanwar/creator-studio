@@ -9,11 +9,130 @@ import {
   addIGSource,
   removeIGSourceByUsername,
   previewCaption,
+  updateIGSource,
 } from "@/lib/api";
-import type { FanpageDetail } from "@/lib/types";
+import type { FanpageDetail, IGSourceRef } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
 const fetcher = (id: number) => getFanpage(id).then((r) => r.data as FanpageDetail);
+
+const MAX_ALBUM = 10;
+
+function IGSourceCard({
+  source,
+  onRemove,
+  onAlbumSaved,
+}: {
+  source: IGSourceRef;
+  onRemove: () => void;
+  onAlbumSaved: () => void;
+}) {
+  const [indices, setIndices] = useState<number[]>(source.album_image_indices ?? [1]);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setIndices(source.album_image_indices ?? [1]);
+  }, [source.album_image_indices?.join(",")]);
+
+  async function toggle(n: number) {
+    const next = indices.includes(n)
+      ? indices.filter((x) => x !== n)
+      : [...indices, n].sort((a, b) => a - b);
+    if (next.length === 0) return;
+    setIndices(next);
+    setSaving(true);
+    setSaved(false);
+    try {
+      await updateIGSource(source.id, { album_image_indices: next });
+      setSaved(true);
+      onAlbumSaved();
+      setTimeout(() => setSaved(false), 1800);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const label =
+    indices.length === MAX_ALBUM
+      ? "All images"
+      : indices.length === 1
+      ? `Image ${indices[0]} only`
+      : `Images ${indices.join(", ")}`;
+
+  return (
+    <div className="group relative rounded-lg border border-hairline bg-bg-paper-hover p-4 space-y-3 transition-colors hover:border-primary-main/30">
+      {/* Header row */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-500 via-red-500 to-yellow-400 flex items-center justify-center shrink-0">
+            <Icon icon="mdi:instagram" width={18} className="text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-text-primary leading-tight">@{source.ig_username}</p>
+            <p className="text-[11px] text-text-secondary leading-tight">Instagram source</p>
+          </div>
+        </div>
+        <button
+          onClick={onRemove}
+          className="opacity-0 group-hover:opacity-100 transition-opacity text-text-secondary hover:text-error-main p-1.5 rounded-md hover:bg-error-lighter"
+          title={`Remove @${source.ig_username}`}
+        >
+          <Icon icon="solar:trash-bin-trash-bold-duotone" width={15} />
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div className="border-t border-hairline" />
+
+      {/* Album picker */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Icon icon="solar:gallery-wide-bold-duotone" width={13} className="text-text-secondary" />
+            <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wide">
+              Album download
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 h-4">
+            {saving && (
+              <Icon icon="svg-spinners:ring-resize" width={12} className="text-primary-main" />
+            )}
+            {saved && !saving && (
+              <span className="flex items-center gap-0.5 text-[10px] text-primary-main font-semibold">
+                <Icon icon="solar:check-circle-bold" width={12} />
+                Saved
+              </span>
+            )}
+            {!saving && !saved && (
+              <span className="text-[11px] text-text-secondary">{label}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-1 flex-wrap">
+          {Array.from({ length: MAX_ALBUM }, (_, i) => i + 1).map((n) => {
+            const on = indices.includes(n);
+            return (
+              <button
+                key={n}
+                onClick={() => toggle(n)}
+                disabled={saving}
+                className={`w-7 h-7 rounded-md text-xs font-semibold border transition-all disabled:opacity-48 ${
+                  on
+                    ? "bg-primary-main text-white border-primary-main"
+                    : "bg-bg-paper text-text-secondary border-hairline hover:border-primary-main hover:text-primary-main"
+                }`}
+              >
+                {n}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function FanpageEditPage() {
   const { id } = useParams<{ id: string }>();
@@ -109,23 +228,18 @@ export default function FanpageEditPage() {
       <section className="card space-y-4">
         <h2 className="text-base font-semibold text-text-primary">Instagram Sources</h2>
 
-        <div className="flex flex-wrap gap-2">
-          {(fp.ig_source_usernames ?? []).map((uname) => (
-            <span
-              key={uname}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-bg-paper-hover text-text-primary text-xs rounded-full"
-            >
-              @{uname}
-              <button
-                onClick={() => handleRemoveSource(uname)}
-                className="ml-1 w-4 h-4 flex items-center justify-center rounded-full bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold leading-none transition-colors flex-shrink-0"
-                title={`Remove @${uname}`}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
+        {(fp.ig_sources ?? []).length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {(fp.ig_sources ?? []).map((src) => (
+              <IGSourceCard
+                key={src.id}
+                source={src}
+                onRemove={() => handleRemoveSource(src.ig_username)}
+                onAlbumSaved={mutate}
+              />
+            ))}
+          </div>
+        )}
 
         <div className="flex gap-2">
           <input

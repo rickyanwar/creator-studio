@@ -92,7 +92,7 @@ export const listIGSources = (orphanOnly?: boolean) =>
   api.get("/ig-sources", { params: { orphan_only: orphanOnly } });
 export const assignBurnerToSource = (sourceId: number, burnerId: number | null) =>
   api.patch(`/ig-sources/${sourceId}/assign-burner`, { burner_id: burnerId });
-export const updateIGSource = (sourceId: number, data: { ig_username?: string; is_active?: boolean }) =>
+export const updateIGSource = (sourceId: number, data: { ig_username?: string; is_active?: boolean; album_image_indices?: number[] }) =>
   api.patch(`/ig-sources/${sourceId}`, data);
 export const deleteIGSource = (sourceId: number) =>
   api.delete(`/ig-sources/${sourceId}`);

@@ -40,6 +40,7 @@ export interface Fanpage {
 export interface IGSourceRef {
   id: number;
   ig_username: string;
+  album_image_indices: number[];
 }
 
 export interface FanpageDetail extends Fanpage {
