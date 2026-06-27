@@ -49,10 +49,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.status_sync.sync_pending_schedules",
         "schedule": 300,
     },
-    # Cleanup: daily at 03:00 WIB (20:00 UTC)
+    # Cleanup: every 2 hours
     "cleanup-media": {
         "task": "app.tasks.cleanup.cleanup_old_media",
-        "schedule": crontab(hour=20, minute=0),
+        "schedule": crontab(minute=0, hour="*/2"),
     },
     # Fanpage sync: every 6 hours
     "sync-fanpages": {

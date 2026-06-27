@@ -1,9 +1,14 @@
 """Fan-out task — creates one PublishJob per active fanpage for a stored post."""
 
 import logging
+import random
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
+
+# Stagger between fanpages sharing the same IG source (seconds)
+_FANPAGE_STAGGER_MIN = 60
+_FANPAGE_STAGGER_MAX = 120
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,7 @@ def create_fanout_jobs(self, post_id: int):
         )
 
         created = 0
+        slot = 0  # stagger slot index for fanpages sharing this source
         for link in fanpage_links:
             # Idempotency: skip if job already exists
             existing = db.query(PublishJob).filter_by(
@@ -55,7 +61,17 @@ def create_fanout_jobs(self, post_id: int):
 
             from app.tasks.ai_generator import generate_caption_for_job
             db.commit()
-            generate_caption_for_job.delay(job.id)
+
+            # Stagger caption generation (and therefore publishing) so fanpages
+            # sharing the same IG source don't all post at exactly the same time.
+            stagger = slot * random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
+            generate_caption_for_job.apply_async(args=[job.id], countdown=stagger)
+            if stagger:
+                logger.info(
+                    "Job %d (fanpage=%d) caption delayed %ds to avoid simultaneous posting",
+                    job.id, link.fanpage_id, stagger,
+                )
+            slot += 1
 
         post.status = PostStatus.pending_fanout
         db.commit()

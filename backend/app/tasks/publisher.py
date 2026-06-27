@@ -67,7 +67,7 @@ def publish_job(self, job_id: int):
         job.repliz_response_json = response
         job.status = PublishJobStatus.published
         job.published_at = now
-        job.cleanup_at = now + timedelta(days=4)
+        job.cleanup_at = now + timedelta(hours=6)
         job.attempt_count = (job.attempt_count or 0) + 1
         db.commit()
 
