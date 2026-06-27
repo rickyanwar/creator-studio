@@ -19,6 +19,7 @@ from instagrapi.exceptions import (
     LoginRequired,
     PleaseWaitFewMinutes,
     BadPassword,
+    FeedbackRequired,
 )
 
 from app.services.encryption import encrypt, decrypt
@@ -83,6 +84,9 @@ class IGSessionManager:
         try:
             user_id = cl.user_id_from_username(ig_username)
             return cl.user_medias_v1(user_id, amount=amount)
+        except FeedbackRequired:
+            self._mark_feedback_required()
+            raise
         except PleaseWaitFewMinutes:
             self._mark_rate_limited()
             raise
@@ -126,6 +130,16 @@ class IGSessionManager:
         self.db.add(self.burner)
         self.db.commit()
         logger.error("Burner @%s is CHALLENGED — re-import session via ig_session_from_browser.py", self.burner.ig_username)
+
+    def _mark_feedback_required(self):
+        from app.models.burner_accounts import BurnerStatus
+        from datetime import timedelta
+        self.burner.status = BurnerStatus.rate_limited
+        self.burner.cooldown_until = datetime.now(timezone.utc) + timedelta(hours=72)
+        self.burner.last_error = "FeedbackRequired — Instagram action-blocked this account, cooling down 72h. Open the account on a real phone to unlock."
+        self.db.add(self.burner)
+        self.db.commit()
+        logger.error("Burner @%s FEEDBACK REQUIRED — action blocked, cooldown 72h", self.burner.ig_username)
 
     def _mark_rate_limited(self):
         from app.models.burner_accounts import BurnerStatus
