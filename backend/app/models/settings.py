@@ -10,6 +10,7 @@ class Settings(Base):
     id = Column(Integer, primary_key=True, default=1)
 
     crawl_interval_minutes = Column(Integer, default=30, nullable=False)
+    max_post_age_days = Column(Integer, default=2, nullable=False)
 
     ai_provider_primary = Column(String(32), default="gemini", nullable=False)
     ai_provider_fallback = Column(String(32), default="groq", nullable=False)

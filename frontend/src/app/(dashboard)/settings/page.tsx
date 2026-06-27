@@ -20,6 +20,7 @@ export default function SettingsPage() {
     if (settings) {
       setForm({
         crawl_interval_minutes: settings.crawl_interval_minutes,
+        max_post_age_days: settings.max_post_age_days ?? 2,
         ai_provider_primary: settings.ai_provider_primary,
         ai_provider_fallback: settings.ai_provider_fallback,
         storage_base_url: settings.storage_base_url ?? "",
@@ -171,11 +172,19 @@ export default function SettingsPage() {
       {/* Crawl */}
       <section className="card space-y-4">
         <h2 className="text-base font-semibold text-text-primary">Crawler</h2>
-        <div className="max-w-xs">
-          <label className="label">Crawl Interval (minutes)</label>
-          <input className="input-rect" type="number"
-            value={form.crawl_interval_minutes as number} onChange={(e) => set("crawl_interval_minutes", parseInt(e.target.value))} />
-          <p className="text-xs text-text-secondary mt-1">Minimum 15 minutes recommended</p>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="label">Crawl Interval (minutes)</label>
+            <input className="input-rect" type="number"
+              value={form.crawl_interval_minutes as number} onChange={(e) => set("crawl_interval_minutes", parseInt(e.target.value))} />
+            <p className="text-xs text-text-secondary mt-1">Minimum 15 minutes recommended</p>
+          </div>
+          <div>
+            <label className="label">Max Post Age (days)</label>
+            <input className="input-rect" type="number" min={1} max={30}
+              value={form.max_post_age_days as number} onChange={(e) => set("max_post_age_days", parseInt(e.target.value))} />
+            <p className="text-xs text-text-secondary mt-1">Skip posts older than this — e.g. 1 = today only</p>
+          </div>
         </div>
       </section>
 

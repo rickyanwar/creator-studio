@@ -23,6 +23,7 @@ def get_settings(db: DB, _: CurrentUser):
     row = _get_or_create_settings(db)
     return SettingsOut(
         crawl_interval_minutes=row.crawl_interval_minutes,
+        max_post_age_days=row.max_post_age_days if row.max_post_age_days is not None else 3,
         ai_provider_primary=row.ai_provider_primary,
         ai_provider_fallback=row.ai_provider_fallback,
         storage_base_url=row.storage_base_url,

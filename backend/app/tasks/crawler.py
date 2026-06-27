@@ -10,7 +10,7 @@ Anti-ban rules:
 import logging
 import random
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pytz
 
@@ -109,12 +109,25 @@ def crawl_single_source(self, source_id: int):
         medias = manager.fetch_recent_posts(source.ig_username, amount=random.randint(9, 15))
 
         new_count = 0
+        from app.models.settings import Settings as DBSettings
+        db_settings = db.query(DBSettings).filter_by(id=1).first()
+        max_age_days = db_settings.max_post_age_days if db_settings and db_settings.max_post_age_days else settings.max_post_age_days
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         for media in medias:
             ig_media_id = str(media.pk)
 
             # Skip already-seen posts
             if db.query(Post).filter_by(ig_media_id=ig_media_id).first():
                 continue
+
+            # Skip posts older than max_post_age_days
+            taken_at = getattr(media, "taken_at", None)
+            if taken_at:
+                if taken_at.tzinfo is None:
+                    taken_at = taken_at.replace(tzinfo=timezone.utc)
+                if taken_at < cutoff:
+                    logger.debug("Skipping old post %s from @%s (taken %s)", ig_media_id, source.ig_username, taken_at.date())
+                    continue
 
             # Smart adaptive carousel logic
             resources = getattr(media, "resources", []) or []

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 class SettingsUpdate(BaseModel):
     crawl_interval_minutes: Optional[int] = None
+    max_post_age_days: Optional[int] = None
     ai_provider_primary: Optional[str] = None
     ai_provider_fallback: Optional[str] = None
     gemini_api_key: Optional[str] = None   # plain — will be encrypted before saving
@@ -20,6 +21,7 @@ class SettingsUpdate(BaseModel):
 
 class SettingsOut(BaseModel):
     crawl_interval_minutes: int
+    max_post_age_days: int = 2
     ai_provider_primary: str
     ai_provider_fallback: str
     storage_base_url: Optional[str] = None

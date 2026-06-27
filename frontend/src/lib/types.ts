@@ -119,6 +119,7 @@ export interface CrawlerHealth {
 
 export interface AppSettings {
   crawl_interval_minutes: number;
+  max_post_age_days: number;
   ai_provider_primary: string;
   ai_provider_fallback: string;
   storage_base_url: string | null;

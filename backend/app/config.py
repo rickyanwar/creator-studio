@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     crawl_interval_minutes: int = 10
     crawl_sleep_start_wib: int = 5   # 05:00 WIB — UK sleeping (BST 23:00)
     crawl_sleep_end_wib: int = 13    # 13:00 WIB — UK waking up (BST 07:00)
+    max_post_age_days: int = 2       # Skip IG posts older than this many days
 
     # ── Notifications ─────────────────────────────
     telegram_bot_token: str = ""
