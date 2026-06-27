@@ -312,7 +312,7 @@ function CrawlerHealthCard({
   const statusConfig = {
     ok:    { bg: "bg-[rgba(0,167,111,0.08)]", border: "border-[rgba(0,167,111,0.2)]", dot: "bg-primary-main", label: "Running", labelClass: "text-primary-main" },
     sleep: { bg: "bg-[rgba(255,171,0,0.08)]", border: "border-[rgba(255,171,0,0.2)]", dot: "bg-warning-main", label: "Sleep Window", labelClass: "text-warning-main" },
-    dead:  { bg: "bg-[rgba(255,86,48,0.08)]",  border: "border-[rgba(255,86,48,0.2)]",  dot: "bg-error-main",   label: "Beat Stopped", labelClass: "text-error-main" },
+    dead:  { bg: "bg-[rgba(255,86,48,0.08)]",  border: "border-[rgba(255,86,48,0.2)]",  dot: "bg-error-main",   label: "Crawl Stale", labelClass: "text-error-main" },
   }[status];
 
   function fmtLastCrawl() {
@@ -326,7 +326,7 @@ function CrawlerHealthCard({
   }
 
   function fmtNextCrawl() {
-    if (status === "dead") return "Unknown — restart beat first";
+    if (status === "dead") return "Waiting — click Run Crawl Now";
     if (status === "sleep") {
       const wib = new Date(server_time_wib);
       const wakeH = sleep_end_wib;
@@ -358,7 +358,7 @@ function CrawlerHealthCard({
             </span>
             {status === "dead" && (
               <span className="text-xs text-error-main bg-[rgba(255,86,48,0.12)] px-2 py-0.5 rounded-full font-medium">
-                Beat process stopped — restart on VPS
+                Crawls not updating — check burner status or worker logs
               </span>
             )}
             {status === "sleep" && (
@@ -389,22 +389,10 @@ function CrawlerHealthCard({
               </span>
             </span>
           </div>
-          {status === "dead" && (
-            <div className="mt-2 flex items-center gap-2">
-              <button
-                onClick={onRestartBeat}
-                disabled={restartingBeat}
-                className="btn-secondary text-xs py-1 px-3"
-              >
-                <Icon icon={restartingBeat ? "solar:refresh-bold-duotone" : "solar:restart-bold-duotone"} width={13} className={restartingBeat ? "animate-spin" : ""} />
-                {restartingBeat ? "Restarting…" : "Restart Beat"}
-              </button>
-              {restartMsg && (
-                <span className={`text-xs ${restartMsg.includes("failed") ? "text-error-main" : "text-primary-main"}`}>
-                  {restartMsg}
-                </span>
-              )}
-            </div>
+          {restartMsg && (
+            <p className={`mt-1 text-xs ${restartMsg.includes("failed") ? "text-error-main" : "text-primary-main"}`}>
+              {restartMsg}
+            </p>
           )}
         </div>
       </div>
