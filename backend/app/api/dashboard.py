@@ -112,4 +112,6 @@ def get_crawler_health(db: DB, _: CurrentUser):
         "sleep_start_wib": settings.crawl_sleep_start_wib,
         "sleep_end_wib": settings.crawl_sleep_end_wib,
         "crawl_interval_minutes": settings.crawl_interval_minutes,
+        "server_time_utc": now_utc.isoformat(),
+        "server_time_wib": now_wib.isoformat(),
     }

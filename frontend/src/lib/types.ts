@@ -112,6 +112,8 @@ export interface CrawlerHealth {
   sleep_start_wib: number;
   sleep_end_wib: number;
   crawl_interval_minutes: number;
+  server_time_utc: string;
+  server_time_wib: string;
 }
 
 export interface AppSettings {

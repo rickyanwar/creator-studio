@@ -285,7 +285,8 @@ function CrawlerHealthCard({
   crawlMsg: string | null;
 }) {
   const { beat_healthy, in_sleep_window, minutes_since_crawl, last_crawl_at,
-          sleep_start_wib, sleep_end_wib, crawl_interval_minutes } = health;
+          sleep_start_wib, sleep_end_wib, crawl_interval_minutes,
+          server_time_utc, server_time_wib } = health;
 
   const status = in_sleep_window ? "sleep" : beat_healthy ? "ok" : "dead";
 
@@ -329,6 +330,13 @@ function CrawlerHealthCard({
             Last crawl: <span className="font-medium text-text-primary">{fmtLastCrawl()}</span>
             <span className="mx-1.5 text-text-disabled">·</span>
             Interval: every {crawl_interval_minutes}m
+            <span className="mx-1.5 text-text-disabled">·</span>
+            Server: <span className="font-medium text-text-primary font-mono">
+              {new Date(server_time_wib).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} WIB
+            </span>
+            <span className="ml-1 text-text-disabled">
+              ({new Date(server_time_utc).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} UTC)
+            </span>
           </p>
         </div>
       </div>
