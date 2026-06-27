@@ -114,6 +114,7 @@ export interface CrawlerHealth {
   crawl_interval_minutes: number;
   server_time_utc: string;
   server_time_wib: string;
+  active_sources: number;
 }
 
 export interface AppSettings {

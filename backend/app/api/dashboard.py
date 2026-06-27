@@ -88,12 +88,21 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
 def get_crawler_health(db: DB, _: CurrentUser):
     """Beat + crawler health: last crawl time, sleep window status, staleness."""
     from app.models.ig_sources import IGSource
+    from app.models.fanpage_sources import FanpageSource
 
     now_utc = datetime.now(timezone.utc)
     now_wib = datetime.now(WIB)
     in_sleep = settings.crawl_sleep_start_wib <= now_wib.hour < settings.crawl_sleep_end_wib
 
     latest = db.query(func.max(IGSource.last_checked_at)).scalar()
+
+    active_sources = (
+        db.query(IGSource)
+        .join(FanpageSource, FanpageSource.ig_source_id == IGSource.id)
+        .filter(IGSource.is_active == True, FanpageSource.is_active == True)
+        .distinct()
+        .count()
+    )
 
     minutes_since = None
     beat_healthy = False
@@ -114,4 +123,5 @@ def get_crawler_health(db: DB, _: CurrentUser):
         "crawl_interval_minutes": settings.crawl_interval_minutes,
         "server_time_utc": now_utc.isoformat(),
         "server_time_wib": now_wib.isoformat(),
+        "active_sources": active_sources,
     }

@@ -109,6 +109,7 @@ export const testReplizCredentials = (accessKey: string, secretKey: string) =>
 // ── Jobs (manual triggers) ───────────────────────────────────────────────────
 export const triggerCrawl = () => api.post("/jobs/crawl-now");
 export const triggerFanpageSync = () => api.post("/jobs/sync-fanpages");
+export const restartBeat = () => api.post("/jobs/restart-beat");
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
 export const getLogs = (params?: { category?: string; days?: number }) =>

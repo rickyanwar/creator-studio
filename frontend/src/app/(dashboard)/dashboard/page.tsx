@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { getDashboardStats, getCrawlerHealth, triggerCrawl, triggerFanpageSync } from "@/lib/api";
+import { getDashboardStats, getCrawlerHealth, triggerCrawl, triggerFanpageSync, restartBeat } from "@/lib/api";
 import type { DashboardStats, BurnerStatus, CrawlerHealth } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -39,15 +39,31 @@ export default function DashboardPage() {
   const { data: health, mutate: mutateHealth } = useSWR("crawler-health", healthFetcher, {
     refreshInterval: 30000,
   });
-  const [loadingSync, setLoadingSync]   = useState(false);
-  const [loadingCrawl, setLoadingCrawl] = useState(false);
-  const [crawlMsg, setCrawlMsg] = useState<string | null>(null);
+  const [loadingSync, setLoadingSync]     = useState(false);
+  const [loadingCrawl, setLoadingCrawl]   = useState(false);
+  const [crawlMsg, setCrawlMsg]           = useState<string | null>(null);
+  const [restartingBeat, setRestartingBeat] = useState(false);
+  const [restartMsg, setRestartMsg]       = useState<string | null>(null);
 
   const diskPct = data ? Math.round((data.disk_used_mb / data.disk_total_mb) * 100) : 0;
 
   async function handleSync() {
     setLoadingSync(true);
     try { await triggerFanpageSync(); mutate(); } finally { setLoadingSync(false); }
+  }
+
+  async function handleRestartBeat() {
+    setRestartingBeat(true);
+    setRestartMsg(null);
+    try {
+      await restartBeat();
+      setRestartMsg("Beat restarted — should be active in ~15 seconds.");
+      setTimeout(() => mutateHealth(), 15000);
+    } catch {
+      setRestartMsg("Restart failed — check VPS manually.");
+    } finally {
+      setRestartingBeat(false);
+    }
   }
 
   async function handleCrawl() {
@@ -130,7 +146,7 @@ export default function DashboardPage() {
 
       {/* ── Crawler health bar ─────────────────────── */}
       {health && (
-        <CrawlerHealthCard health={health} onCrawlNow={handleCrawl} crawling={loadingCrawl} crawlMsg={crawlMsg} />
+        <CrawlerHealthCard health={health} onCrawlNow={handleCrawl} crawling={loadingCrawl} crawlMsg={crawlMsg} onRestartBeat={handleRestartBeat} restartingBeat={restartingBeat} restartMsg={restartMsg} />
       )}
 
       {/* ── Lower row: burners + disk ──────────────── */}
@@ -277,16 +293,19 @@ export default function DashboardPage() {
    Crawler Health Card
    ──────────────────────────────────────────────── */
 function CrawlerHealthCard({
-  health, onCrawlNow, crawling, crawlMsg,
+  health, onCrawlNow, crawling, crawlMsg, onRestartBeat, restartingBeat, restartMsg,
 }: {
   health: CrawlerHealth;
   onCrawlNow: () => void;
   crawling: boolean;
   crawlMsg: string | null;
+  onRestartBeat: () => void;
+  restartingBeat: boolean;
+  restartMsg: string | null;
 }) {
   const { beat_healthy, in_sleep_window, minutes_since_crawl, last_crawl_at,
           sleep_start_wib, sleep_end_wib, crawl_interval_minutes,
-          server_time_utc, server_time_wib } = health;
+          server_time_utc, server_time_wib, active_sources } = health;
 
   const status = in_sleep_window ? "sleep" : beat_healthy ? "ok" : "dead";
 
@@ -306,12 +325,34 @@ function CrawlerHealthCard({
     return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
   }
 
+  function fmtNextCrawl() {
+    if (status === "dead") return "Unknown — restart beat first";
+    if (status === "sleep") {
+      const wib = new Date(server_time_wib);
+      const wakeH = sleep_end_wib;
+      const wakeTime = new Date(wib);
+      wakeTime.setHours(wakeH, 0, 0, 0);
+      if (wib >= wakeTime) wakeTime.setDate(wakeTime.getDate() + 1);
+      const minsUntil = Math.round((wakeTime.getTime() - wib.getTime()) / 60000);
+      const hh = String(wakeH).padStart(2, "0");
+      if (minsUntil < 60) return `Sleep ends at ${hh}:00 WIB (~${minsUntil}m)`;
+      const hLeft = Math.floor(minsUntil / 60);
+      const mLeft = minsUntil % 60;
+      return `Sleep ends at ${hh}:00 WIB (~${hLeft}h ${mLeft}m)`;
+    }
+    // Running normally — estimate minutes until next beat fire
+    const elapsed = minutes_since_crawl ?? 0;
+    const remaining = Math.max(0, crawl_interval_minutes - (elapsed % crawl_interval_minutes));
+    if (remaining <= 1) return "any moment now";
+    return `in ~${remaining}m`;
+  }
+
   return (
     <div className={`rounded-xl border px-5 py-4 flex flex-wrap items-center gap-4 ${statusConfig.bg} ${statusConfig.border}`}>
       <div className="flex items-center gap-2.5 flex-1 min-w-0">
         <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusConfig.dot} ${status === "ok" ? "animate-pulse" : ""}`} />
-        <div>
-          <div className="flex items-center gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={`text-sm font-bold ${statusConfig.labelClass}`}>
               Crawler — {statusConfig.label}
             </span>
@@ -321,23 +362,50 @@ function CrawlerHealthCard({
               </span>
             )}
             {status === "sleep" && (
-              <span className="text-xs text-warning-main">
-                {String(sleep_start_wib).padStart(2, "0")}:00–{String(sleep_end_wib).padStart(2, "0")}:00 WIB
+              <span className="text-xs text-warning-main bg-[rgba(255,171,0,0.12)] px-2 py-0.5 rounded-full font-medium">
+                Sleep {String(sleep_start_wib).padStart(2, "0")}:00–{String(sleep_end_wib).padStart(2, "0")}:00 WIB
               </span>
             )}
           </div>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Last crawl: <span className="font-medium text-text-primary">{fmtLastCrawl()}</span>
-            <span className="mx-1.5 text-text-disabled">·</span>
-            Interval: every {crawl_interval_minutes}m
-            <span className="mx-1.5 text-text-disabled">·</span>
-            Server: <span className="font-medium text-text-primary font-mono">
-              {new Date(server_time_wib).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} WIB
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+            <span className="text-xs text-text-secondary">
+              Last crawl: <span className="font-medium text-text-primary">{fmtLastCrawl()}</span>
             </span>
-            <span className="ml-1 text-text-disabled">
-              ({new Date(server_time_utc).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} UTC)
+            <span className="text-xs text-text-disabled hidden sm:inline">·</span>
+            <span className="text-xs text-text-secondary">
+              Next run: <span className={`font-medium ${status === "dead" ? "text-error-main" : status === "sleep" ? "text-warning-main" : "text-primary-main"}`}>{fmtNextCrawl()}</span>
             </span>
-          </p>
+            <span className="text-xs text-text-disabled hidden sm:inline">·</span>
+            <span className="text-xs text-text-secondary">
+              Sources: <span className="font-medium text-text-primary">{active_sources} active</span>
+            </span>
+            <span className="text-xs text-text-disabled hidden sm:inline">·</span>
+            <span className="text-xs text-text-secondary">
+              Server: <span className="font-mono font-medium text-text-primary">
+                {new Date(server_time_wib).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} WIB
+              </span>
+              <span className="ml-1 text-text-disabled">
+                ({new Date(server_time_utc).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} UTC)
+              </span>
+            </span>
+          </div>
+          {status === "dead" && (
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={onRestartBeat}
+                disabled={restartingBeat}
+                className="btn-secondary text-xs py-1 px-3"
+              >
+                <Icon icon={restartingBeat ? "solar:refresh-bold-duotone" : "solar:restart-bold-duotone"} width={13} className={restartingBeat ? "animate-spin" : ""} />
+                {restartingBeat ? "Restarting…" : "Restart Beat"}
+              </button>
+              {restartMsg && (
+                <span className={`text-xs ${restartMsg.includes("failed") ? "text-error-main" : "text-primary-main"}`}>
+                  {restartMsg}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
