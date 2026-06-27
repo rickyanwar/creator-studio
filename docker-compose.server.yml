@@ -68,10 +68,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
-    command: celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler
+    command: celery -A app.tasks.celery_app beat --loglevel=info
     env_file: .env
-    volumes:
-      - celery_beat_data:/tmp/celerybeat
     depends_on:
       redis:
         condition: service_healthy
@@ -110,4 +108,3 @@ volumes:
   postgres_data:
   redis_data:
   media_data:
-  celery_beat_data:
