@@ -142,6 +142,22 @@ def post_comment_now(burner_id: int, db: DB, _: CurrentUser):
     return {"ok": True, "task_id": task.id}
 
 
+@router.post("/{burner_id}/reset")
+def reset_burner(burner_id: int, db: DB, _: CurrentUser):
+    """Manually clear rate-limit / cooldown and set burner back to active."""
+    from app.models.burner_accounts import BurnerAccount, BurnerStatus
+
+    burner = db.query(BurnerAccount).filter_by(id=burner_id).first()
+    if not burner:
+        raise HTTPException(status_code=404, detail="Burner not found")
+
+    burner.status = BurnerStatus.active
+    burner.cooldown_until = None
+    burner.last_error = None
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/{burner_id}/import-session")
 def import_session(burner_id: int, body: dict, db: DB, _: CurrentUser):
     """Import a pre-existing instagrapi session JSON (exported from a local login)."""

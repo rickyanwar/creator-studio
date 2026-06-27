@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { listBurners, createBurner, deleteBurner, submitOTP, testBurnerSession, importBurnerSession, updateBurner, postStoryNow, postCommentNow } from "@/lib/api";
+import { listBurners, createBurner, deleteBurner, submitOTP, testBurnerSession, importBurnerSession, updateBurner, postStoryNow, postCommentNow, resetBurner } from "@/lib/api";
 import type { Burner, BurnerStatus } from "@/lib/types";
 import { Icon } from "@iconify/react";
 import { clsx } from "clsx";
@@ -48,6 +48,7 @@ export default function BurnersPage() {
   const [postingCommentId, setPostingCommentId] = useState<number | null>(null);
   const [editProxy, setEditProxy] = useState<{ burnerId: number; value: string } | null>(null);
   const [savingProxy, setSavingProxy] = useState<number | null>(null);
+  const [resettingId, setResettingId] = useState<number | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -132,6 +133,17 @@ export default function BurnersPage() {
     } catch {
       return url;
     }
+  }
+
+  async function handleReset(id: number) {
+    setResettingId(id);
+    try {
+      await resetBurner(id);
+      setTestResult((prev) => ({ ...prev, [id]: "Status reset — burner is active again" }));
+      mutate();
+    } catch {
+      setTestResult((prev) => ({ ...prev, [id]: "Reset failed" }));
+    } finally { setResettingId(null); }
   }
 
   async function handleSaveProxy(burnerId: number) {
@@ -409,6 +421,16 @@ export default function BurnersPage() {
                   className="btn-ghost text-xs text-warning-main"
                 >
                   Submit OTP
+                </button>
+              )}
+              {b.status === "rate_limited" && (
+                <button
+                  onClick={() => handleReset(b.id)}
+                  disabled={resettingId === b.id}
+                  className="btn-ghost text-xs text-warning-main"
+                >
+                  <Icon icon="solar:refresh-bold-duotone" width={12} className={resettingId === b.id ? "animate-spin" : "hidden"} />
+                  {resettingId === b.id ? "Resetting…" : "Reset Status"}
                 </button>
               )}
             </div>

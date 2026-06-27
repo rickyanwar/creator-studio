@@ -73,6 +73,7 @@ export const importBurnerSession = (id: number, sessionJson: Record<string, unkn
   api.post(`/burners/${id}/import-session`, sessionJson);
 export const postStoryNow = (id: number) => api.post(`/burners/${id}/post-story-now`);
 export const postCommentNow = (id: number) => api.post(`/burners/${id}/post-comment-now`);
+export const resetBurner = (id: number) => api.post(`/burners/${id}/reset`);
 
 // ── Publish Jobs ─────────────────────────────────────────────────────────────
 export const listJobs = (params?: {
