@@ -135,11 +135,11 @@ class IGSessionManager:
         from app.models.burner_accounts import BurnerStatus
         from datetime import timedelta
         self.burner.status = BurnerStatus.rate_limited
-        self.burner.cooldown_until = datetime.now(timezone.utc) + timedelta(hours=72)
-        self.burner.last_error = "FeedbackRequired — Instagram action-blocked this account, cooling down 72h. Open the account on a real phone to unlock."
+        self.burner.cooldown_until = datetime.now(timezone.utc) + timedelta(hours=2)
+        self.burner.last_error = "FeedbackRequired — Instagram temporarily limited this account, cooling down 2h."
         self.db.add(self.burner)
         self.db.commit()
-        logger.error("Burner @%s FEEDBACK REQUIRED — action blocked, cooldown 72h", self.burner.ig_username)
+        logger.warning("Burner @%s FeedbackRequired — cooling down 2h", self.burner.ig_username)
 
     def _mark_rate_limited(self):
         from app.models.burner_accounts import BurnerStatus
