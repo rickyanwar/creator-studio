@@ -46,6 +46,8 @@ export default function BurnersPage() {
   const [postingStoryId, setPostingStoryId] = useState<number | null>(null);
   const [togglingComment, setTogglingComment] = useState<number | null>(null);
   const [postingCommentId, setPostingCommentId] = useState<number | null>(null);
+  const [editProxy, setEditProxy] = useState<{ burnerId: number; value: string } | null>(null);
+  const [savingProxy, setSavingProxy] = useState<number | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -119,6 +121,26 @@ export default function BurnersPage() {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setTestResult((prev) => ({ ...prev, [burnerId]: detail || "Import failed — invalid session JSON" }));
     } finally { setImportingId(null); }
+  }
+
+  function maskProxy(url: string): string {
+    try {
+      const u = new URL(url);
+      if (u.password) u.password = "***";
+      if (u.username) u.username = u.username.slice(0, 3) + "***";
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  async function handleSaveProxy(burnerId: number) {
+    setSavingProxy(burnerId);
+    try {
+      await updateBurner(burnerId, { proxy_url: editProxy?.value || undefined });
+      setEditProxy(null);
+      mutate();
+    } finally { setSavingProxy(null); }
   }
 
   async function handleTest(id: number) {
@@ -220,10 +242,24 @@ export default function BurnersPage() {
                 </div>
                 <p className="text-xs text-text-secondary mt-0.5">
                   {b.requests_today} requests today
-                  {b.proxy_url && (
-                    <span className="ml-2 text-primary-main">Proxy set</span>
-                  )}
                 </p>
+                <div className="flex items-center gap-1 mt-1">
+                  <Icon icon="solar:server-square-bold-duotone" width={12} className="text-text-secondary flex-shrink-0" />
+                  {b.proxy_url ? (
+                    <span className="text-[11px] text-primary-main font-mono truncate max-w-[180px]" title={maskProxy(b.proxy_url)}>
+                      {maskProxy(b.proxy_url)}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-text-disabled">No proxy</span>
+                  )}
+                  <button
+                    onClick={() => setEditProxy(editProxy?.burnerId === b.id ? null : { burnerId: b.id, value: b.proxy_url || "" })}
+                    className="ml-1 text-text-secondary hover:text-primary-main transition-colors"
+                    title="Edit proxy"
+                  >
+                    <Icon icon="solar:pen-2-bold-duotone" width={12} />
+                  </button>
+                </div>
               </div>
               <button
                 onClick={() => handleDelete(b.id)}
@@ -238,6 +274,29 @@ export default function BurnersPage() {
               <p className="text-xs text-error-main bg-[rgba(255,86,48,0.08)] px-3 py-2 rounded-md">
                 {b.last_error}
               </p>
+            )}
+
+            {editProxy?.burnerId === b.id && (
+              <div className="space-y-2 px-3 py-2 rounded bg-bg-default">
+                <p className="text-xs font-semibold text-text-primary">Edit Proxy URL</p>
+                <input
+                  className="input-rect w-full font-mono text-xs"
+                  placeholder="http://user:pass@host:port"
+                  value={editProxy.value}
+                  onChange={(e) => setEditProxy({ ...editProxy, value: e.target.value })}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleSaveProxy(b.id)}
+                    disabled={savingProxy === b.id}
+                    className="btn-primary text-xs"
+                  >
+                    <Icon icon="solar:refresh-bold-duotone" width={12} className={savingProxy === b.id ? "animate-spin" : "hidden"} />
+                    {savingProxy === b.id ? "Saving…" : "Save"}
+                  </button>
+                  <button onClick={() => setEditProxy(null)} className="btn-secondary text-xs">Cancel</button>
+                </div>
+              </div>
             )}
 
             {/* ── Story warmer ── */}

@@ -106,7 +106,7 @@ def crawl_single_source(self, source_id: int):
             logger.info("Re-assigned @%s to burner @%s", source.ig_username, burner.ig_username)
 
         manager = IGSessionManager(burner, db)
-        medias = manager.fetch_recent_posts(source.ig_username, amount=12)
+        medias = manager.fetch_recent_posts(source.ig_username, amount=random.randint(9, 15))
 
         new_count = 0
         for media in medias:
