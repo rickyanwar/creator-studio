@@ -42,6 +42,7 @@ const fetcher = (status: string) =>
 export default function HistoryPage() {
   const [activeStatus, setActiveStatus] = useState<PublishJobStatus>("published");
   const [lightboxJob, setLightboxJob] = useState<{ job: PublishJob; urls: string[]; idx: number } | null>(null);
+  const [blurred, setBlurred] = useState(false);
 
   const { data: jobs = [], isLoading } = useSWR(
     `history-${activeStatus}`,
@@ -53,11 +54,30 @@ export default function HistoryPage() {
     <>
       <div className="space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary">Publish History</h1>
-          <p className="text-sm text-text-secondary mt-0.5">
-            {isLoading ? "Loading…" : `${jobs.length} ${activeStatus} post${jobs.length !== 1 ? "s" : ""}`}
-          </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-text-primary">Publish History</h1>
+            <p className="text-sm text-text-secondary mt-0.5">
+              {isLoading ? "Loading…" : `${jobs.length} ${activeStatus} post${jobs.length !== 1 ? "s" : ""}`}
+            </p>
+          </div>
+
+          {/* Privacy toggle */}
+          <button
+            onClick={() => setBlurred((b) => !b)}
+            title={blurred ? "Show content" : "Hide content (demo mode)"}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all flex-shrink-0 ${
+              blurred
+                ? "bg-warning-main/15 text-warning-dark border border-warning-main/30"
+                : "bg-bg-paper-hover text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            <Icon
+              icon={blurred ? "solar:eye-closed-bold-duotone" : "solar:eye-bold-duotone"}
+              width={17}
+            />
+            <span className="hidden sm:inline">{blurred ? "Demo Mode" : "Privacy"}</span>
+          </button>
         </div>
 
         {/* Status tabs */}
@@ -126,6 +146,7 @@ export default function HistoryPage() {
               <HistoryCard
                 key={job.id}
                 job={job}
+                blurred={blurred}
                 onImageClick={(idx) => {
                   const urls = resolveUrls(job);
                   if (urls.length) setLightboxJob({ job, urls, idx });
@@ -140,6 +161,7 @@ export default function HistoryPage() {
       {lightboxJob && (
         <HistoryLightbox
           state={lightboxJob}
+          blurred={blurred}
           onClose={() => setLightboxJob(null)}
           onPrev={() => setLightboxJob((l) => l && l.idx > 0 ? { ...l, idx: l.idx - 1 } : l)}
           onNext={() => setLightboxJob((l) => l && l.idx < l.urls.length - 1 ? { ...l, idx: l.idx + 1 } : l)}
@@ -152,9 +174,11 @@ export default function HistoryPage() {
 /* ── History card ─────────────────────────────────── */
 function HistoryCard({
   job,
+  blurred,
   onImageClick,
 }: {
   job: PublishJob;
+  blurred: boolean;
   onImageClick: (idx: number) => void;
 }) {
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
@@ -167,6 +191,9 @@ function HistoryCard({
 
   const publishedDate = job.published_at ?? (job as unknown as Record<string, string>).updated_at;
 
+  const blur = "blur-sm select-none transition-all duration-200";
+  const blurImg = "blur-md transition-all duration-200";
+
   return (
     <div className="bg-bg-paper rounded-xl overflow-hidden flex flex-col dark:shadow-card">
       {/* Header */}
@@ -175,11 +202,11 @@ function HistoryCard({
           <img
             src={job.fanpage_picture_url}
             alt={fanpage}
-            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+            className={`w-10 h-10 rounded-full object-cover flex-shrink-0 ${blurred ? blurImg : ""}`}
           />
         ) : (
           <div
-            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 select-none"
+            className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 select-none ${blurred ? blurImg : ""}`}
             style={{ background: color }}
           >
             {fanpage[0]?.toUpperCase() ?? "?"}
@@ -187,8 +214,8 @@ function HistoryCard({
         )}
 
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-text-primary truncate">{fanpage}</p>
-          <p className="text-xs text-text-secondary truncate">
+          <p className={`text-sm font-semibold text-text-primary truncate ${blurred ? blur : ""}`}>{fanpage}</p>
+          <p className={`text-xs text-text-secondary truncate ${blurred ? blur : ""}`}>
             {publishedDate
               ? format(new Date(publishedDate), "MMM d, yyyy · HH:mm")
               : `@${job.ig_username}`}
@@ -204,7 +231,7 @@ function HistoryCard({
 
       {/* Meta */}
       <div className="flex items-center gap-3 px-4 pb-3">
-        <span className="flex items-center gap-1 text-xs text-text-secondary">
+        <span className={`flex items-center gap-1 text-xs text-text-secondary ${blurred ? blur : ""}`}>
           <Icon icon="solar:user-bold-duotone" width={12} />
           @{job.ig_username}
         </span>
@@ -228,7 +255,7 @@ function HistoryCard({
         onClick={() => onImageClick(0)}
       >
         {thumb ? (
-          <img src={thumb} alt="Post" className="w-full aspect-[4/3] object-cover" />
+          <img src={thumb} alt="Post" className={`w-full aspect-[4/3] object-cover ${blurred ? blurImg : ""}`} />
         ) : (
           <div className="w-full aspect-[4/3] flex items-center justify-center">
             <Icon icon="solar:gallery-bold-duotone" width={40} className="text-text-disabled" />
@@ -268,7 +295,7 @@ function HistoryCard({
             {job.last_error}
           </p>
         ) : caption ? (
-          <p className="text-xs text-text-secondary leading-relaxed line-clamp-3">{caption}</p>
+          <p className={`text-xs text-text-secondary leading-relaxed line-clamp-3 ${blurred ? blur : ""}`}>{caption}</p>
         ) : (
           <p className="text-xs text-text-disabled italic">No caption</p>
         )}
@@ -280,11 +307,13 @@ function HistoryCard({
 /* ── History lightbox (view-only, no actions) ─────── */
 function HistoryLightbox({
   state,
+  blurred,
   onClose,
   onPrev,
   onNext,
 }: {
   state: { job: PublishJob; urls: string[]; idx: number };
+  blurred: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -296,6 +325,9 @@ function HistoryLightbox({
   const total = urls.length;
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
   const publishedDate = job.published_at ?? (job as unknown as Record<string, string>).updated_at;
+
+  const blur = "blur-sm select-none transition-all duration-200";
+  const blurImg = "blur-xl transition-all duration-200";
 
   return (
     <div
@@ -311,7 +343,7 @@ function HistoryLightbox({
           <img
             src={urls[idx]}
             alt={`Image ${idx + 1}`}
-            className="absolute inset-0 w-full h-full object-contain"
+            className={`absolute inset-0 w-full h-full object-contain ${blurred ? blurImg : ""}`}
           />
 
           {/* Close */}
@@ -348,16 +380,16 @@ function HistoryLightbox({
             <div className="flex items-center gap-2.5 mb-2">
               {job.fanpage_picture_url ? (
                 <img src={job.fanpage_picture_url} alt={fanpage}
-                  className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                  className={`w-7 h-7 rounded-full object-cover flex-shrink-0 ${blurred ? blurImg : ""}`} />
               ) : (
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${blurred ? "blur-sm" : ""}`}
                   style={{ background: color }}>
                   {fanpage[0]?.toUpperCase()}
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <p className="text-white text-xs font-semibold leading-none">{fanpage}</p>
-                <p className="text-white/60 text-[10px] mt-0.5">
+                <p className={`text-white text-xs font-semibold leading-none ${blurred ? blur : ""}`}>{fanpage}</p>
+                <p className={`text-white/60 text-[10px] mt-0.5 ${blurred ? blur : ""}`}>
                   @{job.ig_username}
                   {publishedDate ? ` · ${format(new Date(publishedDate), "MMM d, yyyy HH:mm")}` : ""}
                 </p>
@@ -371,7 +403,7 @@ function HistoryLightbox({
             {job.last_error ? (
               <p className="text-error-light text-xs leading-relaxed line-clamp-3">{job.last_error}</p>
             ) : caption ? (
-              <p className="text-white/90 text-xs leading-relaxed line-clamp-4">{caption}</p>
+              <p className={`text-white/90 text-xs leading-relaxed line-clamp-4 ${blurred ? blur : ""}`}>{caption}</p>
             ) : (
               <p className="text-white/40 text-xs italic">No caption</p>
             )}
@@ -392,7 +424,7 @@ function HistoryLightbox({
           {job.repliz_schedule_id && (
             <div className="flex items-center gap-1.5 text-xs text-text-secondary">
               <Icon icon="solar:link-bold-duotone" width={13} />
-              Repliz ID: <span className="font-mono text-text-primary">{job.repliz_schedule_id.slice(-12)}</span>
+              Repliz ID: <span className={`font-mono text-text-primary ${blurred ? blur : ""}`}>{job.repliz_schedule_id.slice(-12)}</span>
             </div>
           )}
           <div className="ml-auto flex items-center gap-1.5 text-xs" style={{ color: cfg.iconClass === "text-primary-main" ? "#00A76F" : cfg.iconClass === "text-error-main" ? "#FF5630" : "#637381" }}>

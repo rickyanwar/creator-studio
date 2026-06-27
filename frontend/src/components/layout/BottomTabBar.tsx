@@ -8,7 +8,7 @@ import { clsx } from "clsx";
 const TABS = [
   { href: "/dashboard", label: "Home",     icon: "solar:widget-bold-duotone" },
   { href: "/fanpages",  label: "Fanpages", icon: "mingcute:facebook-fill" },
-  { href: "/queue",     label: "Queue",    icon: "solar:clock-circle-bold-duotone", center: true },
+  { href: "/queue",     label: "Queue",    icon: "solar:clock-circle-bold-duotone" },
   { href: "/history",   label: "History",  icon: "solar:history-bold-duotone" },
   { href: "/burners",   label: "Burners",  icon: "solar:users-group-rounded-bold-duotone" },
   { href: "/settings",  label: "Settings", icon: "solar:settings-bold-duotone" },
@@ -26,30 +26,6 @@ export default function BottomTabBar() {
       <div className="flex h-[60px]">
         {TABS.map((tab) => {
           const active = isActive(tab.href);
-
-          if (tab.center) {
-            return (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                className="flex-1 flex flex-col items-center justify-center gap-0.5 relative"
-              >
-                <div
-                  className={clsx(
-                    "w-11 h-11 rounded-xl flex items-center justify-center transition-all",
-                    active ? "bg-primary-main shadow-primary-btn" : "bg-bg-paper-hover"
-                  )}
-                >
-                  <Icon
-                    icon={tab.icon}
-                    width={22}
-                    className={active ? "text-white" : "text-text-secondary"}
-                  />
-                </div>
-              </Link>
-            );
-          }
-
           return (
             <Link
               key={tab.href}
