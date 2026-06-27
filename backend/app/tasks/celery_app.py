@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.fanpage_sync",
         "app.tasks.story_poster",
         "app.tasks.comment_poster",
+        "app.tasks.warmup",
     ],
 )
 
@@ -73,5 +74,10 @@ celery_app.conf.beat_schedule = {
     "post-burner-comments": {
         "task": "app.tasks.comment_poster.post_comments_for_all_burners",
         "schedule": crontab(hour=3, minute=0),
+    },
+    # Warmup: random profile browse + occasional like every 3 hours (human-like behaviour)
+    "warmup-burners": {
+        "task": "app.tasks.warmup.run_warmup",
+        "schedule": crontab(minute=30, hour="*/3"),
     },
 }

@@ -177,6 +177,17 @@ def crawl_single_source(self, source_id: int):
 
         source.last_checked_at = datetime.now(timezone.utc)
         burner.requests_today = (burner.requests_today or 0) + 1
+
+        # Warmup: 15% chance to like 1 already-fetched post (no extra API call for profile/media)
+        if medias and random.random() < 0.15:
+            try:
+                post_to_like = random.choice(medias[:5])
+                manager.client.media_like(post_to_like.id)
+                burner.requests_today += 1
+                logger.debug("Warmup like on @%s", source.ig_username)
+            except Exception:
+                pass
+
         db.commit()
 
         logger.info("@%s: found %d new posts", source.ig_username, new_count)
