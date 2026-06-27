@@ -1,8 +1,9 @@
 "use client";
 
 import useSWR from "swr";
-import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners } from "@/lib/api";
-import { format } from "date-fns";
+import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners, getCrawlerHealth } from "@/lib/api";
+import { format, formatDistanceToNowStrict } from "date-fns";
+import type { CrawlerHealth } from "@/lib/types";
 import { useState } from "react";
 import { Icon } from "@iconify/react";
 
@@ -32,6 +33,11 @@ export default function SourcesPage() {
   const { data: burnersData } = useSWR<{ burners: Burner[] }>(
     "burners-list",
     () => listBurners().then((r) => r.data)
+  );
+  const { data: health } = useSWR<CrawlerHealth>(
+    "crawler-health",
+    () => getCrawlerHealth().then((r) => r.data),
+    { refreshInterval: 30000 }
   );
 
   const burners: Burner[] = burnersData?.burners ?? (Array.isArray(burnersData) ? burnersData as Burner[] : []);
@@ -168,10 +174,26 @@ export default function SourcesPage() {
                       <span className="badge-yellow">Orphaned</span>
                     )}
                   </td>
-                  <td className="px-5 py-3 text-ink-48">
-                    {s.last_checked_at
-                      ? format(new Date(s.last_checked_at), "MMM d HH:mm")
-                      : "Never"}
+                  <td className="px-5 py-3">
+                    {s.last_checked_at ? (() => {
+                      const date = new Date(s.last_checked_at);
+                      const minsAgo = Math.floor((Date.now() - date.getTime()) / 60000);
+                      const stale = !health?.in_sleep_window && minsAgo > (health?.crawl_interval_minutes ?? 10) * 2;
+                      return (
+                        <div className="flex items-center gap-2">
+                          <span className="text-ink-48" title={format(date, "MMM d HH:mm")}>
+                            {formatDistanceToNowStrict(date, { addSuffix: true })}
+                          </span>
+                          {stale && (
+                            <span className="text-[10px] font-medium text-error-main bg-[rgba(255,86,48,0.1)] px-1.5 py-0.5 rounded-full">
+                              stale
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })() : (
+                      <span className="text-ink-48">Never</span>
+                    )}
                   </td>
                   <td className="px-5 py-3">
                     <span className={s.is_active ? "badge-green" : "badge-gray"}>

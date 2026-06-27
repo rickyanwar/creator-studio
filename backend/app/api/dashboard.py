@@ -1,9 +1,10 @@
 """Dashboard overview stats endpoint."""
 
-import os
 import shutil
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
+import pytz
+from sqlalchemy import func
 from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DB
@@ -11,6 +12,7 @@ from app.config import get_settings
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 settings = get_settings()
+WIB = pytz.timezone("Asia/Jakarta")
 
 
 @router.get("/stats")
@@ -79,4 +81,35 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         "burners": burner_stats,
         "disk_used_mb": disk_used_mb,
         "disk_total_mb": disk_total_mb,
+    }
+
+
+@router.get("/health")
+def get_crawler_health(db: DB, _: CurrentUser):
+    """Beat + crawler health: last crawl time, sleep window status, staleness."""
+    from app.models.ig_sources import IGSource
+
+    now_utc = datetime.now(timezone.utc)
+    now_wib = datetime.now(WIB)
+    in_sleep = settings.crawl_sleep_start_wib <= now_wib.hour < settings.crawl_sleep_end_wib
+
+    latest = db.query(func.max(IGSource.last_checked_at)).scalar()
+
+    minutes_since = None
+    beat_healthy = False
+
+    if latest:
+        latest_utc = latest.replace(tzinfo=timezone.utc) if latest.tzinfo is None else latest
+        minutes_since = int((now_utc - latest_utc).total_seconds() / 60)
+        stale_threshold = settings.crawl_interval_minutes * 2
+        beat_healthy = in_sleep or minutes_since <= stale_threshold
+
+    return {
+        "beat_healthy": beat_healthy,
+        "last_crawl_at": latest,
+        "minutes_since_crawl": minutes_since,
+        "in_sleep_window": in_sleep,
+        "sleep_start_wib": settings.crawl_sleep_start_wib,
+        "sleep_end_wib": settings.crawl_sleep_end_wib,
+        "crawl_interval_minutes": settings.crawl_interval_minutes,
     }

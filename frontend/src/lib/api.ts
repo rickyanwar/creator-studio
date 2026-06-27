@@ -34,6 +34,7 @@ export const login = (username: string, password: string) =>
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 export const getDashboardStats = () => api.get("/dashboard/stats");
+export const getCrawlerHealth = () => api.get("/dashboard/health");
 
 // ── Fanpages ─────────────────────────────────────────────────────────────────
 export const listFanpages = () => api.get("/fanpages");

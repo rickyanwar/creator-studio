@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { getDashboardStats, triggerCrawl, triggerFanpageSync } from "@/lib/api";
-import type { DashboardStats, BurnerStatus } from "@/lib/types";
+import { getDashboardStats, getCrawlerHealth, triggerCrawl, triggerFanpageSync } from "@/lib/api";
+import type { DashboardStats, BurnerStatus, CrawlerHealth } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
 const BURNER_STATUS_STYLE: Record<BurnerStatus, string> = {
@@ -21,6 +21,7 @@ const BURNER_STATUS_ICON: Record<BurnerStatus, string> = {
 };
 
 const fetcher = () => getDashboardStats().then((r) => r.data as DashboardStats);
+const healthFetcher = () => getCrawlerHealth().then((r) => r.data as CrawlerHealth);
 
 /* ── Sparkline paths (80×36 viewBox) ────────────── */
 const SPARKLINES = {
@@ -35,8 +36,12 @@ export default function DashboardPage() {
   const { data, isLoading, mutate } = useSWR("dashboard-stats", fetcher, {
     refreshInterval: 30000,
   });
+  const { data: health, mutate: mutateHealth } = useSWR("crawler-health", healthFetcher, {
+    refreshInterval: 30000,
+  });
   const [loadingSync, setLoadingSync]   = useState(false);
   const [loadingCrawl, setLoadingCrawl] = useState(false);
+  const [crawlMsg, setCrawlMsg] = useState<string | null>(null);
 
   const diskPct = data ? Math.round((data.disk_used_mb / data.disk_total_mb) * 100) : 0;
 
@@ -47,7 +52,17 @@ export default function DashboardPage() {
 
   async function handleCrawl() {
     setLoadingCrawl(true);
-    try { await triggerCrawl(); mutate(); } finally { setLoadingCrawl(false); }
+    setCrawlMsg(null);
+    try {
+      await triggerCrawl();
+      setCrawlMsg("Crawl queued — sources will be checked in a few seconds.");
+      mutate();
+      setTimeout(() => mutateHealth(), 5000);
+    } catch {
+      setCrawlMsg("Failed to trigger crawl.");
+    } finally {
+      setLoadingCrawl(false);
+    }
   }
 
   return (
@@ -112,6 +127,11 @@ export default function DashboardPage() {
           sparkline={SPARKLINES.red}
         />
       </div>
+
+      {/* ── Crawler health bar ─────────────────────── */}
+      {health && (
+        <CrawlerHealthCard health={health} onCrawlNow={handleCrawl} crawling={loadingCrawl} crawlMsg={crawlMsg} />
+      )}
 
       {/* ── Lower row: burners + disk ──────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -248,6 +268,85 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────
+   Crawler Health Card
+   ──────────────────────────────────────────────── */
+function CrawlerHealthCard({
+  health, onCrawlNow, crawling, crawlMsg,
+}: {
+  health: CrawlerHealth;
+  onCrawlNow: () => void;
+  crawling: boolean;
+  crawlMsg: string | null;
+}) {
+  const { beat_healthy, in_sleep_window, minutes_since_crawl, last_crawl_at,
+          sleep_start_wib, sleep_end_wib, crawl_interval_minutes } = health;
+
+  const status = in_sleep_window ? "sleep" : beat_healthy ? "ok" : "dead";
+
+  const statusConfig = {
+    ok:    { bg: "bg-[rgba(0,167,111,0.08)]", border: "border-[rgba(0,167,111,0.2)]", dot: "bg-primary-main", label: "Running", labelClass: "text-primary-main" },
+    sleep: { bg: "bg-[rgba(255,171,0,0.08)]", border: "border-[rgba(255,171,0,0.2)]", dot: "bg-warning-main", label: "Sleep Window", labelClass: "text-warning-main" },
+    dead:  { bg: "bg-[rgba(255,86,48,0.08)]",  border: "border-[rgba(255,86,48,0.2)]",  dot: "bg-error-main",   label: "Beat Stopped", labelClass: "text-error-main" },
+  }[status];
+
+  function fmtLastCrawl() {
+    if (!last_crawl_at) return "Never";
+    if (minutes_since_crawl === null) return "Unknown";
+    if (minutes_since_crawl < 1) return "just now";
+    if (minutes_since_crawl < 60) return `${minutes_since_crawl}m ago`;
+    const h = Math.floor(minutes_since_crawl / 60);
+    const m = minutes_since_crawl % 60;
+    return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
+  }
+
+  return (
+    <div className={`rounded-xl border px-5 py-4 flex flex-wrap items-center gap-4 ${statusConfig.bg} ${statusConfig.border}`}>
+      <div className="flex items-center gap-2.5 flex-1 min-w-0">
+        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusConfig.dot} ${status === "ok" ? "animate-pulse" : ""}`} />
+        <div>
+          <div className="flex items-center gap-2">
+            <span className={`text-sm font-bold ${statusConfig.labelClass}`}>
+              Crawler — {statusConfig.label}
+            </span>
+            {status === "dead" && (
+              <span className="text-xs text-error-main bg-[rgba(255,86,48,0.12)] px-2 py-0.5 rounded-full font-medium">
+                Beat process stopped — restart on VPS
+              </span>
+            )}
+            {status === "sleep" && (
+              <span className="text-xs text-warning-main">
+                {String(sleep_start_wib).padStart(2, "0")}:00–{String(sleep_end_wib).padStart(2, "0")}:00 WIB
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Last crawl: <span className="font-medium text-text-primary">{fmtLastCrawl()}</span>
+            <span className="mx-1.5 text-text-disabled">·</span>
+            Interval: every {crawl_interval_minutes}m
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 flex-shrink-0">
+        {crawlMsg && (
+          <span className={`text-xs ${crawlMsg.includes("Failed") ? "text-error-main" : "text-primary-main"}`}>
+            {crawlMsg}
+          </span>
+        )}
+        <button
+          onClick={onCrawlNow}
+          disabled={crawling}
+          className="btn-primary text-xs py-1.5 px-3"
+        >
+          <Icon icon={crawling ? "solar:refresh-bold-duotone" : "solar:play-bold-duotone"} width={13} className={crawling ? "animate-spin" : ""} />
+          {crawling ? "Crawling…" : "Run Crawl Now"}
+        </button>
       </div>
     </div>
   );

@@ -104,6 +104,16 @@ export interface DashboardStats {
   disk_total_mb: number;
 }
 
+export interface CrawlerHealth {
+  beat_healthy: boolean;
+  last_crawl_at: string | null;
+  minutes_since_crawl: number | null;
+  in_sleep_window: boolean;
+  sleep_start_wib: number;
+  sleep_end_wib: number;
+  crawl_interval_minutes: number;
+}
+
 export interface AppSettings {
   crawl_interval_minutes: number;
   ai_provider_primary: string;
