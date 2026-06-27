@@ -40,6 +40,9 @@ structlog==24.4.0
 # ── Timezone ──────────────────────────────────
 pytz==2024.2
 
+# ── Docker SDK (for restarting containers from API) ───
+docker==7.1.0
+
 # ── Utilities ─────────────────────────────────
 python-dateutil==2.9.0
 aiofiles==24.1.0

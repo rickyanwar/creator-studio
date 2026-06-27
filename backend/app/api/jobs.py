@@ -1,6 +1,5 @@
 """Manual job triggers — for testing and admin actions."""
 
-import subprocess
 from fastapi import APIRouter, HTTPException
 
 from app.api.deps import CurrentUser, DB
@@ -34,20 +33,20 @@ def trigger_cleanup(_: CurrentUser):
 
 @router.post("/restart-beat")
 def restart_beat(_: CurrentUser):
-    """Restart the Celery beat scheduler container."""
+    """Restart the Celery beat scheduler container via Docker socket."""
     try:
-        result = subprocess.run(
-            ["docker", "compose", "restart", "beat"],
-            capture_output=True, text=True, timeout=30,
-            cwd="/opt/studio",
-        )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=result.stderr.strip() or "Restart failed")
+        import docker
+        client = docker.from_env()
+        # Container is named <project>-beat-1 (project = directory name on VPS = "studio")
+        containers = client.containers.list(filters={"name": "beat"})
+        if not containers:
+            raise HTTPException(status_code=404, detail="Beat container not found — is it running?")
+        containers[0].restart(timeout=15)
         return {"ok": True}
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Restart timed out")
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="docker not found on server")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/task-status/{task_id}")

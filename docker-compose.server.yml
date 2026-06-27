@@ -39,6 +39,7 @@ services:
     env_file: .env
     volumes:
       - media_data:/opt/studio/media
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
