@@ -15,11 +15,11 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        "settings",
-        sa.Column("max_post_age_days", sa.Integer(), nullable=False, server_default="2"),
+    op.execute(
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS max_post_age_days INTEGER NOT NULL DEFAULT 2"
     )
 
 
 def downgrade():
     op.drop_column("settings", "max_post_age_days")
+    
