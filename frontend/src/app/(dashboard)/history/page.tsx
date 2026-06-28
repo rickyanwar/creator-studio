@@ -5,6 +5,9 @@ import useSWR from "swr";
 import { listJobs } from "@/lib/api";
 import type { PublishJob, PublishJobStatus } from "@/lib/types";
 import { format } from "date-fns";
+
+const parseUtc = (s: string) =>
+  new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
 import { Icon } from "@iconify/react";
 
 const STATUSES: { value: PublishJobStatus; label: string; icon: string }[] = [
@@ -217,7 +220,7 @@ function HistoryCard({
           <p className={`text-sm font-semibold text-text-primary truncate ${blurred ? blur : ""}`}>{fanpage}</p>
           <p className={`text-xs text-text-secondary truncate ${blurred ? blur : ""}`}>
             {publishedDate
-              ? format(new Date(publishedDate), "MMM d, yyyy · HH:mm")
+              ? format(parseUtc(publishedDate), "MMM d, yyyy · HH:mm")
               : `@${job.ig_username}`}
           </p>
         </div>
@@ -391,7 +394,7 @@ function HistoryLightbox({
                 <p className={`text-white text-xs font-semibold leading-none ${blurred ? blur : ""}`}>{fanpage}</p>
                 <p className={`text-white/60 text-[10px] mt-0.5 ${blurred ? blur : ""}`}>
                   @{job.ig_username}
-                  {publishedDate ? ` · ${format(new Date(publishedDate), "MMM d, yyyy HH:mm")}` : ""}
+                  {publishedDate ? ` · ${format(parseUtc(publishedDate), "MMM d, yyyy HH:mm")}` : ""}
                 </p>
               </div>
               <span className={`${cfg.badge} flex items-center gap-1 flex-shrink-0`}>
