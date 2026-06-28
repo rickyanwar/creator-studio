@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     crawl_sleep_end_wib: int = 13    # 13:00 WIB — UK waking up (BST 07:00)
     max_post_age_days: int = 2       # Skip IG posts older than this many days
 
+    # ── FlashAPI (alternative IG scraper) ─────────
+    flashapi_api_key: str = ""
+    flashapi_base_url: str = "https://fast.igapi.ru/api"
+
     # ── Notifications ─────────────────────────────
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

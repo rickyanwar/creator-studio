@@ -21,6 +21,7 @@ def _enrich_job(job, db) -> PublishJobOut:
     out.fanpage_picture_url = fanpage.picture_url if fanpage else None
     out.ig_username = ig_source.ig_username if ig_source else None
     out.image_public_urls = list(post.image_public_urls) if post and post.image_public_urls else []
+    out.image_source_urls = list(post.image_source_urls) if post and post.image_source_urls else []
     out.media_type = post.media_type.value if post else None
     return out
 

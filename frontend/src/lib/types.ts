@@ -131,4 +131,6 @@ export interface AppSettings {
   has_repliz_keys: boolean;
   has_telegram_token: boolean;
   telegram_chat_id: string | null;
+  scraper_mode: "auto" | "instagrapi" | "flashapi";
+  has_flashapi_key: boolean;
 }

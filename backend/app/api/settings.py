@@ -35,6 +35,8 @@ def get_settings(db: DB, _: CurrentUser):
         has_repliz_keys=bool(row.repliz_access_key_encrypted and row.repliz_secret_key_encrypted),
         has_telegram_token=bool(row.telegram_bot_token_encrypted),
         telegram_chat_id=row.telegram_chat_id,
+        scraper_mode=row.scraper_mode or "auto",
+        has_flashapi_key=bool(row.flashapi_api_key_encrypted),
     )
 
 
@@ -56,6 +58,8 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         row.repliz_secret_key_encrypted = encrypt(data.pop("repliz_secret_key"))
     if "telegram_bot_token" in data:
         row.telegram_bot_token_encrypted = encrypt(data.pop("telegram_bot_token"))
+    if "flashapi_api_key" in data:
+        row.flashapi_api_key_encrypted = encrypt(data.pop("flashapi_api_key"))
 
     for field, value in data.items():
         setattr(row, field, value)

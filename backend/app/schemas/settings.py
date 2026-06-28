@@ -17,6 +17,8 @@ class SettingsUpdate(BaseModel):
     repliz_secret_key: Optional[str] = None
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
+    scraper_mode: Optional[str] = None      # "auto" | "instagrapi" | "flashapi"
+    flashapi_api_key: Optional[str] = None  # plain — will be encrypted before saving
 
 
 class SettingsOut(BaseModel):
@@ -33,6 +35,8 @@ class SettingsOut(BaseModel):
     has_repliz_keys: bool
     has_telegram_token: bool
     telegram_chat_id: Optional[str] = None
+    scraper_mode: str = "auto"
+    has_flashapi_key: bool = False
 
     model_config = {"from_attributes": False}
 

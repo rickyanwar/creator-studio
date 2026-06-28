@@ -15,6 +15,7 @@ class UpdateIGSourceRequest(BaseModel):
     ig_username: Optional[str] = None
     is_active: Optional[bool] = None
     album_image_indices: Optional[List[int]] = None
+    scraper_backend: Optional[str] = None  # "auto" | "instagrapi" | "flashapi"
 
     @field_validator("album_image_indices")
     @classmethod
@@ -62,6 +63,7 @@ def list_ig_sources(
             "last_seen_post_id": s.last_seen_post_id,
             "active_fanpage_count": active_links,
             "album_image_indices": s.album_image_indices or [1],
+            "scraper_backend": (s.scraper_backend.value if s.scraper_backend else "auto"),
         })
 
     return result
@@ -105,6 +107,13 @@ def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: Cur
 
     if body.album_image_indices is not None:
         source.album_image_indices = body.album_image_indices
+
+    if body.scraper_backend is not None:
+        from app.models.ig_sources import ScraperBackend
+        try:
+            source.scraper_backend = ScraperBackend(body.scraper_backend)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid scraper_backend: must be auto, instagrapi, or flashapi")
 
     db.commit()
     return {"ok": True}

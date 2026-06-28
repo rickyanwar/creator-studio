@@ -28,11 +28,13 @@ export default function SettingsPage() {
         ai_fallback_after_failures: settings.ai_fallback_after_failures,
         ai_fallback_reset_after_minutes: settings.ai_fallback_reset_after_minutes,
         telegram_chat_id: settings.telegram_chat_id ?? "",
+        scraper_mode: settings.scraper_mode ?? "auto",
         gemini_api_key: "",
         groq_api_key: "",
         repliz_access_key: "",
         repliz_secret_key: "",
         telegram_bot_token: "",
+        flashapi_api_key: "",
       });
     }
   }, [settings]);
@@ -185,6 +187,58 @@ export default function SettingsPage() {
               value={form.max_post_age_days as number} onChange={(e) => set("max_post_age_days", parseInt(e.target.value))} />
             <p className="text-xs text-text-secondary mt-1">Skip posts older than this — e.g. 1 = today only</p>
           </div>
+        </div>
+      </section>
+
+      {/* Scraper Mode */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">Instagram Scraper</h2>
+        <p className="text-xs text-text-secondary">
+          Choose how the crawler fetches posts. <strong>Auto</strong> tries your burner accounts first and falls back to FlashAPI when all are unavailable.
+        </p>
+
+        <div>
+          <label className="label">Scraper Mode</label>
+          <div className="flex gap-3 mt-1">
+            {(["auto", "instagrapi", "flashapi"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => set("scraper_mode", mode)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  form.scraper_mode === mode
+                    ? "bg-primary-main text-white border-primary-main"
+                    : "bg-surface-secondary text-text-secondary border-border-default hover:border-primary-main"
+                }`}
+              >
+                {mode === "auto" && "Auto"}
+                {mode === "instagrapi" && "Burner Accounts"}
+                {mode === "flashapi" && "FlashAPI"}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-text-secondary mt-2">
+            {form.scraper_mode === "auto" && "Tries burner accounts first; falls back to FlashAPI if none are available."}
+            {form.scraper_mode === "instagrapi" && "Always uses burner accounts. Stops crawling if all burners are rate-limited."}
+            {form.scraper_mode === "flashapi" && "Always uses FlashAPI. No burner accounts needed. Requires an API key below."}
+          </p>
+        </div>
+
+        <div>
+          <label className="label">
+            FlashAPI Key{" "}
+            {settings?.has_flashapi_key && <span className="text-primary-main">✓ saved</span>}
+          </label>
+          <input
+            className="input-rect"
+            type="password"
+            placeholder="Leave blank to keep existing"
+            value={form.flashapi_api_key as string ?? ""}
+            onChange={(e) => set("flashapi_api_key", e.target.value)}
+          />
+          <p className="text-xs text-text-secondary mt-1">
+            Required when mode is <strong>FlashAPI</strong> or as auto-fallback. Get a key at flashapi.ru.
+          </p>
         </div>
       </section>
 

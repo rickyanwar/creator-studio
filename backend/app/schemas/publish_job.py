@@ -24,6 +24,7 @@ class PublishJobOut(BaseModel):
     fanpage_picture_url: Optional[str] = None
     ig_username: Optional[str] = None
     image_public_urls: list[str] = []
+    image_source_urls: list[str] = []
     media_type: Optional[str] = None
 
     model_config = {"from_attributes": True}
