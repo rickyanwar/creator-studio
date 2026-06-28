@@ -70,6 +70,7 @@ def crawl_all_sources(self, manual: bool = False):
 def crawl_single_source(self, source_id: int):
     """Crawl one IG source and enqueue image-save for any new posts."""
     db = SessionLocal()
+    source = None
     try:
         from app.models.ig_sources import IGSource, ScraperBackend
         from app.models.burner_accounts import BurnerAccount, BurnerStatus
@@ -155,6 +156,7 @@ def crawl_single_source(self, source_id: int):
             save_post_images.delay(post.id, image_urls)
 
         source.last_checked_at = datetime.now(timezone.utc)
+        source.last_crawl_error = None
         db.commit()
 
         logger.info("@%s: found %d new posts", source.ig_username, new_count)
@@ -162,6 +164,12 @@ def crawl_single_source(self, source_id: int):
     except Exception as exc:
         db.rollback()
         logger.error("Error crawling @%s: %s", source_id, exc, exc_info=True)
+        try:
+            if source:
+                source.last_crawl_error = str(exc)[:512]
+                db.commit()
+        except Exception:
+            db.rollback()
         raise self.retry(exc=exc, countdown=300)
     finally:
         db.close()
@@ -233,6 +241,8 @@ def _fetch_medias(source, backend, db, amount: int) -> list:
                 logger.info("Re-assigned @%s to burner @%s", source.ig_username, burner.ig_username)
             elif effective == ScraperBackend.instagrapi:
                 logger.warning("No available burners to crawl @%s — all busy or at limit", source.ig_username)
+                source.last_crawl_error = "No active burner available"
+                db.commit()
                 return []
             else:
                 # auto mode: no burner → fall back to FlashAPI
@@ -264,25 +274,35 @@ def _fetch_medias(source, backend, db, amount: int) -> list:
             "FlashAPI backend requested for @%s but no API key is configured — skipping",
             source.ig_username,
         )
+        source.last_crawl_error = "FlashAPI key not configured"
+        db.commit()
         return []
 
     from app.services.flashapi_client import FlashAPIClient
     import requests as _requests
     client = FlashAPIClient(api_key=api_key, base_url=settings.flashapi_base_url)
     try:
-        return client.fetch_recent_posts(source.ig_username, amount=amount)
+        medias = client.fetch_recent_posts(source.ig_username, amount=amount)
+        source.last_crawl_error = None
+        db.commit()
+        return medias
     except _requests.HTTPError as exc:
         status = exc.response.status_code if exc.response else 0
         if status in (400, 401, 403, 422):
-            # Auth / bad-request errors — no point retrying, skip this source
-            logger.warning(
-                "FlashAPI %s for @%s — check API key or plan limits, skipping",
-                status, source.ig_username,
-            )
+            try:
+                body = exc.response.json()
+                msg = body.get("answer") or body.get("message") or f"HTTP {status}"
+            except Exception:
+                msg = f"HTTP {status}"
+            logger.warning("FlashAPI %s for @%s — %s", status, source.ig_username, msg)
+            source.last_crawl_error = f"FlashAPI: {msg}"
+            db.commit()
             return []
         raise  # 5xx or network errors: let the task retry normally
     except _requests.RequestException as exc:
         logger.warning("FlashAPI network error for @%s: %s — skipping", source.ig_username, exc)
+        source.last_crawl_error = f"FlashAPI network error: {str(exc)[:200]}"
+        db.commit()
         return []
 
 

@@ -16,6 +16,7 @@ type IGSourceRow = {
   is_active: boolean;
   last_checked_at: string | null;
   active_fanpage_count: number;
+  last_crawl_error: string | null;
 };
 
 type Burner = {
@@ -196,9 +197,19 @@ export default function SourcesPage() {
                     )}
                   </td>
                   <td className="px-5 py-3">
-                    <span className={s.is_active ? "badge-green" : "badge-gray"}>
-                      {s.is_active ? "Active" : "Inactive"}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className={s.is_active ? "badge-green" : "badge-gray"}>
+                        {s.is_active ? "Active" : "Inactive"}
+                      </span>
+                      {s.last_crawl_error && (
+                        <span
+                          className="text-[10px] font-medium text-error-main bg-[rgba(255,86,48,0.1)] px-1.5 py-0.5 rounded-full truncate max-w-[180px]"
+                          title={s.last_crawl_error}
+                        >
+                          {s.last_crawl_error}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3">
                     <button

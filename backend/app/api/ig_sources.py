@@ -64,6 +64,7 @@ def list_ig_sources(
             "active_fanpage_count": active_links,
             "album_image_indices": s.album_image_indices or [1],
             "scraper_backend": (s.scraper_backend.value if s.scraper_backend else "auto"),
+            "last_crawl_error": s.last_crawl_error,
         })
 
     return result

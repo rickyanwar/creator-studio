@@ -20,6 +20,7 @@ class IGSource(Base):
     ig_user_id = Column(String(64), nullable=True)  # populated after first successful crawl
     burner_account_id = Column(Integer, ForeignKey("burner_accounts.id"), nullable=True)
     last_checked_at = Column(DateTime, nullable=True)
+    last_crawl_error = Column(String(512), nullable=True)
     last_seen_post_id = Column(String(128), nullable=True)  # ig_media_id of most recent seen post
     is_active = Column(Boolean, default=True, nullable=False)
     album_image_indices = Column(ARRAY(Integer), nullable=False, server_default="{1}")
