@@ -194,6 +194,7 @@ def crawl_single_source(self, source_id: int):
         logger.error("Error crawling @%s: %s", source_id, exc, exc_info=True)
         try:
             if source:
+                source.last_checked_at = datetime.now(timezone.utc)
                 source.last_crawl_error = str(exc)[:512]
                 db.commit()
         except Exception:

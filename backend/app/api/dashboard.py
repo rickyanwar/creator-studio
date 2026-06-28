@@ -90,6 +90,8 @@ def get_crawler_health(db: DB, _: CurrentUser):
     from app.models.ig_sources import IGSource
     from app.models.fanpage_sources import FanpageSource
 
+    from app.models.settings import Settings as DBSettings
+
     now_utc = datetime.now(timezone.utc)
     now_wib = datetime.now(WIB)
     in_sleep = settings.crawl_sleep_start_wib <= now_wib.hour < settings.crawl_sleep_end_wib
@@ -104,13 +106,21 @@ def get_crawler_health(db: DB, _: CurrentUser):
         .count()
     )
 
+    # Read interval from DB so it matches what the user set in the UI
+    db_settings = db.query(DBSettings).filter_by(id=1).first()
+    crawl_interval = (
+        db_settings.crawl_interval_minutes
+        if db_settings and db_settings.crawl_interval_minutes
+        else settings.crawl_interval_minutes
+    )
+
     minutes_since = None
     beat_healthy = False
 
     if latest:
         latest_utc = latest.replace(tzinfo=timezone.utc) if latest.tzinfo is None else latest
         minutes_since = int((now_utc - latest_utc).total_seconds() / 60)
-        stale_threshold = settings.crawl_interval_minutes * 2
+        stale_threshold = crawl_interval * 2
         beat_healthy = in_sleep or minutes_since <= stale_threshold
 
     return {
@@ -120,7 +130,7 @@ def get_crawler_health(db: DB, _: CurrentUser):
         "in_sleep_window": in_sleep,
         "sleep_start_wib": settings.crawl_sleep_start_wib,
         "sleep_end_wib": settings.crawl_sleep_end_wib,
-        "crawl_interval_minutes": settings.crawl_interval_minutes,
+        "crawl_interval_minutes": crawl_interval,
         "server_time_utc": now_utc.isoformat(),
         "server_time_wib": now_wib.isoformat(),
         "active_sources": active_sources,
