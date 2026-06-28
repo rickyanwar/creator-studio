@@ -2,6 +2,7 @@
 
 import logging
 import random
+from datetime import datetime, timezone, timedelta
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
@@ -82,5 +83,41 @@ def create_fanout_jobs(self, post_id: int):
         db.rollback()
         logger.error("Fan-out error for post %d: %s", post_id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=60)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.fan_out.recover_stuck_posts")
+def recover_stuck_posts():
+    """Re-trigger fan-out for posts stuck in 'stored' status with no publish jobs.
+
+    Runs every 15 minutes to catch cases where fan-out was never triggered
+    (e.g., worker crashed mid-chain or fan-out task was dropped from Redis).
+    """
+    db = SessionLocal()
+    try:
+        from app.models.posts import Post, PostStatus
+        from app.models.publish_jobs import PublishJob
+        from sqlalchemy import exists
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+
+        stuck_ids = (
+            db.query(Post.id)
+            .filter(
+                Post.status == PostStatus.stored,
+                Post.updated_at < cutoff,
+                ~exists().where(PublishJob.post_id == Post.id),
+            )
+            .all()
+        )
+
+        for (post_id,) in stuck_ids:
+            create_fanout_jobs.delay(post_id)
+            logger.info("Recovery: re-triggering fan-out for stuck post %d", post_id)
+
+        if stuck_ids:
+            logger.warning("Recovery: found %d stuck stored posts — fan-out re-queued", len(stuck_ids))
+
     finally:
         db.close()

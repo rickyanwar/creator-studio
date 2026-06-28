@@ -50,6 +50,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.status_sync.sync_pending_schedules",
         "schedule": 300,
     },
+    # Recovery: re-trigger fan-out for posts stuck in 'stored' with no publish jobs
+    "recover-stuck-posts": {
+        "task": "app.tasks.fan_out.recover_stuck_posts",
+        "schedule": 900,  # every 15 minutes
+    },
     # Cleanup: every 2 hours
     "cleanup-media": {
         "task": "app.tasks.cleanup.cleanup_old_media",

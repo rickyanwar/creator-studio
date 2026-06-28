@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # ── AI Providers ──────────────────────────────
     gemini_api_key: str = ""
     groq_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash-exp"
+    gemini_model: str = "gemini-2.0-flash"
     groq_model: str = "llama-3.3-70b-versatile"
 
     # ── AI Failover ───────────────────────────────

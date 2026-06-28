@@ -67,13 +67,20 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
 
     except Exception as exc:
         db.rollback()
+        from app.services.ai_caption import GroqRateLimitError
+        if isinstance(exc, GroqRateLimitError):
+            logger.warning("Job %d: Groq rate limited — retrying in 60s", job_id)
+            raise self.retry(exc=exc, countdown=60)
         logger.error("Caption generation failed for job %d: %s", job_id, exc, exc_info=True)
-        from app.models.publish_jobs import PublishJob, PublishJobStatus
-        job = db.query(PublishJob).filter_by(id=job_id).first()
-        if job:
-            job.last_error = str(exc)
-            job.attempt_count = (job.attempt_count or 0) + 1
-            db.commit()
+        try:
+            from app.models.publish_jobs import PublishJob
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            if job:
+                job.last_error = str(exc)
+                job.attempt_count = (job.attempt_count or 0) + 1
+                db.commit()
+        except Exception:
+            db.rollback()
         raise self.retry(exc=exc, countdown=120)
     finally:
         db.close()

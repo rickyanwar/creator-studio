@@ -103,17 +103,24 @@ def _call_gemini(prompt: str) -> str:
     return response.text.strip()
 
 
+class GroqRateLimitError(Exception):
+    """Raised when Groq returns 429 — caller should retry after a delay."""
+
+
 def _call_groq(prompt: str) -> str:
-    from groq import Groq  # type: ignore
+    from groq import Groq, RateLimitError  # type: ignore
 
     client = Groq(api_key=settings.groq_api_key)
-    completion = client.chat.completions.create(
-        model=settings.groq_model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1024,
-        temperature=0.7,
-    )
-    return completion.choices[0].message.content.strip()
+    try:
+        completion = client.chat.completions.create(
+            model=settings.groq_model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        return completion.choices[0].message.content.strip()
+    except RateLimitError as exc:
+        raise GroqRateLimitError(str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,6 +148,9 @@ def generate_caption(prompt: str, force_provider: AIProviderName | None = None) 
         try:
             text = _call_groq(prompt)
             return text, "groq"
+        except GroqRateLimitError as exc:
+            logger.warning("Groq rate limited (429) — will retry later")
+            raise
         except Exception as exc:
             raise RuntimeError(f"Both AI providers failed. Last Groq error: {exc}") from exc
 
@@ -158,6 +168,9 @@ def generate_caption(prompt: str, force_provider: AIProviderName | None = None) 
         try:
             text = _call_groq(prompt)
             return text, "groq"
+        except GroqRateLimitError:
+            logger.warning("Groq rate limited (429) — will retry later")
+            raise
         except Exception as groq_exc:
             raise RuntimeError(
                 f"Both AI providers failed. Gemini: {gemini_exc}. Groq: {groq_exc}"

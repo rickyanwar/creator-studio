@@ -9,7 +9,6 @@ Anti-ban rules:
 
 import logging
 import random
-import time
 from datetime import datetime, timezone, timedelta
 
 import pytz
@@ -61,12 +60,13 @@ def crawl_all_sources(self, manual: bool = False):
 
         logger.info("Crawling %d active IG sources (manual=%s)", len(sources), manual)
 
+        # Stagger sources via countdown so the worker isn't blocked sleeping.
+        # Manual runs skip stagger so results come back quickly.
+        countdown = 0
         for source in sources:
+            crawl_single_source.apply_async(args=[source.id], countdown=countdown)
             if not manual:
-                delay = random.uniform(30, 90)
-                logger.debug("Waiting %.1fs before crawling @%s", delay, source.ig_username)
-                time.sleep(delay)
-            crawl_single_source.delay(source.id)
+                countdown += random.randint(30, 90)
 
 
     finally:
