@@ -125,7 +125,7 @@ def get_crawler_health(db: DB, _: CurrentUser):
 
     return {
         "beat_healthy": beat_healthy,
-        "last_crawl_at": latest,
+        "last_crawl_at": latest.replace(tzinfo=timezone.utc).isoformat() if latest else None,
         "minutes_since_crawl": minutes_since,
         "in_sleep_window": in_sleep,
         "sleep_start_wib": settings.crawl_sleep_start_wib,

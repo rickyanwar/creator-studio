@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, List
+from datetime import timezone
 from pydantic import BaseModel, field_validator
 
 from app.api.deps import CurrentUser, DB
@@ -59,7 +60,7 @@ def list_ig_sources(
             "burner_username": burner.ig_username if burner else None,
             "burner_status": burner.status.value if burner else None,
             "is_active": s.is_active,
-            "last_checked_at": s.last_checked_at,
+            "last_checked_at": s.last_checked_at.replace(tzinfo=timezone.utc).isoformat() if s.last_checked_at else None,
             "last_seen_post_id": s.last_seen_post_id,
             "active_fanpage_count": active_links,
             "album_image_indices": s.album_image_indices or [1],
