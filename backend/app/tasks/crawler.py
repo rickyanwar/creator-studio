@@ -41,7 +41,28 @@ def crawl_all_sources(self, manual: bool = False):
     try:
         from app.models.ig_sources import IGSource
         from app.models.fanpage_sources import FanpageSource
-        from sqlalchemy import exists
+        from app.models.settings import Settings as DBSettings
+        from sqlalchemy import exists, func
+
+        # Read interval from DB so UI changes take effect without a restart.
+        if not manual:
+            db_settings = db.query(DBSettings).filter_by(id=1).first()
+            interval_minutes = (
+                db_settings.crawl_interval_minutes
+                if db_settings and db_settings.crawl_interval_minutes
+                else settings.crawl_interval_minutes
+            )
+            last_crawl = db.query(func.max(IGSource.last_checked_at)).scalar()
+            if last_crawl:
+                if last_crawl.tzinfo is None:
+                    last_crawl = last_crawl.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - last_crawl).total_seconds() / 60
+                if elapsed < interval_minutes:
+                    logger.debug(
+                        "Crawl skipped — %.1f min elapsed, interval is %d min",
+                        elapsed, interval_minutes,
+                    )
+                    return
 
         # Only crawl sources that have at least one active fanpage link.
         # Use EXISTS to avoid join-multiplied rows (a source with N fanpages

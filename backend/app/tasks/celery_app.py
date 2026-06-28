@@ -39,11 +39,12 @@ celery_app.conf.update(
 
 # ── Beat schedule ─────────────────────────────────────────────────────────────
 celery_app.conf.beat_schedule = {
-    # Crawler: every 30 minutes with jitter applied in the task itself
+    # Crawler: ticks every minute — task reads crawl_interval_minutes from DB
+    # and self-throttles, so changing the interval in the UI takes effect immediately.
     "crawl-ig-sources": {
         "task": "app.tasks.crawler.crawl_all_sources",
-        "schedule": 60 * settings.crawl_interval_minutes,
-        "options": {"expires": 60 * 25, "countdown": __import__("random").randint(0, 300)},
+        "schedule": 60,
+        "options": {"expires": 55},
     },
     # Status sync: every 5 minutes
     "sync-repliz-status": {
