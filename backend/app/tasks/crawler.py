@@ -42,13 +42,20 @@ def crawl_all_sources(self, manual: bool = False):
     try:
         from app.models.ig_sources import IGSource
         from app.models.fanpage_sources import FanpageSource
+        from sqlalchemy import exists
 
-        # Only crawl sources that have at least one active fanpage link
+        # Only crawl sources that have at least one active fanpage link.
+        # Use EXISTS to avoid join-multiplied rows (a source with N fanpages
+        # would otherwise be dispatched N times even with .distinct()).
         sources = (
             db.query(IGSource)
-            .join(FanpageSource, FanpageSource.ig_source_id == IGSource.id)
-            .filter(IGSource.is_active == True, FanpageSource.is_active == True)
-            .distinct()
+            .filter(
+                IGSource.is_active == True,
+                exists().where(
+                    FanpageSource.ig_source_id == IGSource.id,
+                    FanpageSource.is_active == True,
+                ),
+            )
             .all()
         )
 
