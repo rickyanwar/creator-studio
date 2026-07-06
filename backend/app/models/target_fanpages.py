@@ -45,6 +45,9 @@ class TargetFanpage(Base):
     attribution_position = Column(Enum(AttributionPosition), default=AttributionPosition.caption_end, nullable=False)
     caption_custom_prompt = Column(Text, default="", nullable=False)
 
+    # ── Image watermark (per fanpage) ─────────────
+    watermark_text = Column(String(128), nullable=True)
+
     last_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

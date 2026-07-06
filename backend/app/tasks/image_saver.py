@@ -53,6 +53,31 @@ def save_post_images(self, post_id: int, image_urls: list[str]):
         post.image_local_paths = local_paths
         post.image_public_urls = public_urls
         post.image_source_urls = image_urls  # original IG CDN URLs (used when public_urls are localhost)
+
+        from app.models.ig_sources import IGSource
+        ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
+
+        if ig_source and ig_source.image_edit_enabled:
+            post.status = PostStatus.editing_image
+            db.commit()
+
+            from app.services.ai_image_edit import clean_and_translate_image
+
+            try:
+                for local_path in local_paths:
+                    with open(local_path, "rb") as f:
+                        original_bytes = f.read()
+                    edited_bytes = clean_and_translate_image(original_bytes, ig_source.image_edit_custom_prompt)
+                    with open(local_path, "wb") as f:
+                        f.write(edited_bytes)
+            except Exception as exc:
+                # Image edit quota/rate limits are stricter than download failures —
+                # hold the post at 'editing_image' and back off longer before retrying.
+                logger.warning("Post %d: image edit failed, will retry: %s", post_id, exc)
+                raise self.retry(exc=exc, countdown=300, max_retries=8)
+
+            logger.info("Post %d: cleaned %d images", post_id, len(local_paths))
+
         post.status = PostStatus.stored
         db.commit()
 
@@ -63,9 +88,44 @@ def save_post_images(self, post_id: int, image_urls: list[str]):
         create_fanout_jobs.delay(post_id)
 
     except Exception as exc:
+        from celery.exceptions import Retry, MaxRetriesExceededError
+        if isinstance(exc, (Retry, MaxRetriesExceededError)):
+            raise
         db.rollback()
         logger.error("Error saving images for post %d: %s", post_id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=60)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.image_saver.recover_stuck_image_edits")
+def recover_stuck_image_edits():
+    """Re-trigger image editing for posts stuck in 'editing_image' too long.
+
+    Runs every 30 minutes to catch cases where the edit retries were
+    exhausted or the task was dropped from Redis mid-chain.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    db = SessionLocal()
+    try:
+        from app.models.posts import Post, PostStatus
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        stuck_posts = (
+            db.query(Post)
+            .filter(
+                Post.status == PostStatus.editing_image,
+                Post.updated_at < cutoff,
+            )
+            .all()
+        )
+
+        for post in stuck_posts:
+            save_post_images.delay(post.id, list(post.image_source_urls))
+            logger.warning("Recovery: re-queued image edit for stuck post %d", post.id)
+
     finally:
         db.close()
 

@@ -13,6 +13,7 @@ class MediaType(str, enum.Enum):
 
 class PostStatus(str, enum.Enum):
     crawled = "crawled"
+    editing_image = "editing_image"
     stored = "stored"
     pending_fanout = "pending_fanout"
     done = "done"
@@ -40,6 +41,7 @@ class Post(Base):
     taken_at = Column(DateTime, nullable=True)    # when IG post was published
     crawled_at = Column(DateTime, server_default=func.now(), nullable=False)
     cleanup_at = Column(DateTime, nullable=True)  # set after all jobs published
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     ig_source = relationship("IGSource")
     publish_jobs = relationship("PublishJob", back_populates="post", cascade="all, delete-orphan")

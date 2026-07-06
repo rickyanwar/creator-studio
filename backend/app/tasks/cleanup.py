@@ -21,7 +21,7 @@ def cleanup_old_media():
     """Remove media files for:
     - Posts where all jobs published and cleanup_at passed (6h after publish)
     - Posts where all jobs failed/skipped (no point keeping files)
-    - Posts stuck in stored/pending_fanout for more than 12h
+    - Posts stuck in editing_image/stored/pending_fanout for more than 12h
     """
     db = SessionLocal()
     now = datetime.now(timezone.utc)
@@ -34,7 +34,12 @@ def cleanup_old_media():
         candidates = (
             db.query(Post)
             .filter(
-                Post.status.in_([PostStatus.done, PostStatus.stored, PostStatus.pending_fanout]),
+                Post.status.in_([
+                    PostStatus.done,
+                    PostStatus.stored,
+                    PostStatus.pending_fanout,
+                    PostStatus.editing_image,
+                ]),
                 Post.image_local_paths != "{}",
             )
             .all()

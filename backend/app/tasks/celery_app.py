@@ -14,6 +14,7 @@ celery_app = Celery(
     include=[
         "app.tasks.crawler",
         "app.tasks.image_saver",
+        "app.tasks.image_watermark",
         "app.tasks.fan_out",
         "app.tasks.ai_generator",
         "app.tasks.publisher",
@@ -55,6 +56,16 @@ celery_app.conf.beat_schedule = {
     "recover-stuck-posts": {
         "task": "app.tasks.fan_out.recover_stuck_posts",
         "schedule": 900,  # every 15 minutes
+    },
+    # Recovery: re-trigger image cleanup edit for posts stuck in 'editing_image'
+    "recover-stuck-image-edits": {
+        "task": "app.tasks.image_saver.recover_stuck_image_edits",
+        "schedule": 1800,  # every 30 minutes
+    },
+    # Recovery: re-trigger per-fanpage watermarking for jobs stuck in 'pending_watermark'
+    "recover-stuck-watermarks": {
+        "task": "app.tasks.image_watermark.recover_stuck_watermarks",
+        "schedule": 1800,  # every 30 minutes
     },
     # Cleanup: every 2 hours
     "cleanup-media": {

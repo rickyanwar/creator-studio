@@ -2,6 +2,7 @@ export type PublishMode = "auto" | "manual_review";
 export type AttributionPosition = "caption_end" | "caption_start";
 export type BurnerStatus = "active" | "challenged" | "rate_limited" | "banned";
 export type PublishJobStatus =
+  | "pending_watermark"
   | "pending_caption"
   | "pending_review"
   | "pending_publish"
@@ -10,7 +11,7 @@ export type PublishJobStatus =
   | "skipped";
 export type AIProvider = "gemini" | "groq";
 export type MediaType = "image" | "album";
-export type PostStatus = "crawled" | "stored" | "pending_fanout" | "done" | "cleaned";
+export type PostStatus = "crawled" | "editing_image" | "stored" | "pending_fanout" | "done" | "cleaned";
 
 export interface Fanpage {
   id: number;
@@ -33,6 +34,7 @@ export interface Fanpage {
   caption_attribution_template: string;
   attribution_position: AttributionPosition;
   caption_custom_prompt: string;
+  watermark_text: string | null;
   last_synced_at: string | null;
   created_at: string;
 }
@@ -41,6 +43,8 @@ export interface IGSourceRef {
   id: number;
   ig_username: string;
   album_image_indices: number[];
+  image_edit_enabled: boolean;
+  image_edit_custom_prompt: string | null;
 }
 
 export interface FanpageDetail extends Fanpage {

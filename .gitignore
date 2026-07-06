@@ -18,6 +18,9 @@ ENV/
 .env.local
 .env.*.local
 
+# MCP config (may contain plaintext secrets)
+.mcp.json
+
 # Node
 node_modules/
 .next/

@@ -16,6 +16,7 @@ class FanpageBase(BaseModel):
     caption_attribution_template: str = "via @{source_username}"
     attribution_position: AttributionPosition = AttributionPosition.caption_end
     caption_custom_prompt: str = ""
+    watermark_text: Optional[str] = None
     publish_mode: PublishMode = PublishMode.manual_review
     is_active: bool = False
 
@@ -50,6 +51,8 @@ class IGSourceRef(BaseModel):
     id: int
     ig_username: str
     album_image_indices: list[int] = [1]
+    image_edit_enabled: bool = False
+    image_edit_custom_prompt: Optional[str] = None
 
 
 class FanpageDetailOut(FanpageOut):

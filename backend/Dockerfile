@@ -2,13 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for instagrapi + psycopg2
+# System deps for instagrapi + psycopg2 + fonts-dejavu-core (bold font for
+# deterministic text-overlay rendering in ai_image_edit.py)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     libffi-dev \
     libssl-dev \
     curl \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

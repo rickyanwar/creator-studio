@@ -30,10 +30,18 @@ function IGSourceCard({
   const [indices, setIndices] = useState<number[]>(source.album_image_indices ?? [1]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [editEnabled, setEditEnabled] = useState(source.image_edit_enabled ?? false);
+  const [editPrompt, setEditPrompt] = useState(source.image_edit_custom_prompt ?? "");
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     setIndices(source.album_image_indices ?? [1]);
   }, [source.album_image_indices?.join(",")]);
+
+  useEffect(() => {
+    setEditEnabled(source.image_edit_enabled ?? false);
+    setEditPrompt(source.image_edit_custom_prompt ?? "");
+  }, [source.image_edit_enabled, source.image_edit_custom_prompt]);
 
   async function toggle(n: number) {
     const next = indices.includes(n)
@@ -50,6 +58,28 @@ function IGSourceCard({
       setTimeout(() => setSaved(false), 1800);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleImageEdit() {
+    const next = !editEnabled;
+    setEditEnabled(next);
+    setEditSaving(true);
+    try {
+      await updateIGSource(source.id, { image_edit_enabled: next });
+      onAlbumSaved();
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function saveEditPrompt() {
+    setEditSaving(true);
+    try {
+      await updateIGSource(source.id, { image_edit_custom_prompt: editPrompt });
+      onAlbumSaved();
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -129,6 +159,43 @@ function IGSourceCard({
             );
           })}
         </div>
+      </div>
+
+      {/* Divider */}
+      <div className="border-t border-hairline" />
+
+      {/* AI image edit (Nano Banana) */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Icon icon="solar:magic-stick-3-bold-duotone" width={13} className="text-text-secondary" />
+            <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wide">
+              Auto-edit image (remove watermark)
+            </span>
+          </div>
+          <button
+            onClick={toggleImageEdit}
+            disabled={editSaving}
+            className={`relative w-9 h-5 rounded-full transition-colors disabled:opacity-48 ${
+              editEnabled ? "bg-primary-main" : "bg-hairline"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                editEnabled ? "translate-x-4" : ""
+              }`}
+            />
+          </button>
+        </div>
+        {editEnabled && (
+          <textarea
+            className="input-rect h-16 resize-none text-xs"
+            value={editPrompt}
+            onChange={(e) => setEditPrompt(e.target.value)}
+            onBlur={saveEditPrompt}
+            placeholder="Optional extra instructions for the image edit (e.g. replace account name)"
+          />
+        )}
       </div>
     </div>
   );
@@ -426,6 +493,20 @@ export default function FanpageEditPage() {
             onChange={(e) => set("caption_custom_prompt", e.target.value)}
             placeholder="e.g. Always mention our brand name. Keep it family-friendly."
           />
+        </div>
+
+        {/* Watermark text (per fanpage) */}
+        <div>
+          <label className="label">Watermark Text</label>
+          <input
+            className="input-rect"
+            value={(form.watermark_text as string) ?? ""}
+            onChange={(e) => set("watermark_text", e.target.value)}
+            placeholder="e.g. @yourbrand — leave empty to skip watermarking"
+          />
+          <p className="text-[11px] text-text-secondary mt-1">
+            Stamped onto images (via Nano Banana) for posts from sources with image editing enabled.
+          </p>
         </div>
       </section>
 

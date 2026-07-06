@@ -1,10 +1,12 @@
 import enum
 from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey, JSON, func, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
 
 
 class PublishJobStatus(str, enum.Enum):
+    pending_watermark = "pending_watermark"
     pending_caption = "pending_caption"
     pending_review = "pending_review"
     pending_publish = "pending_publish"
@@ -28,6 +30,7 @@ class PublishJob(Base):
 
     ai_generated_caption = Column(Text, nullable=True)
     ai_provider_used = Column(Enum(AIProvider), nullable=True)
+    watermarked_image_urls = Column(ARRAY(String), nullable=True)
 
     status = Column(Enum(PublishJobStatus), default=PublishJobStatus.pending_caption, nullable=False, index=True)
 

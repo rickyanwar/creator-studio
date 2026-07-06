@@ -33,8 +33,11 @@ class Settings(BaseSettings):
     # ── AI Providers ──────────────────────────────
     gemini_api_key: str = ""
     groq_api_key: str = ""
+    qwen_api_key: str = ""  # Alibaba Cloud Model Studio (DashScope) — image edit fallback
     gemini_model: str = "gemini-2.0-flash"
     groq_model: str = "llama-3.3-70b-versatile"
+    qwen_image_edit_model: str = "qwen-image-edit-plus"
+    qwen_vl_model: str = "qwen3-vl-plus"  # vision-language model used to extract+translate burned-in text
 
     # ── AI Failover ───────────────────────────────
     ai_fallback_after_failures: int = 3

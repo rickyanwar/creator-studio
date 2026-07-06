@@ -35,13 +35,16 @@ def publish_job(self, job_id: int):
             db.commit()
             return
 
-        # Use original IG CDN URLs when public URLs are localhost (dev environment)
-        pub_urls = list(post.image_public_urls)
-        if pub_urls and "localhost" in pub_urls[0] and post.image_source_urls:
-            image_urls = list(post.image_source_urls)
-            logger.info("Job %d: using IG source URLs (public URLs are localhost)", job_id)
+        if job.watermarked_image_urls:
+            image_urls = list(job.watermarked_image_urls)
         else:
-            image_urls = pub_urls
+            # Use original IG CDN URLs when public URLs are localhost (dev environment)
+            pub_urls = list(post.image_public_urls)
+            if pub_urls and "localhost" in pub_urls[0] and post.image_source_urls:
+                image_urls = list(post.image_source_urls)
+                logger.info("Job %d: using IG source URLs (public URLs are localhost)", job_id)
+            else:
+                image_urls = pub_urls
 
         client = get_repliz_client_from_db(db)
 

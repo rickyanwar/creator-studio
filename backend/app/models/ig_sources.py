@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func, Enum as SAEnum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, func, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -29,6 +29,8 @@ class IGSource(Base):
         nullable=False,
         server_default="auto",
     )
+    image_edit_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    image_edit_custom_prompt = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

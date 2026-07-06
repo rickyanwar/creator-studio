@@ -32,7 +32,16 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
 
     from app.schemas.fanpage import IGSourceRef
     out = FanpageDetailOut.model_validate(fp)
-    out.ig_sources = [IGSourceRef(id=s.id, ig_username=s.ig_username, album_image_indices=s.album_image_indices or [1]) for s in sources]
+    out.ig_sources = [
+        IGSourceRef(
+            id=s.id,
+            ig_username=s.ig_username,
+            album_image_indices=s.album_image_indices or [1],
+            image_edit_enabled=s.image_edit_enabled,
+            image_edit_custom_prompt=s.image_edit_custom_prompt,
+        )
+        for s in sources
+    ]
     out.ig_source_usernames = [s.ig_username for s in sources]
     return out
 
