@@ -10,6 +10,12 @@ import {
   removeIGSourceByUsername,
   previewCaption,
   updateIGSource,
+  listNewsSources,
+  listGalleryKeywords,
+  listTemplates,
+  addFanpageNewsSource,
+  removeFanpageNewsSource,
+  previewNewsCopy,
 } from "@/lib/api";
 import type { FanpageDetail, IGSourceRef } from "@/lib/types";
 import { Icon } from "@iconify/react";
@@ -219,6 +225,59 @@ export default function FanpageEditPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [mustIncludeInput, setMustIncludeInput] = useState("");
   const [mustAvoidInput, setMustAvoidInput] = useState("");
+
+  // ── Mode 2 (news content) state ──
+  const { data: allNewsSources = [] } = useSWR<{ id: number; name: string; category_url: string }[]>(
+    "news-sources-picker",
+    () => listNewsSources().then((r) => r.data as { id: number; name: string; category_url: string }[])
+  );
+  const { data: allGalleryKeywords = [] } = useSWR<{ id: number; keyword: string }[]>(
+    "gallery-keywords-picker",
+    () => listGalleryKeywords().then((r) => r.data as { id: number; keyword: string }[])
+  );
+  type TemplateRef = { id: number; name: string; is_default: boolean; canvas_width: number; canvas_height: number };
+  const { data: allTemplates = [] } = useSWR<TemplateRef[]>(
+    `templates-picker-${fanpageId}`,
+    () => listTemplates(fanpageId).then((r) => r.data as TemplateRef[])
+  );
+  const [galleryKeywordInput, setGalleryKeywordInput] = useState("");
+  const [newsPreviewTitle, setNewsPreviewTitle] = useState("");
+  const [newsPreviewContent, setNewsPreviewContent] = useState("");
+  const [newsPreviewResult, setNewsPreviewResult] = useState<{ title: string; caption: string } | null>(null);
+  const [newsPreviewLoading, setNewsPreviewLoading] = useState(false);
+
+  async function toggleNewsSource(sourceId: number, subscribed: boolean) {
+    if (subscribed) {
+      await removeFanpageNewsSource(fanpageId, sourceId);
+    } else {
+      await addFanpageNewsSource(fanpageId, sourceId);
+    }
+    const fresh = await mutate();
+    if (fresh) setForm((prev) => ({ ...prev, news_sources: fresh.news_sources }));
+  }
+
+  function addGalleryKeyword(kw: string) {
+    const clean = kw.trim().toLowerCase();
+    const arr = (form.mode2_gallery_keywords as string[]) ?? [];
+    if (clean && !arr.includes(clean)) set("mode2_gallery_keywords", [...arr, clean]);
+  }
+
+  async function handleNewsPreview() {
+    setNewsPreviewLoading(true);
+    setNewsPreviewResult(null);
+    try {
+      const res = await previewNewsCopy(fanpageId, {
+        title: newsPreviewTitle,
+        content: newsPreviewContent,
+      });
+      setNewsPreviewResult(res.data);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      alert(`Preview failed: ${e.response?.data?.detail ?? "unknown error"}`);
+    } finally {
+      setNewsPreviewLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (fp && !formInitialized.current) {
@@ -537,6 +596,292 @@ export default function FanpageEditPage() {
             </label>
           ))}
         </div>
+      </section>
+
+      {/* ── Section: Mode 2 — News Content ─────────────── */}
+      <section className="card space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-text-primary">Mode 2: News Content</h2>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Scraped news → AI copywriter → image design → publish
+            </p>
+          </div>
+          <button
+            onClick={() => set("mode2_news_content_enabled", !form.mode2_news_content_enabled)}
+            className={`relative w-11 h-6 rounded-full transition-colors ${
+              form.mode2_news_content_enabled ? "bg-primary-main" : "bg-hairline"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                form.mode2_news_content_enabled ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
+
+        {form.mode2_news_content_enabled && (
+          <>
+            {/* News source subscriptions */}
+            <div>
+              <label className="label">News Sources</label>
+              {allNewsSources.length === 0 ? (
+                <p className="text-xs text-text-secondary">
+                  No news sources configured yet — add them on the News Sources page first.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {allNewsSources.map((ns) => {
+                    const subscribed = ((form.news_sources as FanpageDetail["news_sources"]) ?? []).some(
+                      (s) => s.id === ns.id
+                    );
+                    return (
+                      <label
+                        key={ns.id}
+                        className="flex items-center gap-3 p-2.5 rounded-lg border border-hairline hover:border-primary-main/30 cursor-pointer transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded accent-primary-main"
+                          checked={subscribed}
+                          onChange={() => toggleNewsSource(ns.id, subscribed)}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm text-text-primary font-medium leading-tight">{ns.name}</p>
+                          <p className="text-[11px] text-text-secondary truncate">{ns.category_url}</p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Publish mode for news content */}
+            <div>
+              <label className="label">News Publish Mode</label>
+              <div className="flex gap-4">
+                {(["manual_review", "auto"] as const).map((mode) => (
+                  <label key={mode} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="mode2-publish-mode"
+                      value={mode}
+                      checked={form.mode2_publish_mode === mode}
+                      onChange={() => set("mode2_publish_mode", mode)}
+                      className="accent-primary-main"
+                    />
+                    <span className="text-sm text-text-primary">
+                      {mode === "auto" ? "Auto-publish" : "Manual Review (open in designer)"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Default design template */}
+            <div>
+              <label className="label">Default Design Template</label>
+              <select
+                className="input w-full"
+                value={(form.mode2_default_template_id as number | null) ?? ""}
+                onChange={(e) => set("mode2_default_template_id", e.target.value ? parseInt(e.target.value) : null)}
+              >
+                <option value="">— use shared default template —</option>
+                {allTemplates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-text-secondary mt-1">
+                Used when auto-rendering news designs for this fanpage. Create or edit templates in{" "}
+                <a href="/templates" className="text-primary-main hover:underline">Template Designer</a>.
+              </p>
+            </div>
+
+            {/* Gallery keywords */}
+            <div>
+              <label className="label">Gallery Keywords (for image selection)</label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {((form.mode2_gallery_keywords as string[]) ?? []).map((kw) => (
+                  <span key={kw} className="badge badge-blue gap-1">
+                    {kw}
+                    <button
+                      onClick={() =>
+                        set(
+                          "mode2_gallery_keywords",
+                          ((form.mode2_gallery_keywords as string[]) ?? []).filter((v) => v !== kw)
+                        )
+                      }
+                    >
+                      <Icon icon="solar:close-bold" width={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <input
+                className="input w-full"
+                placeholder="Add keyword, press Enter (e.g. marc marquez)"
+                value={galleryKeywordInput}
+                onChange={(e) => setGalleryKeywordInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    addGalleryKeyword(galleryKeywordInput);
+                    setGalleryKeywordInput("");
+                  }
+                }}
+              />
+              {allGalleryKeywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {allGalleryKeywords
+                    .filter((k) => !((form.mode2_gallery_keywords as string[]) ?? []).includes(k.keyword))
+                    .map((k) => (
+                      <button
+                        key={k.id}
+                        onClick={() => addGalleryKeyword(k.keyword)}
+                        className="text-[11px] px-2 py-0.5 rounded-full border border-hairline text-text-secondary hover:border-primary-main hover:text-primary-main transition-colors"
+                      >
+                        + {k.keyword}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            {/* Mode 2 caption criteria */}
+            <div className="border-t border-hairline pt-4 space-y-4">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                News Copywriting Criteria (separate from Mode 1)
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Tone</label>
+                  <input
+                    className="input-rect"
+                    value={(form.mode2_caption_tone as string) ?? ""}
+                    onChange={(e) => set("mode2_caption_tone", e.target.value)}
+                    placeholder="informative, breaking-news, casual…"
+                  />
+                </div>
+                <div>
+                  <label className="label">Language</label>
+                  <select
+                    className="input-rect"
+                    value={(form.mode2_caption_language as string) ?? "en"}
+                    onChange={(e) => set("mode2_caption_language", e.target.value)}
+                  >
+                    <option value="en">English</option>
+                    <option value="id">Indonesian</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Caption Max Length (chars)</label>
+                  <input
+                    className="input-rect"
+                    type="number"
+                    value={(form.mode2_caption_max_length as number) ?? 500}
+                    onChange={(e) => set("mode2_caption_max_length", parseInt(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="label">Hashtag Count</label>
+                  <input
+                    className="input-rect"
+                    type="number"
+                    value={(form.mode2_caption_hashtag_count as number) ?? 5}
+                    onChange={(e) => set("mode2_caption_hashtag_count", parseInt(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="label">Design Title Max Chars</label>
+                  <input
+                    className="input-rect"
+                    type="number"
+                    value={(form.mode2_title_max_chars as number) ?? 80}
+                    onChange={(e) => set("mode2_title_max_chars", parseInt(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="label">Call-to-Action Text</label>
+                  <input
+                    className="input-rect"
+                    value={(form.mode2_caption_cta_text as string) ?? ""}
+                    onChange={(e) => set("mode2_caption_cta_text", e.target.value)}
+                    placeholder="Follow for more MotoGP news!"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="mode2-attribution"
+                  type="checkbox"
+                  className="w-4 h-4 rounded accent-primary-main"
+                  checked={(form.mode2_source_attribution as boolean) ?? true}
+                  onChange={(e) => set("mode2_source_attribution", e.target.checked)}
+                />
+                <label htmlFor="mode2-attribution" className="text-xs text-text-primary cursor-pointer">
+                  Add source attribution to caption (e.g. &quot;Source: Motosan&quot;)
+                </label>
+              </div>
+              <div>
+                <label className="label">Additional AI Instructions</label>
+                <textarea
+                  className="input-rect h-20 resize-none"
+                  value={(form.mode2_caption_custom_prompt as string) ?? ""}
+                  onChange={(e) => set("mode2_caption_custom_prompt", e.target.value)}
+                  placeholder="e.g. Never speculate beyond the article facts."
+                />
+              </div>
+            </div>
+
+            {/* News copy preview */}
+            <div className="border-t border-hairline pt-4 space-y-3">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                Copywriter Preview
+              </p>
+              <input
+                className="input-rect"
+                value={newsPreviewTitle}
+                onChange={(e) => setNewsPreviewTitle(e.target.value)}
+                placeholder="Paste an article title…"
+              />
+              <textarea
+                className="input-rect h-24 resize-none"
+                value={newsPreviewContent}
+                onChange={(e) => setNewsPreviewContent(e.target.value)}
+                placeholder="Paste article content…"
+              />
+              <button
+                onClick={handleNewsPreview}
+                disabled={newsPreviewLoading || !newsPreviewTitle || !newsPreviewContent}
+                className="btn-primary"
+              >
+                <Icon icon="solar:magic-stick-3-bold-duotone" width={16} />
+                {newsPreviewLoading ? "Generating…" : "Generate Title + Caption"}
+              </button>
+              {newsPreviewResult && (
+                <div className="p-4 bg-bg-paper-hover rounded-lg space-y-3">
+                  <div>
+                    <p className="text-[11px] text-text-secondary mb-1 font-semibold uppercase tracking-wide">
+                      Design Title (goes on the image)
+                    </p>
+                    <p className="text-sm text-text-primary font-semibold">{newsPreviewResult.title}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-text-secondary mb-1 font-semibold uppercase tracking-wide">
+                      FB Caption
+                    </p>
+                    <p className="text-sm text-text-primary whitespace-pre-wrap">{newsPreviewResult.caption}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </section>
 
       {/* ── Section 4: Live Caption Preview ───────────── */}

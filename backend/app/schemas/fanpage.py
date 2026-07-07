@@ -20,6 +20,23 @@ class FanpageBase(BaseModel):
     publish_mode: PublishMode = PublishMode.manual_review
     is_active: bool = False
 
+    # ── Content modes (Feature 2) ──
+    mode1_ig_repost_enabled: bool = True
+    mode2_news_content_enabled: bool = False
+    mode2_publish_mode: PublishMode = PublishMode.manual_review
+    mode2_gallery_keywords: list[str] = []
+    mode2_default_template_id: Optional[int] = None
+
+    # ── Mode 2 caption criteria (separate from Mode 1) ──
+    mode2_caption_tone: str = "informative"
+    mode2_caption_language: str = "en"
+    mode2_caption_max_length: int = 500
+    mode2_caption_hashtag_count: int = 5
+    mode2_caption_cta_text: str = ""
+    mode2_caption_custom_prompt: str = ""
+    mode2_title_max_chars: int = 80
+    mode2_source_attribution: bool = True
+
 
 class FanpageUpdate(FanpageBase):
     pass
@@ -55,9 +72,33 @@ class IGSourceRef(BaseModel):
     image_edit_custom_prompt: Optional[str] = None
 
 
+class NewsSourceRef(BaseModel):
+    id: int
+    name: str
+    category_url: str
+
+
 class FanpageDetailOut(FanpageOut):
     ig_sources: list[IGSourceRef] = []
     ig_source_usernames: list[str] = []  # kept for backward compat
+    news_sources: list[NewsSourceRef] = []
+
+
+class FanpageNewsSourceAdd(BaseModel):
+    news_source_id: int
+
+
+class PreviewNewsCopyRequest(BaseModel):
+    title: str
+    content: str
+    source_name: Optional[str] = None
+    provider: Optional[str] = None  # "gemini" | "groq" | None (auto)
+
+
+class PreviewNewsCopyResponse(BaseModel):
+    title: str
+    caption: str
+    provider_used: str
 
 
 class PreviewCaptionRequest(BaseModel):

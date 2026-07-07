@@ -32,6 +32,23 @@ class TargetFanpage(Base):
     is_active = Column(Boolean, default=False, nullable=False)
     publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False)
 
+    # ── Content modes (Feature 2) ─────────────────
+    mode1_ig_repost_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    mode2_news_content_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    mode2_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
+    mode2_gallery_keywords = Column(ARRAY(String), server_default="{}", nullable=False)
+    mode2_default_template_id = Column(Integer, nullable=True)  # FK to design_templates (Phase 2D)
+
+    # ── Mode 2 caption criteria (separate set from Mode 1) ──
+    mode2_caption_tone = Column(String(64), default="informative", nullable=False, server_default="informative")
+    mode2_caption_language = Column(String(8), default="en", nullable=False, server_default="en")
+    mode2_caption_max_length = Column(Integer, default=500, nullable=False, server_default="500")
+    mode2_caption_hashtag_count = Column(Integer, default=5, nullable=False, server_default="5")
+    mode2_caption_cta_text = Column(String(256), default="", nullable=False, server_default="")
+    mode2_caption_custom_prompt = Column(Text, default="", nullable=False, server_default="")
+    mode2_title_max_chars = Column(Integer, default=80, nullable=False, server_default="80")
+    mode2_source_attribution = Column(Boolean, default=True, nullable=False, server_default="true")
+
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
     caption_language = Column(String(8), default="en", nullable=False)
@@ -54,4 +71,5 @@ class TargetFanpage(Base):
 
     # ── Relationships ─────────────────────────────
     source_links = relationship("FanpageSource", back_populates="fanpage", cascade="all, delete-orphan")
+    news_source_links = relationship("FanpageNewsSource", back_populates="fanpage", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="fanpage")

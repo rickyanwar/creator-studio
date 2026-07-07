@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     groq_api_key: str = ""
     qwen_api_key: str = ""  # Alibaba Cloud Model Studio (DashScope) — image edit fallback
-    gemini_model: str = "gemini-2.0-flash"
+    # 2.0-flash free-tier quota was cut to 0 (429 "limit: 0") — 2.5-flash still has free quota
+    gemini_model: str = "gemini-2.5-flash"
     groq_model: str = "llama-3.3-70b-versatile"
     qwen_image_edit_model: str = "qwen-image-edit-plus"
     qwen_vl_model: str = "qwen3-vl-plus"  # vision-language model used to extract+translate burned-in text
@@ -52,6 +53,9 @@ class Settings(BaseSettings):
     # ── FlashAPI (alternative IG scraper) ─────────
     flashapi_api_key: str = ""
     flashapi_base_url: str = "https://fast.igapi.ru/api"
+
+    # ── Design renderer (Phase 2D) ────────────────
+    renderer_url: str = "http://renderer:3001"
 
     # ── Notifications ─────────────────────────────
     telegram_bot_token: str = ""

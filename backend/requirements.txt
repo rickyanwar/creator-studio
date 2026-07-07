@@ -24,6 +24,16 @@ bcrypt==4.2.1
 # ── HTTP client ────────────────────────────────
 httpx==0.28.1
 
+# ── News scraping ──────────────────────────────
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# ── Gallery image downloader ───────────────────
+# google-images-download = tested primary; upstream repo archived Dec 2025, so
+# icrawler (Bing) is the auto-fallback — see app/services/image_downloader.py
+google_images_download==2.8.0
+icrawler==0.6.10
+
 # ── Instagram ──────────────────────────────────
 instagrapi==2.1.3
 

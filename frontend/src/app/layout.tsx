@@ -13,6 +13,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* Designer canvas fonts — a <link> always applies, unlike an @import
+            placed after the @tailwind directives in globals.css */}
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;900&family=Montserrat:wght@400;600;700;900&display=swap"
+        />
       </head>
       <body className="bg-bg-default text-text-primary antialiased">
         <ThemeProvider>{children}</ThemeProvider>

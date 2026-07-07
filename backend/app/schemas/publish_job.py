@@ -6,8 +6,13 @@ from app.models.publish_jobs import PublishJobStatus, AIProvider
 
 class PublishJobOut(BaseModel):
     id: int
-    post_id: int
+    post_id: Optional[int] = None  # null for news_content jobs
     fanpage_id: int
+    content_type: str = "ig_repost"
+    source_article_id: Optional[int] = None
+    design_title: Optional[str] = None
+    design_image_url: Optional[str] = None
+    design_template_id: Optional[int] = None
     ai_generated_caption: Optional[str] = None
     ai_provider_used: Optional[AIProvider] = None
     status: PublishJobStatus

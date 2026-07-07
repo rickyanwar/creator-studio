@@ -109,6 +109,96 @@ export const deleteIGSource = (sourceId: number) =>
 export const autoAssignBurners = () =>
   api.post("/ig-sources/auto-assign-burners");
 
+// ── News Sources ─────────────────────────────────────────────────────────────
+export const listNewsSources = () => api.get("/news-sources");
+export const createNewsSource = (data: Record<string, unknown>) =>
+  api.post("/news-sources", data);
+export const updateNewsSource = (id: number, data: Record<string, unknown>) =>
+  api.put(`/news-sources/${id}`, data);
+export const deleteNewsSource = (id: number) => api.delete(`/news-sources/${id}`);
+export const scrapeNewsSourceNow = (id: number) =>
+  api.post(`/news-sources/${id}/scrape-now`);
+export const testNewsListSelector = (data: {
+  category_url: string;
+  article_list_selector: string;
+  article_link_attribute?: string;
+  render_mode?: string;
+}) => api.post("/news-sources/test-list-selector", data);
+export const testNewsSelectors = (data: {
+  article_url: string;
+  title_selector: string;
+  content_selector: string;
+  image_selector?: string;
+  date_selector?: string;
+  render_mode?: string;
+}) => api.post("/news-sources/test-selectors", data);
+export const listNewsArticles = (sourceId: number, limit = 20) =>
+  api.get(`/news-sources/${sourceId}/articles`, { params: { limit } });
+
+// ── Gallery ──────────────────────────────────────────────────────────────────
+export const listGalleryKeywords = () => api.get("/gallery/keywords");
+export const createGalleryKeyword = (data: Record<string, unknown>) =>
+  api.post("/gallery/keywords", data);
+export const updateGalleryKeyword = (id: number, data: Record<string, unknown>) =>
+  api.put(`/gallery/keywords/${id}`, data);
+export const deleteGalleryKeyword = (id: number) =>
+  api.delete(`/gallery/keywords/${id}`);
+export const downloadGalleryKeywordNow = (id: number) =>
+  api.post(`/gallery/keywords/${id}/download-now`);
+export const listGalleryImages = (params: {
+  keyword?: string;
+  only_unused?: boolean;
+  limit?: number;
+  offset?: number;
+}) => api.get("/gallery/images", { params });
+export const uploadGalleryImage = (file: File, keyword: string) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("keyword", keyword);
+  return api.post("/gallery/images/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+};
+export const deleteGalleryImage = (id: number) =>
+  api.delete(`/gallery/images/${id}`);
+
+// ── Fanpage Mode 2 (news content) ────────────────────────────────────────────
+export const addFanpageNewsSource = (fanpageId: number, newsSourceId: number) =>
+  api.post(`/fanpages/${fanpageId}/news-sources`, { news_source_id: newsSourceId });
+export const removeFanpageNewsSource = (fanpageId: number, newsSourceId: number) =>
+  api.delete(`/fanpages/${fanpageId}/news-sources/${newsSourceId}`);
+export const previewNewsCopy = (
+  fanpageId: number,
+  data: { title: string; content: string; source_name?: string; provider?: string }
+) => api.post(`/fanpages/${fanpageId}/preview-news-copy`, data);
+
+// ── Design Templates ─────────────────────────────────────────────────────────
+export const listTemplates = (fanpageId?: number) =>
+  api.get("/templates", { params: fanpageId ? { fanpage_id: fanpageId } : {} });
+export const getTemplate = (id: number) => api.get(`/templates/${id}`);
+export const createTemplate = (data: Record<string, unknown>) =>
+  api.post("/templates", data);
+export const updateTemplate = (id: number, data: Record<string, unknown>) =>
+  api.put(`/templates/${id}`, data);
+export const deleteTemplate = (id: number) => api.delete(`/templates/${id}`);
+
+// ── Job design (news content) ────────────────────────────────────────────────
+export const getDesignPayload = (jobId: number) =>
+  api.get(`/publish-jobs/${jobId}/design-payload`);
+export const uploadDesignImage = (jobId: number, blob: Blob) => {
+  const form = new FormData();
+  form.append("file", blob, "design.png");
+  return api.post(`/publish-jobs/${jobId}/design-image`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+};
+export const renderJobNow = (jobId: number) =>
+  api.post(`/publish-jobs/${jobId}/render-now`);
+export const proxyImageUrl = async (url: string): Promise<string> => {
+  const r = await api.get("/gallery/proxy", { params: { url }, responseType: "blob" });
+  return URL.createObjectURL(r.data as Blob);
+};
+
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get("/settings");
 export const updateSettings = (data: Record<string, unknown>) => api.put("/settings", data);

@@ -4,11 +4,13 @@ export type BurnerStatus = "active" | "challenged" | "rate_limited" | "banned";
 export type PublishJobStatus =
   | "pending_watermark"
   | "pending_caption"
+  | "pending_design"
   | "pending_review"
   | "pending_publish"
   | "published"
   | "failed"
   | "skipped";
+export type ContentType = "ig_repost" | "news_content";
 export type AIProvider = "gemini" | "groq";
 export type MediaType = "image" | "album";
 export type PostStatus = "crawled" | "editing_image" | "stored" | "pending_fanout" | "done" | "cleaned";
@@ -37,6 +39,26 @@ export interface Fanpage {
   watermark_text: string | null;
   last_synced_at: string | null;
   created_at: string;
+  // ── Content modes (Feature 2) ──
+  mode1_ig_repost_enabled: boolean;
+  mode2_news_content_enabled: boolean;
+  mode2_publish_mode: PublishMode;
+  mode2_gallery_keywords: string[];
+  mode2_default_template_id: number | null;
+  mode2_caption_tone: string;
+  mode2_caption_language: string;
+  mode2_caption_max_length: number;
+  mode2_caption_hashtag_count: number;
+  mode2_caption_cta_text: string;
+  mode2_caption_custom_prompt: string;
+  mode2_title_max_chars: number;
+  mode2_source_attribution: boolean;
+}
+
+export interface NewsSourceRef {
+  id: number;
+  name: string;
+  category_url: string;
 }
 
 export interface IGSourceRef {
@@ -50,6 +72,7 @@ export interface IGSourceRef {
 export interface FanpageDetail extends Fanpage {
   ig_sources: IGSourceRef[];
   ig_source_usernames: string[];
+  news_sources: NewsSourceRef[];
 }
 
 export interface Burner {
@@ -70,8 +93,13 @@ export interface Burner {
 
 export interface PublishJob {
   id: number;
-  post_id: number;
+  post_id: number | null;
   fanpage_id: number;
+  content_type: "ig_repost" | "news_content";
+  source_article_id: number | null;
+  design_title: string | null;
+  design_image_url: string | null;
+  design_template_id: number | null;
   ai_generated_caption: string | null;
   ai_provider_used: AIProvider | null;
   status: PublishJobStatus;

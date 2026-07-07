@@ -24,6 +24,10 @@ celery_app = Celery(
         "app.tasks.story_poster",
         "app.tasks.comment_poster",
         "app.tasks.warmup",
+        "app.tasks.news_scraper",
+        "app.tasks.gallery_downloader",
+        "app.tasks.news_copywriter",
+        "app.tasks.design_renderer",
     ],
 )
 
@@ -46,6 +50,33 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.crawler.crawl_all_sources",
         "schedule": 60,
         "options": {"expires": 55},
+    },
+    # News scraper: ticks every minute — each source self-throttles on its own
+    # scrape_interval_minutes, so per-source interval changes apply immediately.
+    "scrape-news-sources": {
+        "task": "app.tasks.news_scraper.scrape_all_sources",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
+    # Gallery downloader: ticks every 30 min — each keyword self-throttles to
+    # one run per 24h (spec: daily); "Download Now" in the UI queues instantly.
+    "download-gallery-keywords": {
+        "task": "app.tasks.gallery_downloader.download_all_keywords",
+        "schedule": 1800,
+        "options": {"expires": 1700},
+    },
+    # News copywriter sweep: catches articles scraped before a fanpage
+    # subscribed, dropped tasks, and partial AI failures
+    "copywrite-pending-articles": {
+        "task": "app.tasks.news_copywriter.copywrite_pending_articles",
+        "schedule": 300,
+        "options": {"expires": 290},
+    },
+    # Design render sweep: auto-render pending_design jobs (auto-mode fanpages)
+    "render-pending-designs": {
+        "task": "app.tasks.design_renderer.render_pending_designs",
+        "schedule": 120,
+        "options": {"expires": 110},
     },
     # Status sync: every 5 minutes
     "sync-repliz-status": {

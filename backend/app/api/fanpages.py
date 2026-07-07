@@ -5,6 +5,8 @@ from app.api.deps import CurrentUser, DB
 from app.schemas.fanpage import (
     FanpageOut, FanpageDetailOut, FanpageUpdate,
     FanpageSourceAdd, PreviewCaptionRequest, PreviewCaptionResponse,
+    FanpageNewsSourceAdd, NewsSourceRef,
+    PreviewNewsCopyRequest, PreviewNewsCopyResponse,
 )
 
 router = APIRouter(prefix="/fanpages", tags=["fanpages"])
@@ -43,6 +45,15 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
         for s in sources
     ]
     out.ig_source_usernames = [s.ig_username for s in sources]
+
+    from app.models.fanpage_news_sources import FanpageNewsSource
+    from app.models.news_sources import NewsSource
+    news_links = db.query(FanpageNewsSource).filter_by(fanpage_id=fanpage_id, is_active=True).all()
+    news_ids = [l.news_source_id for l in news_links]
+    news = db.query(NewsSource).filter(NewsSource.id.in_(news_ids)).all() if news_ids else []
+    out.news_sources = [
+        NewsSourceRef(id=n.id, name=n.name, category_url=n.category_url) for n in news
+    ]
     return out
 
 
@@ -130,6 +141,71 @@ def remove_ig_source_by_username(fanpage_id: int, username: str, db: DB, _: Curr
     link.is_active = False
     db.commit()
     return {"ok": True}
+
+
+@router.post("/{fanpage_id}/news-sources", status_code=status.HTTP_201_CREATED)
+def add_news_source_link(fanpage_id: int, body: FanpageNewsSourceAdd, db: DB, _: CurrentUser):
+    """Subscribe a fanpage to a news source (Mode 2)."""
+    from app.models.target_fanpages import TargetFanpage
+    from app.models.news_sources import NewsSource
+    from app.models.fanpage_news_sources import FanpageNewsSource
+
+    fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+    source = db.query(NewsSource).filter_by(id=body.news_source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="News source not found")
+
+    link = db.query(FanpageNewsSource).filter_by(
+        fanpage_id=fanpage_id, news_source_id=source.id
+    ).first()
+    if link:
+        link.is_active = True
+    else:
+        db.add(FanpageNewsSource(fanpage_id=fanpage_id, news_source_id=source.id, is_active=True))
+
+    db.commit()
+    return {"ok": True, "news_source_id": source.id, "name": source.name}
+
+
+@router.delete("/{fanpage_id}/news-sources/{news_source_id}")
+def remove_news_source_link(fanpage_id: int, news_source_id: int, db: DB, _: CurrentUser):
+    from app.models.fanpage_news_sources import FanpageNewsSource
+
+    link = db.query(FanpageNewsSource).filter_by(
+        fanpage_id=fanpage_id, news_source_id=news_source_id
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="News source link not found")
+
+    link.is_active = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{fanpage_id}/preview-news-copy", response_model=PreviewNewsCopyResponse)
+def preview_news_copy(fanpage_id: int, body: PreviewNewsCopyRequest, db: DB, _: CurrentUser):
+    """Preview the Mode 2 copywriter output for pasted article text."""
+    from types import SimpleNamespace
+    from app.models.target_fanpages import TargetFanpage
+    from app.services.news_copywriter import generate_news_copy
+
+    fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+
+    article = SimpleNamespace(
+        scraped_title=body.title,
+        scraped_content=body.content,
+        news_source=SimpleNamespace(name=body.source_name) if body.source_name else None,
+    )
+    try:
+        copy = generate_news_copy(fp, article, force_provider=body.provider)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI generation failed: {exc}")
+
+    return PreviewNewsCopyResponse(title=copy.title, caption=copy.caption, provider_used=copy.provider)
 
 
 @router.post("/{fanpage_id}/preview-caption", response_model=PreviewCaptionResponse)

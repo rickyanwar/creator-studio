@@ -89,6 +89,15 @@ services:
       redis:
         condition: service_healthy
 
+  # ── Design Renderer (Puppeteer + Fabric.js, Phase 2D) ─
+  # Concurrency 1, Chrome spun up per render job — see Feature 2 spec memory notes
+  renderer:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # no external port — only the worker calls it on the compose network
+
   # ── Next.js Frontend ──────────────────────────
   frontend:
     build:
@@ -114,7 +123,8 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - media_data:/var/www/media:ro
+      # conf.d serves /media/ from /opt/studio/media (same as docker-compose.server.yml)
+      - media_data:/opt/studio/media:ro
     ports:
       - "80:80"
     depends_on:
