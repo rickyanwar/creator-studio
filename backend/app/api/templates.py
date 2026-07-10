@@ -54,7 +54,8 @@ def list_templates(db: DB, _: CurrentUser, fanpage_id: Optional[int] = Query(Non
     if fanpage_id is not None:
         # fanpage-specific plus shared templates
         q = q.filter((DesignTemplate.fanpage_id == fanpage_id) | (DesignTemplate.fanpage_id.is_(None)))
-    return [_serialize(t) for t in q.order_by(DesignTemplate.name).all()]
+    # include_json so the gallery can render a live Fabric.js thumbnail per card
+    return [_serialize(t, include_json=True) for t in q.order_by(DesignTemplate.name).all()]
 
 
 @router.post("")

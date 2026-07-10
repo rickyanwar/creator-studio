@@ -17,7 +17,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { fabric } from "fabric";
 import { Icon } from "@iconify/react";
 
-const FONTS = ["DejaVu Sans", "Arial", "Poppins", "Montserrat", "Georgia", "Impact", "Courier New", "Verdana"];
+// Only fonts vendored in renderer/fonts (installed as system fonts there) so the
+// editor preview matches the headless render exactly. Keep in sync with the
+// Google Fonts @import in globals.css and the TTFs in renderer/fonts/.
+const FONTS = ["Poppins", "Montserrat", "Roboto", "Oswald", "Playfair Display", "Bebas Neue", "Anton", "Pacifico"];
+const DEFAULT_FONT = "Poppins";
 
 type TitleTransform = "uppercase" | "lowercase" | "capitalize";
 type TitleBox = fabric.Textbox & {
@@ -90,6 +94,9 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
   const pendingImageRef = useRef<string | null>(null);
   const [selected, setSelected] = useState<FabricObjectWithRole | null>(null);
   const [bgColor, setBgColor] = useState("#111827");
+  const [activeTool, setActiveTool] = useState<"design" | "text" | "shapes" | "image" | "draw">("design");
+  const [brushColor, setBrushColor] = useState("#ffffff");
+  const [brushWidth, setBrushWidth] = useState(6);
   const [, forceRender] = useState(0);
   const bump = () => forceRender((n) => n + 1);
 
@@ -135,12 +142,19 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
     canvas.setZoom(zoom);
     canvasRef.current = canvas;
 
-    // Webfonts load lazily — without this, text set to Poppins/Montserrat
-    // renders with the fallback font until the next full canvas redraw.
-    document.fonts
-      .load('900 16px Poppins')
-      .then(() => document.fonts.load('900 16px Montserrat'))
-      .then(() => canvas.renderAll())
+    // Webfonts load lazily — preload every editor font (regular + bold) so the
+    // canvas has correct glyph metrics and doesn't render with a fallback until
+    // the next redraw. Must match renderer/fonts for WYSIWYG.
+    Promise.all(
+      FONTS.flatMap((f) => [
+        document.fonts.load(`400 16px "${f}"`),
+        document.fonts.load(`700 16px "${f}"`),
+      ])
+    )
+      .then(() => {
+        FONTS.forEach((f) => fabric.util.clearFabricFontCache(f));
+        canvas.renderAll();
+      })
       .catch(() => {});
 
     canvas.on("selection:created", (e) => setSelected((e.selected?.[0] as FabricObjectWithRole) ?? null));
@@ -310,7 +324,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
         width: width * 0.88,
         fontSize: Math.round(width / 16),
         fontWeight: "bold",
-        fontFamily: "DejaVu Sans",
+        fontFamily: DEFAULT_FONT,
         fill: "#ffffff",
       });
       (box as FabricObjectWithRole)[ROLE_PROP] = "title";
@@ -344,7 +358,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
         top: height * 0.1,
         width: width * 0.4,
         fontSize: Math.round(width / 30),
-        fontFamily: "DejaVu Sans",
+        fontFamily: DEFAULT_FONT,
         fill: "#ffffff",
       });
       c.add(box);
@@ -354,15 +368,58 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
   const addRect = () =>
     withCanvas((c) => {
       const rect = new fabric.Rect({
-        left: 0,
-        top: height * 0.66,
-        width: width,
-        height: height * 0.34,
+        left: width * 0.3,
+        top: height * 0.4,
+        width: Math.round(width * 0.4),
+        height: Math.round(height * 0.2),
         fill: "#dc2626",
       });
       c.add(rect);
       c.setActiveObject(rect);
     });
+
+  const addCircle = () =>
+    withCanvas((c) => {
+      const circle = new fabric.Circle({
+        left: width * 0.35,
+        top: height * 0.35,
+        radius: Math.round(Math.min(width, height) * 0.15),
+        fill: "#2563eb",
+      });
+      c.add(circle);
+      c.setActiveObject(circle);
+    });
+
+  const addTriangle = () =>
+    withCanvas((c) => {
+      const size = Math.round(Math.min(width, height) * 0.3);
+      const tri = new fabric.Triangle({ left: width * 0.35, top: height * 0.35, width: size, height: size, fill: "#f59e0b" });
+      c.add(tri);
+      c.setActiveObject(tri);
+    });
+
+  const addLine = () =>
+    withCanvas((c) => {
+      const line = new fabric.Line([width * 0.2, height * 0.5, width * 0.8, height * 0.5], {
+        stroke: "#ffffff",
+        strokeWidth: 6,
+      });
+      c.add(line);
+      c.setActiveObject(line);
+    });
+
+  // Freehand draw mode follows the "Draw" tool tab
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const drawing = activeTool === "draw";
+    c.isDrawingMode = drawing;
+    if (drawing) {
+      if (!c.freeDrawingBrush) c.freeDrawingBrush = new fabric.PencilBrush(c);
+      c.freeDrawingBrush.color = brushColor;
+      c.freeDrawingBrush.width = brushWidth;
+    }
+  }, [activeTool, brushColor, brushWidth]);
 
   function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -390,12 +447,39 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
       setSelected(null);
     });
 
-  const moveLayer = (dir: 1 | -1) =>
+  const moveLayer = (dir: "front" | "forward" | "backward" | "back") =>
     withCanvas((c) => {
       const obj = c.getActiveObject();
       if (!obj) return;
-      if (dir === 1) c.bringForward(obj);
-      else c.sendBackwards(obj);
+      if (dir === "front") c.bringToFront(obj);
+      else if (dir === "forward") c.bringForward(obj);
+      else if (dir === "backward") c.sendBackwards(obj);
+      else c.sendToBack(obj);
+    });
+
+  const duplicateSelected = () =>
+    withCanvas((c) => {
+      const obj = c.getActiveObject();
+      if (!obj) return;
+      obj.clone((clone: fabric.Object) => {
+        clone.set({ left: (obj.left ?? 0) + 24, top: (obj.top ?? 0) + 24 });
+        // a copy must not keep the title/image placeholder role (only one of each)
+        delete (clone as FabricObjectWithRole)[ROLE_PROP];
+        c.add(clone);
+        c.setActiveObject(clone);
+      });
+    });
+
+  // Toggle a boolean/text style prop on the selected text (bold/italic/underline/strike)
+  const toggleTextStyle = (prop: "fontWeight" | "fontStyle" | "underline" | "linethrough") =>
+    withCanvas((c) => {
+      const obj = c.getActiveObject();
+      if (!(obj instanceof fabric.Textbox || obj instanceof fabric.Text)) return;
+      const t = obj as fabric.Textbox;
+      if (prop === "fontWeight") t.set({ fontWeight: t.fontWeight === "bold" ? "normal" : "bold" });
+      else if (prop === "fontStyle") t.set({ fontStyle: t.fontStyle === "italic" ? "normal" : "italic" });
+      else if (prop === "underline") t.set({ underline: !t.underline });
+      else t.set({ linethrough: !t.linethrough });
     });
 
   function setBackground(color: string) {
@@ -424,52 +508,128 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
   const selectedRole = selected?.[ROLE_PROP];
 
   const btn = "px-2.5 py-1.5 rounded-lg border border-hairline text-xs font-medium text-ink-80 hover:border-primary-main hover:text-primary-main transition-colors flex items-center gap-1.5";
+  const panelBtn = "w-full px-2.5 py-2 rounded-lg border border-hairline text-xs font-medium text-ink-80 hover:border-primary-main hover:text-primary-main transition-colors flex items-center gap-2";
+  const TOOLS = [
+    { id: "design", label: "Design", icon: "solar:widget-2-bold-duotone" },
+    { id: "text", label: "Text", icon: "solar:text-bold-duotone" },
+    { id: "shapes", label: "Shapes", icon: "solar:widget-bold-duotone" },
+    { id: "image", label: "Image", icon: "solar:gallery-bold-duotone" },
+    { id: "draw", label: "Draw", icon: "solar:pen-new-square-bold-duotone" },
+  ] as const;
 
   return (
-    <div className="flex gap-4 items-start">
+    <div className="flex gap-3 items-start">
+      {/* Left icon rail (Canva-style tools) */}
+      <div className="shrink-0 flex flex-col gap-1 rounded-xl border border-hairline p-1.5 bg-bg-paper">
+        {TOOLS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTool(t.id)}
+            className={`flex flex-col items-center gap-0.5 w-16 py-2 rounded-lg text-[10px] font-medium transition-colors ${
+              activeTool === t.id ? "bg-primary-main/10 text-primary-main" : "text-ink-48 hover:bg-parchment"
+            }`}
+          >
+            <Icon icon={t.icon} width={20} />
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tool panel — content follows the active tool */}
+      <div className="shrink-0 w-52 rounded-xl border border-hairline p-3 space-y-2 bg-bg-paper">
+        {activeTool === "design" && (
+          <>
+            <p className="text-[11px] font-bold text-ink-80 mb-1">Placeholders</p>
+            <button className={panelBtn} onClick={addImageSlot} title="Where the news photo goes">
+              <Icon icon="solar:gallery-bold-duotone" width={14} /> Image Slot
+            </button>
+            <button className={panelBtn} onClick={addHeadline} title="Where the AI headline goes">
+              <Icon icon="solar:text-bold-duotone" width={14} /> Headline
+            </button>
+            <div className="pt-2 flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-ink-80">Background</label>
+              <input type="color" value={bgColor} onChange={(e) => setBackground(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-hairline" />
+            </div>
+          </>
+        )}
+        {activeTool === "text" && (
+          <>
+            <p className="text-[11px] font-bold text-ink-80 mb-1">Add text</p>
+            <button className={panelBtn} onClick={addHeadline}>
+              <Icon icon="solar:text-bold-duotone" width={14} /> Headline (AI title)
+            </button>
+            <button className={panelBtn} onClick={addText}>
+              <Icon icon="solar:text-field-bold-duotone" width={14} /> Text box
+            </button>
+          </>
+        )}
+        {activeTool === "shapes" && (
+          <>
+            <p className="text-[11px] font-bold text-ink-80 mb-1">Shapes</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button className={panelBtn} onClick={addRect}><Icon icon="solar:stop-bold" width={14} /> Box</button>
+              <button className={panelBtn} onClick={addCircle}><Icon icon="solar:record-circle-bold" width={14} /> Circle</button>
+              <button className={panelBtn} onClick={addTriangle}><Icon icon="solar:play-bold" width={14} className="rotate-[-90deg]" /> Triangle</button>
+              <button className={panelBtn} onClick={addLine}><Icon icon="solar:minus-bold" width={14} /> Line</button>
+            </div>
+          </>
+        )}
+        {activeTool === "image" && (
+          <>
+            <p className="text-[11px] font-bold text-ink-80 mb-1">Image</p>
+            <button className={panelBtn} onClick={() => fileInputRef.current?.click()}>
+              <Icon icon="solar:upload-bold-duotone" width={14} /> Upload image / logo
+            </button>
+            <button className={panelBtn} onClick={addImageSlot}>
+              <Icon icon="solar:gallery-bold-duotone" width={14} /> Image slot (news photo)
+            </button>
+          </>
+        )}
+        {activeTool === "draw" && (
+          <>
+            <p className="text-[11px] font-bold text-ink-80 mb-1">Freehand draw</p>
+            <p className="text-[10px] text-ink-48">Draw directly on the canvas. Switch to another tool to stop.</p>
+            <div className="flex items-center justify-between pt-1">
+              <label className="text-[11px] font-semibold text-ink-80">Brush color</label>
+              <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-hairline" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-ink-80 mb-0.5">Brush size: {brushWidth}px</label>
+              <input type="range" min={1} max={40} value={brushWidth} onChange={(e) => setBrushWidth(parseInt(e.target.value))} className="w-full" />
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Canvas */}
       <div className="shrink-0 border border-hairline rounded-lg overflow-hidden shadow-sm" style={{ width: width * zoom, height: height * zoom }}>
         <canvas ref={canvasElRef} />
       </div>
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
 
-      {/* Controls */}
-      <div className="flex-1 min-w-[220px] space-y-4">
-        <div className="flex flex-wrap gap-1.5">
-          <button className={btn} onClick={addImageSlot} title="Where the news photo goes">
-            <Icon icon="solar:gallery-bold-duotone" width={13} /> Image Slot
-          </button>
-          <button className={btn} onClick={addHeadline} title="Where the AI headline goes">
-            <Icon icon="solar:text-bold-duotone" width={13} /> Headline
-          </button>
-          <button className={btn} onClick={addText}>
-            <Icon icon="solar:text-field-bold-duotone" width={13} /> Text
-          </button>
-          <button className={btn} onClick={addRect}>
-            <Icon icon="solar:widget-bold-duotone" width={13} /> Box
-          </button>
-          <button className={btn} onClick={() => fileInputRef.current?.click()}>
-            <Icon icon="solar:upload-bold-duotone" width={13} /> Logo
-          </button>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-semibold text-ink-80">Background</label>
-          <input type="color" value={bgColor} onChange={(e) => setBackground(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-hairline" />
-        </div>
-
+      {/* Properties (contextual) */}
+      <div className="flex-1 min-w-[200px] space-y-4">
         {selected && (
           <div className="rounded-lg border border-hairline p-3 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs font-bold text-ink">
                 {selectedRole === "title" ? "📰 Headline placeholder" : selectedRole === "image" ? "🖼 Image slot" : selected.type}
               </p>
-              <div className="flex gap-1">
-                <button className="p-1 rounded hover:bg-parchment" title="Bring forward" onClick={() => moveLayer(1)}>
-                  <Icon icon="solar:layers-bold-duotone" width={14} className="text-ink-48" />
+              <div className="flex gap-0.5">
+                <button className="p-1 rounded hover:bg-parchment" title="Bring to front" onClick={() => moveLayer("front")}>
+                  <Icon icon="solar:double-alt-arrow-up-bold-duotone" width={15} className="text-ink-48" />
                 </button>
-                <button className="p-1 rounded hover:bg-parchment rotate-180" title="Send backward" onClick={() => moveLayer(-1)}>
-                  <Icon icon="solar:layers-bold-duotone" width={14} className="text-ink-48" />
+                <button className="p-1 rounded hover:bg-parchment" title="Bring forward" onClick={() => moveLayer("forward")}>
+                  <Icon icon="solar:alt-arrow-up-bold" width={14} className="text-ink-48" />
+                </button>
+                <button className="p-1 rounded hover:bg-parchment" title="Send backward" onClick={() => moveLayer("backward")}>
+                  <Icon icon="solar:alt-arrow-down-bold" width={14} className="text-ink-48" />
+                </button>
+                <button className="p-1 rounded hover:bg-parchment" title="Send to back" onClick={() => moveLayer("back")}>
+                  <Icon icon="solar:double-alt-arrow-down-bold-duotone" width={15} className="text-ink-48" />
+                </button>
+                <button className="p-1 rounded hover:bg-parchment" title="Duplicate" onClick={duplicateSelected}>
+                  <Icon icon="solar:copy-bold-duotone" width={14} className="text-ink-48" />
                 </button>
                 <button className="p-1 rounded hover:bg-red-50" title="Delete" onClick={deleteSelected}>
                   <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} className="text-red-500" />
@@ -503,13 +663,11 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
                   <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Font</label>
                   <select
                     className="input-rect py-1 text-xs"
-                    value={String((selected as fabric.Textbox).fontFamily ?? "DejaVu Sans")}
+                    value={String((selected as fabric.Textbox).fontFamily ?? DEFAULT_FONT)}
                     onChange={(e) => {
                       const family = e.target.value;
                       const weight = String((selected as fabric.Textbox).fontWeight ?? "normal");
                       updateSelected({ fontFamily: family });
-                      // Webfonts load lazily; fabric also caches char widths per
-                      // family — without this the canvas keeps the fallback metrics.
                       document.fonts
                         .load(`${weight === "bold" || /^\d+$/.test(weight) ? weight : "normal"} 16px "${family}"`)
                         .then(() => {
@@ -540,11 +698,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
                           value={(selected as TitleBox).titleAccentColor ?? "#3CD52F"}
                           onChange={(e) => setTitleAccent(e.target.value)}
                         />
-                        <button
-                          className={btn}
-                          title="Disable two-tone"
-                          onClick={() => setTitleAccent(undefined)}
-                        >
+                        <button className={btn} title="Disable two-tone" onClick={() => setTitleAccent(undefined)}>
                           Off
                         </button>
                       </div>
@@ -563,7 +717,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
                             const box = obj as TitleBox;
                             const v = e.target.value as TitleTransform | "none";
                             box.titleTextTransform = v === "none" ? undefined : v;
-                            box.titleUppercase = undefined; // legacy flag superseded
+                            box.titleUppercase = undefined;
                             if (box.text) {
                               box.set({ text: transformTitle(box.text, box) });
                               applyTwoTone(box);
@@ -603,16 +757,39 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
                     />
                   </div>
                 </div>
-                <div className="flex gap-1.5">
+                <div className="flex flex-wrap gap-1.5">
                   <button
-                    className={`${btn} ${((selected as fabric.Textbox).fontWeight === "bold") ? "border-primary-main text-primary-main" : ""}`}
-                    onClick={() => updateSelected({ fontWeight: (selected as fabric.Textbox).fontWeight === "bold" ? "normal" : "bold" })}
+                    title="Bold"
+                    className={`${btn} font-bold ${((selected as fabric.Textbox).fontWeight === "bold") ? "border-primary-main text-primary-main" : ""}`}
+                    onClick={() => toggleTextStyle("fontWeight")}
                   >
                     B
+                  </button>
+                  <button
+                    title="Italic"
+                    className={`${btn} italic ${((selected as fabric.Textbox).fontStyle === "italic") ? "border-primary-main text-primary-main" : ""}`}
+                    onClick={() => toggleTextStyle("fontStyle")}
+                  >
+                    I
+                  </button>
+                  <button
+                    title="Underline"
+                    className={`${btn} underline ${((selected as fabric.Textbox).underline ? "border-primary-main text-primary-main" : "")}`}
+                    onClick={() => toggleTextStyle("underline")}
+                  >
+                    U
+                  </button>
+                  <button
+                    title="Strikethrough"
+                    className={`${btn} line-through ${((selected as fabric.Textbox).linethrough ? "border-primary-main text-primary-main" : "")}`}
+                    onClick={() => toggleTextStyle("linethrough")}
+                  >
+                    S
                   </button>
                   {(["left", "center", "right"] as const).map((a) => (
                     <button
                       key={a}
+                      title={`Align ${a}`}
                       className={`${btn} ${((selected as fabric.Textbox).textAlign === a) ? "border-primary-main text-primary-main" : ""}`}
                       onClick={() => updateSelected({ textAlign: a })}
                     >
@@ -622,16 +799,41 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
                 </div>
               </>
             )}
-            {!isText && selected.type === "rect" && selectedRole !== "image" && (
-              <div>
-                <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Fill</label>
-                <input
-                  type="color"
-                  className="w-full h-7 rounded cursor-pointer border border-hairline"
-                  value={String(selected.fill ?? "#dc2626")}
-                  onChange={(e) => updateSelected({ fill: e.target.value })}
-                />
-              </div>
+            {!isText && selectedRole !== "image" && (
+              <>
+                {(selected.type === "rect" || selected.type === "circle" || selected.type === "triangle") && (
+                  <div>
+                    <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Fill</label>
+                    <input
+                      type="color"
+                      className="w-full h-7 rounded cursor-pointer border border-hairline"
+                      value={String(selected.fill ?? "#dc2626")}
+                      onChange={(e) => updateSelected({ fill: e.target.value })}
+                    />
+                  </div>
+                )}
+                {selected.type === "line" && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Line color</label>
+                      <input
+                        type="color"
+                        className="w-full h-7 rounded cursor-pointer border border-hairline"
+                        value={String(selected.stroke ?? "#ffffff")}
+                        onChange={(e) => updateSelected({ stroke: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Thickness: {Math.round((selected.strokeWidth as number) ?? 6)}px</label>
+                      <input type="range" min={1} max={40} value={Math.round((selected.strokeWidth as number) ?? 6)} onChange={(e) => updateSelected({ strokeWidth: parseInt(e.target.value) })} className="w-full" />
+                    </div>
+                  </>
+                )}
+                <div>
+                  <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Opacity: {Math.round(((selected.opacity as number) ?? 1) * 100)}%</label>
+                  <input type="range" min={0} max={100} value={Math.round(((selected.opacity as number) ?? 1) * 100)} onChange={(e) => updateSelected({ opacity: parseInt(e.target.value) / 100 })} className="w-full" />
+                </div>
+              </>
             )}
           </div>
         )}

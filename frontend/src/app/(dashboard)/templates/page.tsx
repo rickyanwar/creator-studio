@@ -4,8 +4,8 @@ import useSWR from "swr";
 import { useState } from "react";
 import Link from "next/link";
 import { Icon } from "@iconify/react";
-import { formatDistanceToNowStrict } from "date-fns";
 import { listTemplates, createTemplate, updateTemplate, deleteTemplate, listFanpages } from "@/lib/api";
+import TemplateThumbnail from "@/components/designer/TemplateThumbnail";
 
 type Template = {
   id: number;
@@ -15,6 +15,7 @@ type Template = {
   canvas_height: number;
   is_default: boolean;
   has_content: boolean;
+  template_json: unknown | null;
   updated_at: string | null;
 };
 
@@ -140,73 +141,98 @@ export default function TemplatesPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {templates.map((t) => (
-            <div key={t.id} className="card p-5 space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  {editingId === t.id ? (
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        autoFocus
-                        className="input-rect py-1 text-sm"
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleRename(t);
-                          if (e.key === "Escape") setEditingId(null);
-                        }}
-                      />
-                      <button onClick={() => handleRename(t)} title="Save" className="p-1.5 rounded-lg text-primary-main hover:bg-primary-main/10 shrink-0">
-                        <Icon icon="solar:check-circle-bold" width={16} />
-                      </button>
-                      <button onClick={() => setEditingId(null)} title="Cancel" className="p-1.5 rounded-lg text-ink-48 hover:bg-ink-8 shrink-0">
-                        <Icon icon="solar:close-circle-bold" width={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-sm font-bold text-ink flex items-center gap-2">
-                        <span className="truncate">{t.name}</span>
-                        {t.is_default && (
-                          <span className="inline-flex items-center rounded-full bg-primary-main/10 text-primary-main px-2 py-0.5 text-[10px] font-semibold shrink-0">default</span>
-                        )}
-                        <button
-                          onClick={() => { setEditingId(t.id); setEditName(t.name); }}
-                          title="Rename"
-                          className="p-1 rounded text-ink-48 hover:text-primary-main shrink-0"
-                        >
-                          <Icon icon="solar:pen-bold-duotone" width={13} />
-                        </button>
-                      </p>
-                      <p className="text-[11px] text-ink-48 mt-0.5">{fanpageName(t.fanpage_id)}</p>
-                    </>
-                  )}
-                </div>
-                {editingId !== t.id && (
-                  <button onClick={() => handleDelete(t)} className="p-1.5 rounded-lg text-ink-48 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0">
-                    <Icon icon="solar:trash-bin-trash-bold-duotone" width={15} />
-                  </button>
+            <div key={t.id} className="group">
+              {/* Preview */}
+              <div
+                className="relative rounded-xl overflow-hidden border border-hairline bg-parchment"
+                style={{ aspectRatio: `${t.canvas_width} / ${t.canvas_height}` }}
+              >
+                {t.has_content && t.template_json ? (
+                  <TemplateThumbnail
+                    json={t.template_json}
+                    width={t.canvas_width}
+                    height={t.canvas_height}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-ink-48">
+                    <Icon icon="solar:gallery-add-bold-duotone" width={40} className="opacity-40" />
+                  </div>
                 )}
-              </div>
-              <p className="text-[11px] text-ink-48">
-                {t.canvas_width}×{t.canvas_height}
-                {" · "}
-                {t.has_content ? "designed" : "empty"}
-                {t.updated_at && <> · {formatDistanceToNowStrict(new Date(t.updated_at), { addSuffix: true })}</>}
-              </p>
-              <div className="flex gap-2">
-                <Link href={`/templates/${t.id}`} className="btn btn-secondary flex-1 text-center flex items-center justify-center gap-1.5">
-                  <Icon icon="solar:pen-bold-duotone" width={13} />
-                  Open Editor
+
+                {/* hover overlay → open editor */}
+                <Link
+                  href={`/templates/${t.id}`}
+                  className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <span className="inline-flex items-center gap-1.5 text-white font-semibold text-sm">
+                    <Icon icon="solar:pen-bold" width={15} /> Open in editor
+                  </span>
                 </Link>
-                {!t.is_default && (
-                  <button
-                    onClick={() => updateTemplate(t.id, { is_default: true }).then(() => mutate())}
-                    className="btn btn-secondary"
-                    title="Make default"
-                  >
-                    <Icon icon="solar:star-bold-duotone" width={13} />
-                  </button>
+
+                {t.is_default && (
+                  <span className="absolute top-2 left-2 inline-flex items-center rounded-full bg-primary-main text-white px-2 py-0.5 text-[10px] font-semibold shadow">
+                    default
+                  </span>
                 )}
+
+                {/* actions (show on hover) */}
+                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {!t.is_default && (
+                    <button
+                      onClick={() => updateTemplate(t.id, { is_default: true }).then(() => mutate())}
+                      title="Make default"
+                      className="p-1.5 rounded-lg bg-white/90 text-ink-80 hover:text-primary-main shadow-sm"
+                    >
+                      <Icon icon="solar:star-bold-duotone" width={14} />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDelete(t)}
+                    title="Delete"
+                    className="p-1.5 rounded-lg bg-white/90 text-ink-80 hover:text-red-600 shadow-sm"
+                  >
+                    <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Meta */}
+              <div className="mt-2 px-0.5">
+                {editingId === t.id ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      autoFocus
+                      className="input-rect py-1 text-sm"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRename(t);
+                        if (e.key === "Escape") setEditingId(null);
+                      }}
+                    />
+                    <button onClick={() => handleRename(t)} title="Save" className="p-1 text-primary-main shrink-0">
+                      <Icon icon="solar:check-circle-bold" width={16} />
+                    </button>
+                    <button onClick={() => setEditingId(null)} title="Cancel" className="p-1 text-ink-48 shrink-0">
+                      <Icon icon="solar:close-circle-bold" width={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-semibold text-ink truncate">{t.name}</span>
+                    <button
+                      onClick={() => { setEditingId(t.id); setEditName(t.name); }}
+                      title="Rename"
+                      className="p-0.5 rounded text-ink-48 hover:text-primary-main shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Icon icon="solar:pen-bold-duotone" width={12} />
+                    </button>
+                  </div>
+                )}
+                <p className="text-[11px] text-ink-48 mt-0.5">
+                  {t.canvas_width} × {t.canvas_height} px · {fanpageName(t.fanpage_id)}
+                </p>
               </div>
             </div>
           ))}
