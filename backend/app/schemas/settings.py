@@ -19,6 +19,10 @@ class SettingsUpdate(BaseModel):
     telegram_chat_id: Optional[str] = None
     scraper_mode: Optional[str] = None      # "auto" | "instagrapi" | "flashapi"
     flashapi_api_key: Optional[str] = None  # plain — will be encrypted before saving
+    scraper_proxies: Optional[str] = None   # newline-separated proxy pool for the news scraper
+    nine_router_base_url: Optional[str] = None
+    nine_router_api_key: Optional[str] = None  # plain — will be encrypted before saving
+    nine_router_model: Optional[str] = None
 
 
 class SettingsOut(BaseModel):
@@ -37,8 +41,17 @@ class SettingsOut(BaseModel):
     telegram_chat_id: Optional[str] = None
     scraper_mode: str = "auto"
     has_flashapi_key: bool = False
+    scraper_proxies: Optional[str] = None   # raw text so the UI can edit the pool
+    scraper_proxy_count: int = 0
+    nine_router_base_url: Optional[str] = None
+    nine_router_model: Optional[str] = None
+    has_nine_router_key: bool = False
 
     model_config = {"from_attributes": False}
+
+
+class ProxyTestRequest(BaseModel):
+    proxies: Optional[str] = None   # raw textarea text; if omitted, tests the saved pool
 
 
 class ReplizTestRequest(BaseModel):

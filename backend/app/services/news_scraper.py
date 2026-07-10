@@ -13,13 +13,51 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from app.services.proxy_pool import pick_proxy, playwright_proxy
+
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 FETCH_TIMEOUT = 30.0
+_BLOCK_STATUSES = {403, 429, 503}
 
 # robots.txt parsers cached per host for the lifetime of the process/task
 _robots_cache: dict[str, urllib.robotparser.RobotFileParser] = {}
+
+
+def _proxy_host(proxy: str | None) -> str:
+    """Host of a proxy URL for logging — never logs credentials."""
+    if not proxy:
+        return "direct"
+    try:
+        return urlparse(proxy).hostname or "proxy"
+    except Exception:
+        return "proxy"
+
+
+def _httpx_get(url: str, timeout: float, headers: dict, tries: int = 3) -> httpx.Response:
+    """GET via a random pool proxy, rotating to another proxy on a transport
+    error or a block status (403/429/503). Falls back to direct only when the
+    pool is empty."""
+    last_exc: Exception | None = None
+    resp: httpx.Response | None = None
+    for attempt in range(tries):
+        proxy = pick_proxy()
+        try:
+            with httpx.Client(proxy=proxy, headers=headers, timeout=timeout, follow_redirects=True) as client:
+                resp = client.get(url)
+            if proxy and resp.status_code in _BLOCK_STATUSES and attempt < tries - 1:
+                logger.warning("Scraper: %s blocked (%s) via proxy %s — rotating", url, resp.status_code, _proxy_host(proxy))
+                continue
+            return resp
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("Scraper: request to %s via proxy %s failed: %s", url, _proxy_host(proxy), exc)
+            if not proxy:
+                break  # no pool → direct attempt failed, stop retrying
+    if resp is not None:
+        return resp
+    raise last_exc if last_exc else RuntimeError(f"failed to fetch {url}")
 
 
 @dataclass
@@ -40,7 +78,7 @@ def _robots_allowed(url: str) -> bool:
         rp = urllib.robotparser.RobotFileParser()
         robots_url = f"{urlparse(url).scheme}://{host}/robots.txt"
         try:
-            resp = httpx.get(robots_url, headers={"User-Agent": USER_AGENT}, timeout=10.0, follow_redirects=True)
+            resp = _httpx_get(robots_url, timeout=10.0, headers={"User-Agent": USER_AGENT})
             if resp.status_code == 200:
                 rp.parse(resp.text.splitlines())
             else:
@@ -59,11 +97,10 @@ def fetch_html(url: str, render_mode: str = "static") -> str:
     if render_mode == "js":
         return _fetch_html_playwright(url)
 
-    resp = httpx.get(
+    resp = _httpx_get(
         url,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "en;q=0.9,*;q=0.5"},
         timeout=FETCH_TIMEOUT,
-        follow_redirects=True,
+        headers={"User-Agent": USER_AGENT, "Accept-Language": "en;q=0.9,*;q=0.5"},
     )
     resp.raise_for_status()
     return resp.text
@@ -78,11 +115,18 @@ def _fetch_html_playwright(url: str) -> str:
             "pip install playwright && playwright install chromium"
         )
 
+    proxy = pick_proxy()
+    launch_kwargs = {
+        "headless": True,
+        "args": ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+    }
+    pw_proxy = playwright_proxy(proxy)
+    if pw_proxy:
+        launch_kwargs["proxy"] = pw_proxy
+        logger.info("Scraper: rendering %s via proxy %s", url, _proxy_host(proxy))
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
-        )
+        browser = p.chromium.launch(**launch_kwargs)
         try:
             page = browser.new_page(user_agent=USER_AGENT)
             page.goto(url, timeout=int(FETCH_TIMEOUT * 1000), wait_until="domcontentloaded")

@@ -15,7 +15,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-AIProviderName = Literal["gemini", "groq"]
+AIProviderName = Literal["router", "gemini", "groq"]
 
 _REDIS_FAILURE_KEY = "ai:gemini_consecutive_failures"
 _REDIS_SWITCHED_KEY = "ai:switched_to_groq_until"
@@ -94,6 +94,34 @@ OUTPUT: only the final caption, no explanation, no quote marks."""
 # Provider calls
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _router_enabled() -> bool:
+    """9Router is the primary provider only when a base URL + model are set
+    (via the Settings UI or NINE_ROUTER_* env vars)."""
+    from app.services.nine_router import get_nine_router_config
+
+    return get_nine_router_config().enabled
+
+
+def _call_router(prompt: str) -> str:
+    from openai import OpenAI  # type: ignore
+
+    from app.services.nine_router import get_nine_router_config
+
+    cfg = get_nine_router_config()
+    client = OpenAI(
+        base_url=cfg.base_url,
+        # OpenAI SDK requires a non-empty key; 9Router may not enforce it.
+        api_key=cfg.api_key or "sk-9router",
+    )
+    completion = client.chat.completions.create(
+        model=cfg.model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=1024,
+        temperature=0.7,
+    )
+    return completion.choices[0].message.content.strip()
+
+
 def _call_gemini(prompt: str) -> str:
     import google.generativeai as genai  # type: ignore
 
@@ -135,12 +163,24 @@ def generate_caption(prompt: str, force_provider: AIProviderName | None = None) 
     """
     threshold = settings.ai_fallback_after_failures
 
+    if force_provider == "router":
+        text = _call_router(prompt)
+        return text, "router"
     if force_provider == "groq":
         text = _call_groq(prompt)
         return text, "groq"
     if force_provider == "gemini":
         text = _call_gemini(prompt)
         return text, "gemini"
+
+    # 9Router is the primary provider when configured; on any failure fall
+    # through to the existing Gemini→Groq failover below.
+    if _router_enabled():
+        try:
+            text = _call_router(prompt)
+            return text, "router"
+        except Exception as router_exc:
+            logger.warning("9Router failed: %s — falling back to Gemini/Groq", router_exc)
 
     # Auto failover logic
     if _is_switched_to_groq() or _gemini_failures() >= threshold:

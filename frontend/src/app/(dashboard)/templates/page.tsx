@@ -41,6 +41,16 @@ export default function TemplatesPage() {
   const [fanpageId, setFanpageId] = useState<string>("");
   const [sizeIdx, setSizeIdx] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+
+  async function handleRename(t: Template) {
+    const newName = editName.trim();
+    if (!newName || newName === t.name) { setEditingId(null); return; }
+    await updateTemplate(t.id, { name: newName });
+    setEditingId(null);
+    mutate();
+  }
 
   async function handleCreate() {
     if (!name.trim()) return;
@@ -131,19 +141,51 @@ export default function TemplatesPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {templates.map((t) => (
             <div key={t.id} className="card p-5 space-y-3">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-bold text-ink flex items-center gap-2">
-                    {t.name}
-                    {t.is_default && (
-                      <span className="inline-flex items-center rounded-full bg-primary-main/10 text-primary-main px-2 py-0.5 text-[10px] font-semibold">default</span>
-                    )}
-                  </p>
-                  <p className="text-[11px] text-ink-48 mt-0.5">{fanpageName(t.fanpage_id)}</p>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  {editingId === t.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        autoFocus
+                        className="input-rect py-1 text-sm"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleRename(t);
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                      <button onClick={() => handleRename(t)} title="Save" className="p-1.5 rounded-lg text-primary-main hover:bg-primary-main/10 shrink-0">
+                        <Icon icon="solar:check-circle-bold" width={16} />
+                      </button>
+                      <button onClick={() => setEditingId(null)} title="Cancel" className="p-1.5 rounded-lg text-ink-48 hover:bg-ink-8 shrink-0">
+                        <Icon icon="solar:close-circle-bold" width={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm font-bold text-ink flex items-center gap-2">
+                        <span className="truncate">{t.name}</span>
+                        {t.is_default && (
+                          <span className="inline-flex items-center rounded-full bg-primary-main/10 text-primary-main px-2 py-0.5 text-[10px] font-semibold shrink-0">default</span>
+                        )}
+                        <button
+                          onClick={() => { setEditingId(t.id); setEditName(t.name); }}
+                          title="Rename"
+                          className="p-1 rounded text-ink-48 hover:text-primary-main shrink-0"
+                        >
+                          <Icon icon="solar:pen-bold-duotone" width={13} />
+                        </button>
+                      </p>
+                      <p className="text-[11px] text-ink-48 mt-0.5">{fanpageName(t.fanpage_id)}</p>
+                    </>
+                  )}
                 </div>
-                <button onClick={() => handleDelete(t)} className="p-1.5 rounded-lg text-ink-48 hover:text-red-600 hover:bg-red-50 transition-colors">
-                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={15} />
-                </button>
+                {editingId !== t.id && (
+                  <button onClick={() => handleDelete(t)} className="p-1.5 rounded-lg text-ink-48 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0">
+                    <Icon icon="solar:trash-bin-trash-bold-duotone" width={15} />
+                  </button>
+                )}
               </div>
               <p className="text-[11px] text-ink-48">
                 {t.canvas_width}×{t.canvas_height}

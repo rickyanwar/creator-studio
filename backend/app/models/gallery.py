@@ -11,9 +11,10 @@ class GalleryKeyword(Base):
     keyword = Column(String(128), unique=True, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, server_default="true")
     max_images = Column(Integer, nullable=False, server_default="50")
-    min_width = Column(Integer, nullable=False, server_default="500")
-    min_height = Column(Integer, nullable=False, server_default="500")
-    source_engine = Column(String(16), nullable=False, server_default="bing")  # bing | google
+    max_pages = Column(Integer, nullable=False, server_default="10")  # search-result pages to fetch per run
+    min_width = Column(Integer, nullable=False, server_default="200")
+    min_height = Column(Integer, nullable=False, server_default="200")
+    source_engine = Column(String(16), nullable=False, server_default="bing")  # bing | google | 9router
     license_filter = Column(String(64), nullable=False, server_default="commercial,modify")
     last_downloaded_at = Column(DateTime, nullable=True)
     last_download_error = Column(String(512), nullable=True)

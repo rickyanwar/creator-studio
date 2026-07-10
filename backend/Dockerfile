@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Chromium for render_mode "js" news sources (Cloudflare-protected sites)
+RUN playwright install --with-deps chromium
+
 COPY . .
 
 # Create media directory (will be overridden by volume on VPS)

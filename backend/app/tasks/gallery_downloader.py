@@ -74,6 +74,7 @@ def download_keyword(self, keyword_id: int):
                 min_size=(kw.min_width, kw.min_height),
                 license_filter=kw.license_filter,
                 skip_urls=skip_urls,
+                max_pages=kw.max_pages,
             )
         except Exception as exc:
             kw.last_download_error = str(exc)[:512]

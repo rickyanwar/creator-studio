@@ -165,4 +165,9 @@ export interface AppSettings {
   telegram_chat_id: string | null;
   scraper_mode: "auto" | "instagrapi" | "flashapi";
   has_flashapi_key: boolean;
+  scraper_proxies: string | null;
+  scraper_proxy_count: number;
+  nine_router_base_url: string | null;
+  nine_router_model: string | null;
+  has_nine_router_key: boolean;
 }

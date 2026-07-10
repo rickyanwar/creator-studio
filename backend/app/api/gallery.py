@@ -11,16 +11,17 @@ from app.config import get_settings
 router = APIRouter(prefix="/gallery", tags=["gallery"])
 settings = get_settings()
 
-_VALID_ENGINES = ("bing", "google")
+_VALID_ENGINES = ("bing", "google", "9router")
 
 
 class KeywordBody(BaseModel):
     keyword: str
     is_active: Optional[bool] = True
     max_images: Optional[int] = 50
-    min_width: Optional[int] = 500
-    min_height: Optional[int] = 500
-    source_engine: Optional[str] = "bing"
+    max_pages: Optional[int] = 10
+    min_width: Optional[int] = 200
+    min_height: Optional[int] = 200
+    source_engine: Optional[str] = "9router"
     license_filter: Optional[str] = "commercial,modify"
 
     @field_validator("source_engine")
@@ -37,11 +38,18 @@ class KeywordBody(BaseModel):
             raise ValueError("max_images must be between 1 and 200")
         return v
 
+    @field_validator("max_pages")
+    @classmethod
+    def validate_max_pages(cls, v):
+        if v is not None and not (1 <= v <= 50):
+            raise ValueError("max_pages must be between 1 and 50")
+        return v
+
     @field_validator("min_width", "min_height")
     @classmethod
     def validate_min_size(cls, v):
-        if v is not None and v < 100:
-            raise ValueError("minimum size must be at least 100")
+        if v is not None and v < 50:
+            raise ValueError("minimum size must be at least 50")
         return v
 
 
@@ -55,6 +63,7 @@ def _serialize_keyword(kw, image_count: int = 0):
         "keyword": kw.keyword,
         "is_active": kw.is_active,
         "max_images": kw.max_images,
+        "max_pages": kw.max_pages,
         "min_width": kw.min_width,
         "min_height": kw.min_height,
         "source_engine": kw.source_engine,
@@ -107,9 +116,10 @@ def create_keyword(body: KeywordBody, db: DB, _: CurrentUser):
         keyword=keyword,
         is_active=body.is_active if body.is_active is not None else True,
         max_images=body.max_images or 50,
-        min_width=body.min_width or 500,
-        min_height=body.min_height or 500,
-        source_engine=body.source_engine or "bing",
+        max_pages=body.max_pages or 10,
+        min_width=body.min_width or 200,
+        min_height=body.min_height or 200,
+        source_engine=body.source_engine or "9router",
         license_filter=body.license_filter or "commercial,modify",
     )
     db.add(kw)
@@ -132,6 +142,8 @@ def update_keyword(keyword_id: int, body: UpdateKeywordBody, db: DB, _: CurrentU
         kw.is_active = body.is_active
     if body.max_images is not None:
         kw.max_images = body.max_images
+    if body.max_pages is not None:
+        kw.max_pages = body.max_pages
     if body.min_width is not None:
         kw.min_width = body.min_width
     if body.min_height is not None:

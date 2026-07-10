@@ -22,6 +22,7 @@ class ContentType(str, enum.Enum):
 
 
 class AIProvider(str, enum.Enum):
+    router = "router"
     gemini = "gemini"
     groq = "groq"
 

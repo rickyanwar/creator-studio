@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { getSettings, updateSettings, testReplizCredentials } from "@/lib/api";
+import { getSettings, updateSettings, testReplizCredentials, testProxies } from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -15,6 +15,8 @@ export default function SettingsPage() {
   const [loadingSave, setLoadingSave]   = useState(false);
   const [loadingTest, setLoadingTest]   = useState(false);
   const [replizResult, setReplizResult] = useState<{ ok?: boolean; message?: string } | null>(null);
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyResults, setProxyResults] = useState<{ results: { proxy: string; ok: boolean; ip?: string; ms?: number; error?: string }[]; alive: number; total: number } | null>(null);
 
   useEffect(() => {
     if (settings) {
@@ -29,6 +31,10 @@ export default function SettingsPage() {
         ai_fallback_reset_after_minutes: settings.ai_fallback_reset_after_minutes,
         telegram_chat_id: settings.telegram_chat_id ?? "",
         scraper_mode: settings.scraper_mode ?? "auto",
+        scraper_proxies: settings.scraper_proxies ?? "",
+        nine_router_base_url: settings.nine_router_base_url ?? "",
+        nine_router_model: settings.nine_router_model ?? "",
+        nine_router_api_key: "",
         gemini_api_key: "",
         groq_api_key: "",
         repliz_access_key: "",
@@ -51,6 +57,8 @@ export default function SettingsPage() {
         if (typeof v === "string" && v === "") continue;
         payload[k] = v;
       }
+      // Proxy pool must be sendable even when emptied (to clear it)
+      payload.scraper_proxies = form.scraper_proxies ?? "";
       await updateSettings(payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -73,6 +81,17 @@ export default function SettingsPage() {
     } catch {
       setReplizResult({ ok: false, message: "Connection failed — check credentials" });
     } finally { setLoadingTest(false); }
+  }
+
+  async function handleTestProxies() {
+    setProxyTesting(true);
+    setProxyResults(null);
+    try {
+      const res = await testProxies((form.scraper_proxies as string) ?? "");
+      setProxyResults(res.data);
+    } catch {
+      setProxyResults({ results: [], alive: 0, total: 0 });
+    } finally { setProxyTesting(false); }
   }
 
   return (
@@ -171,9 +190,13 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Crawl */}
+      {/* Instagram Scraper (crawl schedule + fetch mode) */}
       <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Crawler</h2>
+        <h2 className="text-base font-semibold text-text-primary">Instagram Scraper</h2>
+        <p className="text-xs text-text-secondary">
+          How often the crawler runs and how it fetches posts. <strong>Auto</strong> tries your burner accounts first and falls back to FlashAPI when all are unavailable.
+        </p>
+
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label">Crawl Interval (minutes)</label>
@@ -188,14 +211,6 @@ export default function SettingsPage() {
             <p className="text-xs text-text-secondary mt-1">Skip posts older than this — e.g. 1 = today only</p>
           </div>
         </div>
-      </section>
-
-      {/* Scraper Mode */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Instagram Scraper</h2>
-        <p className="text-xs text-text-secondary">
-          Choose how the crawler fetches posts. <strong>Auto</strong> tries your burner accounts first and falls back to FlashAPI when all are unavailable.
-        </p>
 
         <div>
           <label className="label">Scraper Mode</label>
@@ -239,6 +254,105 @@ export default function SettingsPage() {
           <p className="text-xs text-text-secondary mt-1">
             Required when mode is <strong>FlashAPI</strong> or as auto-fallback. Get a key at flashapi.ru.
           </p>
+        </div>
+      </section>
+
+      {/* News Scraper */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">News Scraper</h2>
+        <div>
+          <label className="label">
+            Proxy Pool{" "}
+            {typeof settings?.scraper_proxy_count === "number" && settings.scraper_proxy_count > 0 && (
+              <span className="text-primary-main">✓ {settings.scraper_proxy_count} proxies</span>
+            )}
+          </label>
+          <textarea
+            className="input-rect font-mono text-xs"
+            rows={6}
+            spellCheck={false}
+            placeholder={"One proxy per line, e.g.\nhttp://user:pass@host:port\nhttp://user:pass@1.2.3.4:8000"}
+            value={form.scraper_proxies as string ?? ""}
+            onChange={(e) => set("scraper_proxies", e.target.value)}
+          />
+          <p className="text-xs text-text-secondary mt-1">
+            The news scraper picks one at random per request (and rotates on block/timeout). One proxy per
+            line — a trailing label after the URL is ignored. Leave empty to scrape directly (no proxy).
+          </p>
+
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleTestProxies}
+              disabled={proxyTesting}
+              className="btn btn-secondary text-xs"
+            >
+              {proxyTesting ? "Testing…" : "Test Proxies"}
+            </button>
+            {proxyResults && (
+              <span className={`text-xs font-semibold ${proxyResults.alive > 0 ? "text-primary-main" : "text-red-500"}`}>
+                {proxyResults.alive}/{proxyResults.total} alive
+              </span>
+            )}
+          </div>
+
+          {proxyResults && proxyResults.results.length > 0 && (
+            <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-hairline divide-y divide-hairline text-xs font-mono">
+              {proxyResults.results.map((r) => (
+                <div key={r.proxy} className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-text-primary">{r.proxy}</span>
+                  {r.ok ? (
+                    <span className="text-emerald-600">✓ {r.ip} · {r.ms}ms</span>
+                  ) : (
+                    <span className="text-red-500 truncate max-w-[55%]" title={r.error}>✗ {r.error}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 9Router (primary AI) */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">9Router — Primary AI (OpenAI-compatible)</h2>
+        <p className="text-xs text-text-secondary -mt-2">
+          Captions &amp; news copy route through 9Router first, then fall back to Gemini→Groq. Overrides the
+          NINE_ROUTER_* env vars. Leave Base URL blank to disable and use Gemini directly.
+        </p>
+        <div>
+          <label className="label">Base URL</label>
+          <input
+            className="input-rect"
+            placeholder="http://your-9router-host:20128/v1"
+            value={form.nine_router_base_url as string ?? ""}
+            onChange={(e) => set("nine_router_base_url", e.target.value)}
+          />
+          <p className="text-xs text-text-secondary mt-1">Must end with <code>/v1</code>.</p>
+        </div>
+        <div>
+          <label className="label">Model</label>
+          <input
+            className="input-rect"
+            placeholder="ag/claude-sonnet-4-6 (or a combo name)"
+            value={form.nine_router_model as string ?? ""}
+            onChange={(e) => set("nine_router_model", e.target.value)}
+          />
+          <p className="text-xs text-text-secondary mt-1">A model id from your dashboard, or a combo name. Not <code>auto</code>.</p>
+        </div>
+        <div>
+          <label className="label">
+            API Key / Token{" "}
+            {settings?.has_nine_router_key && <span className="text-primary-main">✓ saved</span>}
+          </label>
+          <input
+            className="input-rect"
+            type="password"
+            placeholder="Leave blank to keep existing"
+            value={form.nine_router_api_key as string ?? ""}
+            onChange={(e) => set("nine_router_api_key", e.target.value)}
+          />
+          <p className="text-xs text-text-secondary mt-1">Copy from the 9Router dashboard.</p>
         </div>
       </section>
 

@@ -30,7 +30,14 @@ class Settings(BaseSettings):
     repliz_access_key: str = ""
     repliz_secret_key: str = ""
 
-    # ── AI Providers ──────────────────────────────
+    # ── 9Router (primary AI, OpenAI-compatible) ───
+    # When nine_router_base_url is set, captions/news route through 9Router first
+    # and fall back to Gemini→Groq below. Leave blank to disable and use Gemini.
+    nine_router_base_url: str = ""          # e.g. http://109.123.232.184:20128/v1
+    nine_router_api_key: str = ""           # copy from 9Router dashboard
+    nine_router_model: str = "auto"   # 9Router auto-picks the model/provider
+
+    # ── AI Providers (fallback) ───────────────────
     gemini_api_key: str = ""
     groq_api_key: str = ""
     qwen_api_key: str = ""  # Alibaba Cloud Model Studio (DashScope) — image edit fallback
@@ -39,6 +46,19 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     qwen_image_edit_model: str = "qwen-image-edit-plus"
     qwen_vl_model: str = "qwen3-vl-plus"  # vision-language model used to extract+translate burned-in text
+
+    # ── Gallery image fetch (via 9Router web-fetch) ──
+    # jina-reader gets past bot-walls that block plain HTTP. The template's
+    # {query} is URL-encoded from the keyword; {page} is 1-based.
+    gallery_fetch_provider: str = "jina-reader"
+    gallery_search_url_template: str = (
+        "https://www.gettyimages.com/search/2/image?family=editorial&phrase={query}&sort=newest&page={page}"
+    )
+    gallery_max_pages: int = 10
+    # Stop paginating after this many consecutive already-downloaded images.
+    # Results are newest-first, so a run of duplicates means everything after is
+    # older and already downloaded too. Set 0 to disable this early-stop.
+    gallery_stop_after_consecutive_dupes: int = 20
 
     # ── AI Failover ───────────────────────────────
     ai_fallback_after_failures: int = 3

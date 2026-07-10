@@ -7,7 +7,7 @@
 @layer base {
   /* ── Light mode (default) ──────────────────────── */
   :root {
-    --bg-default:     #F4F6F8;
+    --bg-default:     #ffffff;
     --bg-paper:       #FFFFFF;
     --bg-paper-hover: #F0F2F5;
     --text-primary:   #1C252E;
@@ -153,10 +153,18 @@
   /* ── Cards ───────────────────────────────────────── */
   .card {
     @apply bg-bg-paper rounded-lg p-6 dark:shadow-card;
+    /* light mode: subtle grey-500 @ 12% hairline (dark uses shadow instead) */
+    border: solid 1px rgba(145, 158, 171, 0.12);
   }
 
   .card-sm {
     @apply bg-bg-paper rounded-lg p-4 dark:shadow-card;
+    border: solid 1px rgba(145, 158, 171, 0.12);
+  }
+
+  .dark .card,
+  .dark .card-sm {
+    border-color: transparent;
   }
 
   /* ── Tinted KPI cards ────────────────────────────── */

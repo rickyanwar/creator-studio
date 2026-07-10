@@ -1,7 +1,8 @@
 "use client";
 
 import useSWR from "swr";
-import { useRef, useState } from "react";
+import useSWRInfinite from "swr/infinite";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { Icon } from "@iconify/react";
 import { formatDistanceToNowStrict } from "date-fns";
 import {
@@ -20,6 +21,7 @@ type Keyword = {
   keyword: string;
   is_active: boolean;
   max_images: number;
+  max_pages: number;
   min_width: number;
   min_height: number;
   source_engine: string;
@@ -45,9 +47,10 @@ const emptyForm = {
   keyword: "",
   is_active: true,
   max_images: 50,
-  min_width: 500,
-  min_height: 500,
-  source_engine: "bing",
+  max_pages: 10,
+  min_width: 200,
+  min_height: 200,
+  source_engine: "9router",
   license_filter: "commercial,modify",
 };
 
@@ -59,15 +62,74 @@ export default function GalleryPage() {
   );
 
   const [filterKeyword, setFilterKeyword] = useState<string>("");
-  const { data: imageData, mutate: mutateImages } = useSWR<{ total: number; images: GalleryImage[] }>(
-    ["gallery-images", filterKeyword],
-    () =>
-      listGalleryImages({ keyword: filterKeyword || undefined, limit: 60 }).then(
-        (r) => r.data as { total: number; images: GalleryImage[] }
-      ),
-    { refreshInterval: 30000 }
+
+  // ── Infinite scroll (offset pagination) — handles thousands of images ──
+  const PAGE_SIZE = 60;
+  type ImagePage = { total: number; images: GalleryImage[] };
+  const {
+    data: pages,
+    size,
+    setSize,
+    mutate: mutateImages,
+    isValidating,
+  } = useSWRInfinite<ImagePage>(
+    (index, prev: ImagePage | null) => {
+      if (prev && prev.images.length < PAGE_SIZE) return null; // no more pages
+      return ["gallery-images", filterKeyword, index] as const;
+    },
+    ([, kw, index]) =>
+      listGalleryImages({
+        keyword: (kw as string) || undefined,
+        limit: PAGE_SIZE,
+        offset: (index as number) * PAGE_SIZE,
+      }).then((r) => r.data as ImagePage),
+    { revalidateFirstPage: false }
   );
-  const images = imageData?.images ?? [];
+
+  const images = pages ? pages.flatMap((p) => p.images) : [];
+  const total = pages?.[0]?.total ?? 0;
+  const lastPage = pages?.[pages.length - 1];
+  const reachedEnd = !!lastPage && lastPage.images.length < PAGE_SIZE;
+  const loadingMore = isValidating;
+
+  // Reset to first page whenever the keyword filter changes
+  useEffect(() => {
+    setSize(1);
+  }, [filterKeyword, setSize]);
+
+  // Load next page when the sentinel scrolls into view
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || reachedEnd) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loadingMore) setSize((s) => s + 1);
+      },
+      { rootMargin: "600px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [reachedEnd, loadingMore, setSize]);
+
+  // ── Lightbox ──
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const closeLightbox = useCallback(() => setLightboxIdx(null), []);
+  const showPrev = useCallback(() => setLightboxIdx((i) => (i === null ? i : Math.max(0, i - 1))), []);
+  const showNext = useCallback(
+    () => setLightboxIdx((i) => (i === null ? i : Math.min(images.length - 1, i + 1))),
+    [images.length]
+  );
+  useEffect(() => {
+    if (lightboxIdx === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeLightbox();
+      else if (e.key === "ArrowLeft") showPrev();
+      else if (e.key === "ArrowRight") showNext();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxIdx, closeLightbox, showPrev, showNext]);
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -92,6 +154,7 @@ export default function GalleryPage() {
       keyword: k.keyword,
       is_active: k.is_active,
       max_images: k.max_images,
+      max_pages: k.max_pages,
       min_width: k.min_width,
       min_height: k.min_height,
       source_engine: k.source_engine,
@@ -179,7 +242,7 @@ export default function GalleryPage() {
             Gallery
           </h1>
           <p className="text-caption text-ink-48 mt-1">
-            {imageData?.total ?? 0} image{(imageData?.total ?? 0) === 1 ? "" : "s"} — used by the News-to-Image designer
+            {total} image{total === 1 ? "" : "s"} — used by the News-to-Image designer
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -219,29 +282,24 @@ export default function GalleryPage() {
               <input type="number" min={1} max={200} className={inputCls} value={form.max_images} onChange={(e) => set("max_images", parseInt(e.target.value) || 50)} />
             </div>
             <div>
-              <label className={labelCls}>Fallback Engine</label>
+              <label className={labelCls}>Pages to Download</label>
+              <input type="number" min={1} max={50} className={inputCls} value={form.max_pages} onChange={(e) => set("max_pages", parseInt(e.target.value) || 10)} />
+            </div>
+            <div>
+              <label className={labelCls}>Source Engine</label>
               <select className={inputCls} value={form.source_engine} onChange={(e) => set("source_engine", e.target.value)}>
-                <option value="bing">Bing (icrawler)</option>
-                <option value="google">Google</option>
+                <option value="9router">9Router (web-fetch)</option>
+                <option value="bing">Bing (legacy)</option>
+                <option value="google">Google (legacy)</option>
               </select>
             </div>
             <div>
               <label className={labelCls}>Min Width (px)</label>
-              <input type="number" min={100} className={inputCls} value={form.min_width} onChange={(e) => set("min_width", parseInt(e.target.value) || 500)} />
+              <input type="number" min={50} className={inputCls} value={form.min_width} onChange={(e) => set("min_width", parseInt(e.target.value) || 200)} />
             </div>
             <div>
               <label className={labelCls}>Min Height (px)</label>
-              <input type="number" min={100} className={inputCls} value={form.min_height} onChange={(e) => set("min_height", parseInt(e.target.value) || 500)} />
-            </div>
-            <div>
-              <label className={labelCls}>License Filter</label>
-              <select className={inputCls} value={form.license_filter} onChange={(e) => set("license_filter", e.target.value)}>
-                <option value="commercial,modify">Commercial + Modify</option>
-                <option value="commercial">Commercial</option>
-                <option value="creativecommons">Creative Commons</option>
-                <option value="publicdomain">Public Domain</option>
-                <option value="">No filter (risky)</option>
-              </select>
+              <input type="number" min={50} className={inputCls} value={form.min_height} onChange={(e) => set("min_height", parseInt(e.target.value) || 200)} />
             </div>
           </div>
 
@@ -264,7 +322,7 @@ export default function GalleryPage() {
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Keyword</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Images</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Min Size</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">License</th>
+                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Pages</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Download</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
                 <th className="px-5 py-3"></th>
@@ -280,7 +338,7 @@ export default function GalleryPage() {
                   </td>
                   <td className="px-5 py-3 text-ink-80">{k.image_count}</td>
                   <td className="px-5 py-3 text-ink-80">{k.min_width}×{k.min_height}</td>
-                  <td className="px-5 py-3 text-ink-80">{k.license_filter || "—"}</td>
+                  <td className="px-5 py-3 text-ink-80">{k.max_pages}</td>
                   <td className="px-5 py-3 text-ink-80">
                     {k.last_downloaded_at ? formatDistanceToNowStrict(new Date(k.last_downloaded_at), { addSuffix: true }) : "never"}
                   </td>
@@ -358,33 +416,103 @@ export default function GalleryPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {images.map((img) => (
-              <div key={img.id} className="card p-0 overflow-hidden group relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.public_url} alt={img.keyword} className="w-full h-36 object-cover" loading="lazy" />
-                <div className="p-2">
-                  <p className="text-[11px] font-semibold text-ink truncate">{img.keyword}</p>
-                  <p className="text-[10px] text-ink-48">
-                    {img.width}×{img.height} · {img.source_engine}
-                    {img.is_used && <span className="ml-1 text-emerald-600 font-semibold">used</span>}
-                  </p>
-                  {img.downloaded_at && (
-                    <p className="text-[10px] text-ink-48">{formatDistanceToNowStrict(new Date(img.downloaded_at), { addSuffix: true })}</p>
-                  )}
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              {images.map((img, idx) => (
+                <div key={img.id} className="card p-0 overflow-hidden group relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.public_url}
+                    alt={img.keyword}
+                    className="w-full h-36 object-cover cursor-zoom-in"
+                    loading="lazy"
+                    onClick={() => setLightboxIdx(idx)}
+                  />
+                  <div className="p-2">
+                    <p className="text-[11px] font-semibold text-ink truncate">{img.keyword}</p>
+                    <p className="text-[10px] text-ink-48">
+                      {img.width}×{img.height} · {img.source_engine}
+                      {img.is_used && <span className="ml-1 text-emerald-600 font-semibold">used</span>}
+                    </p>
+                    {img.downloaded_at && (
+                      <p className="text-[10px] text-ink-48">{formatDistanceToNowStrict(new Date(img.downloaded_at), { addSuffix: true })}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleDeleteImage(img)}
+                    title="Delete"
+                    className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/40 text-white opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all"
+                  >
+                    <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleDeleteImage(img)}
-                  title="Delete"
-                  className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/40 text-white opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all"
-                >
-                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
-                </button>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+
+            {/* Infinite-scroll sentinel + status */}
+            <div ref={sentinelRef} className="h-10" />
+            <div className="text-center py-4 text-caption text-ink-48">
+              {loadingMore ? (
+                <span className="inline-flex items-center gap-2">
+                  <Icon icon="svg-spinners:180-ring" width={16} /> Loading more…
+                </span>
+              ) : reachedEnd ? (
+                `All ${images.length} images loaded`
+              ) : null}
+            </div>
+          </>
         )}
       </div>
+
+      {/* ── Lightbox ── */}
+      {lightboxIdx !== null && images[lightboxIdx] && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+          onClick={closeLightbox}
+        >
+          <button
+            onClick={closeLightbox}
+            title="Close (Esc)"
+            className="absolute top-4 right-4 p-2 rounded-lg bg-white/10 text-white hover:bg-white/20"
+          >
+            <Icon icon="solar:close-circle-bold" width={28} />
+          </button>
+
+          {lightboxIdx > 0 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); showPrev(); }}
+              title="Previous (←)"
+              className="absolute left-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+            >
+              <Icon icon="solar:alt-arrow-left-bold" width={28} />
+            </button>
+          )}
+          {lightboxIdx < images.length - 1 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); showNext(); }}
+              title="Next (→)"
+              className="absolute right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+            >
+              <Icon icon="solar:alt-arrow-right-bold" width={28} />
+            </button>
+          )}
+
+          <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={images[lightboxIdx].public_url}
+              alt={images[lightboxIdx].keyword}
+              className="max-w-[90vw] max-h-[82vh] object-contain rounded-lg"
+            />
+            <div className="mt-3 text-center text-white/80 text-caption">
+              <span className="font-semibold text-white">{images[lightboxIdx].keyword}</span>
+              {" · "}{images[lightboxIdx].width}×{images[lightboxIdx].height}
+              {" · "}{images[lightboxIdx].source_engine}
+              {" · "}{lightboxIdx + 1}/{images.length}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

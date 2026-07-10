@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, func
 from app.database import Base
 
 
@@ -36,5 +36,17 @@ class Settings(Base):
     # "flashapi"   → always use FlashAPI (ignore per-source setting)
     scraper_mode = Column(String(32), default="auto", nullable=False, server_default="auto")
     flashapi_api_key_encrypted = Column(String(512), nullable=True)
+
+    # ── News-scraper proxy pool ───────────────────────────────────────────────
+    # One proxy per line (e.g. http://user:pass@host:port). The news scraper
+    # picks one at random per request. Trailing labels after the URL are ignored.
+    scraper_proxies = Column(Text, nullable=True)
+
+    # ── 9Router (primary AI, OpenAI-compatible) ───────────────────────────────
+    # When set here, these override the NINE_ROUTER_* env vars. Base URL should
+    # end with /v1; model e.g. "ag/claude-sonnet-4-6" or a combo name.
+    nine_router_base_url = Column(String(256), nullable=True)
+    nine_router_api_key_encrypted = Column(String(512), nullable=True)
+    nine_router_model = Column(String(128), nullable=True)
 
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

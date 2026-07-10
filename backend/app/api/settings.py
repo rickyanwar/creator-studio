@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
 from app.api.deps import CurrentUser, DB
-from app.schemas.settings import SettingsUpdate, SettingsOut, ReplizTestRequest
+from app.schemas.settings import SettingsUpdate, SettingsOut, ReplizTestRequest, ProxyTestRequest
+from app.services.proxy_pool import parse_proxies
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -37,6 +38,11 @@ def get_settings(db: DB, _: CurrentUser):
         telegram_chat_id=row.telegram_chat_id,
         scraper_mode=row.scraper_mode or "auto",
         has_flashapi_key=bool(row.flashapi_api_key_encrypted),
+        scraper_proxies=row.scraper_proxies,
+        scraper_proxy_count=len(parse_proxies(row.scraper_proxies)),
+        nine_router_base_url=row.nine_router_base_url,
+        nine_router_model=row.nine_router_model,
+        has_nine_router_key=bool(row.nine_router_api_key_encrypted),
     )
 
 
@@ -60,11 +66,18 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         row.telegram_bot_token_encrypted = encrypt(data.pop("telegram_bot_token"))
     if "flashapi_api_key" in data:
         row.flashapi_api_key_encrypted = encrypt(data.pop("flashapi_api_key"))
+    if "nine_router_api_key" in data:
+        row.nine_router_api_key_encrypted = encrypt(data.pop("nine_router_api_key"))
 
     for field, value in data.items():
         setattr(row, field, value)
 
     db.commit()
+
+    # 9Router config is cached in-process — force a re-read after a save
+    from app.services.nine_router import clear_cache
+    clear_cache()
+
     return get_settings(db, _)
 
 
@@ -79,3 +92,46 @@ def test_repliz_credentials(body: ReplizTestRequest, _: CurrentUser):
         return {"ok": True, "fanpages_found": len(accounts)}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Repliz API error: {exc}")
+
+
+@router.post("/proxies/test")
+def test_proxies(body: ProxyTestRequest, db: DB, _: CurrentUser):
+    """Test each proxy in the pool by fetching an IP-echo endpoint through it.
+
+    Tests the raw text in `body.proxies` if given (so the UI can test unsaved
+    edits), otherwise the saved pool. Runs in parallel; returns per-proxy
+    alive/dead, exit IP and latency. Credentials are never echoed back."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import urlparse
+
+    import httpx
+
+    if body.proxies is not None:
+        raw = body.proxies
+    else:
+        row = _get_or_create_settings(db)
+        raw = row.scraper_proxies or ""
+
+    proxies = parse_proxies(raw)
+    if not proxies:
+        return {"results": [], "alive": 0, "total": 0}
+
+    def _test_one(proxy: str) -> dict:
+        p = urlparse(proxy)
+        label = f"{p.hostname}:{p.port}"
+        t0 = time.time()
+        try:
+            with httpx.Client(proxy=proxy, timeout=8.0) as client:
+                r = client.get("https://api.ipify.org?format=json")
+            ms = int((time.time() - t0) * 1000)
+            if r.status_code == 200:
+                return {"proxy": label, "ok": True, "ip": r.json().get("ip"), "ms": ms}
+            return {"proxy": label, "ok": False, "error": f"HTTP {r.status_code}", "ms": ms}
+        except Exception as exc:
+            return {"proxy": label, "ok": False, "error": str(exc)[:100], "ms": int((time.time() - t0) * 1000)}
+
+    with ThreadPoolExecutor(max_workers=min(10, len(proxies))) as pool:
+        results = list(pool.map(_test_one, proxies))
+
+    return {"results": results, "alive": sum(1 for r in results if r["ok"]), "total": len(results)}

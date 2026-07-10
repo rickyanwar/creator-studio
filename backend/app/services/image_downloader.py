@@ -1,13 +1,15 @@
-"""Gallery image downloader — abstraction layer with two switchable backends.
+"""Gallery image downloader — collects candidate image URLs via 9Router.
 
-Per the Feature 2 spec (docs/spec-feature2-news-to-image.md):
-- Primary: google-images-download (tested working in this environment, but the
-  upstream repo is archived since Dec 2025 and may break at any time).
-- Fallback: icrawler's BingImageCrawler (supports license filters).
+Backend: 9Router's `/v1/web/fetch` (jina-reader provider). For each keyword we
+build a search-results URL (default: Getty editorial search), have jina-reader
+fetch it as markdown — which gets past bot-walls that block plain HTTP — and
+extract the image URLs from that markdown.
 
-Both backends are used only to *collect candidate image URLs*; the actual
-download, dedup-by-source-URL, and Pillow min-size (500x500) validation happen
-in one shared code path so the guarantees are identical regardless of engine.
+The collected URLs are then downloaded, deduped-by-source-URL, and Pillow
+min-size validated in one shared code path (`_fetch_and_store`).
+
+Note: search-result previews are often watermarked/licensed thumbnails capped at
+~612px on the long side. Ensure the caller's min-size and licensing fit the use.
 """
 
 import io
@@ -16,9 +18,12 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from PIL import Image
+
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +38,7 @@ class DownloadedImage:
     filename: str
     width: int
     height: int
-    engine: str  # "google" | "bing"
+    engine: str  # "9router"
 
 
 def keyword_slug(keyword: str) -> str:
@@ -45,80 +50,141 @@ def download_images(
     dest_dir: str | Path,
     max_num: int = 50,
     min_size: tuple[int, int] = (500, 500),
-    license_filter: str = "commercial,modify",
+    license_filter: str = "commercial,modify",  # kept for API compat; unused by the 9Router backend
     skip_urls: set[str] | frozenset[str] = frozenset(),
+    max_pages: int | None = None,
 ) -> list[DownloadedImage]:
-    """Collect image URLs for a keyword and download the ones that pass
-    dedup (skip_urls) and min-size validation. Primary engine first; any
-    failure or empty result falls through to the fallback engine."""
-    urls: list[str] = []
-    engine = "google"
-    try:
-        urls = _collect_urls_gid(keyword, max_num * 2)
-        if not urls:
-            raise RuntimeError("google-images-download returned no URLs")
-    except Exception as exc:
-        logger.warning("Gallery: google-images-download failed for %r (%s) — falling back to icrawler/Bing", keyword, exc)
-        engine = "bing"
-        urls = _collect_urls_icrawler(keyword, max_num * 2, license_filter)
+    """Collect image URLs for a keyword via 9Router web-fetch and download the
+    ones that pass dedup (skip_urls) and min-size validation."""
+    urls = _collect_urls_9router(keyword, max_num * 2, skip_urls, max_pages)
 
     if not urls:
-        raise RuntimeError(f"No image URLs found for keyword {keyword!r} on either engine")
+        logger.info("Gallery: no new image URLs for keyword %r (all already downloaded)", keyword)
+        return []
 
-    return _fetch_and_store(urls, dest_dir, max_num, min_size, skip_urls, engine)
+    return _fetch_and_store(urls, dest_dir, max_num, min_size, skip_urls, "9router")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# URL collectors (one per backend)
+# URL collector — 9Router /v1/web/fetch (jina-reader)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _collect_urls_gid(keyword: str, max_num: int) -> list[str]:
-    """Primary: google-images-download in no_download mode → list of image URLs."""
-    from google_images_download import google_images_download
-
-    gid = google_images_download.googleimagesdownload()
-    res = gid.download({
-        "keywords": keyword,
-        "limit": max_num,
-        "no_download": True,
-        "silent_mode": True,
-    })
-    if isinstance(res, tuple):  # newer versions return (paths, error_count)
-        res = res[0]
-    urls = res.get(keyword) or []
-    # in no_download mode the "paths" are the source image URLs
-    return [u for u in urls if isinstance(u, str) and u.startswith("http")]
+# Matches image URLs inside the markdown jina-reader returns, e.g.
+# ![Image 1: ...](https://media.gettyimages.com/id/123/photo/foo.jpg?s=612x612&...)
+_IMG_URL_RE = re.compile(
+    r"https?://[^\s)\"'<>]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s)\"'<>]*)?",
+    re.IGNORECASE,
+)
 
 
-def _collect_urls_icrawler(keyword: str, max_num: int, license_filter: str | None) -> list[str]:
-    """Fallback: icrawler BingImageCrawler with a downloader that only records
-    each task's file_url instead of downloading — the shared path downloads."""
-    import tempfile
+def _dedup_key(url: str) -> str:
+    """Stable per-image dedup key. Getty signs each media URL with a `c=`
+    signature that changes every fetch, so dedup on the path without its query
+    string — the same photo always maps to the same key across runs."""
+    return url.split("?", 1)[0]
 
-    from icrawler.builtin import BingImageCrawler
-    from icrawler.downloader import ImageDownloader
 
-    captured: list[str] = []
+def _9router_fetch_markdown(search_url: str) -> str:
+    """Fetch a URL through 9Router's jina-reader web-fetch and return its
+    markdown text. Raises on transport/HTTP/API error."""
+    from app.services.nine_router import get_nine_router_config
 
-    class _URLCollector(ImageDownloader):
-        def download(self, task, default_ext, timeout=5, max_retry=3, **kwargs):
-            url = task.get("file_url")
-            if url:
-                captured.append(url)
-            task["success"] = True
+    settings = get_settings()
+    cfg = get_nine_router_config()
+    base = cfg.base_url
+    if not base:
+        raise RuntimeError("9Router base URL is not configured — cannot fetch gallery images")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        crawler = BingImageCrawler(
-            downloader_cls=_URLCollector,
-            storage={"root_dir": tmp},
-            log_level=logging.WARNING,
+    resp = httpx.post(
+        f"{base}/web/fetch",
+        headers={
+            "Authorization": f"Bearer {cfg.api_key}",
+            "Content-Type": "application/json",
+        },
+        json={"url": search_url, "provider": settings.gallery_fetch_provider},
+        timeout=60.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict) and data.get("error"):
+        raise RuntimeError(f"9Router web-fetch error: {data['error']}")
+    return (data.get("content") or {}).get("text", "") if isinstance(data, dict) else ""
+
+
+def _collect_urls_9router(
+    keyword: str,
+    max_num: int,
+    skip_urls: set[str] | frozenset[str] = frozenset(),
+    max_pages: int | None = None,
+) -> list[str]:
+    """Collect NEW candidate image URLs for a keyword by fetching search-result
+    pages (newest-first) through 9Router (jina-reader) and extracting image URLs
+    from the returned markdown.
+
+    Skips images already downloaded before (`skip_urls`, matched on the stable
+    dedup key). Walks pages until enough new URLs are found, a page yields no
+    new images (caught up — since results are sorted newest-first), or the page
+    cap is reached. Returns full signed URLs (needed to actually download)."""
+    settings = get_settings()
+    template = settings.gallery_search_url_template
+    encoded = quote(keyword)
+    pages = max_pages if max_pages and max_pages > 0 else settings.gallery_max_pages
+    stop_after = settings.gallery_stop_after_consecutive_dupes
+
+    collected: list[str] = []
+    seen_keys: set[str] = set()  # processed this run (guards against a page repeating)
+    consecutive_dupes = 0        # run of already-downloaded images (newest-first → older ahead)
+
+    for page in range(1, pages + 1):
+        search_url = template.format(query=encoded, page=page)
+        try:
+            markdown = _9router_fetch_markdown(search_url)
+        except Exception as exc:
+            logger.warning("Gallery: 9Router fetch failed for %r page %d (%s)", keyword, page, exc)
+            break
+
+        page_urls = [m.group(0) for m in _IMG_URL_RE.finditer(markdown)]
+        if not page_urls:
+            break  # end of results
+
+        page_new = 0
+        early_stop = False
+        for u in page_urls:
+            key = _dedup_key(u)
+            if key in seen_keys:
+                continue  # same image seen earlier this run (pagination overlap)
+            seen_keys.add(key)
+
+            if key in skip_urls:
+                consecutive_dupes += 1
+                if stop_after and consecutive_dupes >= stop_after:
+                    early_stop = True
+                    break
+                continue
+
+            # genuinely new image
+            consecutive_dupes = 0
+            collected.append(u)
+            page_new += 1
+
+        logger.info(
+            "Gallery: keyword %r page %d — %d urls, %d new (consecutive already-have=%d)",
+            keyword, page, len(page_urls), page_new, consecutive_dupes,
         )
-        filters = {"license": license_filter} if license_filter else None
-        crawler.crawl(keyword=keyword, max_num=max_num, filters=filters)
 
-    # preserve order, drop duplicates
-    seen: set[str] = set()
-    return [u for u in captured if not (u in seen or seen.add(u))]
+        if early_stop:
+            logger.info(
+                "Gallery: keyword %r — stopped after %d consecutive already-downloaded images "
+                "(newest-first, so older pages are already downloaded)",
+                keyword, consecutive_dupes,
+            )
+            break
+        if len(collected) >= max_num:
+            break
+        if page_new == 0:
+            break  # whole page already downloaded → older pages too
+
+    return collected
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -138,11 +204,16 @@ def _fetch_and_store(
     min_w, min_h = min_size
 
     saved: list[DownloadedImage] = []
+    seen_keys: set[str] = set()
     for url in urls:
         if len(saved) >= max_num:
             break
-        if url in skip_urls:
+        # Dedup on the stable key (query stripped), but download via the full
+        # signed URL — Getty rejects the bare URL with HTTP 400.
+        key = _dedup_key(url)
+        if key in skip_urls or key in seen_keys:
             continue
+        seen_keys.add(key)
 
         try:
             resp = httpx.get(url, headers={"User-Agent": _UA}, timeout=_FETCH_TIMEOUT, follow_redirects=True)
@@ -166,7 +237,7 @@ def _fetch_and_store(
             continue
 
         saved.append(DownloadedImage(
-            source_url=url,
+            source_url=key,  # stable key stored for dedup across future runs
             local_path=str(path),
             filename=filename,
             width=img.width,
