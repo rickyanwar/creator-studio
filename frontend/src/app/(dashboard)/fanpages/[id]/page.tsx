@@ -885,6 +885,51 @@ export default function FanpageEditPage() {
                 Uses the fanpage&apos;s Mode 1 caption criteria for the Facebook post text.
               </p>
             </div>
+
+            {/* Smart layout (opt-in, experimental) */}
+            <div className="border-t border-hairline pt-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="label mb-0">Smart layout (2-photo / split) <span className="text-[10px] text-amber-500">experimental</span></label>
+                  <p className="text-[11px] text-text-secondary mt-0.5">
+                    AI decides 1 vs 2 people → single+inset or split, picks face/action photos, face-aware crop.
+                  </p>
+                </div>
+                <button
+                  onClick={() => set("ig_recreate_smart_layout", !form.ig_recreate_smart_layout)}
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+                    form.ig_recreate_smart_layout ? "bg-primary-main" : "bg-hairline"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                      form.ig_recreate_smart_layout ? "translate-x-5" : ""
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {form.ig_recreate_smart_layout && (
+                <div className="mt-3">
+                  <label className="label">Split Template (2-person news)</label>
+                  <select
+                    className="input w-full"
+                    value={(form.ig_recreate_split_template_id as number | null) ?? ""}
+                    onChange={(e) => set("ig_recreate_split_template_id", e.target.value ? parseInt(e.target.value) : null)}
+                  >
+                    <option value="">— none (falls back to News Template) —</option>
+                    {allTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.canvas_width}×{t.canvas_height})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-text-secondary mt-1">
+                    Used when a news headline is about two people. Should be a two-slot split template.
+                  </p>
+                </div>
+              )}
+            </div>
           </>
         )}
       </section>

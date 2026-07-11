@@ -48,6 +48,8 @@ export interface Fanpage {
   ig_recreate_enabled: boolean;
   ig_recreate_quote_template_id: number | null;
   ig_recreate_news_template_id: number | null;
+  ig_recreate_smart_layout: boolean;
+  ig_recreate_split_template_id: number | null;
   mode2_caption_tone: string;
   mode2_caption_language: string;
   mode2_caption_max_length: number;

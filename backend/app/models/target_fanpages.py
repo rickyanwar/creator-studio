@@ -56,6 +56,10 @@ class TargetFanpage(Base):
     ig_recreate_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     ig_recreate_quote_template_id = Column(Integer, nullable=True)  # FK to design_templates
     ig_recreate_news_template_id = Column(Integer, nullable=True)   # FK to design_templates
+    # Opt-in "smart" 2-photo design: AI decides 1 vs 2 people → single+inset or
+    # split, picks face/action photos, face-aware crop. Off = basic single photo.
+    ig_recreate_smart_layout = Column(Boolean, default=False, nullable=False, server_default="false")
+    ig_recreate_split_template_id = Column(Integer, nullable=True)  # 2-person split template
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

@@ -93,6 +93,7 @@ def download_keyword(self, keyword_id: int):
                 height=item.height,
                 source_engine=item.engine,
                 license_info=kw.license_filter,
+                label=item.label,
             )
             db.add(image)
             try:

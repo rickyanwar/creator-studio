@@ -124,15 +124,26 @@ def render_design(self, job_id: int):
             logger.warning("Design: job %d needs a manual image", job_id)
             return
 
+        # Two-slot templates also get a secondary photo (inset/split — see
+        # design_images.prepare_design_images) with face-aware focus crops.
+        from app.services.design_images import prepare_design_images, focus_points_for
+        title = job.design_title or article.scraped_title
+        template_json, image_srcs = prepare_design_images(
+            db, template.template_json, template.canvas_width,
+            title, fanpage.name, image_src,
+            main_path=gallery_image.local_path if gallery_image else None,
+        )
+
         # ── Render via Puppeteer + Fabric.js service ──
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
             json={
-                "template_json": template.template_json,
+                "template_json": template_json,
                 "width": template.canvas_width,
                 "height": template.canvas_height,
-                "title": job.design_title or article.scraped_title,
-                "image_src": image_src,
+                "title": title,
+                "image_srcs": image_srcs,
+                "focus_points": focus_points_for(image_srcs),
             },
             timeout=_RENDER_TIMEOUT,
         )

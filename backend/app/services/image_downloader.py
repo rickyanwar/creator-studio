@@ -39,6 +39,7 @@ class DownloadedImage:
     width: int
     height: int
     engine: str  # "9router"
+    label: str | None = None  # vision label: "face" | "action" | "other"
 
 
 def keyword_slug(keyword: str) -> str:
@@ -245,6 +246,13 @@ def _fetch_and_store(
             logger.warning("Gallery: failed to save %s: %s", url, exc)
             continue
 
+        # Label the photo (face/action/other) so the designer can pick by context
+        try:
+            from app.services.design_images import classify_image_type
+            label = classify_image_type(final_bytes)
+        except Exception:
+            label = None
+
         saved.append(DownloadedImage(
             source_url=key,  # stable key stored for dedup across future runs
             local_path=str(path),
@@ -252,6 +260,7 @@ def _fetch_and_store(
             width=final_img.width,
             height=final_img.height,
             engine=engine,
+            label=label,
         ))
 
     logger.info("Gallery: stored %d/%d candidate images (engine=%s)", len(saved), len(urls), engine)

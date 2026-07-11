@@ -10,7 +10,7 @@
  * the same placeholder contract for its live preload — keep the two in sync.
  */
 window.renderTemplate = function renderTemplate(args) {
-  const { templateJson, width, height, title, imageSrc, imageSrcs } = args;
+  const { templateJson, width, height, title, imageSrc, imageSrcs, focusPoints } = args;
 
   return new Promise((resolve, reject) => {
     const canvas = new fabric.StaticCanvas("c", { width, height });
@@ -83,43 +83,68 @@ window.renderTemplate = function renderTemplate(args) {
         for (const slot of imageSlots) {
           const role = slot.placeholderRole;
           const idx = role === "image" ? 0 : parseInt(role.split("_")[1], 10) - 1;
-          if (srcs[idx]) pairs.push([slot, srcs[idx]]);
+          if (srcs[idx]) pairs.push([slot, srcs[idx], idx]);
         }
 
         Promise.all(
           pairs.map(
-            ([slot, src]) =>
+            ([slot, src, si]) =>
               new Promise((res, rej) => {
                 fabric.Image.fromURL(
                   src,
-                  (img) => (img && img.width ? res([slot, img]) : rej(new Error("image failed to load"))),
+                  (img) => (img && img.width ? res([slot, img, si]) : rej(new Error("image failed to load"))),
                   { crossOrigin: "anonymous" }
                 );
               })
           )
         )
           .then((loaded) => {
-            for (const [slot, img] of loaded) {
+            for (const [slot, img, si] of loaded) {
               const slotW = slot.getScaledWidth();
               const slotH = slot.getScaledHeight();
+              const cx = slot.left + slotW / 2;
+              const cy = slot.top + slotH / 2;
               const idx = canvas.getObjects().indexOf(slot);
               const scale = Math.max(slotW / img.width, slotH / img.height);
+              const iw = img.width * scale;
+              const ih = img.height * scale;
+              // Focus point (fraction of image, e.g. the detected face). Position
+              // the image so the focus lands at the slot centre, then clamp so the
+              // slot stays fully covered — keeps the face in frame instead of a
+              // blind geometric-centre crop. Default: slightly above centre.
+              const fp = (Array.isArray(focusPoints) && focusPoints[si]) || [0.5, 0.42];
+              let left = cx - fp[0] * iw;
+              let top = cy - fp[1] * ih;
+              left = Math.min(slot.left, Math.max(slot.left + slotW - iw, left));
+              top = Math.min(slot.top, Math.max(slot.top + slotH - ih, top));
               img.set({
-                left: slot.left + slotW / 2,
-                top: slot.top + slotH / 2,
-                originX: "center",
-                originY: "center",
+                left,
+                top,
+                originX: "left",
+                originY: "top",
                 scaleX: scale,
                 scaleY: scale,
                 selectable: false,
               });
-              img.clipPath = new fabric.Rect({
-                left: slot.left,
-                top: slot.top,
-                width: slotW,
-                height: slotH,
-                absolutePositioned: true,
-              });
+              // Circle/ellipse slots clip to a circle (e.g. the round inset in
+              // "GP Today" cards); everything else clips to the slot rect.
+              const isCircle = slot.type === "circle" || slot.type === "ellipse";
+              img.clipPath = isCircle
+                ? new fabric.Circle({
+                    left: cx,
+                    top: cy,
+                    radius: Math.min(slotW, slotH) / 2,
+                    originX: "center",
+                    originY: "center",
+                    absolutePositioned: true,
+                  })
+                : new fabric.Rect({
+                    left: slot.left,
+                    top: slot.top,
+                    width: slotW,
+                    height: slotH,
+                    absolutePositioned: true,
+                  });
               canvas.remove(slot);
               canvas.insertAt(img, idx < 0 ? canvas.getObjects().length : idx, false);
             }

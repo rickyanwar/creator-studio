@@ -33,7 +33,10 @@ class GalleryImage(Base):
     public_url = Column(String(512), nullable=False)
     width = Column(Integer, nullable=False)
     height = Column(Integer, nullable=False)
-    source_engine = Column(String(16), nullable=False)  # bing | google
+    source_engine = Column(String(16), nullable=False)  # bing | google | 9router
     license_info = Column(String(64), nullable=True)
+    # Vision label at download time: "face" | "action" | "other" — lets the
+    # designer pick the right kind of photo per news context.
+    label = Column(String(16), nullable=True, index=True)
     is_used = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
     downloaded_at = Column(DateTime, server_default=func.now(), nullable=False)

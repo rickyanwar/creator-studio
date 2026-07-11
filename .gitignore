@@ -58,3 +58,4 @@ celerybeat.pid
 # Session exports (contain Instagram credentials)
 session_*.json
 session.json
+test-renders/

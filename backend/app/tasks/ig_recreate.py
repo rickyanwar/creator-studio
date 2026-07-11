@@ -154,18 +154,44 @@ def render_ig_recreate(self, job_id: int):
             db.commit()
             return
 
-        with open(post.image_local_paths[0], "rb") as f:
+        main_path = post.image_local_paths[0]
+        with open(main_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
         image_src = f"data:image/jpeg;base64,{b64}"
+
+        # Two-slot templates also get a secondary photo: circular inset → the
+        # second subject's portrait placed opposite the main face; rect slot →
+        # a two-subject split with style-consistent photos.
+        from app.services.design_images import prepare_design_images, extract_two_subjects, focus_points_for
+        from app.models.ig_sources import IGSource
+        ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
+        niche = (ig_source.ig_username if ig_source else None) or fanpage.name
+
+        smart = bool(fanpage.ig_recreate_smart_layout)
+        # Smart layout: a news headline about TWO people → use the split template
+        if (smart and fanpage.ig_recreate_split_template_id
+                and job.design_template_id == fanpage.ig_recreate_news_template_id):
+            primary, secondary = extract_two_subjects(job.design_title or "", niche)
+            if primary and secondary:
+                split_tpl = db.query(DesignTemplate).filter_by(id=fanpage.ig_recreate_split_template_id).first()
+                if split_tpl and split_tpl.template_json:
+                    template = split_tpl
+                    logger.info("IG-recreate: smart split for job %d (%s | %s)", job.id, primary, secondary)
+
+        template_json, image_srcs = prepare_design_images(
+            db, template.template_json, template.canvas_width,
+            job.design_title or "", niche, image_src, main_path=main_path, smart=smart,
+        )
 
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
             json={
-                "template_json": template.template_json,
+                "template_json": template_json,
                 "width": template.canvas_width,
                 "height": template.canvas_height,
                 "title": job.design_title,
-                "image_src": image_src,
+                "image_srcs": image_srcs,
+                "focus_points": focus_points_for(image_srcs),
             },
             timeout=_RENDER_TIMEOUT,
         )
