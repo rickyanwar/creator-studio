@@ -45,6 +45,9 @@ export interface Fanpage {
   mode2_publish_mode: PublishMode;
   mode2_gallery_keywords: string[];
   mode2_default_template_id: number | null;
+  ig_recreate_enabled: boolean;
+  ig_recreate_quote_template_id: number | null;
+  ig_recreate_news_template_id: number | null;
   mode2_caption_tone: string;
   mode2_caption_language: string;
   mode2_caption_max_length: number;
@@ -65,8 +68,6 @@ export interface IGSourceRef {
   id: number;
   ig_username: string;
   album_image_indices: number[];
-  image_edit_enabled: boolean;
-  image_edit_custom_prompt: string | null;
 }
 
 export interface FanpageDetail extends Fanpage {

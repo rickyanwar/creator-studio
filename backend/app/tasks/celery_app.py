@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.image_saver",
         "app.tasks.image_watermark",
         "app.tasks.fan_out",
+        "app.tasks.ig_recreate",
         "app.tasks.ai_generator",
         "app.tasks.publisher",
         "app.tasks.status_sync",

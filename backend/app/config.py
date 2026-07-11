@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     nine_router_base_url: str = ""          # e.g. http://109.123.232.184:20128/v1
     nine_router_api_key: str = ""           # copy from 9Router dashboard
     nine_router_model: str = "auto"   # 9Router auto-picks the model/provider
+    # Vision model for classifying IG post images (must be multimodal). Direct
+    # Gemini API keys don't work here → route through 9Router.
+    nine_router_vision_model: str = "ag/gemini-3.5-flash-extra-low"
 
     # ── AI Providers (fallback) ───────────────────
     gemini_api_key: str = ""

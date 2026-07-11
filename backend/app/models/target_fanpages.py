@@ -49,6 +49,14 @@ class TargetFanpage(Base):
     mode2_title_max_chars = Column(Integer, default=80, nullable=False, server_default="80")
     mode2_source_attribution = Column(Boolean, default=True, nullable=False, server_default="true")
 
+    # ── Mode 3: IG content recreate ───────────────
+    # Classify each scraped IG post image (9Router vision) → recreate it on a
+    # per-fanpage template: quote → quote template, news → news template (title
+    # AI-rewritten), other → skipped. Both use the IG image as the photo.
+    ig_recreate_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    ig_recreate_quote_template_id = Column(Integer, nullable=True)  # FK to design_templates
+    ig_recreate_news_template_id = Column(Integer, nullable=True)   # FK to design_templates
+
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
     caption_language = Column(String(8), default="en", nullable=False)

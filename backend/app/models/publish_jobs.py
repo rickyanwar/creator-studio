@@ -19,6 +19,7 @@ class PublishJobStatus(str, enum.Enum):
 class ContentType(str, enum.Enum):
     ig_repost = "ig_repost"
     news_content = "news_content"
+    ig_recreate = "ig_recreate"  # IG post classified + rebuilt on a quote/news template
 
 
 class AIProvider(str, enum.Enum):

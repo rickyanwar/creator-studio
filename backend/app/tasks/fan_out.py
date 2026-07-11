@@ -51,6 +51,13 @@ def create_fanout_jobs(self, post_id: int):
             if existing:
                 continue
 
+            # Mode 3: classify the IG post image and rebuild it on a quote/news
+            # template instead of reposting the original.
+            if link.fanpage.ig_recreate_enabled:
+                from app.tasks.ig_recreate import recreate_post_for_fanpage
+                recreate_post_for_fanpage.delay(post_id, link.fanpage_id)
+                continue
+
             job = PublishJob(
                 post_id=post_id,
                 fanpage_id=link.fanpage_id,

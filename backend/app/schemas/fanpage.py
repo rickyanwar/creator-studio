@@ -37,6 +37,11 @@ class FanpageBase(BaseModel):
     mode2_title_max_chars: int = 80
     mode2_source_attribution: bool = True
 
+    # ── Mode 3: IG content recreate ──
+    ig_recreate_enabled: bool = False
+    ig_recreate_quote_template_id: Optional[int] = None
+    ig_recreate_news_template_id: Optional[int] = None
+
 
 class FanpageUpdate(FanpageBase):
     pass
@@ -68,8 +73,6 @@ class IGSourceRef(BaseModel):
     id: int
     ig_username: str
     album_image_indices: list[int] = [1]
-    image_edit_enabled: bool = False
-    image_edit_custom_prompt: Optional[str] = None
 
 
 class NewsSourceRef(BaseModel):

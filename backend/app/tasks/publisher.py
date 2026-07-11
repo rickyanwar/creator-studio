@@ -26,7 +26,8 @@ def publish_job(self, job_id: int):
             return
 
         from app.models.publish_jobs import ContentType
-        if job.content_type == ContentType.news_content:
+        # news_content and ig_recreate both publish a single rendered design PNG
+        if job.content_type in (ContentType.news_content, ContentType.ig_recreate):
             _publish_news_job(db, job)
             return
 

@@ -100,8 +100,6 @@ export const updateIGSource = (
     ig_username?: string;
     is_active?: boolean;
     album_image_indices?: number[];
-    image_edit_enabled?: boolean;
-    image_edit_custom_prompt?: string;
   }
 ) => api.patch(`/ig-sources/${sourceId}`, data);
 export const deleteIGSource = (sourceId: number) =>

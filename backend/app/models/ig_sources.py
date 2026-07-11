@@ -29,8 +29,6 @@ class IGSource(Base):
         nullable=False,
         server_default="auto",
     )
-    image_edit_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
-    image_edit_custom_prompt = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
