@@ -58,6 +58,10 @@ class Settings(BaseSettings):
         "https://www.gettyimages.com/search/2/image?family=editorial&phrase={query}&sort=newest&page={page}"
     )
     gallery_max_pages: int = 10
+    # Upscale small gallery images (e.g. Getty 612px comps) via FSRCNN x2 + sharpen.
+    # FSRCNN is ~0.9s/img on CPU (EDSR is ~80x heavier). Default model in
+    # app/sr_models/FSRCNN_x2.pb; see services/upscaler.py to swap to EDSR.
+    gallery_upscale_enabled: bool = True
     # Stop paginating after this many consecutive already-downloaded images.
     # Results are newest-first, so a run of duplicates means everything after is
     # older and already downloaded too. Set 0 to disable this early-stop.

@@ -224,14 +224,23 @@ def _fetch_and_store(
             logger.debug("Gallery: skipping %s (%s)", url, exc)
             continue
 
+        # Min-size filter applies to the ORIGINAL (pre-upscale) resolution
         if img.width < min_w or img.height < min_h:
             logger.debug("Gallery: skipping %s — %dx%d below min %dx%d", url, img.width, img.height, min_w, min_h)
             continue
 
+        # Upscale small images (e.g. Getty 612px comps) → FSRCNN x2 + sharpen
+        final_bytes = resp.content
+        if get_settings().gallery_upscale_enabled:
+            from app.services.upscaler import upscale_image_bytes
+            final_bytes = upscale_image_bytes(resp.content)
+
         filename = f"{uuid.uuid4().hex}.jpg"
         path = dest / filename
         try:
-            img.convert("RGB").save(path, format="JPEG", quality=90)
+            final_img = Image.open(io.BytesIO(final_bytes))
+            final_img.load()
+            final_img.convert("RGB").save(path, format="JPEG", quality=90)
         except Exception as exc:
             logger.warning("Gallery: failed to save %s: %s", url, exc)
             continue
@@ -240,8 +249,8 @@ def _fetch_and_store(
             source_url=key,  # stable key stored for dedup across future runs
             local_path=str(path),
             filename=filename,
-            width=img.width,
-            height=img.height,
+            width=final_img.width,
+            height=final_img.height,
             engine=engine,
         ))
 
