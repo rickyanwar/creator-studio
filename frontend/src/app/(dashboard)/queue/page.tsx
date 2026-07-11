@@ -16,7 +16,7 @@ const fetcher = async () => {
     listJobs({ status: "pending_publish", limit: 100 }),
   ]);
   const news = [...(design.data as PublishJob[]), ...(publish.data as PublishJob[])]
-    .filter((j) => j.content_type === "news_content");
+    .filter((j) => j.content_type === "news_content" || j.content_type === "ig_recreate");
   return [...(review.data as PublishJob[]), ...news].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
@@ -43,7 +43,7 @@ function timeAgo(iso: string) {
 
 /* Use source URL when public URL is localhost */
 function resolveUrls(job: PublishJob): string[] {
-  if (job.content_type === "news_content") {
+  if (job.content_type === "news_content" || job.content_type === "ig_recreate") {
     return job.design_image_url ? [job.design_image_url] : [];
   }
   const pub = job.image_public_urls ?? [];
@@ -229,8 +229,8 @@ function QueueCard({
   const albumCount = urls.length;
   const caption = job.ai_generated_caption ?? "";
   const createdAt = (job as unknown as Record<string, string>).created_at;
-  const isNews = job.content_type === "news_content";
-  const needsDesign = isNews && job.status === "pending_design";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate";
+  const needsDesign = job.content_type === "news_content" && job.status === "pending_design";
 
   const mediaIcon =
     job.media_type === "album"
@@ -500,12 +500,12 @@ function Lightbox({
               <div className="min-w-0">
                 <p className="text-white text-xs font-semibold leading-none">{fanpage}</p>
                 <p className="text-white/60 text-[10px] mt-0.5">
-                  {job.content_type === "news_content" ? (job.design_title ?? "News content") : `@${job.ig_username}`}
+                  {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : "News content")) : `@${job.ig_username}`}
                   {createdAt ? ` · ${timeAgo(createdAt)}` : ""}
                 </p>
               </div>
               <span className="ml-auto text-[10px] font-semibold text-white/60 uppercase tracking-wide bg-white/10 px-2 py-0.5 rounded-full">
-                {job.content_type === "news_content" ? "news" : job.media_type}
+                {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.media_type}
               </span>
             </div>
 

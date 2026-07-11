@@ -96,7 +96,7 @@ export interface PublishJob {
   id: number;
   post_id: number | null;
   fanpage_id: number;
-  content_type: "ig_repost" | "news_content";
+  content_type: "ig_repost" | "news_content" | "ig_recreate";
   source_article_id: number | null;
   design_title: string | null;
   design_image_url: string | null;
