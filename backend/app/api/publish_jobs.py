@@ -121,11 +121,11 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     from app.models.gallery import GalleryImage
 
     job = db.query(PublishJob).filter_by(id=job_id).first()
-    if not job or job.content_type != ContentType.news_content:
-        raise HTTPException(status_code=404, detail="News job not found")
+    if not job or job.content_type not in (ContentType.news_content, ContentType.ig_recreate):
+        raise HTTPException(status_code=404, detail="Design job not found")
 
     fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
-    article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
+    article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first() if job.source_article_id else None
 
     # Same resolution cascade as the auto-renderer (design_renderer.render_design):
     # job override → fanpage default → fanpage/shared template flagged is_default
@@ -161,6 +161,13 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     if article and article.scraped_image_url:
         candidates.insert(0, {"public_url": article.scraped_image_url, "keyword": "article hero", "is_used": False, "width": None, "height": None})
 
+    # IG-recreate: the recreated design uses the IG post's own image(s)
+    if job.content_type == ContentType.ig_recreate and job.post_id:
+        from app.models.posts import Post
+        post = db.query(Post).filter_by(id=job.post_id).first()
+        for u in reversed(list((post.image_public_urls if post else None) or [])):
+            candidates.insert(0, {"public_url": u, "keyword": "IG post", "is_used": False, "width": None, "height": None})
+
     return {
         "job_id": job.id,
         "status": job.status.value,
@@ -194,8 +201,8 @@ async def upload_design_image(job_id: int, db: DB, _: CurrentUser, file: UploadF
 
     settings = get_settings()
     job = db.query(PublishJob).filter_by(id=job_id).first()
-    if not job or job.content_type != ContentType.news_content:
-        raise HTTPException(status_code=404, detail="News job not found")
+    if not job or job.content_type not in (ContentType.news_content, ContentType.ig_recreate):
+        raise HTTPException(status_code=404, detail="Design job not found")
 
     data = await file.read()
     if not data:
@@ -211,7 +218,7 @@ async def upload_design_image(job_id: int, db: DB, _: CurrentUser, file: UploadF
     job.status = PublishJobStatus.pending_publish
     job.last_error = None
 
-    article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
+    article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first() if job.source_article_id else None
     if article:
         article.status = ArticleStatus.designed
 
