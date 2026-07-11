@@ -10,7 +10,7 @@
  * the same placeholder contract for its live preload — keep the two in sync.
  */
 window.renderTemplate = function renderTemplate(args) {
-  const { templateJson, width, height, title, imageSrc } = args;
+  const { templateJson, width, height, title, imageSrc, imageSrcs } = args;
 
   return new Promise((resolve, reject) => {
     const canvas = new fabric.StaticCanvas("c", { width, height });
@@ -64,49 +64,69 @@ window.renderTemplate = function renderTemplate(args) {
           }
         }
 
-        // ── Image slot placeholder ──
-        const slot = objects.find((o) => o.placeholderRole === "image");
-        if (!slot || !imageSrc) {
+        // ── Image slot placeholders (image, image_2, image_3, …) ──
+        // Back-compat: single imageSrc → the "image" slot. imageSrcs (array)
+        // maps by index: image→0, image_2→1, image_N→N-1.
+        const srcs = Array.isArray(imageSrcs) && imageSrcs.length
+          ? imageSrcs
+          : (imageSrc ? [imageSrc] : []);
+        const imageSlots = objects.filter(
+          (o) => typeof o.placeholderRole === "string" && /^image(_\d+)?$/.test(o.placeholderRole)
+        );
+        if (!imageSlots.length || !srcs.length) {
           canvas.renderAll();
           resolve(canvas.toDataURL({ format: "png" }));
           return;
         }
 
-        const slotW = slot.getScaledWidth();
-        const slotH = slot.getScaledHeight();
-        const slotIndex = objects.indexOf(slot);
+        const pairs = [];
+        for (const slot of imageSlots) {
+          const role = slot.placeholderRole;
+          const idx = role === "image" ? 0 : parseInt(role.split("_")[1], 10) - 1;
+          if (srcs[idx]) pairs.push([slot, srcs[idx]]);
+        }
 
-        fabric.Image.fromURL(
-          imageSrc,
-          (img) => {
-            if (!img || !img.width) {
-              reject(new Error("image failed to load"));
-              return;
+        Promise.all(
+          pairs.map(
+            ([slot, src]) =>
+              new Promise((res, rej) => {
+                fabric.Image.fromURL(
+                  src,
+                  (img) => (img && img.width ? res([slot, img]) : rej(new Error("image failed to load"))),
+                  { crossOrigin: "anonymous" }
+                );
+              })
+          )
+        )
+          .then((loaded) => {
+            for (const [slot, img] of loaded) {
+              const slotW = slot.getScaledWidth();
+              const slotH = slot.getScaledHeight();
+              const idx = canvas.getObjects().indexOf(slot);
+              const scale = Math.max(slotW / img.width, slotH / img.height);
+              img.set({
+                left: slot.left + slotW / 2,
+                top: slot.top + slotH / 2,
+                originX: "center",
+                originY: "center",
+                scaleX: scale,
+                scaleY: scale,
+                selectable: false,
+              });
+              img.clipPath = new fabric.Rect({
+                left: slot.left,
+                top: slot.top,
+                width: slotW,
+                height: slotH,
+                absolutePositioned: true,
+              });
+              canvas.remove(slot);
+              canvas.insertAt(img, idx < 0 ? canvas.getObjects().length : idx, false);
             }
-            const scale = Math.max(slotW / img.width, slotH / img.height);
-            img.set({
-              left: slot.left + slotW / 2,
-              top: slot.top + slotH / 2,
-              originX: "center",
-              originY: "center",
-              scaleX: scale,
-              scaleY: scale,
-              selectable: false,
-            });
-            img.clipPath = new fabric.Rect({
-              left: slot.left,
-              top: slot.top,
-              width: slotW,
-              height: slotH,
-              absolutePositioned: true,
-            });
-            canvas.remove(slot);
-            canvas.insertAt(img, slotIndex, false);
             canvas.renderAll();
             resolve(canvas.toDataURL({ format: "png" }));
-          },
-          { crossOrigin: "anonymous" }
-        );
+          })
+          .catch(reject);
       } catch (err) {
         reject(err);
       }

@@ -332,20 +332,21 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
       c.setActiveObject(box);
     });
 
-  const addImageSlot = () =>
+  const addImageSlot = (role: string = "image") =>
     withCanvas((c) => {
-      clearRole(c, "image");
+      clearRole(c, role);
+      const secondary = role !== "image";
       const rect = new fabric.Rect({
-        left: 0,
+        left: secondary ? Math.round(width * 0.5) : 0,
         top: 0,
-        width: width,
+        width: secondary ? Math.round(width * 0.5) : width,
         height: Math.round(height * 0.66),
-        fill: "#374151",
+        fill: secondary ? "#4b5563" : "#374151",
         stroke: "#9ca3af",
         strokeDashArray: [12, 8],
         strokeWidth: 2,
       });
-      (rect as FabricObjectWithRole)[ROLE_PROP] = "image";
+      (rect as FabricObjectWithRole)[ROLE_PROP] = role;
       c.add(rect);
       c.sendToBack(rect);
       c.setActiveObject(rect);
@@ -540,8 +541,11 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
         {activeTool === "design" && (
           <>
             <p className="text-[11px] font-bold text-ink-80 mb-1">Placeholders</p>
-            <button className={panelBtn} onClick={addImageSlot} title="Where the news photo goes">
+            <button className={panelBtn} onClick={() => addImageSlot("image")} title="Main photo slot">
               <Icon icon="solar:gallery-bold-duotone" width={14} /> Image Slot
+            </button>
+            <button className={panelBtn} onClick={() => addImageSlot("image_2")} title="Secondary/related photo slot">
+              <Icon icon="solar:gallery-bold-duotone" width={14} /> Image Slot 2
             </button>
             <button className={panelBtn} onClick={addHeadline} title="Where the AI headline goes">
               <Icon icon="solar:text-bold-duotone" width={14} /> Headline
@@ -580,8 +584,11 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
             <button className={panelBtn} onClick={() => fileInputRef.current?.click()}>
               <Icon icon="solar:upload-bold-duotone" width={14} /> Upload image / logo
             </button>
-            <button className={panelBtn} onClick={addImageSlot}>
-              <Icon icon="solar:gallery-bold-duotone" width={14} /> Image slot (news photo)
+            <button className={panelBtn} onClick={() => addImageSlot("image")}>
+              <Icon icon="solar:gallery-bold-duotone" width={14} /> Image slot (main)
+            </button>
+            <button className={panelBtn} onClick={() => addImageSlot("image_2")}>
+              <Icon icon="solar:gallery-bold-duotone" width={14} /> Image slot 2 (related)
             </button>
           </>
         )}
@@ -613,7 +620,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
           <div className="rounded-lg border border-hairline p-3 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs font-bold text-ink">
-                {selectedRole === "title" ? "📰 Headline placeholder" : selectedRole === "image" ? "🖼 Image slot" : selected.type}
+                {selectedRole === "title" ? "📰 Headline placeholder" : selectedRole === "image" ? "🖼 Image slot" : selectedRole === "image_2" ? "🖼 Image slot 2" : selected.type}
               </p>
               <div className="flex gap-0.5">
                 <button className="p-1 rounded hover:bg-parchment" title="Bring to front" onClick={() => moveLayer("front")}>
@@ -799,7 +806,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
                 </div>
               </>
             )}
-            {!isText && selectedRole !== "image" && (
+            {!isText && selectedRole !== "image" && selectedRole !== "image_2" && (
               <>
                 {(selected.type === "rect" || selected.type === "circle" || selected.type === "triangle") && (
                   <div>
