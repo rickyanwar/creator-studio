@@ -132,6 +132,7 @@ def render_design(self, job_id: int):
             db, template.template_json, template.canvas_width,
             title, fanpage.name, image_src,
             main_path=gallery_image.local_path if gallery_image else None,
+            expand=bool(fanpage.design_expand),
         )
 
         # ── Render via Puppeteer + Fabric.js service ──
@@ -144,6 +145,7 @@ def render_design(self, job_id: int):
                 "title": title,
                 "image_srcs": image_srcs,
                 "focus_points": focus_points_for(image_srcs),
+                "scale": settings.design_render_scale,
             },
             timeout=_RENDER_TIMEOUT,
         )

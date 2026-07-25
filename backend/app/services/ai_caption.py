@@ -59,8 +59,19 @@ def _switch_to_groq():
 # Prompt builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_caption_prompt(fanpage, source_username: str, original_caption: str) -> str:
-    """Build the AI prompt from fanpage criteria + source context."""
+def _eff(source, fanpage, field: str):
+    """Effective caption value: the IG source's per-source override when it is
+    set (non-empty), else the fanpage's own criteria."""
+    if source is not None:
+        v = getattr(source, field, None)
+        if v is not None and v != "":
+            return v
+    return getattr(fanpage, field)
+
+
+def build_caption_prompt(fanpage, source_username: str, original_caption: str, source=None) -> str:
+    """Build the AI prompt from fanpage criteria + source context. When `source`
+    (an IGSource) has its own caption criteria set, those override the fanpage's."""
     attribution_line = ""
     if fanpage.use_attribution:
         attribution_line = (
@@ -71,21 +82,28 @@ def build_caption_prompt(fanpage, source_username: str, original_caption: str) -
     must_include = ", ".join(fanpage.caption_must_include) if fanpage.caption_must_include else "none"
     must_avoid = ", ".join(fanpage.caption_must_avoid) if fanpage.caption_must_avoid else "none"
 
+    language = _eff(source, fanpage, "caption_language")
+    tone = _eff(source, fanpage, "caption_tone")
+    max_length = _eff(source, fanpage, "caption_max_length")
+    hashtag_count = _eff(source, fanpage, "caption_hashtag_count")
+    cta_text = _eff(source, fanpage, "caption_cta_text")
+    custom_prompt = _eff(source, fanpage, "caption_custom_prompt")
+
     return f"""You are a social media copywriter for the Facebook Fanpage "{fanpage.name}".
 
 ORIGINAL POST CONTEXT (from Instagram @{source_username}):
 "{original_caption}"
 
 TASK: Rewrite the caption for the Facebook Fanpage above with these criteria:
-- Language: {fanpage.caption_language}
-- Tone: {fanpage.caption_tone}
-- Maximum length: {fanpage.caption_max_length} characters
+- Language: {language}
+- Tone: {tone}
+- Maximum length: {max_length} characters
 - Must include keywords: {must_include}
 - Must avoid words: {must_avoid}
-- Include {fanpage.caption_hashtag_count} relevant hashtags at the end
-- End with call-to-action: {fanpage.caption_cta_text if fanpage.caption_cta_text else "none"}
+- Include {hashtag_count} relevant hashtags at the end
+- End with call-to-action: {cta_text if cta_text else "none"}
 {attribution_line}
-- Additional notes: {fanpage.caption_custom_prompt if fanpage.caption_custom_prompt else "none"}
+- Additional notes: {custom_prompt if custom_prompt else "none"}
 
 OUTPUT: only the final caption, no explanation, no quote marks."""
 

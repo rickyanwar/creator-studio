@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     storage_base_path: str = "/var/www/media"
     storage_base_url: str = "http://localhost/media"
 
+    # Design render output multiplier — 2 → 2160×2700 (~2K) crisp PNGs.
+    design_render_scale: int = 2
+
     # ── Repliz ────────────────────────────────────
     repliz_base_url: str = "https://api.repliz.com"
     repliz_access_key: str = ""
@@ -62,6 +65,11 @@ class Settings(BaseSettings):
     # FSRCNN is ~0.9s/img on CPU (EDSR is ~80x heavier). Default model in
     # app/sr_models/FSRCNN_x2.pb; see services/upscaler.py to swap to EDSR.
     gallery_upscale_enabled: bool = True
+    # HQ upscale (opt-in): UltraSharpV2 (whole image) + GFPGAN (faces) via
+    # onnxruntime — detailed bikes/gear/faces, CPU-only, SLOW (~30s–2min/img).
+    # Applied at gallery-download time only. Needs ~2–3 GB free RAM; models are
+    # downloaded on first use. Overrides gallery_upscale_enabled when true.
+    hq_upscale_enabled: bool = False
     # Stop paginating after this many consecutive already-downloaded images.
     # Results are newest-first, so a run of duplicates means everything after is
     # older and already downloaded too. Set 0 to disable this early-stop.

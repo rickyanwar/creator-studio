@@ -934,6 +934,33 @@ export default function FanpageEditPage() {
         )}
       </section>
 
+      {/* ── Section: Image Framing (news + IG recreate) ── */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">Image Framing</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <label className="label mb-0">Expand image to fill (auto)</label>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              When a photo would be heavily cropped, fill the frame instead — mirror-extend
+              action shots, blurred fit for close-up faces. Photos that already fit are untouched.
+              Applies to news &amp; IG-recreate designs.
+            </p>
+          </div>
+          <button
+            onClick={() => set("design_expand", !form.design_expand)}
+            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+              form.design_expand ? "bg-primary-main" : "bg-hairline"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                form.design_expand ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
+      </section>
+
       {/* ── Section 4: Live Caption Preview ───────────── */}
       <section className="card space-y-4">
         <h2 className="text-base font-semibold text-text-primary">Caption Preview</h2>

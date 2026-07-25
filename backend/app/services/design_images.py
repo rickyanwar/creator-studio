@@ -14,6 +14,11 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# The renderer outputs at DESIGN_SCALE× the design size (crisper, ~2K). Composited
+# photos (reflect-extend / fit+blur) are built at the same scale so their detail
+# survives the high-res render. Keep in sync with the renderer's `scale` default.
+DESIGN_SCALE = int(os.getenv("DESIGN_RENDER_SCALE", "2"))
+
 
 def template_has_role(template_json, role: str) -> bool:
     return find_role_object(template_json, role) is not None
@@ -29,6 +34,156 @@ def find_role_object(template_json, role: str):
 def file_to_datauri(path: str) -> str:
     with open(path, "rb") as f:
         return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
+
+
+def fit_with_blur_bg(image_bytes: bytes, target_w: int, target_h: int,
+                     top_bias: float = 0.24, pad: float = 0.98,
+                     blur: int = 40, darken: float = 0.78) -> bytes | None:
+    """Canva-style "fit": show the WHOLE subject (contain, no hard crop) over a
+    blurred, darkened cover of the same photo so the frame stays full-bleed.
+    The subject is nudged up (top_bias) to stay clear of the bottom text overlay.
+    Returns JPEG bytes sized target_w×target_h, or None if PIL/decoding fails."""
+    try:
+        import io
+        from PIL import Image, ImageFilter, ImageEnhance
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        iw, ih = img.size
+        # Background: cover-crop → blur → darken.
+        sbg = max(target_w / iw, target_h / ih)
+        bg = img.resize((max(1, int(iw * sbg)), max(1, int(ih * sbg))))
+        l = (bg.width - target_w) // 2
+        t = (bg.height - target_h) // 2
+        bg = bg.crop((l, t, l + target_w, t + target_h))
+        bg = bg.filter(ImageFilter.GaussianBlur(blur))
+        bg = ImageEnhance.Brightness(bg).enhance(darken)
+        # Foreground: contain the whole subject, nudged up.
+        sfg = min(target_w * pad / iw, target_h * pad / ih)
+        fw, fh = max(1, int(iw * sfg)), max(1, int(ih * sfg))
+        fg = img.resize((fw, fh))
+        x = (target_w - fw) // 2
+        y = int((target_h - fh) * top_bias)
+        bg.paste(fg, (x, y))
+        out = io.BytesIO()
+        bg.save(out, "JPEG", quality=90)
+        return out.getvalue()
+    except Exception as exc:
+        logger.warning("fit_with_blur_bg failed: %s", exc)
+        return None
+
+
+def reflect_extend(image_bytes: bytes, target_w: int, target_h: int,
+                   top_bias: float = 0.16, zoom: float = 1.08, feather: int = 70,
+                   blur: int = 26, edge_dark: float = 0.55) -> bytes | None:
+    """Fill the frame by fitting the photo to the slot WIDTH (with a slight zoom
+    so the subject is more prominent and less filling is needed) and extending the
+    empty area with a mirrored continuation of the scene — natural for racing
+    shots (track, grass, crowd, barriers) without blur bars.
+
+    Refinements: the photo is raised (top_bias small) so the extension piles up at
+    the BOTTOM, under the text overlay where it barely shows; the seam is feathered
+    so there's no visible edge; the extension is darkened toward the far edges for
+    depth. Returns JPEG bytes, or None on failure."""
+    try:
+        import io
+        import numpy as np
+        from PIL import Image, ImageFilter
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        iw, ih = img.size
+        scale = (target_w / iw) * zoom
+        rw, rh = max(1, round(iw * scale)), max(1, round(ih * scale))
+        img = img.resize((rw, rh))
+        if rw > target_w:  # zoom overshoots width → centre-crop the sides
+            l = (rw - target_w) // 2
+            img = img.crop((l, 0, l + target_w, rh))
+        arr = np.asarray(img)
+        h = arr.shape[0]
+        if h >= target_h:  # tall enough → just crop, biased up
+            t = int((h - target_h) * top_bias)
+            out_img = Image.fromarray(arr[t:t + target_h])
+        else:
+            pt = int((target_h - h) * top_bias)
+            pb = target_h - h - pt
+            padded = np.pad(arr, ((pt, pb), (0, 0), (0, 0)), mode="reflect").astype(np.float32)
+            blurred = np.asarray(
+                Image.fromarray(padded.astype(np.uint8)).filter(ImageFilter.GaussianBlur(blur))
+            ).astype(np.float32)
+            ys = np.arange(target_h)
+            # darken the mirrored extension toward the far top/bottom edges
+            d_top = np.clip((pt - ys) / max(pt, 1), 0, 1)
+            d_bot = np.clip((ys - (pt + h)) / max(pb, 1), 0, 1)
+            blurred *= (1 - np.maximum(d_top, d_bot) * (1 - edge_dark))[:, None, None]
+            # feathered seam: sharp photo fades into the extension over `feather` px
+            rt = np.clip((ys - pt) / feather, 0, 1)
+            rb = np.clip((pt + h - 1 - ys) / feather, 0, 1)
+            alpha = np.minimum(rt, rb)[:, None, None]
+            sharp = np.zeros((target_h, target_w, 3), np.float32)
+            sharp[pt:pt + h] = arr
+            res = blurred * (1 - alpha) + sharp * alpha
+            out_img = Image.fromarray(np.clip(res, 0, 255).astype(np.uint8))
+        out = io.BytesIO()
+        out_img.save(out, "JPEG", quality=92)
+        return out.getvalue()
+    except Exception as exc:
+        logger.warning("reflect_extend failed: %s", exc)
+        return None
+
+
+def _has_dominant_face(image_bytes: bytes) -> bool:
+    """True when a large face fills the frame (close-up portrait) — mirroring it
+    would look wrong, so prefer fit+blur over reflect-extend."""
+    try:
+        import cv2
+        import numpy as np
+
+        arr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            return False
+        gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(int(w * 0.06), int(h * 0.06)))
+        return any(fw >= 0.22 * w for (_x, _y, fw, _fh) in faces)
+    except Exception:
+        return False
+
+
+def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | None:
+    """Decide per-image whether the frame needs filling and how. Returns the
+    composite bytes, or None to leave the photo untouched (plain cover + focus).
+
+    - Source close to (or taller than) the slot aspect → None (cover crops little).
+    - Wide/landscape source (would crop heavily) → EXTEND: reflect-extend for
+      continuous-background action shots, fit+blur when a face dominates.
+    """
+    try:
+        import io
+        from PIL import Image
+
+        iw, ih = Image.open(io.BytesIO(image_bytes)).size
+    except Exception:
+        return None
+    slot_ar = target_w / target_h
+    img_ar = iw / ih
+    if img_ar < slot_ar * 1.15:  # portrait / near-square → cover is fine
+        return None
+    if _has_dominant_face(image_bytes):
+        return fit_with_blur_bg(image_bytes, target_w, target_h)
+    return reflect_extend(image_bytes, target_w, target_h)
+
+
+def _expand_datauri(datauri: str, target_w: int, target_h: int) -> str:
+    """Apply smart_expand to a data-URI image; return the original untouched when
+    no expansion is needed or on any failure (graceful)."""
+    try:
+        raw = base64.b64decode(datauri.split(",", 1)[1])
+    except Exception:
+        return datauri
+    composite = smart_expand(raw, target_w, target_h)
+    if not composite:
+        return datauri
+    return "data:image/jpeg;base64," + base64.b64encode(composite).decode()
 
 
 def extract_secondary_subject(title: str, niche: str) -> str | None:
@@ -56,9 +211,11 @@ def extract_secondary_subject(title: str, niche: str) -> str | None:
 
 def detect_focus_point(image_bytes: bytes) -> list:
     """Return [fx, fy] (0..1) of the main subject to focus the crop on — the
-    largest detected face, else slightly above centre. OpenCV Haar cascade runs
-    locally in ~ms (no API)."""
-    default = [0.5, 0.42]
+    largest detected face, else the salient object, else slightly above centre.
+    Vertical is biased UP (smaller fy raises the subject in the crop) because the
+    bottom of the card carries the text overlay — we keep the subject clear of it.
+    OpenCV runs locally in ~ms (no API)."""
+    default = [0.5, 0.34]
     try:
         import cv2
         import numpy as np
@@ -79,7 +236,33 @@ def detect_focus_point(image_bytes: bytes) -> list:
             # a wrong focus drags the crop into the background, worse than the
             # default. float() — np.float64 is not JSON-serializable.
             if fw >= 0.14 * w:
-                return [round(float(fx + fw / 2) / w, 4), round(float(fy + fh / 2) / h, 4)]
+                cx = (fx + fw / 2) / w
+                # Lift the face toward the upper third so it sits above the text
+                # overlay (only bites when the source is tall enough to move).
+                cy = min(0.44, max(0.24, (fy + fh / 2) / h - 0.08))
+                return [round(float(cx), 4), round(float(cy), 4)]
+
+        # No usable face → saliency: focus on the main object/subject (bike,
+        # action shot, object). Centre of mass of the salient region, clamped so
+        # a noisy map can't push the crop way off.
+        try:
+            sal = cv2.saliency.StaticSaliencySpectralResidual_create()
+            ok, smap = sal.computeSaliency(img)
+            if ok:
+                smap = (smap * 255).astype("uint8")
+                _, th = cv2.threshold(smap, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+                M = cv2.moments(th)
+                if M["m00"] > 0:
+                    # Horizontal centre of the object is safe to trust. Vertical
+                    # is risky — saliency skews low on racing shots (colourful
+                    # leathers/bike) and would push the subject into the text
+                    # overlay, so blend toward the upper default and keep cy high.
+                    cx = min(0.8, max(0.2, M["m10"] / M["m00"] / w))
+                    cy = 0.55 * (M["m01"] / M["m00"] / h) + 0.45 * 0.34
+                    cy = min(0.46, max(0.26, cy))
+                    return [round(float(cx), 4), round(float(cy), 4)]
+        except Exception as exc:
+            logger.debug("saliency focus failed: %s", exc)
     except Exception as exc:
         logger.warning("detect_focus_point failed: %s", exc)
     return default
@@ -305,6 +488,31 @@ def fetch_subject_datauri(subject: str, image_type: str = "face", niche: str = "
     return uris[best]
 
 
+def source_news_main(db, title: str, niche: str, use_vision: bool = True):
+    """Source the MAIN photo for a recreated news card by its subject — so the
+    card shows a clean, relevant photo instead of the original IG screenshot
+    (which often carries the source page's own text/branding).
+
+    Order: a matching gallery image we already downloaded (vision-picked) →
+    a fresh Getty search if the gallery has nothing good. Returns (datauri, path)
+    or (None, None) so the caller can fall back to the IG image.
+    """
+    primary, _ = extract_two_subjects(title, niche)
+    if not primary:
+        return None, None
+    image_type = pick_split_image_type(title, niche)  # "face" or "action"
+    uri, gi = find_gallery_datauri(db, primary, use_vision=use_vision, image_type=image_type)
+    if uri:
+        logger.info("Recreate main: gallery photo for %r (%s)", primary, image_type)
+        return uri, (gi.local_path if gi else None)
+    uri = fetch_subject_datauri(primary, image_type, niche)
+    if uri:
+        logger.info("Recreate main: fresh Getty photo for %r (%s)", primary, image_type)
+        return uri, None
+    logger.info("Recreate main: no photo for %r — falling back to IG image", primary)
+    return None, None
+
+
 def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face", niche: str = "MotoGP"):
     """Two context-appropriate, vision-picked photos (same style) for a left/right
     split. Fetches fresh from Getty first, falls back to the gallery."""
@@ -392,9 +600,14 @@ def position_secondary_slot(template_json, side: str, canvas_width: int = 1080):
 
 
 def prepare_design_images(db, template_json, canvas_width: int, title: str, niche: str,
-                          main_datauri: str, main_path: str | None = None, smart: bool = True):
+                          main_datauri: str, main_path: str | None = None, smart: bool = True,
+                          expand: bool = False):
     """Source every image the template needs. Returns (template_json, image_srcs)
     — the template may be modified (inset slot repositioned).
+
+    `expand=True` (opt-in toggle) → when the MAIN photo would be hard-cropped to
+    fill the slot, fill the frame instead (reflect-extend for action shots,
+    fit+blur for close-up faces). Photos that already fit are left untouched.
 
     `smart=False` (the default OFF toggle) → main photo only, no AI
     secondary/split sourcing. `smart=True`:
@@ -405,6 +618,16 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
       two subjects (both sides FACE or both ACTION)
     Every lookup failure degrades gracefully to fewer images.
     """
+    # Reframe the MAIN photo to fill the image slot when it would otherwise be
+    # heavily cropped. Done up-front so every path below uses the filled photo.
+    if expand:
+        img_slot = find_role_object(template_json, "image")
+        tw = int((img_slot or {}).get("width", canvas_width) * (img_slot or {}).get("scaleX", 1)) if img_slot else canvas_width
+        th = int((img_slot or {}).get("height", 0) * (img_slot or {}).get("scaleY", 1)) if img_slot else 0
+        if tw and th:
+            # Build the composite at the render scale so photo detail survives.
+            main_datauri = _expand_datauri(main_datauri, tw * DESIGN_SCALE, th * DESIGN_SCALE)
+
     if not smart:
         return template_json, [main_datauri]
 

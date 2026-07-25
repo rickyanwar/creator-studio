@@ -40,13 +40,31 @@ def _effective_title_max_chars(fanpage, article) -> int:
     return max(fanpage.mode2_title_max_chars, scraped_len + 40)
 
 
+def _eff_news(source, fanpage, src_field: str, fp_field: str):
+    """Effective news-caption value: the news source's per-source override when
+    set (non-empty), else the fanpage's Mode-2 criteria."""
+    if source is not None:
+        v = getattr(source, src_field, None)
+        if v is not None and v != "":
+            return v
+    return getattr(fanpage, fp_field)
+
+
 def build_news_copy_prompt(fanpage, article) -> str:
-    source_name = article.news_source.name if article.news_source else "the original source"
+    news_source = article.news_source if article else None
+    source_name = news_source.name if news_source else "the original source"
     attribution_line = (
         f"- End the caption with a source attribution line: \"Source: {source_name}\""
         if fanpage.mode2_source_attribution else ""
     )
     content = (article.scraped_content or "")[:_MAX_CONTENT_CHARS]
+
+    language = _eff_news(news_source, fanpage, "caption_language", "mode2_caption_language")
+    tone = _eff_news(news_source, fanpage, "caption_tone", "mode2_caption_tone")
+    max_length = _eff_news(news_source, fanpage, "caption_max_length", "mode2_caption_max_length")
+    hashtag_count = _eff_news(news_source, fanpage, "caption_hashtag_count", "mode2_caption_hashtag_count")
+    cta_text = _eff_news(news_source, fanpage, "caption_cta_text", "mode2_caption_cta_text")
+    custom_prompt = _eff_news(news_source, fanpage, "caption_custom_prompt", "mode2_caption_custom_prompt")
 
     return f"""You are a social media copywriter for the Facebook Fanpage "{fanpage.name}".
 
@@ -58,7 +76,7 @@ CONTENT:
 TASK: Write two pieces of copy for a news image post, substantially rewritten in your own words (do not copy sentences from the source):
 
 1. "title" — the headline that will be printed ON the image design.
-   - Stay close to the source TITLE above: keep all its facts and names, and rewrite it only to make it more engaging (stronger verbs, urgency, hook like "BREAKING:" / "OFFICIAL:" when it fits). Translate to {fanpage.mode2_caption_language} if needed.
+   - Stay close to the source TITLE above: keep all its facts and names, and rewrite it only to make it more engaging (stronger verbs, urgency, hook like "BREAKING:" / "OFFICIAL:" when it fits). Translate to {language} if needed.
    - Keep roughly the SAME LENGTH as the source TITLE (or slightly longer with the hook) — do NOT shorten it or compress it into a vague topic label.
    - GOOD example: source "Di Giannantonio to join Red Bull KTM Factory Racing" → "BREAKING: Fabio Di Giannantonio is officially joining Red Bull KTM Factory Racing!"
    - BAD example: "MotoGP Shake-Up" (dropped the facts, too short)
@@ -66,13 +84,13 @@ TASK: Write two pieces of copy for a news image post, substantially rewritten in
    - No hashtags, no emoji, no quote marks
 
 2. "caption" — the Facebook post text that accompanies the image.
-   - Language: {fanpage.mode2_caption_language}
-   - Tone: {fanpage.mode2_caption_tone}
-   - Maximum length: {fanpage.mode2_caption_max_length} characters
-   - Include {fanpage.mode2_caption_hashtag_count} relevant hashtags at the end
-   - End with call-to-action: {fanpage.mode2_caption_cta_text if fanpage.mode2_caption_cta_text else "none"}
+   - Language: {language}
+   - Tone: {tone}
+   - Maximum length: {max_length} characters
+   - Include {hashtag_count} relevant hashtags at the end
+   - End with call-to-action: {cta_text if cta_text else "none"}
 {attribution_line}
-   - Additional notes: {fanpage.mode2_caption_custom_prompt if fanpage.mode2_caption_custom_prompt else "none"}
+   - Additional notes: {custom_prompt if custom_prompt else "none"}
 
 OUTPUT: only a raw JSON object {{"title": "...", "caption": "..."}} — no markdown fences, no explanation."""
 

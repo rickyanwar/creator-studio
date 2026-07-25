@@ -60,6 +60,10 @@ class TargetFanpage(Base):
     # split, picks face/action photos, face-aware crop. Off = basic single photo.
     ig_recreate_smart_layout = Column(Boolean, default=False, nullable=False, server_default="false")
     ig_recreate_split_template_id = Column(Integer, nullable=True)  # 2-person split template
+    # Opt-in "expand to fill": when the photo would be hard-cropped, fill the
+    # frame instead (reflect-extend for action, fit+blur for close-up faces).
+    # Photos that already fit are left untouched. News + IG-recreate designs.
+    design_expand = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

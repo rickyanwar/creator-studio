@@ -21,6 +21,13 @@ class NewsSourceBody(BaseModel):
     content_selector: str
     image_selector: Optional[str] = None
     date_selector: Optional[str] = None
+    # Per-source caption criteria (override the fanpage's Mode-2 news criteria)
+    caption_tone: Optional[str] = None
+    caption_language: Optional[str] = None
+    caption_max_length: Optional[int] = None
+    caption_hashtag_count: Optional[int] = None
+    caption_cta_text: Optional[str] = None
+    caption_custom_prompt: Optional[str] = None
 
     @field_validator("render_mode")
     @classmethod
@@ -78,6 +85,12 @@ def _serialize(source, article_count: int = 0):
         "last_scraped_at": source.last_scraped_at.replace(tzinfo=timezone.utc).isoformat() if source.last_scraped_at else None,
         "last_scrape_error": source.last_scrape_error,
         "article_count": article_count,
+        "caption_tone": source.caption_tone,
+        "caption_language": source.caption_language,
+        "caption_max_length": source.caption_max_length,
+        "caption_hashtag_count": source.caption_hashtag_count,
+        "caption_cta_text": source.caption_cta_text,
+        "caption_custom_prompt": source.caption_custom_prompt,
     }
 
 
@@ -109,6 +122,12 @@ def create_news_source(body: NewsSourceBody, db: DB, _: CurrentUser):
         content_selector=body.content_selector.strip(),
         image_selector=body.image_selector.strip() if body.image_selector else None,
         date_selector=body.date_selector.strip() if body.date_selector else None,
+        caption_tone=body.caption_tone or None,
+        caption_language=body.caption_language or None,
+        caption_max_length=body.caption_max_length,
+        caption_hashtag_count=body.caption_hashtag_count,
+        caption_cta_text=body.caption_cta_text or None,
+        caption_custom_prompt=body.caption_custom_prompt or None,
     )
     db.add(source)
     db.commit()
@@ -146,6 +165,14 @@ def update_news_source(source_id: int, body: UpdateNewsSourceBody, db: DB, _: Cu
         source.image_selector = body.image_selector.strip() or None
     if body.date_selector is not None:
         source.date_selector = body.date_selector.strip() or None
+
+    # Caption criteria: apply only fields present; "" clears to fanpage default.
+    provided = body.model_fields_set
+    for field in ("caption_tone", "caption_language", "caption_max_length",
+                  "caption_hashtag_count", "caption_cta_text", "caption_custom_prompt"):
+        if field in provided:
+            val = getattr(body, field)
+            setattr(source, field, val if val not in ("", None) else None)
 
     db.commit()
     db.refresh(source)

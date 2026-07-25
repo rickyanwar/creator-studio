@@ -14,6 +14,7 @@ import {
   testNewsSelectors,
   listNewsArticles,
 } from "@/lib/api";
+import { CaptionCriteriaEditor } from "@/components/CaptionCriteriaEditor";
 
 type NewsSource = {
   id: number;
@@ -31,6 +32,12 @@ type NewsSource = {
   last_scraped_at: string | null;
   last_scrape_error: string | null;
   article_count: number;
+  caption_tone: string | null;
+  caption_language: string | null;
+  caption_max_length: number | null;
+  caption_hashtag_count: number | null;
+  caption_cta_text: string | null;
+  caption_custom_prompt: string | null;
 };
 
 type Article = {
@@ -55,6 +62,12 @@ const emptyForm = {
   content_selector: "",
   image_selector: "",
   date_selector: "",
+  caption_tone: "",
+  caption_language: "",
+  caption_max_length: "",
+  caption_hashtag_count: "",
+  caption_cta_text: "",
+  caption_custom_prompt: "",
 };
 
 export default function NewsSourcesPage() {
@@ -107,6 +120,12 @@ export default function NewsSourcesPage() {
       content_selector: s.content_selector,
       image_selector: s.image_selector ?? "",
       date_selector: s.date_selector ?? "",
+      caption_tone: s.caption_tone ?? "",
+      caption_language: s.caption_language ?? "",
+      caption_max_length: s.caption_max_length != null ? String(s.caption_max_length) : "",
+      caption_hashtag_count: s.caption_hashtag_count != null ? String(s.caption_hashtag_count) : "",
+      caption_cta_text: s.caption_cta_text ?? "",
+      caption_custom_prompt: s.caption_custom_prompt ?? "",
     });
     setEditingId(s.id);
     setTestResult(null);
@@ -126,6 +145,8 @@ export default function NewsSourcesPage() {
         ...form,
         image_selector: form.image_selector || null,
         date_selector: form.date_selector || null,
+        caption_max_length: form.caption_max_length === "" ? null : parseInt(form.caption_max_length),
+        caption_hashtag_count: form.caption_hashtag_count === "" ? null : parseInt(form.caption_hashtag_count),
       };
       if (editingId) {
         await updateNewsSource(editingId, payload);
@@ -373,6 +394,22 @@ export default function NewsSourcesPage() {
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="border-t border-hairline pt-4">
+            <h3 className="text-sm font-semibold text-ink mb-2">Caption Criteria (this source)</h3>
+            <CaptionCriteriaEditor
+              value={{
+                caption_tone: form.caption_tone,
+                caption_language: form.caption_language,
+                caption_max_length: form.caption_max_length,
+                caption_hashtag_count: form.caption_hashtag_count,
+                caption_cta_text: form.caption_cta_text,
+                caption_custom_prompt: form.caption_custom_prompt,
+              }}
+              onChange={(next) => setForm((f) => ({ ...f, ...next }))}
+              hint="Caption criteria for this news source (global — used by every fanpage subscribed to it). Empty fields inherit the fanpage's Mode-2 news criteria."
+            />
           </div>
 
           <div className="flex justify-end gap-2 border-t border-hairline pt-4">

@@ -11,6 +11,9 @@
  */
 window.renderTemplate = function renderTemplate(args) {
   const { templateJson, width, height, title, imageSrc, imageSrcs, focusPoints } = args;
+  // Output multiplier — renders the canvas at `scale`× its design size for a
+  // sharper, higher-resolution PNG (e.g. 2 → 2160×2700 for a 1080×1350 design).
+  const outScale = Number(args.scale) > 0 ? Number(args.scale) : 1;
 
   return new Promise((resolve, reject) => {
     const canvas = new fabric.StaticCanvas("c", { width, height });
@@ -75,7 +78,7 @@ window.renderTemplate = function renderTemplate(args) {
         );
         if (!imageSlots.length || !srcs.length) {
           canvas.renderAll();
-          resolve(canvas.toDataURL({ format: "png" }));
+          resolve(canvas.toDataURL({ format: "png", multiplier: outScale }));
           return;
         }
 
@@ -149,7 +152,7 @@ window.renderTemplate = function renderTemplate(args) {
               canvas.insertAt(img, idx < 0 ? canvas.getObjects().length : idx, false);
             }
             canvas.renderAll();
-            resolve(canvas.toDataURL({ format: "png" }));
+            resolve(canvas.toDataURL({ format: "png", multiplier: outScale }));
           })
           .catch(reject);
       } catch (err) {

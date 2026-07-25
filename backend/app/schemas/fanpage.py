@@ -43,6 +43,7 @@ class FanpageBase(BaseModel):
     ig_recreate_news_template_id: Optional[int] = None
     ig_recreate_smart_layout: bool = False
     ig_recreate_split_template_id: Optional[int] = None
+    design_expand: bool = False
 
 
 class FanpageUpdate(FanpageBase):

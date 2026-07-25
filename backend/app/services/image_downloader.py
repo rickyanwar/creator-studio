@@ -230,9 +230,15 @@ def _fetch_and_store(
             logger.debug("Gallery: skipping %s — %dx%d below min %dx%d", url, img.width, img.height, min_w, min_h)
             continue
 
-        # Upscale small images (e.g. Getty 612px comps) → FSRCNN x2 + sharpen
+        # Upscale small images (e.g. Getty 612px comps). HQ mode (opt-in) uses
+        # UltraSharpV2 + GFPGAN for detailed bikes/gear/faces (slow, CPU); else
+        # the fast FSRCNN x2 + sharpen.
         final_bytes = resp.content
-        if get_settings().gallery_upscale_enabled:
+        _s = get_settings()
+        if _s.hq_upscale_enabled:
+            from app.services.hq_upscale import enhance_image_bytes
+            final_bytes = enhance_image_bytes(resp.content)
+        elif _s.gallery_upscale_enabled:
             from app.services.upscaler import upscale_image_bytes
             final_bytes = upscale_image_bytes(resp.content)
 

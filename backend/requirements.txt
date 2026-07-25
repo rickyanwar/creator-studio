@@ -46,6 +46,8 @@ groq==0.13.0
 Pillow==11.0.0
 # opencv (headless — no GUI deps) + FSRCNN super-resolution for gallery upscaling
 opencv-contrib-python-headless==4.10.0.84
+# onnxruntime (CPU) — opt-in HQ upscale: UltraSharpV2 + GFPGAN (services/hq_upscale.py)
+onnxruntime==1.27.0
 
 # ── Logging ────────────────────────────────────
 structlog==24.4.0

@@ -33,6 +33,7 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
             fanpage=fanpage,
             source_username=ig_source.ig_username,
             original_caption=post.original_caption or "",
+            source=ig_source,
         )
 
         caption, provider_used = generate_caption(prompt, force_provider=force_provider)

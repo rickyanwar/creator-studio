@@ -94,9 +94,11 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int):
             logger.warning("IG-recreate: fanpage %d has no %s template configured", fanpage_id, ctype)
             return
 
-        # FB caption (per fanpage caption criteria — reuses Mode 1 prompt)
+        # FB caption (per-source caption criteria override the fanpage's Mode-1)
         try:
-            caption, provider = generate_caption(build_caption_prompt(fanpage, niche, cls["text"]))
+            caption, provider = generate_caption(
+                build_caption_prompt(fanpage, niche, cls["text"], source=ig_source)
+            )
         except GroqRateLimitError:
             raise self.retry(countdown=120)
 
@@ -154,6 +156,7 @@ def render_ig_recreate(self, job_id: int):
             db.commit()
             return
 
+        # Default photo = the IG post image (fallback only).
         main_path = post.image_local_paths[0]
         with open(main_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
@@ -162,10 +165,20 @@ def render_ig_recreate(self, job_id: int):
         # Two-slot templates also get a secondary photo: circular inset → the
         # second subject's portrait placed opposite the main face; rect slot →
         # a two-subject split with style-consistent photos.
-        from app.services.design_images import prepare_design_images, extract_two_subjects, focus_points_for
+        from app.services.design_images import (
+            prepare_design_images, extract_two_subjects, focus_points_for, source_news_main,
+        )
         from app.models.ig_sources import IGSource
         ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
         niche = (ig_source.ig_username if ig_source else None) or fanpage.name
+
+        # News recreate: use a clean, relevant photo (gallery → fresh search) by the
+        # headline's subject instead of the IG screenshot. Falls back to the IG
+        # image if nothing is found.
+        if job.design_template_id == fanpage.ig_recreate_news_template_id:
+            src, path = source_news_main(db, job.design_title or "", niche)
+            if src:
+                image_src, main_path = src, path
 
         smart = bool(fanpage.ig_recreate_smart_layout)
         # Smart layout: a news headline about TWO people → use the split template
@@ -181,6 +194,7 @@ def render_ig_recreate(self, job_id: int):
         template_json, image_srcs = prepare_design_images(
             db, template.template_json, template.canvas_width,
             job.design_title or "", niche, image_src, main_path=main_path, smart=smart,
+            expand=bool(fanpage.design_expand),
         )
 
         resp = httpx.post(
@@ -192,6 +206,7 @@ def render_ig_recreate(self, job_id: int):
                 "title": job.design_title,
                 "image_srcs": image_srcs,
                 "focus_points": focus_points_for(image_srcs),
+                "scale": settings.design_render_scale,
             },
             timeout=_RENDER_TIMEOUT,
         )

@@ -29,6 +29,15 @@ class IGSource(Base):
         nullable=False,
         server_default="auto",
     )
+    # ── Per-source caption criteria (global; overrides the fanpage's Mode-1
+    #    caption criteria when set, else falls back to the fanpage). ──
+    caption_tone = Column(String(64), nullable=True)
+    caption_language = Column(String(8), nullable=True)
+    caption_max_length = Column(Integer, nullable=True)
+    caption_hashtag_count = Column(Integer, nullable=True)
+    caption_cta_text = Column(String(256), nullable=True)
+    caption_custom_prompt = Column(Text, nullable=True)
+
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

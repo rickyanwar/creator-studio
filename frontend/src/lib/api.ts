@@ -100,6 +100,13 @@ export const updateIGSource = (
     ig_username?: string;
     is_active?: boolean;
     album_image_indices?: number[];
+    scraper_backend?: string;
+    caption_tone?: string;
+    caption_language?: string;
+    caption_max_length?: number | null;
+    caption_hashtag_count?: number | null;
+    caption_cta_text?: string;
+    caption_custom_prompt?: string;
   }
 ) => api.patch(`/ig-sources/${sourceId}`, data);
 export const deleteIGSource = (sourceId: number) =>

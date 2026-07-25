@@ -215,10 +215,15 @@ def preview_caption(fanpage_id: int, body: PreviewCaptionRequest, db: DB, _: Cur
     if not fp:
         raise HTTPException(status_code=404, detail="Fanpage not found")
 
+    # Preview honours the source's own caption criteria when it exists.
+    from app.models.ig_sources import IGSource
+    src = db.query(IGSource).filter_by(ig_username=body.source_username.lstrip("@").strip()).first()
+
     prompt = build_caption_prompt(
         fanpage=fp,
         source_username=body.source_username,
         original_caption=body.original_caption,
+        source=src,
     )
     try:
         caption, provider = generate_caption(prompt, force_provider=body.provider)

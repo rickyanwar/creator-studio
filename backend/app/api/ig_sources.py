@@ -17,6 +17,13 @@ class UpdateIGSourceRequest(BaseModel):
     is_active: Optional[bool] = None
     album_image_indices: Optional[List[int]] = None
     scraper_backend: Optional[str] = None  # "auto" | "instagrapi" | "flashapi"
+    # Per-source caption criteria (None = leave unchanged; "" = clear → fanpage default)
+    caption_tone: Optional[str] = None
+    caption_language: Optional[str] = None
+    caption_max_length: Optional[int] = None
+    caption_hashtag_count: Optional[int] = None
+    caption_cta_text: Optional[str] = None
+    caption_custom_prompt: Optional[str] = None
 
     @field_validator("album_image_indices")
     @classmethod
@@ -66,6 +73,12 @@ def list_ig_sources(
             "album_image_indices": s.album_image_indices or [1],
             "scraper_backend": (s.scraper_backend.value if s.scraper_backend else "auto"),
             "last_crawl_error": s.last_crawl_error,
+            "caption_tone": s.caption_tone,
+            "caption_language": s.caption_language,
+            "caption_max_length": s.caption_max_length,
+            "caption_hashtag_count": s.caption_hashtag_count,
+            "caption_cta_text": s.caption_cta_text,
+            "caption_custom_prompt": s.caption_custom_prompt,
         })
 
     return result
@@ -116,6 +129,15 @@ def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: Cur
             source.scraper_backend = ScraperBackend(body.scraper_backend)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid scraper_backend: must be auto, instagrapi, or flashapi")
+
+    # Caption criteria: apply only fields present in the request; "" clears back
+    # to the fanpage default (stored as NULL).
+    provided = body.model_fields_set
+    for field in ("caption_tone", "caption_language", "caption_max_length",
+                  "caption_hashtag_count", "caption_cta_text", "caption_custom_prompt"):
+        if field in provided:
+            val = getattr(body, field)
+            setattr(source, field, val if val not in ("", None) else None)
 
     db.commit()
     return {"ok": True}

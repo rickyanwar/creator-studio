@@ -15,7 +15,11 @@ import os
 logger = logging.getLogger(__name__)
 
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "sr_models", "FSRCNN_x2.pb")
-_MAX_EDGE = 1000  # skip upscaling if the long edge is already >= this
+# Target long edge — Getty originals are locked at ~612px, so we upscale toward
+# ~2K for crisp detail in the 2× design render. Repeated x2 passes (612→1224→2448)
+# reach it; overshoot is downscaled back to the target.
+_TARGET_EDGE = int(os.getenv("GALLERY_UPSCALE_TARGET", "2048"))
+_MAX_PASSES = 2
 _sr = None
 _sr_failed = False
 
@@ -40,9 +44,11 @@ def _get_sr():
     return _sr
 
 
-def upscale_image_bytes(data: bytes) -> bytes:
-    """Return a 2x-upscaled + sharpened JPEG, or the original bytes on any issue
-    (or when the image is already large enough)."""
+def upscale_image_bytes(data: bytes, target_edge: int | None = None) -> bytes:
+    """Return an upscaled + sharpened JPEG whose long edge is ~`target_edge`
+    (default ~2K), or the original bytes on any issue (or when it is already big
+    enough). Applies repeated FSRCNN x2 passes, then trims any overshoot."""
+    target = target_edge or _TARGET_EDGE
     sr = _get_sr()
     if sr is None:
         return data
@@ -54,11 +60,23 @@ def upscale_image_bytes(data: bytes) -> bytes:
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img is None:
             return data
-        h, w = img.shape[:2]
-        if max(h, w) >= _MAX_EDGE:
+        if max(img.shape[:2]) >= target:
             return data  # already sharp/large enough
 
-        up = sr.upsample(img)
+        up = img
+        passes = 0
+        while max(up.shape[:2]) < target and passes < _MAX_PASSES:
+            up = sr.upsample(up)
+            passes += 1
+        if passes == 0:
+            return data
+
+        # Trim big overshoot back to the target (keeps file size sane).
+        long_edge = max(up.shape[:2])
+        if long_edge > target * 1.25:
+            s = target / long_edge
+            up = cv2.resize(up, (int(up.shape[1] * s), int(up.shape[0] * s)), interpolation=cv2.INTER_AREA)
+
         # light unsharp mask for extra crispness
         blur = cv2.GaussianBlur(up, (0, 0), 1.2)
         up = cv2.addWeighted(up, 1.4, blur, -0.4, 0)

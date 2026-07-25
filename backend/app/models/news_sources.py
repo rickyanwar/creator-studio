@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, Enum as SAEnum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, func, Enum as SAEnum
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -31,6 +31,15 @@ class NewsSource(Base):
     content_selector = Column(String(256), nullable=False)
     image_selector = Column(String(256), nullable=True)
     date_selector = Column(String(256), nullable=True)
+
+    # ── Per-source caption criteria (global; overrides the fanpage's Mode-2
+    #    news caption criteria when set, else falls back to the fanpage). ──
+    caption_tone = Column(String(64), nullable=True)
+    caption_language = Column(String(8), nullable=True)
+    caption_max_length = Column(Integer, nullable=True)
+    caption_hashtag_count = Column(Integer, nullable=True)
+    caption_cta_text = Column(String(256), nullable=True)
+    caption_custom_prompt = Column(Text, nullable=True)
 
     last_scraped_at = Column(DateTime, nullable=True)
     last_scrape_error = Column(String(512), nullable=True)
