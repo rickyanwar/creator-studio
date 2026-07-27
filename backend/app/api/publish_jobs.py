@@ -172,6 +172,7 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
         "job_id": job.id,
         "status": job.status.value,
         "design_title": job.design_title,
+        "design_subtitle": job.design_subtitle,
         "caption": job.ai_generated_caption,
         "design_image_url": job.design_image_url,
         "article_title": article.scraped_title if article else None,

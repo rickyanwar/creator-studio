@@ -1,12 +1,11 @@
 "use client";
 
 import useSWR from "swr";
-import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners, getCrawlerHealth, updateIGSource } from "@/lib/api";
+import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners, getCrawlerHealth } from "@/lib/api";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import type { CrawlerHealth } from "@/lib/types";
 import { useState } from "react";
 import { Icon } from "@iconify/react";
-import { CaptionCriteriaEditor, captionFromSource, captionToPayload, emptyCaptionCriteria, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
 
 type IGSourceRow = {
   id: number;
@@ -18,12 +17,6 @@ type IGSourceRow = {
   last_checked_at: string | null;
   active_fanpage_count: number;
   last_crawl_error: string | null;
-  caption_tone: string | null;
-  caption_language: string | null;
-  caption_max_length: number | null;
-  caption_hashtag_count: number | null;
-  caption_cta_text: string | null;
-  caption_custom_prompt: string | null;
 };
 
 type Burner = {
@@ -55,32 +48,6 @@ export default function SourcesPage() {
   const [deleting, setDeleting] = useState<number | null>(null);
   const [autoAssigning, setAutoAssigning] = useState(false);
   const orphans = sources.filter((s) => s.active_fanpage_count === 0);
-
-  const [capOpen, setCapOpen] = useState<number | null>(null);
-  const [capForm, setCapForm] = useState<CaptionCriteria>(emptyCaptionCriteria);
-  const [savingCap, setSavingCap] = useState(false);
-
-  function toggleCaption(s: IGSourceRow) {
-    if (capOpen === s.id) { setCapOpen(null); return; }
-    setCapForm(captionFromSource(s));
-    setCapOpen(s.id);
-  }
-
-  async function saveCaption(sourceId: number) {
-    setSavingCap(true);
-    try {
-      await updateIGSource(sourceId, captionToPayload(capForm));
-      await mutate();
-      setCapOpen(null);
-    } finally {
-      setSavingCap(false);
-    }
-  }
-
-  function captionCount(s: IGSourceRow) {
-    return [s.caption_tone, s.caption_language, s.caption_max_length, s.caption_hashtag_count, s.caption_cta_text, s.caption_custom_prompt]
-      .filter((v) => v !== null && v !== "").length;
-  }
 
   async function handleDelete(sourceId: number, username: string) {
     if (!confirm(`Delete @${username}? This cannot be undone.`)) return;
@@ -245,49 +212,19 @@ export default function SourcesPage() {
                     </div>
                   </td>
                   <td className="px-5 py-3">
-                    <div className="flex items-center gap-3 justify-end">
-                      <button
-                        onClick={() => toggleCaption(s)}
-                        className={`flex items-center gap-1 transition-colors ${capOpen === s.id ? "text-primary" : "text-ink-48 hover:text-primary"}`}
-                        title="Per-source caption criteria"
-                      >
-                        <Icon icon="solar:pen-new-square-bold-duotone" width={16} />
-                        {captionCount(s) > 0 && (
-                          <span className="badge-green text-[10px]">{captionCount(s)}</span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(s.id, s.ig_username)}
-                        disabled={deleting === s.id}
-                        className="text-ink-48 hover:text-red-500 transition-colors"
-                        title="Delete source"
-                      >
-                        {deleting === s.id
-                          ? <Icon icon="svg-spinners:ring-resize" width={14} />
-                          : <Icon icon="solar:trash-bin-trash-bold-duotone" width={16} />}
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => handleDelete(s.id, s.ig_username)}
+                      disabled={deleting === s.id}
+                      className="text-ink-48 hover:text-red-500 transition-colors"
+                      title="Delete source"
+                    >
+                      {deleting === s.id
+                        ? <Icon icon="svg-spinners:ring-resize" width={14} />
+                        : <Icon icon="solar:trash-bin-trash-bold-duotone" width={16} />}
+                    </button>
                   </td>
                 </tr>
-              ))
-              .flatMap((row, i) => {
-                const s = sources[i];
-                if (capOpen !== s.id) return [row];
-                return [
-                  row,
-                  <tr key={`${s.id}-cap`} className="bg-parchment/40">
-                    <td colSpan={6} className="px-5 py-4">
-                      <CaptionCriteriaEditor
-                        value={capForm}
-                        onChange={setCapForm}
-                        onSave={() => saveCaption(s.id)}
-                        saving={savingCap}
-                        hint={`Caption criteria for @${s.ig_username} (used by every fanpage reposting this account). Empty fields inherit the fanpage's Mode-1 criteria.`}
-                      />
-                    </td>
-                  </tr>,
-                ];
-              })}
+              ))}
               {sources.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-5 py-10 text-center text-ink-48">

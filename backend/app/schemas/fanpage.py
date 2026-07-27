@@ -17,6 +17,7 @@ class FanpageBase(BaseModel):
     attribution_position: AttributionPosition = AttributionPosition.caption_end
     caption_custom_prompt: str = ""
     watermark_text: Optional[str] = None
+    watermark_image_url: Optional[str] = None
     publish_mode: PublishMode = PublishMode.manual_review
     is_active: bool = False
 
@@ -76,6 +77,13 @@ class IGSourceRef(BaseModel):
     id: int
     ig_username: str
     album_image_indices: list[int] = [1]
+    # Per-source caption criteria (global; managed from the fanpage page)
+    caption_tone: Optional[str] = None
+    caption_language: Optional[str] = None
+    caption_max_length: Optional[int] = None
+    caption_hashtag_count: Optional[int] = None
+    caption_cta_text: Optional[str] = None
+    caption_custom_prompt: Optional[str] = None
 
 
 class NewsSourceRef(BaseModel):

@@ -263,6 +263,27 @@ export default function NewsSourcesPage() {
         </button>
       </div>
 
+      {/* ── Error log banner (surfaces scrape errors at the top) ── */}
+      {sources.some((s) => s.last_scrape_error) && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
+          <div className="flex items-center gap-2 text-red-700 font-semibold text-sm">
+            <Icon icon="solar:danger-triangle-bold-duotone" width={18} />
+            {sources.filter((s) => s.last_scrape_error).length} source(s) with scrape errors
+          </div>
+          <ul className="space-y-1.5">
+            {sources.filter((s) => s.last_scrape_error).map((s) => (
+              <li key={s.id} className="text-xs text-red-700/90 flex flex-col gap-0.5 border-t border-red-100 pt-1.5 first:border-0 first:pt-0">
+                <span className="font-semibold">{s.name}</span>
+                <span className="font-mono break-words whitespace-pre-wrap text-red-600/90">{s.last_scrape_error}</span>
+                {s.last_scraped_at && (
+                  <span className="text-red-400">last tried {formatDistanceToNowStrict(new Date(s.last_scraped_at), { addSuffix: true })}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* ── Add/Edit form ── */}
       {showForm && (
         <div className="card p-6 space-y-5">

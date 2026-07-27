@@ -37,6 +37,7 @@ export interface Fanpage {
   attribution_position: AttributionPosition;
   caption_custom_prompt: string;
   watermark_text: string | null;
+  watermark_image_url: string | null;
   last_synced_at: string | null;
   created_at: string;
   // ── Content modes (Feature 2) ──
@@ -71,6 +72,12 @@ export interface IGSourceRef {
   id: number;
   ig_username: string;
   album_image_indices: number[];
+  caption_tone: string | null;
+  caption_language: string | null;
+  caption_max_length: number | null;
+  caption_hashtag_count: number | null;
+  caption_cta_text: string | null;
+  caption_custom_prompt: string | null;
 }
 
 export interface FanpageDetail extends Fanpage {

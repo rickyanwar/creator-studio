@@ -111,6 +111,13 @@ export const updateIGSource = (
 ) => api.patch(`/ig-sources/${sourceId}`, data);
 export const deleteIGSource = (sourceId: number) =>
   api.delete(`/ig-sources/${sourceId}`);
+export const uploadWatermarkImage = (fanpageId: number, file: File) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post(`/fanpages/${fanpageId}/watermark-image`, fd);
+};
+export const deleteWatermarkImage = (fanpageId: number) =>
+  api.delete(`/fanpages/${fanpageId}/watermark-image`);
 export const autoAssignBurners = () =>
   api.post("/ig-sources/auto-assign-burners");
 

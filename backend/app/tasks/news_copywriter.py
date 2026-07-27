@@ -82,6 +82,7 @@ def copywrite_article(self, article_id: int):
                 content_type=ContentType.news_content,
                 source_article_id=article_id,
                 design_title=copy.title,
+                design_subtitle=copy.subtitle,
                 ai_generated_caption=copy.caption,
                 ai_provider_used=copy.provider,
                 design_template_id=fp.mode2_default_template_id,

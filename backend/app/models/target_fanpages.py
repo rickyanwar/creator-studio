@@ -80,6 +80,7 @@ class TargetFanpage(Base):
 
     # ── Image watermark (per fanpage) ─────────────
     watermark_text = Column(String(128), nullable=True)
+    watermark_image_url = Column(String(512), nullable=True)  # logo watermark (overrides text on designs)
 
     last_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

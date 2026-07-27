@@ -16,9 +16,12 @@ import {
   addFanpageNewsSource,
   removeFanpageNewsSource,
   previewNewsCopy,
+  uploadWatermarkImage,
+  deleteWatermarkImage,
 } from "@/lib/api";
 import type { FanpageDetail, IGSourceRef } from "@/lib/types";
 import { Icon } from "@iconify/react";
+import { CaptionCriteriaEditor, captionFromSource, captionToPayload, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
 
 const fetcher = (id: number) => getFanpage(id).then((r) => r.data as FanpageDetail);
 
@@ -36,6 +39,25 @@ function IGSourceCard({
   const [indices, setIndices] = useState<number[]>(source.album_image_indices ?? [1]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  const [capOpen, setCapOpen] = useState(false);
+  const [capForm, setCapForm] = useState<CaptionCriteria>(captionFromSource(source));
+  const [capSaving, setCapSaving] = useState(false);
+  const capCount = [
+    source.caption_tone, source.caption_language, source.caption_max_length,
+    source.caption_hashtag_count, source.caption_cta_text, source.caption_custom_prompt,
+  ].filter((v) => v !== null && v !== "").length;
+
+  async function saveCaption() {
+    setCapSaving(true);
+    try {
+      await updateIGSource(source.id, captionToPayload(capForm));
+      onAlbumSaved();
+      setCapOpen(false);
+    } finally {
+      setCapSaving(false);
+    }
+  }
 
   useEffect(() => {
     setIndices(source.album_image_indices ?? [1]);
@@ -137,6 +159,37 @@ function IGSourceCard({
         </div>
       </div>
 
+      {/* Divider */}
+      <div className="border-t border-hairline" />
+
+      {/* Per-source caption criteria */}
+      <div className="space-y-2">
+        <button
+          onClick={() => { setCapForm(captionFromSource(source)); setCapOpen((o) => !o); }}
+          className="flex items-center justify-between w-full text-left"
+        >
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary uppercase tracking-wide">
+            <Icon icon="solar:pen-new-square-bold-duotone" width={13} />
+            Caption criteria
+            {capCount > 0 && (
+              <span className="normal-case rounded-full bg-primary-main/15 text-primary-main px-1.5 py-0.5 text-[10px] font-semibold">{capCount} set</span>
+            )}
+          </span>
+          <Icon icon={capOpen ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={14} className="text-text-secondary" />
+        </button>
+        {capOpen && (
+          <div className="pt-1">
+            <CaptionCriteriaEditor
+              value={capForm}
+              onChange={setCapForm}
+              onSave={saveCaption}
+              saving={capSaving}
+              hint="Applies to this Instagram source across all fanpages. Empty fields inherit this fanpage's caption criteria below."
+            />
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }
@@ -153,6 +206,29 @@ export default function FanpageEditPage() {
   const [saving, setSaving] = useState(false);
   const formInitialized = useRef(false);
   const [newSource, setNewSource] = useState("");
+  const [wmUploading, setWmUploading] = useState(false);
+
+  async function handleWatermarkUpload(file: File) {
+    setWmUploading(true);
+    try {
+      await uploadWatermarkImage(fanpageId, file);
+      await mutate();
+    } catch {
+      alert("Upload failed — make sure the file is a valid image.");
+    } finally {
+      setWmUploading(false);
+    }
+  }
+  async function handleWatermarkDelete() {
+    setWmUploading(true);
+    try {
+      await deleteWatermarkImage(fanpageId);
+      await mutate();
+    } finally {
+      setWmUploading(false);
+    }
+  }
+
   const [previewSrc, setPreviewSrc] = useState("");
   const [previewOrig, setPreviewOrig] = useState("");
   const [previewResult, setPreviewResult] = useState("");
@@ -499,6 +575,32 @@ export default function FanpageEditPage() {
           />
           <p className="text-[11px] text-text-secondary mt-1">
             Stamped onto post images before publishing. Leave empty to skip.
+          </p>
+        </div>
+
+        {/* Watermark logo (image) — overrides the text watermark on designs */}
+        <div>
+          <label className="label">Watermark Logo (image)</label>
+          <div className="flex items-center gap-3">
+            {fp.watermark_image_url ? (
+              <div className="flex items-center gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={fp.watermark_image_url} alt="watermark" className="h-12 rounded-md border border-hairline bg-[rgba(0,0,0,0.3)] p-1" />
+                <button onClick={handleWatermarkDelete} disabled={wmUploading} className="btn-ghost text-error-main flex items-center gap-1">
+                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} /> Remove
+                </button>
+              </div>
+            ) : (
+              <label className={`btn-ghost flex items-center gap-2 cursor-pointer ${wmUploading ? "opacity-50" : ""}`}>
+                {wmUploading ? <Icon icon="svg-spinners:ring-resize" width={14} /> : <Icon icon="solar:upload-bold-duotone" width={14} />}
+                Upload logo
+                <input type="file" accept="image/*" className="hidden" disabled={wmUploading}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWatermarkUpload(f); e.currentTarget.value = ""; }} />
+              </label>
+            )}
+          </div>
+          <p className="text-[11px] text-text-secondary mt-1">
+            A logo (PNG with transparency recommended) placed on every design. When set, it overrides the text watermark.
           </p>
         </div>
       </section>

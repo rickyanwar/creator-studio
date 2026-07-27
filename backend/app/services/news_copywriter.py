@@ -23,9 +23,10 @@ _MAX_CONTENT_CHARS = 4000
 
 @dataclass
 class NewsCopy:
-    title: str      # short headline placed on the image design
+    title: str      # short headline placed on the image design (may carry **red** markers)
     caption: str    # FB post text
     provider: AIProviderName
+    subtitle: str = ""  # short sub-headline for the design (may carry **red** markers)
 
 
 def _effective_title_max_chars(fanpage, article) -> int:
@@ -73,17 +74,22 @@ TITLE: {article.scraped_title}
 CONTENT:
 {content}
 
-TASK: Write two pieces of copy for a news image post, substantially rewritten in your own words (do not copy sentences from the source):
+TASK: Write copy for a news image post, substantially rewritten in your own words (do not copy sentences from the source):
 
 1. "title" — the headline that will be printed ON the image design.
    - Stay close to the source TITLE above: keep all its facts and names, and rewrite it only to make it more engaging (stronger verbs, urgency, hook like "BREAKING:" / "OFFICIAL:" when it fits). Translate to {language} if needed.
    - Keep roughly the SAME LENGTH as the source TITLE (or slightly longer with the hook) — do NOT shorten it or compress it into a vague topic label.
    - GOOD example: source "Di Giannantonio to join Red Bull KTM Factory Racing" → "BREAKING: Fabio Di Giannantonio is officially joining Red Bull KTM Factory Racing!"
    - BAD example: "MotoGP Shake-Up" (dropped the facts, too short)
-   - Maximum {_effective_title_max_chars(fanpage, article)} characters
+   - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 5 words) in double asterisks so it renders in red, e.g. "Marc Marquez takes **his first pole** at Sachsenring". Mark exactly ONE phrase; leave the rest unmarked.
+   - Maximum {_effective_title_max_chars(fanpage, article)} characters (the ** markers do not count)
    - No hashtags, no emoji, no quote marks
 
-2. "caption" — the Facebook post text that accompanies the image.
+2. "subtitle" — one short supporting sentence printed under the headline on the image.
+   - Max 120 characters, same language as the title, plain factual detail that supports the headline.
+   - HIGHLIGHT the key phrase (2 to 6 words) in double asterisks, same as the title.
+
+3. "caption" — the Facebook post text that accompanies the image (NO asterisk markers here).
    - Language: {language}
    - Tone: {tone}
    - Maximum length: {max_length} characters
@@ -92,11 +98,12 @@ TASK: Write two pieces of copy for a news image post, substantially rewritten in
 {attribution_line}
    - Additional notes: {custom_prompt if custom_prompt else "none"}
 
-OUTPUT: only a raw JSON object {{"title": "...", "caption": "..."}} — no markdown fences, no explanation."""
+OUTPUT: only a raw JSON object {{"title": "...", "subtitle": "...", "caption": "..."}} — no markdown fences, no explanation."""
 
 
-def _parse_news_copy(raw: str) -> tuple[str, str]:
-    """Parse the model's JSON output, tolerating markdown fences and stray text."""
+def _parse_news_copy(raw: str) -> tuple[str, str, str]:
+    """Parse the model's JSON output, tolerating markdown fences and stray text.
+    Returns (title, subtitle, caption); subtitle may be empty."""
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
     # models occasionally prepend/append prose — grab the outermost JSON object
     match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
@@ -104,10 +111,11 @@ def _parse_news_copy(raw: str) -> tuple[str, str]:
         raise ValueError(f"no JSON object in AI output: {raw[:200]!r}")
     data = json.loads(match.group(0))
     title = str(data.get("title") or "").strip()
+    subtitle = str(data.get("subtitle") or "").strip()
     caption = str(data.get("caption") or "").strip()
     if not title or not caption:
         raise ValueError(f"AI output missing title/caption: {raw[:200]!r}")
-    return title, caption
+    return title, subtitle, caption
 
 
 def generate_news_copy(fanpage, article, force_provider: AIProviderName | None = None) -> NewsCopy:
@@ -118,10 +126,12 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     """
     prompt = build_news_copy_prompt(fanpage, article)
     raw, provider = generate_caption(prompt, force_provider=force_provider)
-    title, caption = _parse_news_copy(raw)
+    title, subtitle, caption = _parse_news_copy(raw)
 
+    # Length check ignores the ** highlight markers; if we must truncate we drop
+    # the markers (rare) rather than risk splitting a pair.
     title_max = _effective_title_max_chars(fanpage, article)
-    if len(title) > title_max:
-        title = title[: title_max - 1].rstrip() + "…"
+    if len(title.replace("**", "")) > title_max:
+        title = title.replace("**", "")[: title_max - 1].rstrip() + "…"
 
-    return NewsCopy(title=title, caption=caption, provider=provider)
+    return NewsCopy(title=title, caption=caption, provider=provider, subtitle=subtitle)

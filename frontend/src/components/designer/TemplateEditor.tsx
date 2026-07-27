@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { fabric } from "fabric";
 import { Icon } from "@iconify/react";
+import { parseMarks, applyTemplateContent } from "./applyTemplate";
 
 // Only fonts vendored in renderer/fonts (installed as system fonts there) so the
 // editor preview matches the headless render exactly. Keep in sync with the
@@ -69,7 +70,10 @@ export type EditorApi = {
   toTemplateJson: () => { json: Record<string, unknown>; placeholderConfig: Record<string, unknown> };
   exportPng: () => Promise<Blob>;
   injectTitle: (title: string) => void;
+  injectSubtitle: (subtitle: string) => void;
   injectImage: (src: string) => Promise<void>;
+  showSample: () => void;
+  hideSample: () => void;
 };
 
 type Props = {
@@ -77,12 +81,13 @@ type Props = {
   height: number;
   initialJson?: Record<string, unknown> | null;
   onReady?: (api: EditorApi) => void;
+  sampleOnLoad?: boolean; // template designer: show sample content (WYSIWYG)
 };
 
 type SlotBounds = { left: number; top: number; width: number; height: number };
 type FabricObjectWithRole = fabric.Object & { [ROLE_PROP]?: string; text?: string; slotBounds?: SlotBounds };
 
-export default function TemplateEditor({ width, height, initialJson, onReady }: Props) {
+export default function TemplateEditor({ width, height, initialJson, onReady, sampleOnLoad }: Props) {
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<fabric.Canvas | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -91,7 +96,12 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
   // where the AI headline never replaced the placeholder text)
   const jsonLoadedRef = useRef(false);
   const pendingTitleRef = useRef<string | null>(null);
+  const pendingSubtitleRef = useRef<string | null>(null);
   const pendingImageRef = useRef<string | null>(null);
+  // WYSIWYG sample preview (template designer): inject sample content so the
+  // canvas looks like the real result; snapshot lets us reset before Save.
+  const sampleShownRef = useRef(false);
+  const snapshotRef = useRef<Record<string, { text?: string; fontSize?: number; top?: number; width?: number; height?: number; y2?: number }> | null>(null);
   const [selected, setSelected] = useState<FabricObjectWithRole | null>(null);
   const [bgColor, setBgColor] = useState("#111827");
   const [activeTool, setActiveTool] = useState<"design" | "text" | "shapes" | "image" | "draw">("design");
@@ -141,11 +151,19 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
     });
     canvas.setZoom(zoom);
     canvasRef.current = canvas;
+    // fontsReady resolves asynchronously — if the effect (React strict-mode
+    // double-invoke, or a width/height change) tears down and disposes this
+    // canvas before then, calling loadFromJSON on it throws (null context).
+    let disposed = false;
 
-    // Webfonts load lazily — preload every editor font (regular + bold) so the
-    // canvas has correct glyph metrics and doesn't render with a fallback until
-    // the next redraw. Must match renderer/fonts for WYSIWYG.
-    Promise.all(
+    // Webfonts load lazily — preload every editor font (regular + bold) before
+    // touching the canvas so glyph metrics are correct from the start. This
+    // must complete BEFORE loadFromJSON/showSample below: the auto-fit sizing
+    // they do is a one-time measurement — if it runs against a fallback font
+    // (because the real webfont hasn't downloaded yet), the wrong fontSize
+    // gets baked in permanently and never matches TemplateThumbnail, which
+    // waits on document.fonts.ready for the same reason.
+    const fontsReady: Promise<void> = Promise.all(
       FONTS.flatMap((f) => [
         document.fonts.load(`400 16px "${f}"`),
         document.fonts.load(`700 16px "${f}"`),
@@ -153,7 +171,6 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
     )
       .then(() => {
         FONTS.forEach((f) => fabric.util.clearFabricFontCache(f));
-        canvas.renderAll();
       })
       .catch(() => {});
 
@@ -169,50 +186,120 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
       }
     });
 
+    // ── WYSIWYG sample preview (template designer) ──
+    // Declared before loadFromJSON below: its callback can fire synchronously
+    // (templates with no async-loaded objects), which would otherwise call
+    // showSample() -> reference SAMPLE_TITLE while it's still in the TDZ.
+    const SAMPLE_TITLE = "BAGNAIA **SNUBBED YAMAHA'S MILLIONS** TO JOIN APRILIA";
+    const SAMPLE_SUBTITLE = "A BOLD CAREER MOVE THAT SHOCKED THE PADDOCK.";
+
+    function snapshotPlaceholders() {
+      const objs = canvas.getObjects() as FabricObjectWithRole[];
+      const snap: NonNullable<typeof snapshotRef.current> = {};
+      for (const role of ["title", "subtitle"]) {
+        const o = objs.find((x) => x[ROLE_PROP] === role) as (fabric.Textbox & FabricObjectWithRole) | undefined;
+        if (o) snap[role] = { text: o.text, fontSize: o.fontSize, top: o.top, width: o.width };
+      }
+      const scrim = objs.find((x) => x[ROLE_PROP] === "scrim") as
+        (fabric.Rect & { fill?: { coords?: { y2: number } } }) | undefined;
+      if (scrim) snap.scrim = { top: scrim.top, height: scrim.height, y2: scrim.fill?.coords?.y2 };
+      snapshotRef.current = snap;
+    }
+
+    function showSample() {
+      if (sampleShownRef.current) return;
+      try {
+        const objs = canvas.getObjects() as FabricObjectWithRole[];
+        const hasTitle = objs.some((o) => o[ROLE_PROP] === "title");
+        if (!hasTitle) return;
+        const hasSubtitle = objs.some((o) => o[ROLE_PROP] === "subtitle");
+        applyTemplateContent({
+          fabric, canvas, width, height,
+          title: SAMPLE_TITLE,
+          subtitle: hasSubtitle ? SAMPLE_SUBTITLE : undefined,
+        });
+        sampleShownRef.current = true;
+      } catch (err) {
+        console.warn("showSample failed:", err);
+        if (typeof window !== "undefined") {
+          window.setTimeout(() => alert("showSample DEBUG:\n" + (err instanceof Error ? err.message + "\n\n" + (err.stack || "") : String(err))), 100);
+        }
+      }
+    }
+
+    function hideSample() {
+      const snap = snapshotRef.current;
+      if (!snap || !sampleShownRef.current) return;
+      try {
+      const objs = canvas.getObjects() as FabricObjectWithRole[];
+      for (const role of ["title", "subtitle"]) {
+        const o = objs.find((x) => x[ROLE_PROP] === role) as (fabric.Textbox & FabricObjectWithRole) | undefined;
+        const s = snap[role];
+        if (o && s) {
+          o.set({ text: s.text, fontSize: s.fontSize, top: s.top, width: s.width, styles: {} });
+          o.initDimensions();
+        }
+      }
+      const scrim = objs.find((x) => x[ROLE_PROP] === "scrim") as
+        (fabric.Rect & { fill?: { coords?: { y1: number; y2: number } } }) | undefined;
+      if (scrim && snap.scrim) {
+        scrim.set({ top: snap.scrim.top, height: snap.scrim.height });
+        if (scrim.fill && scrim.fill.coords && typeof snap.scrim.y2 === "number") scrim.fill.coords.y2 = snap.scrim.y2;
+        scrim.set("dirty", true);
+      }
+      canvas.renderAll();
+      sampleShownRef.current = false;
+      } catch (err) {
+        console.warn("hideSample failed:", err);
+      }
+    }
+
     jsonLoadedRef.current = !initialJson;
     if (initialJson) {
-      canvas.loadFromJSON(initialJson, () => {
-        // fabric 5.3 quirk: text objects deserialized without a "styles" key
-        // get styles=undefined (stylesFromArray passes it through), and then
-        // toObject()/toJSON() throws — normalize so Save always works.
-        (canvas.getObjects() as Array<FabricObjectWithRole & { styles?: unknown }>).forEach((o) => {
-          if ("text" in o && o.styles === undefined) o.styles = {};
+      fontsReady.then(() => {
+        if (disposed) return;
+        canvas.loadFromJSON(initialJson, () => {
+          if (disposed) return;
+          // fabric 5.3 quirk: text objects deserialized without a "styles" key
+          // get styles=undefined (stylesFromArray passes it through), and then
+          // toObject()/toJSON() throws — normalize so Save always works.
+          (canvas.getObjects() as Array<FabricObjectWithRole & { styles?: unknown }>).forEach((o) => {
+            if ("text" in o && o.styles === undefined) o.styles = {};
+          });
+          // show the two-tone accent on the placeholder while designing
+          const titleBox = (canvas.getObjects() as FabricObjectWithRole[]).find((o) => o[ROLE_PROP] === "title");
+          if (titleBox instanceof fabric.Textbox) applyTwoTone(titleBox as TitleBox);
+          const bg = canvas.backgroundColor;
+          if (typeof bg === "string" && bg) setBgColor(bg);
+          canvas.renderAll();
+          // apply injections that arrived while the JSON was still loading
+          jsonLoadedRef.current = true;
+          snapshotPlaceholders();
+          if (pendingTitleRef.current) {
+            doInjectTitle(pendingTitleRef.current);
+            pendingTitleRef.current = null;
+          }
+          if (pendingSubtitleRef.current) {
+            doInjectSubtitle(pendingSubtitleRef.current);
+            pendingSubtitleRef.current = null;
+          }
+          if (sampleOnLoad) showSample();
+          if (pendingImageRef.current) {
+            doInjectImage(pendingImageRef.current).catch(() => {});
+            pendingImageRef.current = null;
+          }
         });
-        // show the two-tone accent on the placeholder while designing
-        const titleBox = (canvas.getObjects() as FabricObjectWithRole[]).find((o) => o[ROLE_PROP] === "title");
-        if (titleBox instanceof fabric.Textbox) applyTwoTone(titleBox as TitleBox);
-        const bg = canvas.backgroundColor;
-        if (typeof bg === "string" && bg) setBgColor(bg);
-        canvas.renderAll();
-        // apply injections that arrived while the JSON was still loading
-        jsonLoadedRef.current = true;
-        if (pendingTitleRef.current) {
-          doInjectTitle(pendingTitleRef.current);
-          pendingTitleRef.current = null;
-        }
-        if (pendingImageRef.current) {
-          doInjectImage(pendingImageRef.current).catch(() => {});
-          pendingImageRef.current = null;
-        }
       });
     }
 
-    function doInjectTitle(title: string) {
-      const obj = (canvas.getObjects() as FabricObjectWithRole[]).find((o) => o[ROLE_PROP] === "title");
-      if (obj && "set" in obj) {
-        const box = obj as TitleBox;
-        title = transformTitle(title, box);
-        // Auto-fit like renderer/inject.js: shrink font until the headline
-        // fits the placeholder's designed height.
-        const maxHeight = box.height ?? 0;
-        box.set({ text: title, styles: {} });
-        while ((box.height ?? 0) > maxHeight && (box.fontSize ?? 0) > 12) {
-          box.set("fontSize", (box.fontSize ?? 24) - 2);
-          box.initDimensions();
-        }
-        applyTwoTone(box as TitleBox);
-        canvas.renderAll();
-      }
+    // Delegate to the same function the "Live preview" thumbnail uses (applyTemplate.ts)
+    // so the two can never drift apart again — same highlight/auto-fit/scrim/anchor math.
+    function doInjectTitle(rawTitle: string) {
+      applyTemplateContent({ fabric, canvas, width, height, title: rawTitle });
+    }
+
+    function doInjectSubtitle(rawSub: string) {
+      applyTemplateContent({ fabric, canvas, width, height, subtitle: rawSub });
     }
 
     function doInjectImage(src: string) {
@@ -252,7 +339,19 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
 
     const api: EditorApi = {
       toTemplateJson: () => {
-        const json = canvas.toJSON([ROLE_PROP, "titleAccentColor", "titleUppercase", "titleTextTransform"]) as unknown as Record<string, unknown>;
+        // Must list every custom prop the render pipeline reads (applyTemplate.ts /
+        // renderer/inject.js) — anything left off silently vanishes from the saved
+        // JSON: titleAnchorBottom/scrimPad missing here previously broke bottom-
+        // anchoring and scrim positioning on every save/"Refresh preview".
+        const json = canvas.toJSON([
+          ROLE_PROP,
+          "titleAccentColor",
+          "titleUppercase",
+          "titleTextTransform",
+          "titleAnchorBottom",
+          "scrimPad",
+          "slotBounds",
+        ]) as unknown as Record<string, unknown>;
         const objs = canvas.getObjects() as FabricObjectWithRole[];
         const titleIdx = objs.findIndex((o) => o[ROLE_PROP] === "title");
         const imageIdx = objs.findIndex((o) => o[ROLE_PROP] === "image");
@@ -283,6 +382,15 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
         }
         doInjectTitle(title);
       },
+      injectSubtitle: (subtitle: string) => {
+        if (!jsonLoadedRef.current) {
+          pendingSubtitleRef.current = subtitle;
+          return;
+        }
+        doInjectSubtitle(subtitle);
+      },
+      showSample: () => showSample(),
+      hideSample: () => hideSample(),
       injectImage: (src: string) => {
         if (!jsonLoadedRef.current) {
           pendingImageRef.current = src;
@@ -294,6 +402,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady }: 
     onReady?.(api);
 
     return () => {
+      disposed = true;
       canvas.dispose();
       canvasRef.current = null;
     };

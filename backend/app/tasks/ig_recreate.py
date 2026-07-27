@@ -167,6 +167,7 @@ def render_ig_recreate(self, job_id: int):
         # a two-subject split with style-consistent photos.
         from app.services.design_images import (
             prepare_design_images, extract_two_subjects, focus_points_for, source_news_main,
+            watermark_datauri,
         )
         from app.models.ig_sources import IGSource
         ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
@@ -204,6 +205,9 @@ def render_ig_recreate(self, job_id: int):
                 "width": template.canvas_width,
                 "height": template.canvas_height,
                 "title": job.design_title,
+                "subtitle": job.design_subtitle or "",
+                "watermark": fanpage.watermark_text or fanpage.username or fanpage.name or "",
+                "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,
                 "focus_points": focus_points_for(image_srcs),
                 "scale": settings.design_render_scale,

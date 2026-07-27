@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     # Design render output multiplier — 2 → 2160×2700 (~2K) crisp PNGs.
     design_render_scale: int = 2
+    # Use the 9Router vision model to choose the image crop focus point (best for
+    # full-bleed portrait templates). Off → OpenCV face/saliency. Adds one vision
+    # call per image at render time.
+    vision_focus_enabled: bool = True
 
     # ── Repliz ────────────────────────────────────
     repliz_base_url: str = "https://api.repliz.com"

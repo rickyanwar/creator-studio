@@ -126,7 +126,7 @@ def render_design(self, job_id: int):
 
         # Two-slot templates also get a secondary photo (inset/split — see
         # design_images.prepare_design_images) with face-aware focus crops.
-        from app.services.design_images import prepare_design_images, focus_points_for
+        from app.services.design_images import prepare_design_images, focus_points_for, watermark_datauri
         title = job.design_title or article.scraped_title
         template_json, image_srcs = prepare_design_images(
             db, template.template_json, template.canvas_width,
@@ -143,6 +143,9 @@ def render_design(self, job_id: int):
                 "width": template.canvas_width,
                 "height": template.canvas_height,
                 "title": title,
+                "subtitle": job.design_subtitle or "",
+                "watermark": fanpage.watermark_text or fanpage.username or fanpage.name or "",
+                "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,
                 "focus_points": focus_points_for(image_srcs),
                 "scale": settings.design_render_scale,

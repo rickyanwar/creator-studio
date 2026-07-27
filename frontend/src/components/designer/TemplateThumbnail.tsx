@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { fabric } from "fabric";
+import { applyTemplateContent } from "./applyTemplate";
+
+// Sample content so the card shows the real styling (highlight colour, alignment,
+// subtitle) instead of the empty "Headline" placeholder.
+const SAMPLE_TITLE = "BAGNAIA **SNUBBED YAMAHA'S MILLIONS** TO JOIN APRILIA";
+const SAMPLE_SUBTITLE = "A BOLD CAREER MOVE THAT SHOCKED THE PADDOCK.";
 
 /**
  * Renders a design template's Fabric.js JSON into a static PNG preview.
@@ -55,8 +61,15 @@ export default function TemplateThumbnail({
     ready
       .then(() => {
         canvas.loadFromJSON(json, () => {
-          // let font metrics settle before capturing
-          requestAnimationFrame(finish);
+          // Apply sample content the same way the renderer does, then capture.
+          // A same-origin sample photo (public/) avoids canvas taint on export.
+          applyTemplateContent({
+            fabric, canvas, width, height,
+            title: SAMPLE_TITLE, subtitle: SAMPLE_SUBTITLE,
+            imageSrc: "/sample-news.jpg", focusPoint: [0.5, 0.28],
+          })
+            .catch(() => {})
+            .finally(() => requestAnimationFrame(finish));
         });
       })
       .catch(finish);

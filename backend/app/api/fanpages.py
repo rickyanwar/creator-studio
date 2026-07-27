@@ -1,7 +1,12 @@
-from fastapi import APIRouter, HTTPException, status
+import io
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import CurrentUser, DB
+from app.config import get_settings
 from app.schemas.fanpage import (
     FanpageOut, FanpageDetailOut, FanpageUpdate,
     FanpageSourceAdd, PreviewCaptionRequest, PreviewCaptionResponse,
@@ -39,6 +44,12 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
             id=s.id,
             ig_username=s.ig_username,
             album_image_indices=s.album_image_indices or [1],
+            caption_tone=s.caption_tone,
+            caption_language=s.caption_language,
+            caption_max_length=s.caption_max_length,
+            caption_hashtag_count=s.caption_hashtag_count,
+            caption_cta_text=s.caption_cta_text,
+            caption_custom_prompt=s.caption_custom_prompt,
         )
         for s in sources
     ]
@@ -231,3 +242,44 @@ def preview_caption(fanpage_id: int, body: PreviewCaptionRequest, db: DB, _: Cur
         raise HTTPException(status_code=502, detail=f"AI generation failed: {exc}")
 
     return PreviewCaptionResponse(caption=caption, provider_used=provider)
+
+
+@router.post("/{fanpage_id}/watermark-image")
+async def upload_watermark_image(fanpage_id: int, db: DB, _: CurrentUser, file: UploadFile = File(...)):
+    """Upload a logo watermark for the fanpage's designs (stored as PNG to keep
+    transparency). Overrides the text watermark on every rendered design."""
+    from PIL import Image
+    from app.models.target_fanpages import TargetFanpage
+
+    fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+
+    raw = await file.read()
+    try:
+        img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    except Exception:
+        raise HTTPException(status_code=400, detail="File is not a readable image")
+
+    s = get_settings()
+    dest_dir = Path(s.storage_base_path) / "watermarks"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"fp{fanpage_id}_{uuid.uuid4().hex[:8]}.png"
+    img.save(dest_dir / filename, format="PNG")
+
+    fp.watermark_image_url = f"{s.storage_base_url.rstrip('/')}/watermarks/{filename}"
+    db.commit()
+    return {"watermark_image_url": fp.watermark_image_url}
+
+
+@router.delete("/{fanpage_id}/watermark-image")
+def delete_watermark_image(fanpage_id: int, db: DB, _: CurrentUser):
+    """Remove the logo watermark (designs fall back to the text watermark)."""
+    from app.models.target_fanpages import TargetFanpage
+
+    fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+    fp.watermark_image_url = None
+    db.commit()
+    return {"ok": True}

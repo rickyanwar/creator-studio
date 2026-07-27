@@ -36,6 +36,26 @@ def file_to_datauri(path: str) -> str:
         return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
 
 
+def watermark_datauri(fanpage) -> str | None:
+    """A fanpage's watermark LOGO (if set) as a data-URI for the renderer, else
+    None so the renderer falls back to the text watermark."""
+    url = getattr(fanpage, "watermark_image_url", None)
+    if not url:
+        return None
+    try:
+        from app.config import get_settings
+        s = get_settings()
+        base = (s.storage_base_url or "").rstrip("/")
+        path = os.path.join(s.storage_base_path, url[len(base):].lstrip("/")) if base and url.startswith(base) else url
+        if os.path.exists(path):
+            mime = "png" if path.lower().endswith("png") else "jpeg"
+            with open(path, "rb") as f:
+                return f"data:image/{mime};base64," + base64.b64encode(f.read()).decode()
+    except Exception as exc:
+        logger.warning("watermark_datauri failed: %s", exc)
+    return None
+
+
 def fit_with_blur_bg(image_bytes: bytes, target_w: int, target_h: int,
                      top_bias: float = 0.24, pad: float = 0.98,
                      blur: int = 40, darken: float = 0.78) -> bytes | None:
@@ -268,13 +288,66 @@ def detect_focus_point(image_bytes: bytes) -> list:
     return default
 
 
+def vision_focus_point(image_bytes: bytes) -> list | None:
+    """Ask 9Router vision for the MAIN subject's focal point as [x, y] fractions
+    (where the crop should centre — usually the face/head). Returns None on any
+    problem so the caller can fall back to OpenCV. Runs on 9Router (no VPS cost)."""
+    try:
+        from openai import OpenAI  # type: ignore
+        from app.config import get_settings
+        from app.services.nine_router import get_nine_router_config
+
+        cfg = get_nine_router_config()
+        if not cfg.base_url:
+            return None
+        client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router")
+        b64 = base64.b64encode(image_bytes).decode()
+        c = client.chat.completions.create(
+            model=get_settings().nine_router_vision_model,
+            max_tokens=300,
+            temperature=0,
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": (
+                    "This photo is the full-bleed background of a news graphic whose "
+                    "headline sits along the BOTTOM. Find the MAIN subject (the "
+                    "person's face/head, or the key object). Reply with ONLY a JSON "
+                    'object {"x":0.00-1.00,"y":0.00-1.00} — the point the crop should '
+                    "centre on so the subject stays fully in frame and clear of the "
+                    "bottom text. x is fraction from left, y from top (the face is "
+                    "usually in the upper half)."
+                )},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ]}],
+        )
+        raw = (c.choices[0].message.content or "").strip()
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return None
+        import json as _json
+        d = _json.loads(m.group(0))
+        x = float(d.get("x")); y = float(d.get("y"))
+        if 0 <= x <= 1 and 0 <= y <= 1:
+            # keep the subject slightly above centre so it clears the bottom text
+            return [round(min(0.85, max(0.15, x)), 4), round(min(0.7, max(0.15, y)), 4)]
+    except Exception as exc:
+        logger.warning("vision_focus_point failed: %s", exc)
+    return None
+
+
 def focus_points_for(image_srcs: list) -> list:
-    """Compute a focus point per data-URI image (for the renderer)."""
+    """Compute a focus point per data-URI image (for the renderer). When vision
+    focus is enabled, the 9Router vision model chooses the point (best for the
+    full-bleed portrait templates); otherwise OpenCV face/saliency is used."""
+    from app.config import get_settings
+    use_vision = get_settings().vision_focus_enabled
     out = []
     for uri in image_srcs:
         try:
             b = base64.b64decode(uri.split(",", 1)[1]) if "," in uri else b""
-            out.append(detect_focus_point(b) if b else [0.5, 0.42])
+            if not b:
+                out.append([0.5, 0.42]); continue
+            fp = vision_focus_point(b) if use_vision else None
+            out.append(fp or detect_focus_point(b))
         except Exception:
             out.append([0.5, 0.42])
     return out
