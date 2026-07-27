@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey, JSON, func, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey, JSON, func, UniqueConstraint, Boolean
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -64,6 +64,12 @@ class PublishJob(Base):
     cleanup_at = Column(DateTime, nullable=True)   # published_at + 4 days
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Soft delete from History: the row is kept (not hard-deleted) so the
+    # unique constraints above keep preventing the same post/article from
+    # being reposted to this fanpage again.
+    is_deleted = Column(Boolean, nullable=False, server_default="false")
+    deleted_at = Column(DateTime, nullable=True)
 
     post = relationship("Post", back_populates="publish_jobs")
     fanpage = relationship("TargetFanpage", back_populates="publish_jobs")

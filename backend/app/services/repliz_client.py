@@ -137,6 +137,23 @@ class ReplizClient:
         resp.raise_for_status()
         return resp.json()
 
+    # ─────────────────────────────────────────────
+    # Deletion — removes the schedule/post on Repliz (and, per Repliz, on the
+    # connected Facebook page). Not verified against live Repliz docs; follows
+    # the same REST convention as get_schedule() (same resource path).
+    # ─────────────────────────────────────────────
+
+    def delete_schedule(self, schedule_id: str) -> dict:
+        """Delete a scheduled/published post on Repliz (and its live Facebook
+        post). Raises httpx.HTTPStatusError on failure — caller decides how to
+        handle a Repliz-side failure vs. the local record."""
+        resp = self._client.delete(f"/public/schedule/{schedule_id}")
+        resp.raise_for_status()
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
+
 
 # ── Factory helper ────────────────────────────────────────────────────────────
 

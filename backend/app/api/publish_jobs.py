@@ -37,7 +37,7 @@ def list_jobs(
 ):
     from app.models.publish_jobs import PublishJob, PublishJobStatus
 
-    q = db.query(PublishJob)
+    q = db.query(PublishJob).filter(PublishJob.is_deleted == False)
     if status:
         try:
             q = q.filter(PublishJob.status == PublishJobStatus(status))
@@ -147,9 +147,17 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     # image candidates: fanpage gallery keywords first, then the article hero
     candidates: list[dict] = []
     if fanpage and fanpage.mode2_gallery_keywords:
+        from sqlalchemy import or_
+
+        pool = [k.lower() for k in fanpage.mode2_gallery_keywords]
         imgs = (
             db.query(GalleryImage)
-            .filter(GalleryImage.keyword.in_([k.lower() for k in fanpage.mode2_gallery_keywords]))
+            .filter(
+                # A photo can feature more than one person — also match images
+                # tagged with a pool keyword as a secondary (extra) tag.
+                or_(GalleryImage.keyword.in_(pool), GalleryImage.extra_keywords.overlap(pool)),
+                GalleryImage.is_deleted == False,
+            )
             .order_by(GalleryImage.is_used.asc(), GalleryImage.downloaded_at.desc())
             .limit(24)
             .all()
@@ -262,3 +270,46 @@ def skip_job(job_id: int, db: DB, _: CurrentUser):
     db.commit()
     db.refresh(job)
     return _enrich_job(job, db)
+
+
+@router.delete("/{job_id}")
+def delete_job(job_id: int, db: DB, _: CurrentUser):
+    """Remove a job from History. If it was published via Repliz, also try to
+    delete the live post through Repliz's API first. The local record is a
+    soft delete (kept, hidden) — the post_id/fanpage_id and source_article_id/
+    fanpage_id unique constraints must survive so the same content can't be
+    reposted again."""
+    import logging
+    from datetime import datetime, timezone
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+    logger = logging.getLogger(__name__)
+
+    job = db.query(PublishJob).filter_by(id=job_id, is_deleted=False).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in (PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped):
+        raise HTTPException(status_code=400, detail=f"Cannot delete a job still in progress (status: {job.status.value})")
+
+    repliz_deleted = None
+    repliz_error = None
+    if job.repliz_schedule_id:
+        try:
+            from app.services.repliz_client import get_repliz_client_from_db
+
+            with get_repliz_client_from_db(db) as client:
+                client.delete_schedule(job.repliz_schedule_id)
+            repliz_deleted = True
+        except Exception as exc:
+            repliz_deleted = False
+            repliz_error = str(exc)[:500]
+            logger.warning(
+                "Repliz delete failed for job %d (schedule %s): %s",
+                job_id, job.repliz_schedule_id, exc,
+            )
+
+    job.is_deleted = True
+    job.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+
+    return {"ok": True, "repliz_deleted": repliz_deleted, "repliz_error": repliz_error}

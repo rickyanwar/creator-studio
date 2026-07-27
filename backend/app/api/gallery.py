@@ -1,4 +1,4 @@
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +16,7 @@ _VALID_ENGINES = ("bing", "google", "9router")
 
 class KeywordBody(BaseModel):
     keyword: str
+    niche: Optional[str] = None
     is_active: Optional[bool] = True
     max_images: Optional[int] = 50
     max_pages: Optional[int] = 10
@@ -61,6 +62,7 @@ def _serialize_keyword(kw, image_count: int = 0):
     return {
         "id": kw.id,
         "keyword": kw.keyword,
+        "niche": kw.niche,
         "is_active": kw.is_active,
         "max_images": kw.max_images,
         "max_pages": kw.max_pages,
@@ -78,6 +80,7 @@ def _serialize_image(img):
     return {
         "id": img.id,
         "keyword": img.keyword,
+        "extra_keywords": img.extra_keywords or [],
         "source_image_url": img.source_image_url,
         "public_url": img.public_url,
         "width": img.width,
@@ -91,15 +94,40 @@ def _serialize_image(img):
 
 # ── Keywords ─────────────────────────────────────────────────────────────────
 
+def _normalize_niche(niche: Optional[str]) -> Optional[str]:
+    if niche is None:
+        return None
+    niche = niche.strip()
+    return niche or None
+
+
 @router.get("/keywords")
-def list_keywords(db: DB, _: CurrentUser):
+def list_keywords(db: DB, _: CurrentUser, niche: Optional[str] = None):
     from app.models.gallery import GalleryKeyword, GalleryImage
 
-    keywords = db.query(GalleryKeyword).order_by(GalleryKeyword.keyword).all()
+    q = db.query(GalleryKeyword)
+    if niche:
+        q = q.filter(GalleryKeyword.niche == niche)
+    keywords = q.order_by(GalleryKeyword.keyword).all()
     return [
-        _serialize_keyword(kw, db.query(GalleryImage).filter_by(keyword=kw.keyword).count())
+        _serialize_keyword(kw, db.query(GalleryImage).filter_by(keyword=kw.keyword, is_deleted=False).count())
         for kw in keywords
     ]
+
+
+@router.get("/niches")
+def list_niches(db: DB, _: CurrentUser):
+    """Distinct niches in use, for filter dropdowns / autocomplete."""
+    from app.models.gallery import GalleryKeyword
+
+    rows = (
+        db.query(GalleryKeyword.niche)
+        .filter(GalleryKeyword.niche.isnot(None))
+        .distinct()
+        .order_by(GalleryKeyword.niche)
+        .all()
+    )
+    return [r[0] for r in rows]
 
 
 @router.post("/keywords")
@@ -114,6 +142,7 @@ def create_keyword(body: KeywordBody, db: DB, _: CurrentUser):
 
     kw = GalleryKeyword(
         keyword=keyword,
+        niche=_normalize_niche(body.niche),
         is_active=body.is_active if body.is_active is not None else True,
         max_images=body.max_images or 50,
         max_pages=body.max_pages or 10,
@@ -138,6 +167,8 @@ def update_keyword(keyword_id: int, body: UpdateKeywordBody, db: DB, _: CurrentU
 
     if body.keyword is not None:
         kw.keyword = body.keyword.strip().lower()
+    if body.niche is not None:
+        kw.niche = _normalize_niche(body.niche)
     if body.is_active is not None:
         kw.is_active = body.is_active
     if body.max_images is not None:
@@ -156,6 +187,55 @@ def update_keyword(keyword_id: int, body: UpdateKeywordBody, db: DB, _: CurrentU
     db.commit()
     db.refresh(kw)
     return _serialize_keyword(kw)
+
+
+class BulkKeywordItem(KeywordBody):
+    """Same shape as KeywordBody — used for both bulk import and bulk edit.
+    Matched against existing rows by `keyword` (case-insensitive): existing →
+    updated in place, new → created. Nothing is deleted by an import."""
+    pass
+
+
+@router.post("/keywords/bulk-import")
+def bulk_import_keywords(items: list[BulkKeywordItem], db: DB, _: CurrentUser):
+    """Upsert many keywords at once from a pasted/uploaded JSON array — the
+    bulk-edit and bulk-import flows are the same operation: edit the exported
+    JSON (existing keywords keep their spot) or add brand-new entries, then
+    submit the whole array back here."""
+    from app.models.gallery import GalleryKeyword
+
+    if not items:
+        raise HTTPException(status_code=400, detail="No keywords in payload")
+
+    created = 0
+    updated = 0
+    errors: list[str] = []
+
+    for i, body in enumerate(items):
+        keyword = (body.keyword or "").strip().lower()
+        if not keyword:
+            errors.append(f"item {i}: keyword is required")
+            continue
+
+        kw = db.query(GalleryKeyword).filter_by(keyword=keyword).first()
+        if kw is None:
+            kw = GalleryKeyword(keyword=keyword)
+            db.add(kw)
+            created += 1
+        else:
+            updated += 1
+
+        kw.niche = _normalize_niche(body.niche)
+        kw.is_active = body.is_active if body.is_active is not None else True
+        kw.max_images = body.max_images or 50
+        kw.max_pages = body.max_pages or 10
+        kw.min_width = body.min_width or 200
+        kw.min_height = body.min_height or 200
+        kw.source_engine = body.source_engine or "9router"
+        kw.license_filter = body.license_filter or "commercial,modify"
+
+    db.commit()
+    return {"created": created, "updated": updated, "errors": errors}
 
 
 @router.delete("/keywords/{keyword_id}")
@@ -192,21 +272,57 @@ def list_images(
     db: DB,
     _: CurrentUser,
     keyword: Optional[str] = None,
+    niche: Optional[str] = None,
     only_unused: bool = False,
     limit: int = Query(60, le=200),
     offset: int = Query(0, ge=0),
 ):
-    from app.models.gallery import GalleryImage
+    from sqlalchemy import or_
+    from app.models.gallery import GalleryImage, GalleryKeyword
 
-    q = db.query(GalleryImage)
+    q = db.query(GalleryImage).filter(GalleryImage.is_deleted == False)
     if keyword:
-        q = q.filter(GalleryImage.keyword == keyword)
+        # Match the primary keyword or any extra tag — a photo with 2+ people
+        # in frame is filed under one keyword but may be tagged with others.
+        q = q.filter(or_(GalleryImage.keyword == keyword, GalleryImage.extra_keywords.any(keyword)))
+    if niche:
+        niche_keywords = db.query(GalleryKeyword.keyword).filter(GalleryKeyword.niche == niche)
+        q = q.filter(GalleryImage.keyword.in_(niche_keywords))
     if only_unused:
         q = q.filter(GalleryImage.is_used == False)
 
     total = q.count()
     images = q.order_by(GalleryImage.downloaded_at.desc()).offset(offset).limit(limit).all()
     return {"total": total, "images": [_serialize_image(i) for i in images]}
+
+
+class ExtraKeywordsBody(BaseModel):
+    extra_keywords: list[str]
+
+
+@router.patch("/images/{image_id}/keywords")
+def update_image_keywords(image_id: int, body: ExtraKeywordsBody, db: DB, _: CurrentUser):
+    """Tag an image with additional keywords — a photo can feature more than
+    one person, so it can match under names besides its primary keyword."""
+    from app.models.gallery import GalleryImage
+
+    img = db.query(GalleryImage).filter_by(id=image_id, is_deleted=False).first()
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    seen = set()
+    cleaned = []
+    for kw in body.extra_keywords:
+        kw = kw.strip().lower()
+        if not kw or kw == img.keyword or kw in seen:
+            continue
+        seen.add(kw)
+        cleaned.append(kw)
+
+    img.extra_keywords = cleaned
+    db.commit()
+    db.refresh(img)
+    return _serialize_image(img)
 
 
 @router.post("/images/upload")
@@ -284,13 +400,17 @@ def proxy_image(url: str, _: CurrentUser):
 
 @router.delete("/images/{image_id}")
 def delete_image(image_id: int, db: DB, _: CurrentUser):
+    """Soft delete: the file is removed from disk, but the row (and its
+    source_image_url) is kept and flagged so the same photo is never
+    re-downloaded by a future gallery run for this keyword."""
     from app.models.gallery import GalleryImage
 
-    img = db.query(GalleryImage).filter_by(id=image_id).first()
+    img = db.query(GalleryImage).filter_by(id=image_id, is_deleted=False).first()
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
 
     Path(img.local_path).unlink(missing_ok=True)
-    db.delete(img)
+    img.is_deleted = True
+    img.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     return {"ok": True}

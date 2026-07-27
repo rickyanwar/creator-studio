@@ -7,18 +7,25 @@ import { Icon } from "@iconify/react";
 import { formatDistanceToNowStrict } from "date-fns";
 import {
   listGalleryKeywords,
+  listGalleryNiches,
   createGalleryKeyword,
   updateGalleryKeyword,
   deleteGalleryKeyword,
   downloadGalleryKeywordNow,
+  bulkImportGalleryKeywords,
   listGalleryImages,
   uploadGalleryImage,
   deleteGalleryImage,
+  updateGalleryImageKeywords,
 } from "@/lib/api";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import PromptDialog from "@/components/ui/PromptDialog";
+import Toast, { type ToastData } from "@/components/ui/Toast";
 
 type Keyword = {
   id: number;
   keyword: string;
+  niche: string | null;
   is_active: boolean;
   max_images: number;
   max_pages: number;
@@ -34,6 +41,7 @@ type Keyword = {
 type GalleryImage = {
   id: number;
   keyword: string;
+  extra_keywords: string[];
   source_image_url: string;
   public_url: string;
   width: number;
@@ -45,6 +53,7 @@ type GalleryImage = {
 
 const emptyForm = {
   keyword: "",
+  niche: "",
   is_active: true,
   max_images: 50,
   max_pages: 10,
@@ -60,8 +69,14 @@ export default function GalleryPage() {
     () => listGalleryKeywords().then((r) => r.data as Keyword[]),
     { refreshInterval: 30000 }
   );
+  const { data: niches = [], mutate: mutateNiches } = useSWR<string[]>(
+    "gallery-niches",
+    () => listGalleryNiches().then((r) => r.data as string[])
+  );
 
   const [filterKeyword, setFilterKeyword] = useState<string>("");
+  const [filterNiche, setFilterNiche] = useState<string>("");
+  const visibleKeywords = filterNiche ? keywords.filter((k) => k.niche === filterNiche) : keywords;
 
   // ── Infinite scroll (offset pagination) — handles thousands of images ──
   const PAGE_SIZE = 60;
@@ -75,11 +90,12 @@ export default function GalleryPage() {
   } = useSWRInfinite<ImagePage>(
     (index, prev: ImagePage | null) => {
       if (prev && prev.images.length < PAGE_SIZE) return null; // no more pages
-      return ["gallery-images", filterKeyword, index] as const;
+      return ["gallery-images", filterKeyword, filterNiche, index] as const;
     },
-    ([, kw, index]) =>
+    ([, kw, nc, index]) =>
       listGalleryImages({
         keyword: (kw as string) || undefined,
+        niche: (nc as string) || undefined,
         limit: PAGE_SIZE,
         offset: (index as number) * PAGE_SIZE,
       }).then((r) => r.data as ImagePage),
@@ -92,10 +108,10 @@ export default function GalleryPage() {
   const reachedEnd = !!lastPage && lastPage.images.length < PAGE_SIZE;
   const loadingMore = isValidating;
 
-  // Reset to first page whenever the keyword filter changes
+  // Reset to first page whenever the keyword/niche filter changes
   useEffect(() => {
     setSize(1);
-  }, [filterKeyword, setSize]);
+  }, [filterKeyword, filterNiche, setSize]);
 
   // Load next page when the sentinel scrolls into view
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -139,6 +155,24 @@ export default function GalleryPage() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [toast, setToast] = useState<ToastData | null>(null);
+  const notify = (message: string, type?: ToastData["type"]) => setToast({ message, type });
+
+  const [confirmDeleteKeyword, setConfirmDeleteKeyword] = useState<Keyword | null>(null);
+  const [deletingKeyword, setDeletingKeyword] = useState(false);
+  const [confirmDeleteImage, setConfirmDeleteImage] = useState<GalleryImage | null>(null);
+  const [deletingImage, setDeletingImage] = useState(false);
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [uploadKeywordInput, setUploadKeywordInput] = useState("");
+
+  // Collapsed by default — with many keywords the table pushed the image
+  // grid far down the page; collapse + an internal scroll box keep it in reach.
+  const [keywordsExpanded, setKeywordsExpanded] = useState(false);
+
+  // Extra keyword tags per image — a photo can feature more than one person.
+  const [tagTarget, setTagTarget] = useState<GalleryImage | null>(null);
+  const [tagInput, setTagInput] = useState("");
+
   function set(field: string, value: unknown) {
     setForm((f) => ({ ...f, [field]: value }));
   }
@@ -152,6 +186,7 @@ export default function GalleryPage() {
   function openEdit(k: Keyword) {
     setForm({
       keyword: k.keyword,
+      niche: k.niche ?? "",
       is_active: k.is_active,
       max_images: k.max_images,
       max_pages: k.max_pages,
@@ -166,7 +201,7 @@ export default function GalleryPage() {
 
   async function handleSave() {
     if (!form.keyword.trim()) {
-      alert("Keyword is required.");
+      notify("Keyword is required.", "error");
       return;
     }
     setSaving(true);
@@ -178,54 +213,202 @@ export default function GalleryPage() {
       }
       setShowForm(false);
       mutateKeywords();
+      mutateNiches();
+      notify(editingId ? "Keyword updated." : "Keyword created.", "success");
     } catch (e) {
       const err = e as { response?: { data?: { detail?: string } } };
-      alert(`Save failed: ${err.response?.data?.detail ?? "unknown error"}`);
+      notify(`Save failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDeleteKeyword(k: Keyword) {
-    if (!confirm(`Delete keyword "${k.keyword}"? Downloaded images are kept.`)) return;
-    await deleteGalleryKeyword(k.id);
-    mutateKeywords();
+  function handleDeleteKeyword(k: Keyword) {
+    setConfirmDeleteKeyword(k);
+  }
+
+  async function confirmDeleteKeywordAction() {
+    if (!confirmDeleteKeyword) return;
+    setDeletingKeyword(true);
+    try {
+      await deleteGalleryKeyword(confirmDeleteKeyword.id);
+      mutateKeywords();
+      notify(`Deleted keyword "${confirmDeleteKeyword.keyword}".`, "success");
+    } catch {
+      notify("Delete failed. Please try again.", "error");
+    } finally {
+      setDeletingKeyword(false);
+      setConfirmDeleteKeyword(null);
+    }
   }
 
   async function handleDownloadNow(id: number) {
     setDownloading(id);
     try {
       await downloadGalleryKeywordNow(id);
-      alert("Download queued — new images will appear within a few minutes.");
+      notify("Download queued — new images will appear within a few minutes.", "success");
     } finally {
       setDownloading(null);
     }
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const keyword = filterKeyword || prompt("Keyword for this image (e.g. marc marquez):")?.trim();
-    if (!keyword) return;
+  async function doUpload(file: File, keyword: string) {
     setUploading(true);
     try {
       await uploadGalleryImage(file, keyword);
       mutateImages();
       mutateKeywords();
+      notify(`Uploaded to "${keyword}".`, "success");
     } catch (err) {
       const ex = err as { response?: { data?: { detail?: string } } };
-      alert(`Upload failed: ${ex.response?.data?.detail ?? "unknown error"}`);
+      notify(`Upload failed: ${ex.response?.data?.detail ?? "unknown error"}`, "error");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
-  async function handleDeleteImage(img: GalleryImage) {
-    if (!confirm("Delete this image?")) return;
-    await deleteGalleryImage(img.id);
-    mutateImages();
-    mutateKeywords();
+  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (filterKeyword) {
+      doUpload(file, filterKeyword);
+    } else {
+      setUploadKeywordInput("");
+      setPendingUploadFile(file);
+    }
+  }
+
+  function confirmUploadKeyword() {
+    if (!pendingUploadFile || !uploadKeywordInput.trim()) return;
+    const file = pendingUploadFile;
+    const keyword = uploadKeywordInput.trim();
+    setPendingUploadFile(null);
+    doUpload(file, keyword);
+  }
+
+  function cancelUploadKeyword() {
+    setPendingUploadFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function handleDeleteImage(img: GalleryImage) {
+    setConfirmDeleteImage(img);
+  }
+
+  async function confirmDeleteImageAction() {
+    if (!confirmDeleteImage) return;
+    setDeletingImage(true);
+    try {
+      await deleteGalleryImage(confirmDeleteImage.id);
+      mutateImages();
+      mutateKeywords();
+    } catch {
+      notify("Delete failed. Please try again.", "error");
+    } finally {
+      setDeletingImage(false);
+      setConfirmDeleteImage(null);
+    }
+  }
+
+  function openTagDialog(img: GalleryImage) {
+    setTagInput("");
+    setTagTarget(img);
+  }
+
+  async function confirmAddTag() {
+    if (!tagTarget || !tagInput.trim()) return;
+    const next = [...tagTarget.extra_keywords, tagInput.trim().toLowerCase()];
+    setTagTarget(null);
+    try {
+      await updateGalleryImageKeywords(tagTarget.id, next);
+      mutateImages();
+    } catch {
+      notify("Could not add tag. Please try again.", "error");
+    }
+  }
+
+  async function removeTag(img: GalleryImage, tag: string) {
+    try {
+      await updateGalleryImageKeywords(img.id, img.extra_keywords.filter((t) => t !== tag));
+      mutateImages();
+    } catch {
+      notify("Could not remove tag. Please try again.", "error");
+    }
+  }
+
+  // ── Bulk edit / import keywords via JSON ──
+  const BULK_FIELDS = [
+    "keyword", "niche", "is_active", "max_images", "max_pages",
+    "min_width", "min_height", "source_engine", "license_filter",
+  ] as const;
+
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null);
+  const bulkFileRef = useRef<HTMLInputElement>(null);
+
+  function keywordsToJson(list: Keyword[]) {
+    return JSON.stringify(
+      list.map((k) =>
+        Object.fromEntries(BULK_FIELDS.map((f) => [f, (k as unknown as Record<string, unknown>)[f] ?? null]))
+      ),
+      null,
+      2
+    );
+  }
+
+  function openBulkModal() {
+    setBulkText(keywordsToJson(keywords));
+    setBulkResult(null);
+    setShowBulkModal(true);
+  }
+
+  function handleBulkFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setBulkText(String(reader.result));
+    reader.readAsText(file);
+    if (bulkFileRef.current) bulkFileRef.current.value = "";
+  }
+
+  function handleBulkDownload() {
+    const blob = new Blob([bulkText], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "gallery-keywords.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleBulkSave() {
+    let items: unknown;
+    try {
+      items = JSON.parse(bulkText);
+    } catch {
+      notify("Invalid JSON — please fix the syntax and try again.", "error");
+      return;
+    }
+    if (!Array.isArray(items)) {
+      notify("JSON must be an array of keyword objects.", "error");
+      return;
+    }
+    setBulkSaving(true);
+    setBulkResult(null);
+    try {
+      const res = await bulkImportGalleryKeywords(items as Record<string, unknown>[]);
+      setBulkResult(res.data as { created: number; updated: number; errors: string[] });
+      mutateKeywords();
+      mutateNiches();
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      notify(`Bulk import failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
+    } finally {
+      setBulkSaving(false);
+    }
   }
 
   const inputCls = "input-rect py-2";
@@ -255,6 +438,10 @@ export default function GalleryPage() {
             {uploading ? <Icon icon="svg-spinners:ring-resize" width={16} /> : <Icon icon="solar:upload-bold-duotone" width={16} />}
             Upload Image
           </button>
+          <button onClick={openBulkModal} className="btn btn-secondary flex items-center gap-2">
+            <Icon icon="solar:code-bold-duotone" width={16} />
+            Bulk Edit (JSON)
+          </button>
           <button onClick={openCreate} className="btn btn-primary flex items-center gap-2">
             <Icon icon="solar:add-circle-bold-duotone" width={16} />
             Add Keyword
@@ -276,6 +463,21 @@ export default function GalleryPage() {
             <div>
               <label className={labelCls}>Keyword</label>
               <input className={inputCls} value={form.keyword} onChange={(e) => set("keyword", e.target.value)} placeholder="marc marquez" />
+            </div>
+            <div>
+              <label className={labelCls}>Niche / Category</label>
+              <input
+                className={inputCls}
+                list="niche-options"
+                value={form.niche}
+                onChange={(e) => set("niche", e.target.value)}
+                placeholder="F1, MotoGP, UFC…"
+              />
+              <datalist id="niche-options">
+                {niches.map((n) => (
+                  <option key={n} value={n} />
+                ))}
+              </datalist>
             </div>
             <div>
               <label className={labelCls}>Max Images per Run</label>
@@ -313,28 +515,82 @@ export default function GalleryPage() {
         </div>
       )}
 
-      {/* ── Keywords table ── */}
+      {/* ── Keywords table (collapsible — can get long) ── */}
       {keywords.length > 0 && (
         <div className="card overflow-hidden p-0">
-          <table className="w-full text-caption">
-            <thead className="bg-parchment border-b border-hairline">
-              <tr>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Keyword</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Images</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Min Size</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Pages</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Download</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
-                <th className="px-5 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-hairline">
-              {keywords.map((k) => (
+          <button
+            onClick={() => setKeywordsExpanded((v) => !v)}
+            className="w-full flex items-center justify-between px-5 py-3 border-b border-hairline bg-parchment/50 hover:bg-parchment transition-colors"
+          >
+            <span className="text-sm font-bold text-ink flex items-center gap-2">
+              Keywords
+              <span className="text-ink-48 font-normal">
+                ({visibleKeywords.length}{filterNiche ? ` of ${keywords.length}` : ""})
+              </span>
+            </span>
+            <span className="flex items-center gap-1 text-ink-48 text-xs font-medium">
+              {keywordsExpanded ? "Collapse" : "Expand"}
+              <Icon icon={keywordsExpanded ? "solar:alt-arrow-up-bold" : "solar:alt-arrow-down-bold"} width={16} />
+            </span>
+          </button>
+
+          {keywordsExpanded && (
+            <>
+              <div className="flex items-center gap-2 px-5 py-3 border-b border-hairline bg-parchment/50">
+                <label className="text-xs font-semibold text-ink-80">Niche</label>
+                <select
+                  className="input-rect py-1 text-xs w-44"
+                  value={filterNiche}
+                  onChange={(e) => setFilterNiche(e.target.value)}
+                >
+                  <option value="">All niches</option>
+                  {niches.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                {filterNiche && (
+                  <button
+                    onClick={() => setFilterNiche("")}
+                    className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
+                  >
+                    {filterNiche}
+                    <Icon icon="solar:close-circle-bold" width={12} />
+                  </button>
+                )}
+              </div>
+              <div className="max-h-[420px] overflow-y-auto">
+              <table className="w-full text-caption">
+                <thead className="bg-parchment border-b border-hairline sticky top-0 z-10">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Keyword</th>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Niche</th>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Images</th>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Min Size</th>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Pages</th>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Download</th>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
+                    <th className="px-5 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-hairline">
+                  {visibleKeywords.map((k) => (
                 <tr key={k.id} className="hover:bg-parchment/50 transition-colors">
                   <td className="px-5 py-3">
                     <button onClick={() => setFilterKeyword(filterKeyword === k.keyword ? "" : k.keyword)} className="text-ink font-medium hover:text-primary-main">
                       {k.keyword}
                     </button>
+                  </td>
+                  <td className="px-5 py-3">
+                    {k.niche ? (
+                      <button
+                        onClick={() => setFilterNiche(filterNiche === k.niche ? "" : (k.niche as string))}
+                        className="inline-flex items-center rounded-full bg-parchment px-2 py-0.5 text-[11px] font-semibold text-ink-80 hover:text-primary-main"
+                      >
+                        {k.niche}
+                      </button>
+                    ) : (
+                      <span className="text-ink-48">—</span>
+                    )}
                   </td>
                   <td className="px-5 py-3 text-ink-80">{k.image_count}</td>
                   <td className="px-5 py-3 text-ink-80">{k.min_width}×{k.min_height}</td>
@@ -386,8 +642,11 @@ export default function GalleryPage() {
                   </td>
                 </tr>
               ))}
-            </tbody>
-          </table>
+                </tbody>
+              </table>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -401,6 +660,15 @@ export default function GalleryPage() {
               className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
             >
               {filterKeyword}
+              <Icon icon="solar:close-circle-bold" width={12} />
+            </button>
+          )}
+          {filterNiche && (
+            <button
+              onClick={() => setFilterNiche("")}
+              className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
+            >
+              {filterNiche}
               <Icon icon="solar:close-circle-bold" width={12} />
             </button>
           )}
@@ -437,6 +705,27 @@ export default function GalleryPage() {
                     {img.downloaded_at && (
                       <p className="text-[10px] text-ink-48">{formatDistanceToNowStrict(new Date(img.downloaded_at), { addSuffix: true })}</p>
                     )}
+                    {/* Extra keyword tags — a photo can feature more than one person */}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {img.extra_keywords.map((tag) => (
+                        <span
+                          key={tag}
+                          className="inline-flex items-center gap-0.5 rounded-full bg-parchment px-1.5 py-0.5 text-[9px] font-medium text-ink-80"
+                        >
+                          {tag}
+                          <button onClick={() => removeTag(img, tag)} title={`Remove "${tag}"`} className="hover:text-red-600">
+                            <Icon icon="solar:close-circle-bold" width={9} />
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={() => openTagDialog(img)}
+                        title="Tag another person in this photo"
+                        className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-hairline px-1.5 py-0.5 text-[9px] font-medium text-ink-48 hover:text-primary-main hover:border-primary-main transition-colors"
+                      >
+                        <Icon icon="solar:add-circle-bold" width={9} /> tag
+                      </button>
+                    </div>
                   </div>
                   <button
                     onClick={() => handleDeleteImage(img)}
@@ -506,6 +795,9 @@ export default function GalleryPage() {
             />
             <div className="mt-3 text-center text-white/80 text-caption">
               <span className="font-semibold text-white">{images[lightboxIdx].keyword}</span>
+              {images[lightboxIdx].extra_keywords.length > 0 && (
+                <span className="text-white/60"> (+ {images[lightboxIdx].extra_keywords.join(", ")})</span>
+              )}
               {" · "}{images[lightboxIdx].width}×{images[lightboxIdx].height}
               {" · "}{images[lightboxIdx].source_engine}
               {" · "}{lightboxIdx + 1}/{images.length}
@@ -513,6 +805,110 @@ export default function GalleryPage() {
           </div>
         </div>
       )}
+
+      {/* ── Bulk edit / import keywords (JSON) ── */}
+      {showBulkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowBulkModal(false)}>
+          <div className="card w-full max-w-3xl max-h-[85vh] flex flex-col p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-ink">Bulk Edit / Import Keywords</h2>
+                <p className="text-[11px] text-ink-48 mt-0.5">
+                  Edit this JSON directly, or replace it with an uploaded file, then Save. Matching is by
+                  <code className="mx-1 px-1 py-0.5 rounded bg-parchment">keyword</code>
+                  — existing keywords are updated in place, new ones are created. Nothing is deleted by an import.
+                </p>
+              </div>
+              <button onClick={() => setShowBulkModal(false)} className="text-ink-48 hover:text-ink shrink-0">
+                <Icon icon="solar:close-circle-bold-duotone" width={20} />
+              </button>
+            </div>
+
+            <textarea
+              className="input-rect font-mono text-xs flex-1 min-h-[320px] resize-none"
+              spellCheck={false}
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+            />
+
+            {bulkResult && (
+              <div className="rounded-lg bg-parchment px-3 py-2 text-xs text-ink-80">
+                {bulkResult.created} created, {bulkResult.updated} updated
+                {bulkResult.errors.length > 0 && (
+                  <span className="text-red-600"> — {bulkResult.errors.length} error(s): {bulkResult.errors.join("; ")}</span>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2 border-t border-hairline pt-4">
+              <div className="flex gap-2">
+                <input ref={bulkFileRef} type="file" accept="application/json,.json" className="hidden" onChange={handleBulkFile} />
+                <button onClick={() => bulkFileRef.current?.click()} className="btn btn-secondary text-xs flex items-center gap-1.5">
+                  <Icon icon="solar:folder-open-bold-duotone" width={14} /> Load file
+                </button>
+                <button onClick={handleBulkDownload} className="btn btn-secondary text-xs flex items-center gap-1.5">
+                  <Icon icon="solar:download-bold-duotone" width={14} /> Download .json
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setShowBulkModal(false)} className="btn btn-secondary">Close</button>
+                <button onClick={handleBulkSave} disabled={bulkSaving} className="btn btn-primary flex items-center gap-2">
+                  {bulkSaving && <Icon icon="svg-spinners:ring-resize" width={14} />}
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!confirmDeleteKeyword}
+        title={`Delete keyword "${confirmDeleteKeyword?.keyword ?? ""}"?`}
+        message="Downloaded images under this keyword are kept — only the download config is removed."
+        confirmLabel="Delete"
+        danger
+        loading={deletingKeyword}
+        onConfirm={confirmDeleteKeywordAction}
+        onCancel={() => setConfirmDeleteKeyword(null)}
+      />
+
+      <ConfirmDialog
+        open={!!confirmDeleteImage}
+        title="Delete this image?"
+        message="The file is removed and this exact photo will never be downloaded again for its keyword."
+        confirmLabel="Delete"
+        danger
+        loading={deletingImage}
+        onConfirm={confirmDeleteImageAction}
+        onCancel={() => setConfirmDeleteImage(null)}
+      />
+
+      <PromptDialog
+        open={!!pendingUploadFile}
+        title="Keyword for this image"
+        message="Which keyword should this upload be filed under?"
+        placeholder="marc marquez"
+        value={uploadKeywordInput}
+        onChange={setUploadKeywordInput}
+        confirmLabel="Upload"
+        onConfirm={confirmUploadKeyword}
+        onCancel={cancelUploadKeyword}
+      />
+
+      <PromptDialog
+        open={!!tagTarget}
+        title="Tag another person in this photo"
+        message={`Add a keyword this "${tagTarget?.keyword ?? ""}" image should also match under.`}
+        placeholder="valentino rossi"
+        value={tagInput}
+        onChange={setTagInput}
+        confirmLabel="Add tag"
+        onConfirm={confirmAddTag}
+        onCancel={() => setTagTarget(null)}
+      />
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

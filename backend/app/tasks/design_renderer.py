@@ -36,6 +36,7 @@ def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object 
     3. article hero image (scraped_image_url), downloaded on the fly
     4. None → job needs a manual image
     """
+    from sqlalchemy import or_
     from app.models.gallery import GalleryImage
 
     keywords = [k.lower() for k in (fanpage.mode2_gallery_keywords or [])]
@@ -47,7 +48,13 @@ def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object 
             continue
         img = (
             db.query(GalleryImage)
-            .filter(GalleryImage.keyword.in_(pool), GalleryImage.is_used == False)
+            .filter(
+                # A photo can feature more than one person — also match images
+                # tagged with a pool keyword as a secondary (extra) tag.
+                or_(GalleryImage.keyword.in_(pool), GalleryImage.extra_keywords.overlap(pool)),
+                GalleryImage.is_used == False,
+                GalleryImage.is_deleted == False,
+            )
             .order_by(GalleryImage.downloaded_at.desc())
             .first()
         )

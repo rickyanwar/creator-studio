@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { listJobs } from "@/lib/api";
+import { listJobs, deletePublishJob } from "@/lib/api";
 import type { PublishJob, PublishJobStatus } from "@/lib/types";
 import { format } from "date-fns";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Toast, { type ToastData } from "@/components/ui/Toast";
 
 const parseUtc = (s: string) =>
   new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
@@ -47,11 +49,39 @@ export default function HistoryPage() {
   const [lightboxJob, setLightboxJob] = useState<{ job: PublishJob; urls: string[]; idx: number } | null>(null);
   const [blurred, setBlurred] = useState(false);
 
-  const { data: jobs = [], isLoading } = useSWR(
+  const { data: jobs = [], isLoading, mutate } = useSWR(
     `history-${activeStatus}`,
     () => fetcher(activeStatus),
     { refreshInterval: 60000 }
   );
+
+  const [confirmDeleteJob, setConfirmDeleteJob] = useState<PublishJob | null>(null);
+  const [deletingJob, setDeletingJob] = useState(false);
+  const [toast, setToast] = useState<ToastData | null>(null);
+  const notify = (message: string, type?: ToastData["type"]) => setToast({ message, type });
+
+  async function confirmDeleteJobAction() {
+    if (!confirmDeleteJob) return;
+    setDeletingJob(true);
+    try {
+      const res = await deletePublishJob(confirmDeleteJob.id);
+      const { repliz_deleted, repliz_error } = res.data;
+      if (repliz_deleted === true) {
+        notify("Deleted from history and removed from Facebook via Repliz.", "success");
+      } else if (repliz_deleted === false) {
+        notify(`Deleted from history, but Repliz could not remove the live post: ${repliz_error ?? "unknown error"}`, "error");
+      } else {
+        notify("Deleted from history.", "success");
+      }
+      if (lightboxJob?.job.id === confirmDeleteJob.id) setLightboxJob(null);
+      mutate();
+    } catch {
+      notify("Delete failed. Please try again.", "error");
+    } finally {
+      setDeletingJob(false);
+      setConfirmDeleteJob(null);
+    }
+  }
 
   return (
     <>
@@ -154,6 +184,7 @@ export default function HistoryPage() {
                   const urls = resolveUrls(job);
                   if (urls.length) setLightboxJob({ job, urls, idx });
                 }}
+                onDelete={() => setConfirmDeleteJob(job)}
               />
             ))}
           </div>
@@ -168,8 +199,25 @@ export default function HistoryPage() {
           onClose={() => setLightboxJob(null)}
           onPrev={() => setLightboxJob((l) => l && l.idx > 0 ? { ...l, idx: l.idx - 1 } : l)}
           onNext={() => setLightboxJob((l) => l && l.idx < l.urls.length - 1 ? { ...l, idx: l.idx + 1 } : l)}
+          onDelete={() => setConfirmDeleteJob(lightboxJob.job)}
         />
       )}
+
+      <ConfirmDialog
+        open={!!confirmDeleteJob}
+        title="Delete this from history?"
+        message={
+          confirmDeleteJob?.repliz_schedule_id
+            ? "This will also try to delete the live post from Facebook via Repliz. This cannot be undone."
+            : "This cannot be undone."
+        }
+        confirmLabel="Delete"
+        danger
+        loading={deletingJob}
+        onConfirm={confirmDeleteJobAction}
+        onCancel={() => setConfirmDeleteJob(null)}
+      />
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </>
   );
 }
@@ -179,10 +227,12 @@ function HistoryCard({
   job,
   blurred,
   onImageClick,
+  onDelete,
 }: {
   job: PublishJob;
   blurred: boolean;
   onImageClick: (idx: number) => void;
+  onDelete: () => void;
 }) {
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const color = avatarColor(fanpage);
@@ -244,12 +294,21 @@ function HistoryCard({
             {albumCount} photos
           </span>
         )}
-        {job.repliz_schedule_id && (
-          <span className="flex items-center gap-1 text-xs text-text-secondary ml-auto">
-            <Icon icon="solar:link-bold-duotone" width={11} />
-            {job.repliz_schedule_id.slice(-8)}
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {job.repliz_schedule_id && (
+            <span className="flex items-center gap-1 text-xs text-text-secondary">
+              <Icon icon="solar:link-bold-duotone" width={11} />
+              {job.repliz_schedule_id.slice(-8)}
+            </span>
+          )}
+          <button
+            onClick={onDelete}
+            title="Delete from history"
+            className="p-1 rounded-md text-text-disabled hover:text-error-main hover:bg-error-main/10 transition-colors"
+          >
+            <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
+          </button>
+        </div>
       </div>
 
       {/* Thumbnail */}
@@ -314,12 +373,14 @@ function HistoryLightbox({
   onClose,
   onPrev,
   onNext,
+  onDelete,
 }: {
   state: { job: PublishJob; urls: string[]; idx: number };
   blurred: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
+  onDelete: () => void;
 }) {
   const { job, urls, idx } = state;
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
@@ -422,7 +483,7 @@ function HistoryLightbox({
           </div>
         )}
 
-        {/* Info bar — no actions, read-only */}
+        {/* Info bar */}
         <div className="flex items-center gap-3 px-5 py-4 bg-bg-paper">
           {job.repliz_schedule_id && (
             <div className="flex items-center gap-1.5 text-xs text-text-secondary">
@@ -430,6 +491,13 @@ function HistoryLightbox({
               Repliz ID: <span className={`font-mono text-text-primary ${blurred ? blur : ""}`}>{job.repliz_schedule_id.slice(-12)}</span>
             </div>
           )}
+          <button
+            onClick={onDelete}
+            title="Delete from history"
+            className="p-1.5 rounded-md text-text-disabled hover:text-error-main hover:bg-error-main/10 transition-colors"
+          >
+            <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
+          </button>
           <div className="ml-auto flex items-center gap-1.5 text-xs" style={{ color: cfg.iconClass === "text-primary-main" ? "#00A76F" : cfg.iconClass === "text-error-main" ? "#FF5630" : "#637381" }}>
             <Icon icon={cfg.icon} width={14} />
             <span className="font-semibold capitalize">{job.status}</span>

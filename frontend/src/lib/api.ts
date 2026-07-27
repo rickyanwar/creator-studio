@@ -88,6 +88,8 @@ export const regenerateCaption = (id: number, provider?: string) =>
   api.post(`/publish-jobs/${id}/regenerate-caption`, { provider });
 export const publishJob = (id: number) => api.post(`/publish-jobs/${id}/publish`);
 export const skipJob = (id: number) => api.post(`/publish-jobs/${id}/skip`);
+export const deletePublishJob = (id: number) =>
+  api.delete(`/publish-jobs/${id}`) as Promise<{ data: { ok: boolean; repliz_deleted: boolean | null; repliz_error: string | null } }>;
 
 // ── IG Sources ───────────────────────────────────────────────────────────────
 export const listIGSources = (orphanOnly?: boolean) =>
@@ -148,7 +150,9 @@ export const listNewsArticles = (sourceId: number, limit = 20) =>
   api.get(`/news-sources/${sourceId}/articles`, { params: { limit } });
 
 // ── Gallery ──────────────────────────────────────────────────────────────────
-export const listGalleryKeywords = () => api.get("/gallery/keywords");
+export const listGalleryKeywords = (niche?: string) =>
+  api.get("/gallery/keywords", { params: niche ? { niche } : {} });
+export const listGalleryNiches = () => api.get("/gallery/niches");
 export const createGalleryKeyword = (data: Record<string, unknown>) =>
   api.post("/gallery/keywords", data);
 export const updateGalleryKeyword = (id: number, data: Record<string, unknown>) =>
@@ -157,8 +161,11 @@ export const deleteGalleryKeyword = (id: number) =>
   api.delete(`/gallery/keywords/${id}`);
 export const downloadGalleryKeywordNow = (id: number) =>
   api.post(`/gallery/keywords/${id}/download-now`);
+export const bulkImportGalleryKeywords = (items: Record<string, unknown>[]) =>
+  api.post("/gallery/keywords/bulk-import", items);
 export const listGalleryImages = (params: {
   keyword?: string;
+  niche?: string;
   only_unused?: boolean;
   limit?: number;
   offset?: number;
@@ -173,6 +180,8 @@ export const uploadGalleryImage = (file: File, keyword: string) => {
 };
 export const deleteGalleryImage = (id: number) =>
   api.delete(`/gallery/images/${id}`);
+export const updateGalleryImageKeywords = (id: number, extra_keywords: string[]) =>
+  api.patch(`/gallery/images/${id}/keywords`, { extra_keywords });
 
 // ── Fanpage Mode 2 (news content) ────────────────────────────────────────────
 export const addFanpageNewsSource = (fanpageId: number, newsSourceId: number) =>

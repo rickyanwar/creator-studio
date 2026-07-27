@@ -446,9 +446,19 @@ def find_gallery_datauri(db, subject: str, exclude_path: str | None = None, use_
     """Find the best (ideally unused) gallery image whose keyword matches the
     subject. When several match, 9Router vision picks the best — constrained to
     `image_type` ("face"/"action") so split layouts stay consistent."""
+    from sqlalchemy import func, or_
     from app.models.gallery import GalleryImage
 
-    base = db.query(GalleryImage).filter(GalleryImage.keyword.ilike(f"%{subject.lower()}%"))
+    needle = f"%{subject.lower()}%"
+    base = db.query(GalleryImage).filter(
+        # A photo can feature more than one person — match either the primary
+        # keyword it was downloaded under or any additional tag on the image.
+        or_(
+            GalleryImage.keyword.ilike(needle),
+            func.array_to_string(GalleryImage.extra_keywords, ",").ilike(needle),
+        ),
+        GalleryImage.is_deleted == False,
+    )
     order = (GalleryImage.is_used.asc(), GalleryImage.downloaded_at.desc())
 
     rows = []
