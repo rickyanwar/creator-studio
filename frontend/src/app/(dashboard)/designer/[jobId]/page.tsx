@@ -22,6 +22,7 @@ type DesignPayload = {
   status: string;
   design_title: string | null;
   design_subtitle: string | null;
+  design_caption: string | null;
   caption: string | null;
   design_image_url: string | null;
   article_title: string | null;
@@ -62,6 +63,7 @@ export default function JobDesignerPage() {
     setPreloaded(true);
     if (payload.design_title) api.injectTitle(payload.design_title);
     if (payload.design_subtitle) api.injectSubtitle(payload.design_subtitle);
+    if (payload.design_caption) api.injectCaption(payload.design_caption);
     const first = payload.image_candidates[0];
     if (first) {
       setImageLoading(true);

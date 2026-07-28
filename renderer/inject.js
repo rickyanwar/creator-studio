@@ -10,7 +10,7 @@
  * the same placeholder contract for its live preload — keep the two in sync.
  */
 window.renderTemplate = function renderTemplate(args) {
-  const { templateJson, width, height, title, subtitle, watermark, watermarkImage, imageSrc, imageSrcs, focusPoints } = args;
+  const { templateJson, width, height, title, subtitle, caption, watermark, watermarkImage, imageSrc, imageSrcs, focusPoints } = args;
 
   // Watermark drawn on EVERY design (branding), top-left, on top of everything.
   // An IMAGE (logo) takes priority when provided; otherwise a semi-transparent
@@ -174,6 +174,42 @@ window.renderTemplate = function renderTemplate(args) {
           if (accent) {
             for (const [s, e] of parsed.ranges) subObj.setSelectionStyles({ fill: accent }, s, e);
           }
+
+          // ── Name badge: hug the subtitle text's actual width (e.g. a
+          // pill behind "TOTO WOLFF") instead of a fixed box that's either
+          // too tight for a long name or leaves an odd gap for a short one.
+          // Also re-centre it vertically on the text — subObj's height can
+          // shrink (fewer/smaller glyphs) after the fit loop above, and a
+          // fixed badge top would then sit visibly off-centre.
+          const badge = objects.find((o) => o.placeholderRole === "subtitleBadge");
+          if (badge) {
+            const textW = subObj.calcTextWidth();
+            const pad = typeof badge.badgePadX === "number" ? badge.badgePadX : 80;
+            const newW = Math.max(badge.height, textW + pad);
+            const cx = badge.left + badge.width / 2;
+            const textCy = subObj.top + subObj.height / 2;
+            badge.set({ width: newW, left: cx - newW / 2, top: textCy - badge.height / 2 });
+          }
+        }
+
+        // ── Caption placeholder (small descriptive line under the name/badge;
+        // same **red** word markers) — e.g. "on Lewis Hamilton's success, and
+        // Kim Kardashian" under a "TOTO WOLFF" name badge ──
+        const captionObj = objects.find((o) => o.placeholderRole === "caption");
+        if (captionObj && caption) {
+          const mode = captionObj.titleTextTransform || null;
+          const parsed = parseMarks(String(caption));
+          const text = applyCase(parsed.text, mode);
+          const maxHeight = captionObj.height;
+          captionObj.set({ text, styles: {} });
+          while (captionObj.height > maxHeight && captionObj.fontSize > 8) {
+            captionObj.set("fontSize", captionObj.fontSize - 1);
+            captionObj.initDimensions();
+          }
+          const accent = captionObj.titleAccentColor;
+          if (accent) {
+            for (const [s, e] of parsed.ranges) captionObj.setSelectionStyles({ fill: accent }, s, e);
+          }
         }
 
         // ── Text scrim: keep the dark overlay hugging the TEXT only ──
@@ -192,6 +228,16 @@ window.renderTemplate = function renderTemplate(args) {
             scrim.fill.coords.y2 = h;
             scrim.set("dirty", true);
           }
+        }
+
+        // ── Quote icon: hug the text like the scrim does ──
+        // A short quote sits lower (less height needed above the bottom
+        // anchor), so a static icon position would leave a growing gap;
+        // anchor it a fixed distance above titleObj's actual post-fit top.
+        const quoteIcon = objects.find((o) => o.placeholderRole === "quoteIcon");
+        if (quoteIcon && titleObj) {
+          const gap = typeof quoteIcon.iconGap === "number" ? quoteIcon.iconGap : 20;
+          quoteIcon.set("top", titleObj.top - gap - quoteIcon.height);
         }
 
         // ── Image slot placeholders (image, image_2, image_3, …) ──

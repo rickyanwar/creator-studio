@@ -21,7 +21,7 @@ import { parseMarks, applyTemplateContent } from "./applyTemplate";
 // Only fonts vendored in renderer/fonts (installed as system fonts there) so the
 // editor preview matches the headless render exactly. Keep in sync with the
 // Google Fonts @import in globals.css and the TTFs in renderer/fonts/.
-const FONTS = ["Poppins", "Montserrat", "Roboto", "Oswald", "Playfair Display", "Bebas Neue", "Anton", "Pacifico"];
+const FONTS = ["Poppins", "Montserrat", "Roboto", "Oswald", "Playfair Display", "Bebas Neue", "Anton", "Pacifico", "Tusker Grotesk", "Agrandir", "Agrandir Grand Light"];
 const DEFAULT_FONT = "Poppins";
 
 type TitleTransform = "uppercase" | "lowercase" | "capitalize";
@@ -71,6 +71,7 @@ export type EditorApi = {
   exportPng: () => Promise<Blob>;
   injectTitle: (title: string) => void;
   injectSubtitle: (subtitle: string) => void;
+  injectCaption: (caption: string) => void;
   injectImage: (src: string) => Promise<void>;
   showSample: () => void;
   hideSample: () => void;
@@ -97,6 +98,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
   const jsonLoadedRef = useRef(false);
   const pendingTitleRef = useRef<string | null>(null);
   const pendingSubtitleRef = useRef<string | null>(null);
+  const pendingCaptionRef = useRef<string | null>(null);
   const pendingImageRef = useRef<string | null>(null);
   // WYSIWYG sample preview (template designer): inject sample content so the
   // canvas looks like the real result; snapshot lets us reset before Save.
@@ -192,11 +194,12 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
     // showSample() -> reference SAMPLE_TITLE while it's still in the TDZ.
     const SAMPLE_TITLE = "BAGNAIA **SNUBBED YAMAHA'S MILLIONS** TO JOIN APRILIA";
     const SAMPLE_SUBTITLE = "A BOLD CAREER MOVE THAT SHOCKED THE PADDOCK.";
+    const SAMPLE_CAPTION = "ON THE RIVALRY THAT DEFINED THE SEASON, AND WHAT COMES NEXT.";
 
     function snapshotPlaceholders() {
       const objs = canvas.getObjects() as FabricObjectWithRole[];
       const snap: NonNullable<typeof snapshotRef.current> = {};
-      for (const role of ["title", "subtitle"]) {
+      for (const role of ["title", "subtitle", "caption"]) {
         const o = objs.find((x) => x[ROLE_PROP] === role) as (fabric.Textbox & FabricObjectWithRole) | undefined;
         if (o) snap[role] = { text: o.text, fontSize: o.fontSize, top: o.top, width: o.width };
       }
@@ -213,10 +216,12 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
         const hasTitle = objs.some((o) => o[ROLE_PROP] === "title");
         if (!hasTitle) return;
         const hasSubtitle = objs.some((o) => o[ROLE_PROP] === "subtitle");
+        const hasCaption = objs.some((o) => o[ROLE_PROP] === "caption");
         applyTemplateContent({
           fabric, canvas, width, height,
           title: SAMPLE_TITLE,
           subtitle: hasSubtitle ? SAMPLE_SUBTITLE : undefined,
+          caption: hasCaption ? SAMPLE_CAPTION : undefined,
         });
         sampleShownRef.current = true;
       } catch (err) {
@@ -232,7 +237,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
       if (!snap || !sampleShownRef.current) return;
       try {
       const objs = canvas.getObjects() as FabricObjectWithRole[];
-      for (const role of ["title", "subtitle"]) {
+      for (const role of ["title", "subtitle", "caption"]) {
         const o = objs.find((x) => x[ROLE_PROP] === role) as (fabric.Textbox & FabricObjectWithRole) | undefined;
         const s = snap[role];
         if (o && s) {
@@ -283,6 +288,10 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
             doInjectSubtitle(pendingSubtitleRef.current);
             pendingSubtitleRef.current = null;
           }
+          if (pendingCaptionRef.current) {
+            doInjectCaption(pendingCaptionRef.current);
+            pendingCaptionRef.current = null;
+          }
           if (sampleOnLoad) showSample();
           if (pendingImageRef.current) {
             doInjectImage(pendingImageRef.current).catch(() => {});
@@ -300,6 +309,10 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
 
     function doInjectSubtitle(rawSub: string) {
       applyTemplateContent({ fabric, canvas, width, height, subtitle: rawSub });
+    }
+
+    function doInjectCaption(rawCaption: string) {
+      applyTemplateContent({ fabric, canvas, width, height, caption: rawCaption });
     }
 
     function doInjectImage(src: string) {
@@ -351,6 +364,8 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
           "titleAnchorBottom",
           "scrimPad",
           "slotBounds",
+          "iconGap",
+          "badgePadX",
         ]) as unknown as Record<string, unknown>;
         const objs = canvas.getObjects() as FabricObjectWithRole[];
         const titleIdx = objs.findIndex((o) => o[ROLE_PROP] === "title");
@@ -388,6 +403,13 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
           return;
         }
         doInjectSubtitle(subtitle);
+      },
+      injectCaption: (caption: string) => {
+        if (!jsonLoadedRef.current) {
+          pendingCaptionRef.current = caption;
+          return;
+        }
+        doInjectCaption(caption);
       },
       showSample: () => showSample(),
       hideSample: () => hideSample(),

@@ -181,6 +181,7 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
         "status": job.status.value,
         "design_title": job.design_title,
         "design_subtitle": job.design_subtitle,
+        "design_caption": job.design_caption,
         "caption": job.ai_generated_caption,
         "design_image_url": job.design_image_url,
         "article_title": article.scraped_title if article else None,

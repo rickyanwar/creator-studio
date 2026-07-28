@@ -206,6 +206,7 @@ def render_ig_recreate(self, job_id: int):
                 "height": template.canvas_height,
                 "title": job.design_title,
                 "subtitle": job.design_subtitle or "",
+                "caption": job.design_caption or "",
                 "watermark": fanpage.watermark_text or fanpage.username or fanpage.name or "",
                 "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,

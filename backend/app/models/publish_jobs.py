@@ -44,6 +44,7 @@ class PublishJob(Base):
     source_article_id = Column(Integer, ForeignKey("scraped_articles.id", ondelete="CASCADE"), nullable=True, index=True)
     design_title = Column(Text, nullable=True)          # AI headline that goes on the design
     design_subtitle = Column(Text, nullable=True)       # AI sub-headline (may carry **red** markers)
+    design_caption = Column(Text, nullable=True)        # AI caption line under the name badge (e.g. "on X's Y")
     design_image_path = Column(String(512), nullable=True)  # rendered PNG (Phase 2D)
     design_image_url = Column(String(512), nullable=True)
     design_template_id = Column(Integer, nullable=True)     # FK to design_templates (Phase 2D)

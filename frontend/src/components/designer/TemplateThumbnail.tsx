@@ -8,6 +8,7 @@ import { applyTemplateContent } from "./applyTemplate";
 // subtitle) instead of the empty "Headline" placeholder.
 const SAMPLE_TITLE = "BAGNAIA **SNUBBED YAMAHA'S MILLIONS** TO JOIN APRILIA";
 const SAMPLE_SUBTITLE = "A BOLD CAREER MOVE THAT SHOCKED THE PADDOCK.";
+const SAMPLE_CAPTION = "ON THE RIVALRY THAT DEFINED THE SEASON, AND WHAT COMES NEXT.";
 
 /**
  * Renders a design template's Fabric.js JSON into a static PNG preview.
@@ -65,7 +66,7 @@ export default function TemplateThumbnail({
           // A same-origin sample photo (public/) avoids canvas taint on export.
           applyTemplateContent({
             fabric, canvas, width, height,
-            title: SAMPLE_TITLE, subtitle: SAMPLE_SUBTITLE,
+            title: SAMPLE_TITLE, subtitle: SAMPLE_SUBTITLE, caption: SAMPLE_CAPTION,
             imageSrc: "/sample-news.jpg", focusPoint: [0.5, 0.28],
           })
             .catch(() => {})

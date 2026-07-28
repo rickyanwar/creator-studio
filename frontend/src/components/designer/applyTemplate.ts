@@ -42,13 +42,14 @@ type ApplyArgs = {
   height: number;
   title?: string;
   subtitle?: string;
+  caption?: string;
   imageSrc?: string | null;
   focusPoint?: [number, number];
   watermark?: string;
 };
 
 export async function applyTemplateContent(args: ApplyArgs): Promise<void> {
-  const { fabric, canvas, width, height, title, subtitle, imageSrc, focusPoint, watermark } = args;
+  const { fabric, canvas, width, height, title, subtitle, caption, imageSrc, focusPoint, watermark } = args;
   const objects = canvas.getObjects();
 
   // ── Title ──
@@ -104,6 +105,34 @@ export async function applyTemplateContent(args: ApplyArgs): Promise<void> {
     }
     const accent = subObj.titleAccentColor;
     if (accent) for (const [s, e] of parsed.ranges) subObj.setSelectionStyles({ fill: accent }, s, e);
+
+    // ── Name badge: hug the subtitle text's actual width and re-centre
+    // vertically on it (subObj's height can shrink after the fit loop) ──
+    const badge = objects.find((o: any) => o.placeholderRole === "subtitleBadge");
+    if (badge) {
+      const textW = subObj.calcTextWidth();
+      const pad = typeof badge.badgePadX === "number" ? badge.badgePadX : 80;
+      const newW = Math.max(badge.height, textW + pad);
+      const cx = badge.left + badge.width / 2;
+      const textCy = subObj.top + subObj.height / 2;
+      badge.set({ width: newW, left: cx - newW / 2, top: textCy - badge.height / 2 });
+    }
+  }
+
+  // ── Caption (small descriptive line under the name/badge) ──
+  const captionObj = objects.find((o: any) => o.placeholderRole === "caption");
+  if (captionObj && caption) {
+    const mode = captionObj.titleTextTransform || null;
+    const parsed = parseMarks(String(caption));
+    const text = applyCase(parsed.text, mode);
+    const maxHeight = captionObj.height;
+    captionObj.set({ text, styles: {} });
+    while (captionObj.height > maxHeight && captionObj.fontSize > 8) {
+      captionObj.set("fontSize", captionObj.fontSize - 1);
+      captionObj.initDimensions();
+    }
+    const accent = captionObj.titleAccentColor;
+    if (accent) for (const [s, e] of parsed.ranges) captionObj.setSelectionStyles({ fill: accent }, s, e);
   }
 
   // ── Text scrim (hug the text) ──
@@ -118,6 +147,16 @@ export async function applyTemplateContent(args: ApplyArgs): Promise<void> {
       scrim.fill.coords.y2 = h;
       scrim.set("dirty", true);
     }
+  }
+
+  // ── Quote icon (hug the text, like the scrim) — a short quote sits lower
+  // (less height needed above the bottom anchor), so a static icon position
+  // would leave a growing gap; anchor the icon a fixed distance above
+  // titleObj's actual (post-fit) top instead.
+  const quoteIcon = objects.find((o: any) => o.placeholderRole === "quoteIcon");
+  if (quoteIcon && titleObj) {
+    const gap = typeof quoteIcon.iconGap === "number" ? quoteIcon.iconGap : 20;
+    quoteIcon.set("top", titleObj.top - gap - quoteIcon.height);
   }
 
   // ── Photo (optional; cover-fit + focus + clip) ──

@@ -58,18 +58,35 @@ def watermark_datauri(fanpage) -> str | None:
 
 def fit_with_blur_bg(image_bytes: bytes, target_w: int, target_h: int,
                      top_bias: float = 0.24, pad: float = 0.98,
-                     blur: int = 40, darken: float = 0.78) -> bytes | None:
-    """Canva-style "fit": show the WHOLE subject (contain, no hard crop) over a
+                     blur: int = 40, darken: float = 0.78, feather: int = 220,
+                     face_bbox: tuple[float, float, float, float] | None = None,
+                     face_zoom: float = 5.5) -> bytes | None:
+    """Canva-style "fit": show the subject (contain, no hard crop) over a
     blurred, darkened cover of the same photo so the frame stays full-bleed.
     The subject is nudged up (top_bias) to stay clear of the bottom text overlay.
+    The sharp foreground's bottom edge is feathered into the blurred/darkened
+    background beneath it (rather than pasted as a hard rectangle) so it reads
+    as one continuous photo behind the text overlay, not a visible seam.
+
+    face_bbox (fx, fy, fw, fh — normalized fractions, from _dominant_face_bbox):
+    when given, the foreground is first cropped to a window centered on the
+    face (sized so the face reads at a natural ~1/face_zoom of the crop's
+    height) instead of containing the WHOLE original photo. Without this, a
+    photo where the subject is already a small part of the frame ends up
+    looking small and distant even after "fit" — and centering the whole
+    photo (rather than the face) leaves an off-center subject off-center.
+    Omit face_bbox to keep the old whole-photo behavior (still used for the
+    extreme-close-up case, which needs headroom, not a further zoom-in).
+
     Returns JPEG bytes sized target_w×target_h, or None if PIL/decoding fails."""
     try:
         import io
+        import numpy as np
         from PIL import Image, ImageFilter, ImageEnhance
 
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         iw, ih = img.size
-        # Background: cover-crop → blur → darken.
+        # Background: cover-crop → blur → darken (always the full original photo).
         sbg = max(target_w / iw, target_h / ih)
         bg = img.resize((max(1, int(iw * sbg)), max(1, int(ih * sbg))))
         l = (bg.width - target_w) // 2
@@ -77,15 +94,39 @@ def fit_with_blur_bg(image_bytes: bytes, target_w: int, target_h: int,
         bg = bg.crop((l, t, l + target_w, t + target_h))
         bg = bg.filter(ImageFilter.GaussianBlur(blur))
         bg = ImageEnhance.Brightness(bg).enhance(darken)
-        # Foreground: contain the whole subject, nudged up.
-        sfg = min(target_w * pad / iw, target_h * pad / ih)
-        fw, fh = max(1, int(iw * sfg)), max(1, int(ih * sfg))
-        fg = img.resize((fw, fh))
+
+        # Foreground source: the whole photo, or a tighter window zoomed/
+        # centered on the face so the subject reads at a natural size.
+        subject = img
+        if face_bbox:
+            fx, fy, ffw, ffh = face_bbox
+            cx, cy = (fx + ffw / 2) * iw, (fy + ffh / 2) * ih
+            crop_h = min(ih, max(1, (ffh * ih) * face_zoom))
+            crop_w = min(iw, crop_h * (target_w / target_h))
+            crop_h = crop_w * (target_h / target_w)  # re-lock aspect after width clamp
+            left = min(max(0, cx - crop_w / 2), iw - crop_w)
+            top_ = min(max(0, cy - crop_h / 2), ih - crop_h)
+            subject = img.crop((int(left), int(top_), int(left + crop_w), int(top_ + crop_h)))
+
+        siw, sih = subject.size
+        sfg = min(target_w * pad / siw, target_h * pad / sih)
+        fw, fh = max(1, int(siw * sfg)), max(1, int(sih * sfg))
+        fg = subject.resize((fw, fh))
         x = (target_w - fw) // 2
         y = int((target_h - fh) * top_bias)
-        bg.paste(fg, (x, y))
+
+        bg_arr = np.asarray(bg).astype(np.float32)
+        fg_arr = np.asarray(fg).astype(np.float32)
+        f = min(feather, fh)
+        alpha = np.ones(fh, dtype=np.float32)
+        if f > 0:
+            alpha[-f:] = np.linspace(1, 0, f)
+        alpha3 = alpha[:, None, None]
+        region = bg_arr[y:y + fh, x:x + fw]
+        bg_arr[y:y + fh, x:x + fw] = fg_arr * alpha3 + region * (1 - alpha3)
+        out_img = Image.fromarray(np.clip(bg_arr, 0, 255).astype(np.uint8))
         out = io.BytesIO()
-        bg.save(out, "JPEG", quality=90)
+        out_img.save(out, "JPEG", quality=90)
         return out.getvalue()
     except Exception as exc:
         logger.warning("fit_with_blur_bg failed: %s", exc)
@@ -150,32 +191,47 @@ def reflect_extend(image_bytes: bytes, target_w: int, target_h: int,
         return None
 
 
-def _has_dominant_face(image_bytes: bytes) -> bool:
-    """True when a large face fills the frame (close-up portrait) — mirroring it
-    would look wrong, so prefer fit+blur over reflect-extend."""
+def _dominant_face_bbox(image_bytes: bytes) -> tuple[float, float, float, float] | None:
+    """Largest detected face as normalized (fx, fy, fw, fh) fractions of the
+    image, or None if no face found. Used both to decide "does a face dominate
+    the frame" and, via fh/face-bottom, "does it reach too far down for a
+    bottom text overlay" (an extreme close-up)."""
     try:
         import cv2
         import numpy as np
 
         arr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
         if arr is None:
-            return False
+            return None
         gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
         cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
         faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(int(w * 0.06), int(h * 0.06)))
-        return any(fw >= 0.22 * w for (_x, _y, fw, _fh) in faces)
+        if len(faces) == 0:
+            return None
+        fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+        return (fx / w, fy / h, fw / w, fh / h)
     except Exception:
-        return False
+        return None
 
 
 def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | None:
     """Decide per-image whether the frame needs filling and how. Returns the
     composite bytes, or None to leave the photo untouched (plain cover + focus).
 
+    - Extreme close-up (face/chin already reaches deep into the lower frame) →
+      fit+blur regardless of aspect ratio: a big bottom text overlay (e.g. a
+      Quote Card) would land on the face otherwise, and a plain cover-crop
+      can only pan, not shrink the subject to make room. face_zoom is large
+      here so the crop clamps to the whole photo (we need HEADROOM, not a
+      further zoom-in) — just centered on the face, not the photo's geometry.
     - Source close to (or taller than) the slot aspect → None (cover crops little).
-    - Wide/landscape source (would crop heavily) → EXTEND: reflect-extend for
-      continuous-background action shots, fit+blur when a face dominates.
+    - Wide/landscape source with a detected face → fit+blur, zoomed/centered
+      on the face (rather than reflect_extend's plain whole-photo centre-crop,
+      which has no notion of where the face actually is and can leave it
+      small and off-centre).
+    - Wide/landscape, no face at all → reflect-extend (continuous-background
+      action shots — track, grass, crowd; nothing that needs face-centring).
     """
     try:
         import io
@@ -184,12 +240,18 @@ def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | No
         iw, ih = Image.open(io.BytesIO(image_bytes)).size
     except Exception:
         return None
+
     slot_ar = target_w / target_h
     img_ar = iw / ih
+    face = _dominant_face_bbox(image_bytes)
+
+    if face and (face[3] >= 0.32 or face[1] + face[3] >= 0.78):
+        return fit_with_blur_bg(image_bytes, target_w, target_h, face_bbox=face, face_zoom=50)
+
     if img_ar < slot_ar * 1.15:  # portrait / near-square → cover is fine
         return None
-    if _has_dominant_face(image_bytes):
-        return fit_with_blur_bg(image_bytes, target_w, target_h)
+    if face:
+        return fit_with_blur_bg(image_bytes, target_w, target_h, face_bbox=face)
     return reflect_extend(image_bytes, target_w, target_h)
 
 
@@ -682,6 +744,42 @@ def position_secondary_slot(template_json, side: str, canvas_width: int = 1080):
     return tj
 
 
+def _with_inset(template_json, srcs: list) -> list:
+    """Fill an optional circular image_3 inset (e.g. the quote-card name badge's
+    portrait) by reusing the last already-resolved photo — keeps the inset
+    always filled without firing a third AI/gallery lookup. No-op if the
+    template has no image_3 slot.
+
+    image_3 is the THIRD element positionally (srcs[0]→image, srcs[1]→image_2,
+    srcs[2]→image_3) — if image_2 wasn't filled (srcs has only 1 entry) we pad
+    index 1 with None (falsy → renderer leaves that slot empty) rather than
+    accidentally shifting the inset photo into the image_2 slot."""
+    slot3 = find_role_object(template_json, "image_3")
+    if slot3 is not None and slot3.get("type") in ("circle", "ellipse") and srcs:
+        padded = (list(srcs) + [None, None])[:2]
+        return padded + [srcs[-1]]
+    return srcs
+
+
+def _widen_to_full(template_json, canvas_width: int):
+    """When a rectangular image_2 split never got filled (only one subject to
+    show), widen the main "image" slot to cover the full canvas instead of
+    leaving it a half-width rect next to an empty grey panel. image_2 itself
+    is hidden too — left in place (unfilled) it would still paint its flat
+    placeholder colour over the right half, on top of the now-widened photo."""
+    import copy
+
+    tj = copy.deepcopy(template_json)
+    img = find_role_object(tj, "image")
+    if img is not None:
+        img["left"] = 0
+        img["width"] = canvas_width
+    img2 = find_role_object(tj, "image_2")
+    if img2 is not None:
+        img2["visible"] = False
+    return tj
+
+
 def prepare_design_images(db, template_json, canvas_width: int, title: str, niche: str,
                           main_datauri: str, main_path: str | None = None, smart: bool = True,
                           expand: bool = False):
@@ -712,28 +810,28 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
             main_datauri = _expand_datauri(main_datauri, tw * DESIGN_SCALE, th * DESIGN_SCALE)
 
     if not smart:
-        return template_json, [main_datauri]
+        return template_json, _with_inset(template_json, [main_datauri])
 
     slot = find_role_object(template_json, "image_2")
     if slot is None:
-        return template_json, [main_datauri]
+        return template_json, _with_inset(template_json, [main_datauri])
 
     if slot.get("type") in ("circle", "ellipse"):
         # ── Inset flow ──
         subject = extract_secondary_subject(title, niche)
         if not subject:
             logger.info("Design: no secondary subject for %r — image_2 left empty", title[:50])
-            return template_json, [main_datauri]
+            return template_json, _with_inset(template_json, [main_datauri])
         uri = fetch_subject_datauri(subject, "face", niche)
         if not uri:
             uri, _ = find_gallery_datauri(db, subject, exclude_path=main_path, image_type="face")
         if not uri:
             logger.info("Design: no photo found for secondary subject %r", subject)
-            return template_json, [main_datauri]
+            return template_json, _with_inset(template_json, [main_datauri])
         side = analyze_subject_side(main_datauri)
         tj = position_secondary_slot(template_json, side, canvas_width)
         logger.info("Design: inset image_2 subject=%r (main subject %s)", subject, side)
-        return tj, [main_datauri, uri]
+        return tj, _with_inset(tj, [main_datauri, uri])
 
     # ── Split flow (rectangular image_2) ──
     primary, secondary = extract_two_subjects(title, niche)
@@ -742,16 +840,21 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         srcs = build_split_srcs(db, primary, secondary, image_type, niche)
         if srcs:
             logger.info("Design: split layout %r | %r (%s)", primary, secondary, image_type)
-            return template_json, srcs
+            return template_json, _with_inset(template_json, srcs)
         logger.info("Design: split sourcing failed for %r | %r — falling back", primary, secondary)
 
     subject = secondary if (primary and secondary) else extract_secondary_subject(title, niche)
     if not subject:
-        logger.info("Design: no secondary subject for %r — image_2 left empty", title[:50])
-        return template_json, [main_datauri]
+        # Only one subject in the whole piece — no split to show, so the main
+        # photo fills the full canvas instead of sitting half-width next to
+        # an empty grey panel.
+        logger.info("Design: no secondary subject for %r — image widened to full width", title[:50])
+        tj = _widen_to_full(template_json, canvas_width)
+        return tj, _with_inset(tj, [main_datauri])
     uri, gi = find_gallery_datauri(db, subject, exclude_path=main_path)
     if not uri:
-        logger.info("Design: no gallery image for secondary subject %r", subject)
-        return template_json, [main_datauri]
+        logger.info("Design: no gallery image for secondary subject %r — image widened to full width", subject)
+        tj = _widen_to_full(template_json, canvas_width)
+        return tj, _with_inset(tj, [main_datauri])
     logger.info("Design: image_2 subject=%r → gallery image %d", subject, gi.id)
-    return template_json, [main_datauri, uri]
+    return template_json, _with_inset(template_json, [main_datauri, uri])

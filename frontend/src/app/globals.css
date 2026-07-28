@@ -7,6 +7,30 @@
 /* Design-editor fonts — MUST match the TTFs vendored in renderer/fonts so the
    live editor preview equals the headless render (WYSIWYG). */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;900&family=Montserrat:wght@400;600;700;800&family=Roboto:wght@400;700;900&family=Oswald:wght@400;600;700&family=Playfair+Display:wght@400;700;900&family=Bebas+Neue&family=Anton&family=Pacifico&display=swap');
+/* Self-hosted (not on Google Fonts) — same file vendored in renderer/fonts/
+   for the headless render. font-weight is a range so any numeric/keyword
+   weight a template sets resolves to this one static file. */
+@font-face {
+  font-family: "Tusker Grotesk";
+  src: url('/fonts/tusker-grotesk-6600-semibold.otf') format('opentype');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Agrandir";
+  src: url('/fonts/Agrandir-Regular.otf') format('opentype');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Agrandir Grand Light";
+  src: url('/fonts/Agrandir-GrandLight.otf') format('opentype');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
 @layer base {
   /* ── Light mode (default) ──────────────────────── */
   :root {
