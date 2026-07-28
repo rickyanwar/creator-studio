@@ -10,10 +10,17 @@ existing-job check make this idempotent).
 """
 
 import logging
+import random
 from datetime import datetime, timezone, timedelta
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
+
+# Stagger auto-rendered fanpages sharing the same article (seconds) — same
+# pattern as fan_out.py's IG-repost stagger, so the same photo/story doesn't
+# go live on several fanpages within seconds of each other.
+_FANPAGE_STAGGER_MIN = 60
+_FANPAGE_STAGGER_MAX = 120
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +64,7 @@ def copywrite_article(self, article_id: int):
 
         created = 0
         failed = 0
+        slot = 0  # stagger slot index for fanpages sharing this article
         for fp in fanpages:
             existing = db.query(PublishJob).filter_by(
                 source_article_id=article_id, fanpage_id=fp.id
@@ -103,11 +111,15 @@ def copywrite_article(self, article_id: int):
             db.commit()
             created += 1
 
-            # Auto mode: render immediately; review mode waits for the designer
+            # Auto mode: render (staggered so fanpages sharing this article
+            # don't all publish within seconds of each other); review mode
+            # waits for the designer.
             from app.models.target_fanpages import PublishMode
             if fp.mode2_publish_mode == PublishMode.auto:
                 from app.tasks.design_renderer import render_design
-                render_design.delay(job.id)
+                stagger = slot * random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
+                render_design.apply_async(args=[job.id], countdown=stagger)
+                slot += 1
 
         if not failed:
             article.status = ArticleStatus.copywritten

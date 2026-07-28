@@ -61,7 +61,12 @@ def create_fanout_jobs(self, post_id: int):
                 recreate = link.fanpage.ig_recreate_enabled
             if recreate:
                 from app.tasks.ig_recreate import recreate_post_for_fanpage
-                recreate_post_for_fanpage.delay(post_id, link.fanpage_id)
+                # Same stagger as the plain-repost path below — without it,
+                # every fanpage recreating the same source's post would render
+                # and (if auto-publish) go live within seconds of each other.
+                stagger = slot * random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
+                recreate_post_for_fanpage.apply_async(args=[post_id, link.fanpage_id], countdown=stagger)
+                slot += 1
                 continue
 
             job = PublishJob(
