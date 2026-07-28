@@ -1,6 +1,7 @@
 """Repliz Publisher task — sends posts to Facebook via Repliz API."""
 
 import logging
+import random
 from datetime import datetime, timezone, timedelta
 
 from app.tasks.celery_app import celery_app
@@ -9,6 +10,34 @@ from app.database import SessionLocal
 logger = logging.getLogger(__name__)
 
 _RETRY_BACKOFF = [300, 900, 2700]  # 5/15/45 minutes
+
+# Minimum gap between consecutive posts on the SAME fanpage (seconds) — 10 to
+# 20 minutes, randomized per post. Separate from fan_out.py/news_copywriter.py's
+# stagger, which only spaces the SAME content across DIFFERENT fanpages; this
+# is what stops one fanpage's own feed from getting several unrelated posts
+# in a burst (e.g. a source scrape returning 5 new articles at once).
+_MIN_POST_GAP_SECONDS = 600
+_MAX_POST_GAP_SECONDS = 1200
+
+
+def _next_schedule_at(db, fanpage_id: int) -> datetime:
+    """This fanpage's next Facebook go-live slot: never earlier than now+60s,
+    and never closer than a random 10-20 min gap after its own last scheduled
+    post (scheduled_for, not published_at — that's when we called the API,
+    not the actual future slot, which may itself have been pushed out)."""
+    from sqlalchemy import func
+    from app.models.publish_jobs import PublishJob
+
+    floor = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
+    last = (
+        db.query(func.max(PublishJob.scheduled_for))
+        .filter(PublishJob.fanpage_id == fanpage_id)
+        .scalar()
+    )
+    if not last:
+        return floor
+    gap = timedelta(seconds=random.randint(_MIN_POST_GAP_SECONDS, _MAX_POST_GAP_SECONDS))
+    return max(floor, last + gap)
 
 
 @celery_app.task(name="app.tasks.publisher.publish_job", bind=True, max_retries=3)
@@ -53,20 +82,25 @@ def publish_job(self, job_id: int):
                 image_urls = pub_urls
 
         client = get_repliz_client_from_db(db)
+        from app.services.repliz_client import format_schedule_at
 
         caption = job.ai_generated_caption or ""
+        scheduled_for = _next_schedule_at(db, job.fanpage_id)
+        schedule_at = format_schedule_at(scheduled_for)
 
         if post.media_type == "album" and len(image_urls) >= 2:
             response = client.create_album_schedule(
                 account_id=fanpage.repliz_account_id,
                 description=caption,
                 image_urls=image_urls,
+                schedule_at=schedule_at,
             )
         else:
             response = client.create_image_schedule(
                 account_id=fanpage.repliz_account_id,
                 description=caption,
                 image_url=image_urls[0],
+                schedule_at=schedule_at,
             )
 
         schedule_id = response.get("_id") or response.get("id") or response.get("scheduleId")
@@ -76,6 +110,7 @@ def publish_job(self, job_id: int):
         job.repliz_response_json = response
         job.status = PublishJobStatus.published
         job.published_at = now
+        job.scheduled_for = scheduled_for
         job.cleanup_at = now + timedelta(hours=6)
         job.attempt_count = (job.attempt_count or 0) + 1
         db.commit()
@@ -144,11 +179,15 @@ def _publish_news_job(db, job):
         return
 
     client = get_repliz_client_from_db(db)
+    from app.services.repliz_client import format_schedule_at
+
+    scheduled_for = _next_schedule_at(db, job.fanpage_id)
     response = client.create_image_schedule(
         account_id=fanpage.repliz_account_id,
         description=job.ai_generated_caption or "",
         image_url=job.design_image_url,
         alt=job.design_title or "",
+        schedule_at=format_schedule_at(scheduled_for),
     )
 
     schedule_id = response.get("_id") or response.get("id") or response.get("scheduleId")
@@ -158,6 +197,7 @@ def _publish_news_job(db, job):
     job.repliz_response_json = response
     job.status = PublishJobStatus.published
     job.published_at = now
+    job.scheduled_for = scheduled_for
     job.cleanup_at = now + timedelta(hours=6)
     job.attempt_count = (job.attempt_count or 0) + 1
 

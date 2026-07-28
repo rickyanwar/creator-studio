@@ -57,6 +57,12 @@ class PublishJob(Base):
 
     repliz_schedule_id = Column(String(128), nullable=True, index=True)
     repliz_response_json = Column(JSON, nullable=True)
+    # The actual Facebook go-live time sent to Repliz as scheduleAt — distinct
+    # from published_at (when we made the API call). Used to space out
+    # consecutive posts on the SAME fanpage (see publisher._next_schedule_at):
+    # unlike published_at, this reflects the real future slot even when it
+    # was pushed out by an earlier job's spacing requirement.
+    scheduled_for = Column(DateTime, nullable=True, index=True)
 
     attempt_count = Column(Integer, default=0, nullable=False)
     last_error = Column(Text, nullable=True)

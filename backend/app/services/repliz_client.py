@@ -23,10 +23,17 @@ def _build_auth_header(access_key: str, secret_key: str) -> str:
     return f"Basic {token}"
 
 
+def format_schedule_at(dt: datetime) -> str:
+    """Render a datetime (naive = UTC, or tz-aware) as the ISO 8601 UTC
+    string Repliz's scheduleAt expects."""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
 def _schedule_at_now_plus(seconds: int = 60) -> str:
     """Return ISO 8601 UTC timestamp 'now + seconds'."""
-    dt = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return format_schedule_at(datetime.now(timezone.utc) + timedelta(seconds=seconds))
 
 
 class ReplizClient:
