@@ -23,5 +23,11 @@ class DesignTemplate(Base):
     canvas_width = Column(Integer, nullable=False, server_default="1080")
     canvas_height = Column(Integer, nullable=False, server_default="1080")
     is_default = Column(Boolean, default=False, nullable=False, server_default="false")
+    # "quote" | "news" | null (uncategorized) — which content pipeline this
+    # template is meant for. Both ig_recreate and the news-scrape pipeline
+    # share the same global pool per category (TargetFanpage.default_quote_
+    # template_id / default_news_template_id) instead of separate per-mode
+    # template fields — see app/services/design_images.resolve_template.
+    category = Column(String(16), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

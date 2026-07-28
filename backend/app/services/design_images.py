@@ -36,6 +36,54 @@ def file_to_datauri(path: str) -> str:
         return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
 
 
+def niche_keywords(db, niches: list[str]) -> list[str]:
+    """Resolve a fanpage's gallery niches (e.g. ["MotoGP"]) to the lowercased
+    keyword strings of every active GalleryKeyword under those niches — the
+    candidate pool for image matching. Replaces manually curating individual
+    keywords per fanpage: add a keyword under a niche once, every fanpage
+    subscribed to that niche picks it up automatically."""
+    if not niches:
+        return []
+    from app.models.gallery import GalleryKeyword
+
+    rows = (
+        db.query(GalleryKeyword.keyword)
+        .filter(GalleryKeyword.niche.in_(niches), GalleryKeyword.is_active == True)
+        .all()
+    )
+    return [k.lower() for (k,) in rows]
+
+
+def resolve_template(db, category: str, fanpage=None, job_template_id: int | None = None):
+    """Cascade shared by every content pipeline that renders a design:
+    job override → fanpage's default_{category}_template_id → shared
+    (is_default) template tagged with this category, fanpage-specific
+    override preferred over global.
+
+    category: "quote" | "news". A "news"-category template serves both
+    Mode 2 news_content jobs and Mode 3 ig_recreate posts classified "news";
+    "quote" serves ig_recreate posts classified "quote" — one global pool
+    per category instead of 3 separate per-mode template fields."""
+    from app.models.design_templates import DesignTemplate
+
+    if job_template_id:
+        t = db.query(DesignTemplate).filter_by(id=job_template_id).first()
+        if t:
+            return t
+
+    if fanpage is not None:
+        fp_field = "default_quote_template_id" if category == "quote" else "default_news_template_id"
+        fp_template_id = getattr(fanpage, fp_field, None)
+        if fp_template_id:
+            t = db.query(DesignTemplate).filter_by(id=fp_template_id).first()
+            if t:
+                return t
+
+    q = db.query(DesignTemplate).filter(DesignTemplate.is_default == True, DesignTemplate.category == category)
+    q = q.filter((DesignTemplate.fanpage_id == fanpage.id) | (DesignTemplate.fanpage_id.is_(None))) if fanpage is not None else q.filter(DesignTemplate.fanpage_id.is_(None))
+    return q.order_by(DesignTemplate.fanpage_id.desc().nullslast()).first()
+
+
 def watermark_datauri(fanpage) -> str | None:
     """A fanpage's watermark LOGO (if set) as a data-URI for the renderer, else
     None so the renderer falls back to the text watermark."""

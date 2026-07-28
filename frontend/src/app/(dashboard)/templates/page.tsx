@@ -14,6 +14,7 @@ type Template = {
   canvas_width: number;
   canvas_height: number;
   is_default: boolean;
+  category: "quote" | "news" | null;
   has_content: boolean;
   template_json: unknown | null;
   updated_at: string | null;
@@ -41,6 +42,7 @@ export default function TemplatesPage() {
   const [name, setName] = useState("");
   const [fanpageId, setFanpageId] = useState<string>("");
   const [sizeIdx, setSizeIdx] = useState(0);
+  const [category, setCategory] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
@@ -63,6 +65,7 @@ export default function TemplatesPage() {
         fanpage_id: fanpageId ? parseInt(fanpageId) : null,
         canvas_width: preset.w,
         canvas_height: preset.h,
+        category: category || null,
       });
       setShowForm(false);
       setName("");
@@ -122,6 +125,15 @@ export default function TemplatesPage() {
                   <option key={p.label} value={i}>{p.label}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-ink-80 mb-1">Category</label>
+              <select className="input-rect py-2" value={category} onChange={(e) => setCategory(e.target.value)}>
+                <option value="">Uncategorized</option>
+                <option value="quote">Quote</option>
+                <option value="news">News</option>
+              </select>
+              <p className="text-[10px] text-ink-48 mt-1">Which fanpage &quot;Default Design Template&quot; picker this shows up in.</p>
             </div>
           </div>
           <div className="flex justify-end gap-2">
@@ -233,6 +245,21 @@ export default function TemplatesPage() {
                 <p className="text-[11px] text-ink-48 mt-0.5">
                   {t.canvas_width} × {t.canvas_height} px · {fanpageName(t.fanpage_id)}
                 </p>
+                <select
+                  value={t.category ?? ""}
+                  onChange={(e) => updateTemplate(t.id, { category: e.target.value || null }).then(() => mutate())}
+                  className={`mt-1 text-[10px] font-semibold rounded-full px-2 py-0.5 border ${
+                    t.category === "quote"
+                      ? "bg-purple-50 text-purple-700 border-purple-200"
+                      : t.category === "news"
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : "bg-parchment text-ink-48 border-hairline"
+                  }`}
+                >
+                  <option value="">Uncategorized</option>
+                  <option value="quote">Quote</option>
+                  <option value="news">News</option>
+                </select>
               </div>
             </div>
           ))}

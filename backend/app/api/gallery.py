@@ -273,11 +273,12 @@ def list_images(
     _: CurrentUser,
     keyword: Optional[str] = None,
     niche: Optional[str] = None,
+    search: Optional[str] = None,
     only_unused: bool = False,
     limit: int = Query(60, le=200),
     offset: int = Query(0, ge=0),
 ):
-    from sqlalchemy import or_
+    from sqlalchemy import or_, cast, String
     from app.models.gallery import GalleryImage, GalleryKeyword
 
     q = db.query(GalleryImage).filter(GalleryImage.is_deleted == False)
@@ -288,6 +289,16 @@ def list_images(
     if niche:
         niche_keywords = db.query(GalleryKeyword.keyword).filter(GalleryKeyword.niche == niche)
         q = q.filter(GalleryImage.keyword.in_(niche_keywords))
+    if search:
+        # Free-text search box — substring match against the primary keyword
+        # or any extra tag, unlike the exact-match `keyword` param above.
+        pattern = f"%{search.strip()}%"
+        q = q.filter(
+            or_(
+                GalleryImage.keyword.ilike(pattern),
+                cast(GalleryImage.extra_keywords, String).ilike(pattern),
+            )
+        )
     if only_unused:
         q = q.filter(GalleryImage.is_used == False)
 

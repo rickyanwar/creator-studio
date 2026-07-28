@@ -12,6 +12,7 @@ from app.schemas.fanpage import (
     FanpageSourceAdd, PreviewCaptionRequest, PreviewCaptionResponse,
     FanpageNewsSourceAdd, NewsSourceRef,
     PreviewNewsCopyRequest, PreviewNewsCopyResponse,
+    FanpageSourceRecreateUpdate,
 )
 
 router = APIRouter(prefix="/fanpages", tags=["fanpages"])
@@ -35,6 +36,7 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
 
     links = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, is_active=True).all()
     source_ids = [l.ig_source_id for l in links]
+    recreate_by_source = {l.ig_source_id: l.ig_recreate_enabled for l in links}
     sources = db.query(IGSource).filter(IGSource.id.in_(source_ids)).all() if source_ids else []
 
     from app.schemas.fanpage import IGSourceRef
@@ -44,6 +46,7 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
             id=s.id,
             ig_username=s.ig_username,
             album_image_indices=s.album_image_indices or [1],
+            ig_recreate_enabled=recreate_by_source.get(s.id),
             caption_tone=s.caption_tone,
             caption_language=s.caption_language,
             caption_max_length=s.caption_max_length,
@@ -118,6 +121,21 @@ def add_ig_source(fanpage_id: int, body: FanpageSourceAdd, db: DB, _: CurrentUse
 
     db.commit()
     return {"ok": True, "ig_source_id": source.id, "ig_username": source.ig_username}
+
+
+@router.put("/{fanpage_id}/sources/{ig_source_id}/recreate")
+def set_source_recreate_override(fanpage_id: int, ig_source_id: int, body: FanpageSourceRecreateUpdate, db: DB, _: CurrentUser):
+    """Set (or clear, with null) this source's override of Mode-3 ig_recreate
+    for this fanpage — null inherits the fanpage's blanket setting."""
+    from app.models.fanpage_sources import FanpageSource
+
+    link = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, ig_source_id=ig_source_id).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Source link not found")
+
+    link.ig_recreate_enabled = body.ig_recreate_enabled
+    db.commit()
+    return {"ok": True, "ig_recreate_enabled": link.ig_recreate_enabled}
 
 
 @router.delete("/{fanpage_id}/sources/{ig_source_id}")

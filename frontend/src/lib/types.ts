@@ -45,7 +45,10 @@ export interface Fanpage {
   mode2_news_content_enabled: boolean;
   mode2_publish_mode: PublishMode;
   mode2_gallery_keywords: string[];
+  mode2_gallery_niches: string[];
   mode2_default_template_id: number | null;
+  default_quote_template_id: number | null;
+  default_news_template_id: number | null;
   ig_recreate_enabled: boolean;
   ig_recreate_quote_template_id: number | null;
   ig_recreate_news_template_id: number | null;
@@ -72,6 +75,7 @@ export interface IGSourceRef {
   id: number;
   ig_username: string;
   album_image_indices: number[];
+  ig_recreate_enabled: boolean | null;
   caption_tone: string | null;
   caption_language: string | null;
   caption_max_length: number | null;
@@ -180,6 +184,7 @@ export interface AppSettings {
   scraper_proxy_count: number;
   scraper_relays: string | null;
   scraper_relay_count: number;
+  gallery_scraping_paused: boolean;
   nine_router_base_url: string | null;
   nine_router_model: string | null;
   has_nine_router_key: boolean;

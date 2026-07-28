@@ -47,6 +47,8 @@ export const removeIGSource = (fanpageId: number, igSourceId: number) =>
   api.delete(`/fanpages/${fanpageId}/sources/${igSourceId}`);
 export const removeIGSourceByUsername = (fanpageId: number, username: string) =>
   api.delete(`/fanpages/${fanpageId}/sources/by-username/${encodeURIComponent(username)}`);
+export const setSourceRecreateOverride = (fanpageId: number, igSourceId: number, igRecreateEnabled: boolean | null) =>
+  api.put(`/fanpages/${fanpageId}/sources/${igSourceId}/recreate`, { ig_recreate_enabled: igRecreateEnabled });
 export const previewCaption = (
   fanpageId: number,
   sourceUsername: string,
@@ -166,6 +168,7 @@ export const bulkImportGalleryKeywords = (items: Record<string, unknown>[]) =>
 export const listGalleryImages = (params: {
   keyword?: string;
   niche?: string;
+  search?: string;
   only_unused?: boolean;
   limit?: number;
   offset?: number;

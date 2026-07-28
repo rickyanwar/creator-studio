@@ -117,8 +117,8 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     from app.models.publish_jobs import PublishJob, ContentType
     from app.models.target_fanpages import TargetFanpage
     from app.models.scraped_articles import ScrapedArticle
-    from app.models.design_templates import DesignTemplate
     from app.models.gallery import GalleryImage
+    from app.services.design_images import resolve_template
 
     job = db.query(PublishJob).filter_by(id=job_id).first()
     if not job or job.content_type not in (ContentType.news_content, ContentType.ig_recreate):
@@ -127,29 +127,19 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
     article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first() if job.source_article_id else None
 
-    # Same resolution cascade as the auto-renderer (design_renderer.render_design):
-    # job override → fanpage default → fanpage/shared template flagged is_default
-    template = None
-    template_id = job.design_template_id or (fanpage.mode2_default_template_id if fanpage else None)
-    if template_id:
-        template = db.query(DesignTemplate).filter_by(id=template_id).first()
-    if not template and fanpage:
-        template = (
-            db.query(DesignTemplate)
-            .filter(
-                DesignTemplate.is_default == True,
-                (DesignTemplate.fanpage_id == fanpage.id) | (DesignTemplate.fanpage_id.is_(None)),
-            )
-            .order_by(DesignTemplate.fanpage_id.desc().nullslast())
-            .first()
-        )
+    # Same cascade as the auto-renderer (design_renderer.render_design): job
+    # override → fanpage's default_news_template_id → shared "news" default.
+    # (ig_recreate jobs always have design_template_id set at creation, so
+    # this only matters for news_content jobs — see resolve_template.)
+    template = resolve_template(db, "news", fanpage=fanpage, job_template_id=job.design_template_id)
 
-    # image candidates: fanpage gallery keywords first, then the article hero
+    # image candidates: fanpage gallery niches first, then the article hero
     candidates: list[dict] = []
-    if fanpage and fanpage.mode2_gallery_keywords:
+    if fanpage and fanpage.mode2_gallery_niches:
         from sqlalchemy import or_
+        from app.services.design_images import niche_keywords
 
-        pool = [k.lower() for k in fanpage.mode2_gallery_keywords]
+        pool = niche_keywords(db, fanpage.mode2_gallery_niches)
         imgs = (
             db.query(GalleryImage)
             .filter(

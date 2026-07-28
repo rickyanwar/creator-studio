@@ -11,6 +11,11 @@ class FanpageSource(Base):
     fanpage_id = Column(Integer, ForeignKey("target_fanpages.id", ondelete="CASCADE"), nullable=False)
     ig_source_id = Column(Integer, ForeignKey("ig_sources.id", ondelete="CASCADE"), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Per-source override of the fanpage's Mode-3 ig_recreate_enabled: NULL
+    # inherits the fanpage setting, True/False pins this source regardless.
+    # Lets a fanpage recreate/redesign some sources' posts while reposting
+    # others plain (caption-only) — see app/tasks/fan_out.py.
+    ig_recreate_enabled = Column(Boolean, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     fanpage = relationship("TargetFanpage", back_populates="source_links")

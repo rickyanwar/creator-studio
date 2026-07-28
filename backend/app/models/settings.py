@@ -48,6 +48,11 @@ class Settings(Base):
     # fallback after the proxy pool — see app/services/relay_pool.py.
     scraper_relays = Column(Text, nullable=True)
 
+    # ── Gallery image scraping ────────────────────────────────────────────────
+    # Global kill switch — pauses the scheduled sweep (download_all_keywords)
+    # entirely. Does NOT block an explicit "Download Now" from the UI.
+    gallery_scraping_paused = Column(Boolean, default=False, nullable=False, server_default="false")
+
     # ── 9Router (primary AI, OpenAI-compatible) ───────────────────────────────
     # When set here, these override the NINE_ROUTER_* env vars. Base URL should
     # end with /v1; model e.g. "ag/claude-sonnet-4-6" or a combo name.

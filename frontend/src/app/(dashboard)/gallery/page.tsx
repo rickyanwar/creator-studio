@@ -17,6 +17,8 @@ import {
   uploadGalleryImage,
   deleteGalleryImage,
   updateGalleryImageKeywords,
+  getSettings,
+  updateSettings,
 } from "@/lib/api";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import PromptDialog from "@/components/ui/PromptDialog";
@@ -69,6 +71,21 @@ export default function GalleryPage() {
     () => listGalleryKeywords().then((r) => r.data as Keyword[]),
     { refreshInterval: 30000 }
   );
+  const { data: appSettings, mutate: mutateSettings } = useSWR(
+    "settings",
+    () => getSettings().then((r) => r.data as { gallery_scraping_paused: boolean }),
+  );
+  const [pauseToggling, setPauseToggling] = useState(false);
+  async function toggleScrapingPause() {
+    if (!appSettings) return;
+    setPauseToggling(true);
+    try {
+      await updateSettings({ gallery_scraping_paused: !appSettings.gallery_scraping_paused });
+      mutateSettings();
+    } finally {
+      setPauseToggling(false);
+    }
+  }
   const { data: niches = [], mutate: mutateNiches } = useSWR<string[]>(
     "gallery-niches",
     () => listGalleryNiches().then((r) => r.data as string[])
@@ -76,7 +93,19 @@ export default function GalleryPage() {
 
   const [filterKeyword, setFilterKeyword] = useState<string>("");
   const [filterNiche, setFilterNiche] = useState<string>("");
-  const visibleKeywords = filterNiche ? keywords.filter((k) => k.niche === filterNiche) : keywords;
+  const [imageSearch, setImageSearch] = useState<string>("");
+  const [keywordSearch, setKeywordSearch] = useState<string>("");
+  const visibleKeywords = keywords
+    .filter((k) => (filterNiche ? k.niche === filterNiche : true))
+    .filter((k) => (keywordSearch ? k.keyword.toLowerCase().includes(keywordSearch.trim().toLowerCase()) : true));
+  const keywordsFiltered = !!filterNiche || !!keywordSearch;
+
+  // Debounce the image free-text search so we don't hit the API on every keystroke
+  const [imageSearchDebounced, setImageSearchDebounced] = useState<string>("");
+  useEffect(() => {
+    const t = setTimeout(() => setImageSearchDebounced(imageSearch.trim()), 350);
+    return () => clearTimeout(t);
+  }, [imageSearch]);
 
   // ── Infinite scroll (offset pagination) — handles thousands of images ──
   const PAGE_SIZE = 60;
@@ -90,12 +119,13 @@ export default function GalleryPage() {
   } = useSWRInfinite<ImagePage>(
     (index, prev: ImagePage | null) => {
       if (prev && prev.images.length < PAGE_SIZE) return null; // no more pages
-      return ["gallery-images", filterKeyword, filterNiche, index] as const;
+      return ["gallery-images", filterKeyword, filterNiche, imageSearchDebounced, index] as const;
     },
-    ([, kw, nc, index]) =>
+    ([, kw, nc, s, index]) =>
       listGalleryImages({
         keyword: (kw as string) || undefined,
         niche: (nc as string) || undefined,
+        search: (s as string) || undefined,
         limit: PAGE_SIZE,
         offset: (index as number) * PAGE_SIZE,
       }).then((r) => r.data as ImagePage),
@@ -108,10 +138,10 @@ export default function GalleryPage() {
   const reachedEnd = !!lastPage && lastPage.images.length < PAGE_SIZE;
   const loadingMore = isValidating;
 
-  // Reset to first page whenever the keyword/niche filter changes
+  // Reset to first page whenever the keyword/niche/search filter changes
   useEffect(() => {
     setSize(1);
-  }, [filterKeyword, filterNiche, setSize]);
+  }, [filterKeyword, filterNiche, imageSearchDebounced, setSize]);
 
   // Load next page when the sentinel scrolls into view
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -426,10 +456,28 @@ export default function GalleryPage() {
           </h1>
           <p className="text-caption text-ink-48 mt-1">
             {total} image{total === 1 ? "" : "s"} — used by the News-to-Image designer
+            {appSettings?.gallery_scraping_paused && (
+              <span className="ml-2 text-red-500 font-semibold">· Scraping paused globally</span>
+            )}
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+          {appSettings && (
+            <button
+              onClick={toggleScrapingPause}
+              disabled={pauseToggling}
+              title={appSettings.gallery_scraping_paused ? "Resume scheduled gallery scraping" : "Pause scheduled gallery scraping (Download Now still works)"}
+              className={`btn flex items-center gap-2 ${appSettings.gallery_scraping_paused ? "btn-secondary" : "border border-hairline text-ink-80 hover:border-red-400 hover:text-red-500"}`}
+            >
+              {pauseToggling ? (
+                <Icon icon="svg-spinners:ring-resize" width={16} />
+              ) : (
+                <Icon icon={appSettings.gallery_scraping_paused ? "solar:play-bold-duotone" : "solar:pause-bold-duotone"} width={16} />
+              )}
+              {appSettings.gallery_scraping_paused ? "Resume Scraping" : "Pause Scraping"}
+            </button>
+          )}
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
@@ -525,7 +573,7 @@ export default function GalleryPage() {
             <span className="text-sm font-bold text-ink flex items-center gap-2">
               Keywords
               <span className="text-ink-48 font-normal">
-                ({visibleKeywords.length}{filterNiche ? ` of ${keywords.length}` : ""})
+                ({visibleKeywords.length}{keywordsFiltered ? ` of ${keywords.length}` : ""})
               </span>
             </span>
             <span className="flex items-center gap-1 text-ink-48 text-xs font-medium">
@@ -537,6 +585,25 @@ export default function GalleryPage() {
           {keywordsExpanded && (
             <>
               <div className="flex items-center gap-2 px-5 py-3 border-b border-hairline bg-parchment/50">
+                <div className="relative">
+                  <Icon icon="solar:magnifer-linear" width={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-48" />
+                  <input
+                    type="text"
+                    value={keywordSearch}
+                    onChange={(e) => setKeywordSearch(e.target.value)}
+                    placeholder="Search keywords…"
+                    className="input-rect py-1 pl-7 text-xs w-52"
+                  />
+                  {keywordSearch && (
+                    <button
+                      onClick={() => setKeywordSearch("")}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-ink-48 hover:text-primary-main"
+                      title="Clear search"
+                    >
+                      <Icon icon="solar:close-circle-bold" width={14} />
+                    </button>
+                  )}
+                </div>
                 <label className="text-xs font-semibold text-ink-80">Niche</label>
                 <select
                   className="input-rect py-1 text-xs w-44"
@@ -652,26 +719,50 @@ export default function GalleryPage() {
 
       {/* ── Image grid ── */}
       <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-base font-bold text-ink">Images</h2>
-          {filterKeyword && (
-            <button
-              onClick={() => setFilterKeyword("")}
-              className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
-            >
-              {filterKeyword}
-              <Icon icon="solar:close-circle-bold" width={12} />
-            </button>
-          )}
-          {filterNiche && (
-            <button
-              onClick={() => setFilterNiche("")}
-              className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
-            >
-              {filterNiche}
-              <Icon icon="solar:close-circle-bold" width={12} />
-            </button>
-          )}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-bold text-ink">
+              Images
+              {pages && <span className="text-ink-48 font-normal text-sm ml-1">({total})</span>}
+            </h2>
+            {filterKeyword && (
+              <button
+                onClick={() => setFilterKeyword("")}
+                className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
+              >
+                {filterKeyword}
+                <Icon icon="solar:close-circle-bold" width={12} />
+              </button>
+            )}
+            {filterNiche && (
+              <button
+                onClick={() => setFilterNiche("")}
+                className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
+              >
+                {filterNiche}
+                <Icon icon="solar:close-circle-bold" width={12} />
+              </button>
+            )}
+          </div>
+          <div className="relative">
+            <Icon icon="solar:magnifer-linear" width={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-48" />
+            <input
+              type="text"
+              value={imageSearch}
+              onChange={(e) => setImageSearch(e.target.value)}
+              placeholder="Search images by keyword…"
+              className="input-rect py-1.5 pl-7 text-xs w-64"
+            />
+            {imageSearch && (
+              <button
+                onClick={() => setImageSearch("")}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-ink-48 hover:text-primary-main"
+                title="Clear search"
+              >
+                <Icon icon="solar:close-circle-bold" width={14} />
+              </button>
+            )}
+          </div>
         </div>
 
         {images.length === 0 ? (

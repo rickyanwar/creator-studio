@@ -25,8 +25,11 @@ class FanpageBase(BaseModel):
     mode1_ig_repost_enabled: bool = True
     mode2_news_content_enabled: bool = False
     mode2_publish_mode: PublishMode = PublishMode.manual_review
-    mode2_gallery_keywords: list[str] = []
-    mode2_default_template_id: Optional[int] = None
+    mode2_gallery_keywords: list[str] = []  # deprecated — superseded by mode2_gallery_niches
+    mode2_gallery_niches: list[str] = []
+    mode2_default_template_id: Optional[int] = None  # deprecated — superseded by default_news_template_id
+    default_quote_template_id: Optional[int] = None
+    default_news_template_id: Optional[int] = None
 
     # ── Mode 2 caption criteria (separate from Mode 1) ──
     mode2_caption_tone: str = "informative"
@@ -59,6 +62,10 @@ class FanpageSourceRemove(BaseModel):
     ig_source_id: int
 
 
+class FanpageSourceRecreateUpdate(BaseModel):
+    ig_recreate_enabled: Optional[bool] = None  # null = inherit the fanpage's setting
+
+
 class FanpageOut(FanpageBase):
     id: int
     repliz_account_id: str
@@ -77,6 +84,9 @@ class IGSourceRef(BaseModel):
     id: int
     ig_username: str
     album_image_indices: list[int] = [1]
+    # Per-(fanpage, source) override of Mode-3 ig_recreate: null inherits the
+    # fanpage's blanket ig_recreate_enabled setting.
+    ig_recreate_enabled: Optional[bool] = None
     # Per-source caption criteria (global; managed from the fanpage page)
     caption_tone: Optional[str] = None
     caption_language: Optional[str] = None

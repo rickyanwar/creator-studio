@@ -43,6 +43,7 @@ def get_settings(db: DB, _: CurrentUser):
         scraper_proxy_count=len(parse_proxies(row.scraper_proxies)),
         scraper_relays=row.scraper_relays,
         scraper_relay_count=len(parse_relays(row.scraper_relays)),
+        gallery_scraping_paused=row.gallery_scraping_paused,
         nine_router_base_url=row.nine_router_base_url,
         nine_router_model=row.nine_router_model,
         has_nine_router_key=bool(row.nine_router_api_key_encrypted),

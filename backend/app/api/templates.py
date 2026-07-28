@@ -17,6 +17,7 @@ class TemplateBody(BaseModel):
     template_json: Optional[dict[str, Any]] = None
     placeholder_config: Optional[dict[str, Any]] = None
     is_default: Optional[bool] = False
+    category: Optional[str] = None  # "quote" | "news" | null (uncategorized)
 
 
 class UpdateTemplateBody(TemplateBody):
@@ -37,6 +38,7 @@ def _serialize(t, include_json: bool = False):
         "canvas_width": t.canvas_width,
         "canvas_height": t.canvas_height,
         "is_default": t.is_default,
+        "category": t.category,
         "has_content": t.template_json is not None,
         "placeholder_config": t.placeholder_config,
         "updated_at": t.updated_at.replace(tzinfo=timezone.utc).isoformat() if t.updated_at else None,
@@ -70,6 +72,7 @@ def create_template(body: TemplateBody, db: DB, _: CurrentUser):
         template_json=body.template_json,
         placeholder_config=body.placeholder_config,
         is_default=bool(body.is_default),
+        category=body.category,
     )
     db.add(t)
     db.commit()
@@ -107,6 +110,8 @@ def update_template(template_id: int, body: UpdateTemplateBody, db: DB, _: Curre
         t.template_json = body.template_json
     if body.placeholder_config is not None:
         t.placeholder_config = body.placeholder_config
+    if body.category is not None:
+        t.category = body.category
     if body.is_default is not None:
         t.is_default = body.is_default
         if body.is_default:

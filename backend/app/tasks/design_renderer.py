@@ -31,15 +31,16 @@ _RENDER_TIMEOUT = 120.0
 def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object | None]:
     """Workflow §C cascade. Returns (image_src_data_uri_or_none, gallery_image_or_none).
 
-    1. gallery keywords that appear in the article title/content → unused image
-    2. any unused image under the fanpage's gallery keywords
+    1. niche keywords that appear in the article title/content → unused image
+    2. any unused image under the fanpage's subscribed gallery niches
     3. article hero image (scraped_image_url), downloaded on the fly
     4. None → job needs a manual image
     """
     from sqlalchemy import or_
     from app.models.gallery import GalleryImage
+    from app.services.design_images import niche_keywords
 
-    keywords = [k.lower() for k in (fanpage.mode2_gallery_keywords or [])]
+    keywords = niche_keywords(db, fanpage.mode2_gallery_niches or [])
     text = f"{article.scraped_title} {article.scraped_content or ''}".lower()
     matched = [k for k in keywords if k in text]
 
@@ -88,7 +89,6 @@ def render_design(self, job_id: int):
         from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
         from app.models.target_fanpages import TargetFanpage
         from app.models.scraped_articles import ScrapedArticle, ArticleStatus
-        from app.models.design_templates import DesignTemplate
 
         job = db.query(PublishJob).filter_by(id=job_id).first()
         if not job or job.status != PublishJobStatus.pending_design or job.content_type != ContentType.news_content:
@@ -101,22 +101,11 @@ def render_design(self, job_id: int):
             db.commit()
             return
 
-        # ── Resolve template: job override → fanpage default → fanpage's default flag → shared default ──
-        template = None
-        if job.design_template_id:
-            template = db.query(DesignTemplate).filter_by(id=job.design_template_id).first()
-        if not template and fanpage.mode2_default_template_id:
-            template = db.query(DesignTemplate).filter_by(id=fanpage.mode2_default_template_id).first()
-        if not template:
-            template = (
-                db.query(DesignTemplate)
-                .filter(
-                    DesignTemplate.is_default == True,
-                    (DesignTemplate.fanpage_id == fanpage.id) | (DesignTemplate.fanpage_id.is_(None)),
-                )
-                .order_by(DesignTemplate.fanpage_id.desc().nullslast())
-                .first()
-            )
+        # ── Resolve template: job override → fanpage's default_news_template_id
+        # → shared "news"-category default (see design_images.resolve_template) ──
+        from app.services.design_images import resolve_template
+
+        template = resolve_template(db, "news", fanpage=fanpage, job_template_id=job.design_template_id)
         if not template or not template.template_json:
             job.last_error = "no design template configured — create one in Template Designer"
             db.commit()

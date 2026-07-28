@@ -36,8 +36,23 @@ class TargetFanpage(Base):
     mode1_ig_repost_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     mode2_news_content_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     mode2_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
-    mode2_gallery_keywords = Column(ARRAY(String), server_default="{}", nullable=False)
-    mode2_default_template_id = Column(Integer, nullable=True)  # FK to design_templates (Phase 2D)
+    mode2_gallery_keywords = Column(ARRAY(String), server_default="{}", nullable=False)  # deprecated — superseded by mode2_gallery_niches
+    # Gallery images eligible for this fanpage = every active GalleryKeyword
+    # under these niches (e.g. ["MotoGP"]) — see design_images.niche_keywords.
+    # Replaces mode2_gallery_keywords: a new keyword added under a subscribed
+    # niche is picked up automatically, no per-fanpage curation needed.
+    mode2_gallery_niches = Column(ARRAY(String), server_default="{}", nullable=False)
+    mode2_default_template_id = Column(Integer, nullable=True)  # deprecated — superseded by default_news_template_id
+
+    # ── Default design templates (one setting per category, shared across
+    #    modes) — a "news"-category template renders both Mode 2 news_content
+    #    jobs AND Mode 3 ig_recreate posts classified "news"; a "quote"-
+    #    category template renders Mode 3 ig_recreate posts classified
+    #    "quote". Replaces mode2_default_template_id / ig_recreate_quote_
+    #    template_id / ig_recreate_news_template_id (3 fields, set in 2
+    #    different UI sections, for what's conceptually the same 2 choices).
+    default_quote_template_id = Column(Integer, nullable=True)  # FK to design_templates
+    default_news_template_id = Column(Integer, nullable=True)   # FK to design_templates
 
     # ── Mode 2 caption criteria (separate set from Mode 1) ──
     mode2_caption_tone = Column(String(64), default="informative", nullable=False, server_default="informative")
@@ -54,8 +69,8 @@ class TargetFanpage(Base):
     # per-fanpage template: quote → quote template, news → news template (title
     # AI-rewritten), other → skipped. Both use the IG image as the photo.
     ig_recreate_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
-    ig_recreate_quote_template_id = Column(Integer, nullable=True)  # FK to design_templates
-    ig_recreate_news_template_id = Column(Integer, nullable=True)   # FK to design_templates
+    ig_recreate_quote_template_id = Column(Integer, nullable=True)  # deprecated — superseded by default_quote_template_id
+    ig_recreate_news_template_id = Column(Integer, nullable=True)   # deprecated — superseded by default_news_template_id
     # Opt-in "smart" 2-photo design: AI decides 1 vs 2 people → single+inset or
     # split, picks face/action photos, face-aware crop. Off = basic single photo.
     ig_recreate_smart_layout = Column(Boolean, default=False, nullable=False, server_default="false")

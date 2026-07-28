@@ -23,10 +23,20 @@ settings = get_settings()
 
 @celery_app.task(name="app.tasks.gallery_downloader.download_all_keywords")
 def download_all_keywords():
-    """Dispatch a download for every active keyword whose daily interval elapsed."""
+    """Dispatch a download for every active keyword whose daily interval elapsed.
+
+    Skips entirely while Settings.gallery_scraping_paused is set — a global
+    kill switch for the scheduled sweep. Doesn't affect an explicit
+    "Download Now" (download_keyword.delay called directly from the API)."""
     db = SessionLocal()
     try:
         from app.models.gallery import GalleryKeyword
+        from app.models.settings import Settings
+
+        row = db.query(Settings).filter_by(id=1).first()
+        if row and row.gallery_scraping_paused:
+            logger.info("Gallery: scraping sweep paused globally — skipping")
+            return
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         keywords = db.query(GalleryKeyword).filter(GalleryKeyword.is_active == True).all()

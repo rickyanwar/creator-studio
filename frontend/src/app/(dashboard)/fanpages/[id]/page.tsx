@@ -8,10 +8,11 @@ import {
   updateFanpage,
   addIGSource,
   removeIGSourceByUsername,
+  setSourceRecreateOverride,
   previewCaption,
   updateIGSource,
   listNewsSources,
-  listGalleryKeywords,
+  listGalleryNiches,
   listTemplates,
   addFanpageNewsSource,
   removeFanpageNewsSource,
@@ -29,16 +30,31 @@ const MAX_ALBUM = 10;
 
 function IGSourceCard({
   source,
+  fanpageId,
+  fanpageRecreateEnabled,
   onRemove,
   onAlbumSaved,
 }: {
   source: IGSourceRef;
+  fanpageId: number;
+  fanpageRecreateEnabled: boolean;
   onRemove: () => void;
   onAlbumSaved: () => void;
 }) {
   const [indices, setIndices] = useState<number[]>(source.album_image_indices ?? [1]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [recreateSaving, setRecreateSaving] = useState(false);
+
+  async function setRecreate(value: boolean | null) {
+    setRecreateSaving(true);
+    try {
+      await setSourceRecreateOverride(fanpageId, source.id, value);
+      onAlbumSaved();
+    } finally {
+      setRecreateSaving(false);
+    }
+  }
 
   const [capOpen, setCapOpen] = useState(false);
   const [capForm, setCapForm] = useState<CaptionCriteria>(captionFromSource(source));
@@ -108,6 +124,43 @@ function IGSourceCard({
         >
           <Icon icon="solar:trash-bin-trash-bold-duotone" width={15} />
         </button>
+      </div>
+
+      {/* Divider */}
+      <div className="border-t border-hairline" />
+
+      {/* Recreate/redesign vs plain repost override */}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Icon icon="solar:magic-stick-3-bold-duotone" width={13} className="text-text-secondary" />
+          <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wide">
+            Recreate design
+          </span>
+          {recreateSaving && <Icon icon="svg-spinners:ring-resize" width={11} className="text-primary-main" />}
+        </div>
+        <div className="flex gap-1">
+          {([
+            { v: null, label: `Inherit (${fanpageRecreateEnabled ? "recreate" : "plain"})` },
+            { v: true, label: "Always recreate" },
+            { v: false, label: "Always plain" },
+          ] as const).map((opt) => (
+            <button
+              key={String(opt.v)}
+              onClick={() => setRecreate(opt.v)}
+              disabled={recreateSaving}
+              className={`px-2 py-1 rounded-md text-[10px] font-medium border transition-colors disabled:opacity-48 ${
+                source.ig_recreate_enabled === opt.v
+                  ? "bg-primary-main text-white border-primary-main"
+                  : "bg-bg-paper text-text-secondary border-hairline hover:border-primary-main hover:text-primary-main"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-text-secondary">
+          Plain = repost the original image, only the caption is AI-written. Recreate = redesign onto a quote/news template (Mode 3).
+        </p>
       </div>
 
       {/* Divider */}
@@ -241,16 +294,15 @@ export default function FanpageEditPage() {
     "news-sources-picker",
     () => listNewsSources().then((r) => r.data as { id: number; name: string; category_url: string }[])
   );
-  const { data: allGalleryKeywords = [] } = useSWR<{ id: number; keyword: string }[]>(
-    "gallery-keywords-picker",
-    () => listGalleryKeywords().then((r) => r.data as { id: number; keyword: string }[])
+  const { data: allGalleryNiches = [] } = useSWR<string[]>(
+    "gallery-niches-picker",
+    () => listGalleryNiches().then((r) => r.data as string[])
   );
-  type TemplateRef = { id: number; name: string; is_default: boolean; canvas_width: number; canvas_height: number };
+  type TemplateRef = { id: number; name: string; is_default: boolean; category: "quote" | "news" | null; canvas_width: number; canvas_height: number };
   const { data: allTemplates = [] } = useSWR<TemplateRef[]>(
     `templates-picker-${fanpageId}`,
     () => listTemplates(fanpageId).then((r) => r.data as TemplateRef[])
   );
-  const [galleryKeywordInput, setGalleryKeywordInput] = useState("");
   const [newsPreviewTitle, setNewsPreviewTitle] = useState("");
   const [newsPreviewContent, setNewsPreviewContent] = useState("");
   const [newsPreviewResult, setNewsPreviewResult] = useState<{ title: string; caption: string } | null>(null);
@@ -264,12 +316,6 @@ export default function FanpageEditPage() {
     }
     const fresh = await mutate();
     if (fresh) setForm((prev) => ({ ...prev, news_sources: fresh.news_sources }));
-  }
-
-  function addGalleryKeyword(kw: string) {
-    const clean = kw.trim().toLowerCase();
-    const arr = (form.mode2_gallery_keywords as string[]) ?? [];
-    if (clean && !arr.includes(clean)) set("mode2_gallery_keywords", [...arr, clean]);
   }
 
   async function handleNewsPreview() {
@@ -381,6 +427,8 @@ export default function FanpageEditPage() {
               <IGSourceCard
                 key={src.id}
                 source={src}
+                fanpageId={fanpageId}
+                fanpageRecreateEnabled={!!fp.ig_recreate_enabled}
                 onRemove={() => handleRemoveSource(src.ig_username)}
                 onAlbumSaved={mutate}
               />
@@ -401,6 +449,54 @@ export default function FanpageEditPage() {
             Add
           </button>
         </div>
+      </section>
+
+      {/* ── Section: Design Templates (shared by Mode 2 news + Mode 3 ig_recreate) ── */}
+      <section className="card space-y-5">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">Design Templates</h2>
+          <p className="text-xs text-text-secondary mt-0.5">
+            One setting per category, used everywhere that category of content is rendered — news designs from
+            Mode 2 (news-scrape) and Mode 3 (IG recreate, classified &quot;news&quot;) share the News Template;
+            Mode 3 posts classified &quot;quote&quot; use the Quote Template.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Quote Template</label>
+            <select
+              className="input w-full"
+              value={(form.default_quote_template_id as number | null) ?? ""}
+              onChange={(e) => set("default_quote_template_id", e.target.value ? parseInt(e.target.value) : null)}
+            >
+              <option value="">— shared default (quote-tagged) —</option>
+              {allTemplates.filter((t) => t.category !== "news").map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">News Template</label>
+            <select
+              className="input w-full"
+              value={(form.default_news_template_id as number | null) ?? ""}
+              onChange={(e) => set("default_news_template_id", e.target.value ? parseInt(e.target.value) : null)}
+            >
+              <option value="">— shared default (news-tagged) —</option>
+              {allTemplates.filter((t) => t.category !== "quote").map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="text-[11px] text-text-secondary">
+          Create, edit or tag templates by category in{" "}
+          <a href="/templates" className="text-primary-main hover:underline">Template Designer</a>.
+        </p>
       </section>
 
       {/* ── Section 2: Caption Criteria ────────────────── */}
@@ -716,72 +812,37 @@ export default function FanpageEditPage() {
               </div>
             </div>
 
-            {/* Default design template */}
+            {/* Gallery niches */}
             <div>
-              <label className="label">Default Design Template</label>
-              <select
-                className="input w-full"
-                value={(form.mode2_default_template_id as number | null) ?? ""}
-                onChange={(e) => set("mode2_default_template_id", e.target.value ? parseInt(e.target.value) : null)}
-              >
-                <option value="">— use shared default template —</option>
-                {allTemplates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
-                  </option>
-                ))}
-              </select>
-              <p className="text-[11px] text-text-secondary mt-1">
-                Used when auto-rendering news designs for this fanpage. Create or edit templates in{" "}
-                <a href="/templates" className="text-primary-main hover:underline">Template Designer</a>.
+              <label className="label">Gallery Niches (for image selection)</label>
+              <p className="text-[11px] text-text-secondary mb-2">
+                Any image tagged with a keyword under a subscribed niche is eligible — add a new keyword to a
+                niche in <a href="/gallery" className="text-primary-main hover:underline">Gallery</a> and every
+                fanpage subscribed to it picks it up automatically, no per-fanpage list to maintain.
               </p>
-            </div>
-
-            {/* Gallery keywords */}
-            <div>
-              <label className="label">Gallery Keywords (for image selection)</label>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {((form.mode2_gallery_keywords as string[]) ?? []).map((kw) => (
-                  <span key={kw} className="badge badge-blue gap-1">
-                    {kw}
-                    <button
-                      onClick={() =>
-                        set(
-                          "mode2_gallery_keywords",
-                          ((form.mode2_gallery_keywords as string[]) ?? []).filter((v) => v !== kw)
-                        )
-                      }
-                    >
-                      <Icon icon="solar:close-bold" width={10} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <input
-                className="input w-full"
-                placeholder="Add keyword, press Enter (e.g. marc marquez)"
-                value={galleryKeywordInput}
-                onChange={(e) => setGalleryKeywordInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    addGalleryKeyword(galleryKeywordInput);
-                    setGalleryKeywordInput("");
-                  }
-                }}
-              />
-              {allGalleryKeywords.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {allGalleryKeywords
-                    .filter((k) => !((form.mode2_gallery_keywords as string[]) ?? []).includes(k.keyword))
-                    .map((k) => (
+              {allGalleryNiches.length === 0 ? (
+                <p className="text-[11px] text-text-secondary italic">No niches yet — create gallery keywords with a niche first.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {allGalleryNiches.map((n) => {
+                    const active = ((form.mode2_gallery_niches as string[]) ?? []).includes(n);
+                    return (
                       <button
-                        key={k.id}
-                        onClick={() => addGalleryKeyword(k.keyword)}
-                        className="text-[11px] px-2 py-0.5 rounded-full border border-hairline text-text-secondary hover:border-primary-main hover:text-primary-main transition-colors"
+                        key={n}
+                        onClick={() => {
+                          const cur = (form.mode2_gallery_niches as string[]) ?? [];
+                          set("mode2_gallery_niches", active ? cur.filter((v) => v !== n) : [...cur, n]);
+                        }}
+                        className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
+                          active
+                            ? "bg-primary-main text-white border-primary-main"
+                            : "border-hairline text-text-secondary hover:border-primary-main hover:text-primary-main"
+                        }`}
                       >
-                        + {k.keyword}
+                        {n}
                       </button>
-                    ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -947,46 +1008,11 @@ export default function FanpageEditPage() {
           <>
             <p className="text-[11px] text-text-secondary">
               Each IG post image is classified as <strong>quote</strong>, <strong>news</strong>, or{" "}
-              <strong>other</strong>. Quotes and news are rebuilt on the templates below (using the IG image as
-              the photo); news headlines are AI-rewritten; anything else is skipped.
+              <strong>other</strong>. Quotes and news are rebuilt using the fanpage&apos;s Quote/News Template
+              (set above in <strong>Design Templates</strong>) — using the IG image as the photo; news headlines
+              are AI-rewritten; anything else is skipped. Uses the fanpage&apos;s Mode 1 caption criteria for the
+              Facebook post text.
             </p>
-
-            <div>
-              <label className="label">Quote Template</label>
-              <select
-                className="input w-full"
-                value={(form.ig_recreate_quote_template_id as number | null) ?? ""}
-                onChange={(e) => set("ig_recreate_quote_template_id", e.target.value ? parseInt(e.target.value) : null)}
-              >
-                <option value="">— none (quote posts skipped) —</option>
-                {allTemplates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.canvas_width}×{t.canvas_height})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="label">News Template</label>
-              <select
-                className="input w-full"
-                value={(form.ig_recreate_news_template_id as number | null) ?? ""}
-                onChange={(e) => set("ig_recreate_news_template_id", e.target.value ? parseInt(e.target.value) : null)}
-              >
-                <option value="">— none (news posts skipped) —</option>
-                {allTemplates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.canvas_width}×{t.canvas_height})
-                  </option>
-                ))}
-              </select>
-              <p className="text-[11px] text-text-secondary mt-1">
-                Create or edit templates in{" "}
-                <a href="/templates" className="text-primary-main hover:underline">Template Designer</a>.
-                Uses the fanpage&apos;s Mode 1 caption criteria for the Facebook post text.
-              </p>
-            </div>
 
             {/* Smart layout (opt-in, experimental) */}
             <div className="border-t border-hairline pt-4">

@@ -271,7 +271,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 4
-    }
+    },
+    "category": "news"
   },
   {
     "name": "Quote Card (word-highlight)",
@@ -406,7 +407,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 3
-    }
+    },
+    "category": "quote"
   },
   {
     "name": "News Highlight \u2014 Green \u00b7 Center (Quote overlay)",
@@ -523,7 +525,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 2
-    }
+    },
+    "category": "news"
   },
   {
     "name": "Quote Card (name badge)",
@@ -680,7 +683,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 3
-    }
+    },
+    "category": "quote"
   },
   {
     "name": "Quote Card (word-highlight, name badge)",
@@ -828,7 +832,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 3
-    }
+    },
+    "category": "quote"
   },
   {
     "name": "News Highlight \u2014 Red \u00b7 Left",
@@ -933,7 +938,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 2
-    }
+    },
+    "category": "news"
   },
   {
     "name": "News Highlight \u2014 Red \u00b7 Center",
@@ -1038,7 +1044,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 2
-    }
+    },
+    "category": "news"
   },
   {
     "name": "News Highlight \u2014 Yellow \u00b7 Left",
@@ -1143,7 +1150,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 2
-    }
+    },
+    "category": "news"
   },
   {
     "name": "News Highlight \u2014 Green \u00b7 Left",
@@ -1248,7 +1256,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 2
-    }
+    },
+    "category": "news"
   },
   {
     "name": "News Highlight \u2014 Yellow \u00b7 Center",
@@ -1353,7 +1362,8 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 2
-    }
+    },
+    "category": "news"
   },
   {
     "name": "News Highlight \u2014 Green \u00b7 Center",
@@ -1458,6 +1468,7 @@
       "has_image_slot": true,
       "image_slot_index": 0,
       "title_layer_index": 2
-    }
+    },
+    "category": "news"
   }
 ]

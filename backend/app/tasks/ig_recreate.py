@@ -80,19 +80,24 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int):
             logger.info("IG-recreate: post %d fp %d classified '%s' → skipped", post_id, fanpage_id, ctype)
             return
 
+        from app.services.design_images import resolve_template
+
         if ctype == "quote":
-            template_id = fanpage.ig_recreate_quote_template_id
             design_title = cls["text"]
         else:  # news
-            template_id = fanpage.ig_recreate_news_template_id
             try:
                 design_title = _rewrite_news_title(cls["text"], fanpage)
             except GroqRateLimitError:
                 raise self.retry(countdown=120)
 
-        if not template_id:
-            logger.warning("IG-recreate: fanpage %d has no %s template configured", fanpage_id, ctype)
+        # ctype ("quote"/"news") doubles as the template category — cascades
+        # to the fanpage's default_{category}_template_id, then a shared
+        # default template tagged with that category (see resolve_template).
+        template = resolve_template(db, ctype, fanpage=fanpage)
+        if not template:
+            logger.warning("IG-recreate: fanpage %d has no %s template available", fanpage_id, ctype)
             return
+        template_id = template.id
 
         # FB caption (per-source caption criteria override the fanpage's Mode-1)
         try:
@@ -175,16 +180,18 @@ def render_ig_recreate(self, job_id: int):
 
         # News recreate: use a clean, relevant photo (gallery → fresh search) by the
         # headline's subject instead of the IG screenshot. Falls back to the IG
-        # image if nothing is found.
-        if job.design_template_id == fanpage.ig_recreate_news_template_id:
+        # image if nothing is found. Keyed off the resolved template's category
+        # (not a specific template id) — it survives falling back to a shared
+        # default template, not just the fanpage's own pinned news template.
+        is_news_template = template.category == "news"
+        if is_news_template:
             src, path = source_news_main(db, job.design_title or "", niche)
             if src:
                 image_src, main_path = src, path
 
         smart = bool(fanpage.ig_recreate_smart_layout)
         # Smart layout: a news headline about TWO people → use the split template
-        if (smart and fanpage.ig_recreate_split_template_id
-                and job.design_template_id == fanpage.ig_recreate_news_template_id):
+        if smart and fanpage.ig_recreate_split_template_id and is_news_template:
             primary, secondary = extract_two_subjects(job.design_title or "", niche)
             if primary and secondary:
                 split_tpl = db.query(DesignTemplate).filter_by(id=fanpage.ig_recreate_split_template_id).first()

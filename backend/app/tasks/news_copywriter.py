@@ -85,7 +85,7 @@ def copywrite_article(self, article_id: int):
                 design_subtitle=copy.subtitle,
                 ai_generated_caption=copy.caption,
                 ai_provider_used=copy.provider,
-                design_template_id=fp.mode2_default_template_id,
+                design_template_id=fp.default_news_template_id,
                 status=PublishJobStatus.pending_design,
             )
             db.add(job)
