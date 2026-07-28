@@ -45,15 +45,20 @@ def seed_default_templates(conn) -> int:
         ).first()
         if exists:
             continue
+        # category is NOT set here — this function is called from a migration
+        # (b8c9d0e1f2a3) that runs before the design_templates.category column
+        # exists (added later by f3a4b5c6d7e8, which also backfills it by name
+        # for every seed template). Referencing it here would break a fresh
+        # install running the full migration chain in order.
         conn.execute(
             text(
                 """
                 INSERT INTO design_templates
                     (fanpage_id, name, template_json, placeholder_config,
-                     canvas_width, canvas_height, is_default, category, created_at, updated_at)
+                     canvas_width, canvas_height, is_default, created_at, updated_at)
                 VALUES
                     (NULL, :name, CAST(:tjson AS jsonb), CAST(:pconf AS jsonb),
-                     :cw, :ch, :is_default, :category, now(), now())
+                     :cw, :ch, :is_default, now(), now())
                 """
             ),
             {
@@ -63,7 +68,6 @@ def seed_default_templates(conn) -> int:
                 "cw": tpl.get("canvas_width", 1080),
                 "ch": tpl.get("canvas_height", 1080),
                 "is_default": bool(tpl.get("is_default", False)),
-                "category": tpl.get("category"),
             },
         )
         inserted += 1
