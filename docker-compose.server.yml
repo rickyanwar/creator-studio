@@ -74,6 +74,14 @@ services:
       redis:
         condition: service_healthy
 
+  # ── Design Renderer (headless Fabric.js) ──────
+  renderer:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+    restart: always
+    # no external port — only the worker/api call it on the compose network
+
   # ── Next.js Frontend ──────────────────────────
   frontend:
     build:
