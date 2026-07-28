@@ -7,9 +7,16 @@ from datetime import datetime, timezone, timedelta
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 
-# Stagger between fanpages sharing the same IG source (seconds)
+# Stagger between fanpages sharing the same IG source (seconds) — 1 to 25
+# minutes. Each fanpage draws independently (not slot * range) so the gaps
+# themselves don't form a predictable, obviously-formulaic pattern.
 _FANPAGE_STAGGER_MIN = 60
-_FANPAGE_STAGGER_MAX = 120
+_FANPAGE_STAGGER_MAX = 1500
+
+
+def _fanpage_stagger(slot: int) -> int:
+    return 0 if slot == 0 else random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
+
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +71,7 @@ def create_fanout_jobs(self, post_id: int):
                 # Same stagger as the plain-repost path below — without it,
                 # every fanpage recreating the same source's post would render
                 # and (if auto-publish) go live within seconds of each other.
-                stagger = slot * random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
+                stagger = _fanpage_stagger(slot)
                 recreate_post_for_fanpage.apply_async(args=[post_id, link.fanpage_id], countdown=stagger)
                 slot += 1
                 continue
@@ -85,7 +92,7 @@ def create_fanout_jobs(self, post_id: int):
 
             # Stagger caption generation (and therefore publishing) so fanpages
             # sharing the same IG source don't all post at exactly the same time.
-            stagger = slot * random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
+            stagger = _fanpage_stagger(slot)
 
             if job.status == PublishJobStatus.pending_watermark:
                 from app.tasks.image_watermark import apply_watermark_for_job
