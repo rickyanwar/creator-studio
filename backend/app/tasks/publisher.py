@@ -4,10 +4,13 @@ import logging
 import random
 from datetime import datetime, timezone, timedelta
 
+import pytz
+
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 
 logger = logging.getLogger(__name__)
+WIB = pytz.timezone("Asia/Jakarta")
 
 _RETRY_BACKOFF = [300, 900, 2700]  # 5/15/45 minutes
 
@@ -19,14 +22,84 @@ _RETRY_BACKOFF = [300, 900, 2700]  # 5/15/45 minutes
 _MIN_POST_GAP_SECONDS = 600
 _MAX_POST_GAP_SECONDS = 1200
 
+_DEFAULT_DAILY_LIMIT = 35
+
+
+def _in_sleep_window(hour: int, start: int, end: int) -> bool:
+    if start == end:
+        return False  # degenerate config — treat as disabled
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end  # wraps past midnight, e.g. 22 -> 6
+
+
+def _push_past_sleep(dt_wib: datetime, start: int, end: int) -> datetime:
+    """dt_wib is WIB-aware. Returns the next moment >= dt_wib that's outside
+    the [start, end) sleep window (rolling to end:00, next day if already past)."""
+    if not _in_sleep_window(dt_wib.hour, start, end):
+        return dt_wib
+    target = dt_wib.replace(hour=end, minute=0, second=0, microsecond=0)
+    if target <= dt_wib:
+        target += timedelta(days=1)
+    return target
+
+
+def _apply_fanpage_pacing(db, candidate: datetime, fanpage) -> datetime:
+    """candidate is naive UTC. Pushes it past the fanpage's WIB sleep window
+    and, if today's WIB quota is already used, to the start of the next WIB
+    day — looping since one push can land inside the other constraint."""
+    from app.models.publish_jobs import PublishJob
+
+    daily_limit = fanpage.publish_daily_limit or _DEFAULT_DAILY_LIMIT
+    sleep_start = fanpage.publish_sleep_start_hour
+    sleep_end = fanpage.publish_sleep_end_hour
+
+    for _ in range(10):  # bounded hop count — a real backlog won't need more
+        moved = False
+        candidate_wib = candidate.replace(tzinfo=timezone.utc).astimezone(WIB)
+
+        if sleep_start is not None and sleep_end is not None:
+            pushed_wib = _push_past_sleep(candidate_wib, sleep_start, sleep_end)
+            if pushed_wib != candidate_wib:
+                candidate = pushed_wib.astimezone(timezone.utc).replace(tzinfo=None)
+                candidate_wib = pushed_wib
+                moved = True
+
+        day_start_wib = candidate_wib.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end_wib = day_start_wib + timedelta(days=1)
+        day_start_utc = day_start_wib.astimezone(timezone.utc).replace(tzinfo=None)
+        day_end_utc = day_end_wib.astimezone(timezone.utc).replace(tzinfo=None)
+
+        count_today = (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.fanpage_id == fanpage.id,
+                PublishJob.scheduled_for >= day_start_utc,
+                PublishJob.scheduled_for < day_end_utc,
+            )
+            .count()
+        )
+        if count_today >= daily_limit:
+            candidate = day_end_utc  # roll to next WIB day; re-checked (incl. sleep) next loop
+            moved = True
+
+        if not moved:
+            break
+
+    return candidate
+
 
 def _next_schedule_at(db, fanpage_id: int) -> datetime:
     """This fanpage's next Facebook go-live slot: never earlier than now+60s,
-    and never closer than a random 10-20 min gap after its own last scheduled
+    never closer than a random 10-20 min gap after its own last scheduled
     post (scheduled_for, not published_at — that's when we called the API,
-    not the actual future slot, which may itself have been pushed out)."""
+    not the actual future slot, which may itself have been pushed out), and
+    never inside its WIB sleep window or past its daily publish cap."""
     from sqlalchemy import func
     from app.models.publish_jobs import PublishJob
+    from app.models.target_fanpages import TargetFanpage
+
+    fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
 
     floor = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
     last = (
@@ -34,10 +107,16 @@ def _next_schedule_at(db, fanpage_id: int) -> datetime:
         .filter(PublishJob.fanpage_id == fanpage_id)
         .scalar()
     )
-    if not last:
-        return floor
-    gap = timedelta(seconds=random.randint(_MIN_POST_GAP_SECONDS, _MAX_POST_GAP_SECONDS))
-    return max(floor, last + gap)
+    if last:
+        gap = timedelta(seconds=random.randint(_MIN_POST_GAP_SECONDS, _MAX_POST_GAP_SECONDS))
+        candidate = max(floor, last + gap)
+    else:
+        candidate = floor
+
+    if fanpage:
+        candidate = _apply_fanpage_pacing(db, candidate, fanpage)
+
+    return candidate
 
 
 @celery_app.task(name="app.tasks.publisher.publish_job", bind=True, max_retries=3)

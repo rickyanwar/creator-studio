@@ -25,6 +25,10 @@ export interface Fanpage {
   is_connected: boolean;
   is_active: boolean;
   publish_mode: PublishMode;
+  // ── Publish pacing (anti-bot-detection) ──
+  publish_sleep_start_hour: number | null;
+  publish_sleep_end_hour: number | null;
+  publish_daily_limit: number;
   caption_tone: string;
   caption_language: string;
   caption_max_length: number;

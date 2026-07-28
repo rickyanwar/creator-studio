@@ -32,6 +32,18 @@ class TargetFanpage(Base):
     is_active = Column(Boolean, default=False, nullable=False)
     publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False)
 
+    # ── Publish pacing (anti-bot-detection) ───────
+    # WIB hours during which this fanpage never auto-publishes (a real page
+    # admin isn't scheduling posts at 3am) — null/null = no sleep window.
+    # Applies across every content mode (repost/news/ig_recreate), same as
+    # the daily cap below. See publisher._next_schedule_at.
+    publish_sleep_start_hour = Column(Integer, nullable=True)
+    publish_sleep_end_hour = Column(Integer, nullable=True)
+    # Max auto-publishes per WIB calendar day — beyond this, the next slot
+    # rolls to the following day instead of continuing nonstop. A page that
+    # never stops posting is itself a bot signal, independent of spacing.
+    publish_daily_limit = Column(Integer, default=35, nullable=False, server_default="35")
+
     # ── Content modes (Feature 2) ─────────────────
     mode1_ig_repost_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     mode2_news_content_enabled = Column(Boolean, default=False, nullable=False, server_default="false")

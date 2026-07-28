@@ -21,6 +21,11 @@ class FanpageBase(BaseModel):
     publish_mode: PublishMode = PublishMode.manual_review
     is_active: bool = False
 
+    # ── Publish pacing (anti-bot-detection) ──
+    publish_sleep_start_hour: Optional[int] = 0
+    publish_sleep_end_hour: Optional[int] = 6
+    publish_daily_limit: int = 35
+
     # ── Content modes (Feature 2) ──
     mode1_ig_repost_enabled: bool = True
     mode2_news_content_enabled: bool = False

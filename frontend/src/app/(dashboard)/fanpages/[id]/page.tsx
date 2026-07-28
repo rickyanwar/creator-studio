@@ -730,6 +730,56 @@ export default function FanpageEditPage() {
         </div>
       </section>
 
+      {/* ── Section: Publish Pacing (anti-bot-detection) ─── */}
+      <section className="card space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">Publish Pacing</h2>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Keeps auto-publish looking like a real page admin — a sleep window
+            (no posts at 3am) and a daily cap (a page that never stops posting
+            is itself a bot signal). Applies to every content mode.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="label">Sleep window (WIB)</label>
+            <div className="flex items-center gap-2">
+              <select
+                className="input-rect py-1.5 text-sm w-20"
+                value={form.publish_sleep_start_hour ?? ""}
+                onChange={(e) => set("publish_sleep_start_hour", e.target.value === "" ? null : Number(e.target.value))}
+              >
+                <option value="">Off</option>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                ))}
+              </select>
+              <span className="text-xs text-text-secondary">to</span>
+              <select
+                className="input-rect py-1.5 text-sm w-20"
+                value={form.publish_sleep_end_hour ?? ""}
+                onChange={(e) => set("publish_sleep_end_hour", e.target.value === "" ? null : Number(e.target.value))}
+                disabled={form.publish_sleep_start_hour === null || form.publish_sleep_start_hour === undefined}
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="label">Max posts / day</label>
+            <input
+              type="number"
+              min={1}
+              className="input-rect py-1.5 text-sm w-24"
+              value={form.publish_daily_limit ?? 35}
+              onChange={(e) => set("publish_daily_limit", Math.max(1, Number(e.target.value) || 1))}
+            />
+          </div>
+        </div>
+      </section>
+
       {/* ── Section: Mode 2 — News Content ─────────────── */}
       <section className="card space-y-5">
         <div className="flex items-center justify-between">
