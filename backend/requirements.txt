@@ -28,6 +28,9 @@ httpx==0.28.1
 beautifulsoup4==4.12.3
 lxml==5.3.0
 playwright==1.61.0
+# Fetcher (TLS-fingerprint impersonation) bypasses bot-detection on sites that
+# block plain httpx/proxy requests — see app/services/news_scraper.py
+scrapling[fetchers]==0.2.99
 
 # ── Gallery image downloader ───────────────────
 # Image URLs are collected via 9Router web-fetch (jina-reader) — no scraping

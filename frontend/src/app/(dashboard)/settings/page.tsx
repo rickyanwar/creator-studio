@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { getSettings, updateSettings, testReplizCredentials, testProxies } from "@/lib/api";
+import { getSettings, updateSettings, testReplizCredentials, testProxies, testRelays } from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -17,6 +17,8 @@ export default function SettingsPage() {
   const [replizResult, setReplizResult] = useState<{ ok?: boolean; message?: string } | null>(null);
   const [proxyTesting, setProxyTesting] = useState(false);
   const [proxyResults, setProxyResults] = useState<{ results: { proxy: string; ok: boolean; ip?: string; ms?: number; error?: string }[]; alive: number; total: number } | null>(null);
+  const [relayTesting, setRelayTesting] = useState(false);
+  const [relayResults, setRelayResults] = useState<{ results: { proxy: string; ok: boolean; ip?: string; ms?: number; error?: string }[]; alive: number; total: number } | null>(null);
 
   useEffect(() => {
     if (settings) {
@@ -32,6 +34,7 @@ export default function SettingsPage() {
         telegram_chat_id: settings.telegram_chat_id ?? "",
         scraper_mode: settings.scraper_mode ?? "auto",
         scraper_proxies: settings.scraper_proxies ?? "",
+        scraper_relays: settings.scraper_relays ?? "",
         nine_router_base_url: settings.nine_router_base_url ?? "",
         nine_router_model: settings.nine_router_model ?? "",
         nine_router_api_key: "",
@@ -57,8 +60,9 @@ export default function SettingsPage() {
         if (typeof v === "string" && v === "") continue;
         payload[k] = v;
       }
-      // Proxy pool must be sendable even when emptied (to clear it)
+      // Proxy/relay pools must be sendable even when emptied (to clear them)
       payload.scraper_proxies = form.scraper_proxies ?? "";
+      payload.scraper_relays = form.scraper_relays ?? "";
       await updateSettings(payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -92,6 +96,17 @@ export default function SettingsPage() {
     } catch {
       setProxyResults({ results: [], alive: 0, total: 0 });
     } finally { setProxyTesting(false); }
+  }
+
+  async function handleTestRelays() {
+    setRelayTesting(true);
+    setRelayResults(null);
+    try {
+      const res = await testRelays((form.scraper_relays as string) ?? "");
+      setRelayResults(res.data);
+    } catch {
+      setRelayResults({ results: [], alive: 0, total: 0 });
+    } finally { setRelayTesting(false); }
   }
 
   return (
@@ -299,6 +314,60 @@ export default function SettingsPage() {
           {proxyResults && proxyResults.results.length > 0 && (
             <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-hairline divide-y divide-hairline text-xs font-mono">
               {proxyResults.results.map((r) => (
+                <div key={r.proxy} className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-text-primary">{r.proxy}</span>
+                  {r.ok ? (
+                    <span className="text-emerald-600">✓ {r.ip} · {r.ms}ms</span>
+                  ) : (
+                    <span className="text-red-500 truncate max-w-[55%]" title={r.error}>✗ {r.error}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="pt-2 border-t border-hairline">
+          <label className="label">
+            Relay Pool{" "}
+            {typeof settings?.scraper_relay_count === "number" && settings.scraper_relay_count > 0 && (
+              <span className="text-primary-main">✓ {settings.scraper_relay_count} relays</span>
+            )}
+          </label>
+          <textarea
+            className="input-rect font-mono text-xs"
+            rows={3}
+            spellCheck={false}
+            placeholder={"One relay base URL per line, e.g.\nhttps://vercel-relay-xxx.vercel.app"}
+            value={form.scraper_relays as string ?? ""}
+            onChange={(e) => set("scraper_relays", e.target.value)}
+          />
+          <p className="text-xs text-text-secondary mt-1">
+            Fallback fetch path tried after the proxy pool — a small server-side relay (e.g. deployed via
+            9Router&apos;s &quot;Deploy Relay&quot;) that fetches a URL and returns its raw response. Egresses
+            from the relay platform&apos;s own IP (e.g. Vercel&apos;s datacenter range) — clears sites that
+            block on request fingerprint, not sites that specifically block datacenter IPs. One URL per line.
+          </p>
+
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleTestRelays}
+              disabled={relayTesting}
+              className="btn btn-secondary text-xs"
+            >
+              {relayTesting ? "Testing…" : "Test Relays"}
+            </button>
+            {relayResults && (
+              <span className={`text-xs font-semibold ${relayResults.alive > 0 ? "text-primary-main" : "text-red-500"}`}>
+                {relayResults.alive}/{relayResults.total} alive
+              </span>
+            )}
+          </div>
+
+          {relayResults && relayResults.results.length > 0 && (
+            <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-hairline divide-y divide-hairline text-xs font-mono">
+              {relayResults.results.map((r) => (
                 <div key={r.proxy} className="flex items-center justify-between px-3 py-1.5">
                   <span className="text-text-primary">{r.proxy}</span>
                   {r.ok ? (

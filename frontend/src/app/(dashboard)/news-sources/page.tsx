@@ -22,6 +22,7 @@ type NewsSource = {
   category_url: string;
   is_active: boolean;
   scrape_interval_minutes: number;
+  max_age_days: number;
   render_mode: string;
   article_list_selector: string;
   article_link_attribute: string;
@@ -46,6 +47,7 @@ type Article = {
   scraped_title: string;
   content_preview: string;
   scraped_image_url: string | null;
+  article_published_at: string | null;
   status: string;
   scraped_at: string | null;
 };
@@ -55,6 +57,7 @@ const emptyForm = {
   category_url: "",
   is_active: true,
   scrape_interval_minutes: 60,
+  max_age_days: 3,
   render_mode: "static",
   article_list_selector: "",
   article_link_attribute: "href",
@@ -113,6 +116,7 @@ export default function NewsSourcesPage() {
       category_url: s.category_url,
       is_active: s.is_active,
       scrape_interval_minutes: s.scrape_interval_minutes,
+      max_age_days: s.max_age_days,
       render_mode: s.render_mode,
       article_list_selector: s.article_list_selector,
       article_link_attribute: s.article_link_attribute,
@@ -314,6 +318,11 @@ export default function NewsSourcesPage() {
               <label className={labelCls}>Scrape Interval (minutes, min 15)</label>
               <input type="number" min={15} className={inputCls} value={form.scrape_interval_minutes} onChange={(e) => set("scrape_interval_minutes", parseInt(e.target.value) || 60)} />
             </div>
+            <div>
+              <label className={labelCls}>Max Article Age (days)</label>
+              <input type="number" min={1} className={inputCls} value={form.max_age_days} onChange={(e) => set("max_age_days", parseInt(e.target.value) || 3)} />
+              <p className="text-[11px] text-ink-48 mt-1">Articles published before this are skipped — never copywritten/designed. Default 3.</p>
+            </div>
           </div>
 
           <div className="border-t border-hairline pt-4">
@@ -411,7 +420,16 @@ export default function NewsSourcesPage() {
                   ) : (
                     <p><span className="font-semibold">Image:</span> <em>none found</em></p>
                   )}
-                  {testResult.date_text ? <p><span className="font-semibold">Date:</span> {testResult.date_text as string}</p> : null}
+                  {testResult.date_text ? (
+                    <p>
+                      <span className="font-semibold">Date:</span> {testResult.date_text as string}
+                      {testResult.published_at ? (
+                        <span className="text-ink-48"> → parsed as {new Date(testResult.published_at as string).toLocaleString()}</span>
+                      ) : (
+                        <span className="text-red-600"> → couldn&apos;t parse (age filter will fail open — article always kept)</span>
+                      )}
+                    </p>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -458,6 +476,7 @@ export default function NewsSourcesPage() {
               <tr>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Source</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Interval</th>
+                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Max Age</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Articles</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Scraped</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
@@ -475,6 +494,7 @@ export default function NewsSourcesPage() {
                       </a>
                     </td>
                     <td className="px-5 py-3 text-ink-80">{s.scrape_interval_minutes}m</td>
+                    <td className="px-5 py-3 text-ink-80">{s.max_age_days}d</td>
                     <td className="px-5 py-3">
                       <button onClick={() => toggleArticles(s.id)} className="text-primary-main hover:underline font-medium">
                         {s.article_count} {expandedId === s.id ? "▾" : "▸"}
@@ -548,7 +568,8 @@ export default function NewsSourcesPage() {
                                   <p className="text-xs text-ink-48 line-clamp-2 mt-0.5">{a.content_preview}</p>
                                   <p className="text-[11px] text-ink-48 mt-1">
                                     <span className="uppercase font-semibold">{a.status}</span>
-                                    {a.scraped_at && <> · {formatDistanceToNowStrict(new Date(a.scraped_at), { addSuffix: true })}</>}
+                                    {a.article_published_at && <> · published {formatDistanceToNowStrict(new Date(a.article_published_at), { addSuffix: true })}</>}
+                                    {a.scraped_at && <> · scraped {formatDistanceToNowStrict(new Date(a.scraped_at), { addSuffix: true })}</>}
                                   </p>
                                 </div>
                               </div>

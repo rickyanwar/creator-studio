@@ -227,6 +227,8 @@ export const testReplizCredentials = (accessKey: string, secretKey: string) =>
   api.post("/settings/repliz/test", { access_key: accessKey, secret_key: secretKey });
 export const testProxies = (proxies?: string) =>
   api.post("/settings/proxies/test", { proxies });
+export const testRelays = (relays?: string) =>
+  api.post("/settings/relays/test", { relays });
 
 // ── Jobs (manual triggers) ───────────────────────────────────────────────────
 export const triggerCrawl = () => api.post("/jobs/crawl-now");

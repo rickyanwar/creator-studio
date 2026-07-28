@@ -42,6 +42,12 @@ class Settings(Base):
     # picks one at random per request. Trailing labels after the URL are ignored.
     scraper_proxies = Column(Text, nullable=True)
 
+    # ── News-scraper relay pool ───────────────────────────────────────────────
+    # One relay base URL per line (e.g. a Vercel/Cloudflare Worker deployment
+    # that fetches `x-relay-target` and returns the raw response). Tried as a
+    # fallback after the proxy pool — see app/services/relay_pool.py.
+    scraper_relays = Column(Text, nullable=True)
+
     # ── 9Router (primary AI, OpenAI-compatible) ───────────────────────────────
     # When set here, these override the NINE_ROUTER_* env vars. Base URL should
     # end with /v1; model e.g. "ag/claude-sonnet-4-6" or a combo name.

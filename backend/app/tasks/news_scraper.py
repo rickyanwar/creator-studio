@@ -87,7 +87,10 @@ def scrape_source(self, source_id: int):
         new_links = [u for u in links if u not in existing][:_MAX_NEW_ARTICLES_PER_RUN]
 
         saved = 0
+        skipped_old = 0
         errors: list[str] = []
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        max_age = timedelta(days=source.max_age_days)
         for url in new_links:
             time.sleep(random.randint(_ARTICLE_DELAY_MIN, _ARTICLE_DELAY_MAX))
             try:
@@ -106,12 +109,24 @@ def scrape_source(self, source_id: int):
                 errors.append(f"{url}: missing {'title' if not extracted.title else 'content'}")
                 continue
 
+            # Unknown publish date (selector/meta missing or unparseable) fails
+            # open — we'd rather copywrite an occasional old article than
+            # silently drop fresh ones because date extraction is unreliable.
+            if extracted.published_at is not None and now - extracted.published_at > max_age:
+                skipped_old += 1
+                logger.info(
+                    "News scraper: skipping article older than %dd (published %s): %s",
+                    source.max_age_days, extracted.published_at.date(), url,
+                )
+                continue
+
             article = ScrapedArticle(
                 news_source_id=source.id,
                 article_url=url,
                 scraped_title=extracted.title,
                 scraped_content=extracted.content,
                 scraped_image_url=extracted.image_url,
+                article_published_at=extracted.published_at,
             )
             db.add(article)
             try:
@@ -130,8 +145,8 @@ def scrape_source(self, source_id: int):
         db.commit()
 
         logger.info(
-            "News scraper: source %d (%s) — %d links, %d new, %d saved",
-            source_id, source.name, len(links), len(new_links), saved,
+            "News scraper: source %d (%s) — %d links, %d new, %d saved, %d skipped (>%dd old)",
+            source_id, source.name, len(links), len(new_links), saved, skipped_old, source.max_age_days,
         )
 
     except Exception as exc:

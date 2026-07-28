@@ -178,6 +178,8 @@ export interface AppSettings {
   has_flashapi_key: boolean;
   scraper_proxies: string | null;
   scraper_proxy_count: number;
+  scraper_relays: string | null;
+  scraper_relay_count: number;
   nine_router_base_url: string | null;
   nine_router_model: string | null;
   has_nine_router_key: boolean;

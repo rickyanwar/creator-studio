@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException
 
 from app.api.deps import CurrentUser, DB
-from app.schemas.settings import SettingsUpdate, SettingsOut, ReplizTestRequest, ProxyTestRequest
+from app.schemas.settings import SettingsUpdate, SettingsOut, ReplizTestRequest, ProxyTestRequest, RelayTestRequest
 from app.services.proxy_pool import parse_proxies
+from app.services.relay_pool import parse_relays, RELAY_TARGET_HEADER
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -40,6 +41,8 @@ def get_settings(db: DB, _: CurrentUser):
         has_flashapi_key=bool(row.flashapi_api_key_encrypted),
         scraper_proxies=row.scraper_proxies,
         scraper_proxy_count=len(parse_proxies(row.scraper_proxies)),
+        scraper_relays=row.scraper_relays,
+        scraper_relay_count=len(parse_relays(row.scraper_relays)),
         nine_router_base_url=row.nine_router_base_url,
         nine_router_model=row.nine_router_model,
         has_nine_router_key=bool(row.nine_router_api_key_encrypted),
@@ -133,5 +136,53 @@ def test_proxies(body: ProxyTestRequest, db: DB, _: CurrentUser):
 
     with ThreadPoolExecutor(max_workers=min(10, len(proxies))) as pool:
         results = list(pool.map(_test_one, proxies))
+
+    return {"results": results, "alive": sum(1 for r in results if r["ok"]), "total": len(results)}
+
+
+@router.post("/relays/test")
+def test_relays(body: RelayTestRequest, db: DB, _: CurrentUser):
+    """Test each relay in the pool by asking it to fetch an IP-echo endpoint.
+
+    Tests the raw text in `body.relays` if given (so the UI can test unsaved
+    edits), otherwise the saved pool. Runs in parallel; returns per-relay
+    alive/dead, the relay's exit IP and latency — the exit IP is worth
+    checking (a relay egresses from its own platform, e.g. Vercel's
+    datacenter ranges, not a residential IP)."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import urlparse
+
+    import httpx
+
+    if body.relays is not None:
+        raw = body.relays
+    else:
+        row = _get_or_create_settings(db)
+        raw = row.scraper_relays or ""
+
+    relays = parse_relays(raw)
+    if not relays:
+        return {"results": [], "alive": 0, "total": 0}
+
+    def _test_one(relay: str) -> dict:
+        label = urlparse(relay).hostname or relay
+        t0 = time.time()
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(relay, headers={RELAY_TARGET_HEADER: "https://api.ipify.org?format=json"})
+            ms = int((time.time() - t0) * 1000)
+            if r.status_code == 200:
+                try:
+                    ip = r.json().get("ip")
+                except Exception:
+                    ip = None
+                return {"proxy": label, "ok": True, "ip": ip, "ms": ms}
+            return {"proxy": label, "ok": False, "error": f"HTTP {r.status_code}", "ms": ms}
+        except Exception as exc:
+            return {"proxy": label, "ok": False, "error": str(exc)[:100], "ms": int((time.time() - t0) * 1000)}
+
+    with ThreadPoolExecutor(max_workers=min(10, len(relays))) as pool:
+        results = list(pool.map(_test_one, relays))
 
     return {"results": results, "alive": sum(1 for r in results if r["ok"]), "total": len(results)}

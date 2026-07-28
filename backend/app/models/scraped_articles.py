@@ -22,6 +22,7 @@ class ScrapedArticle(Base):
     scraped_title = Column(Text, nullable=False)
     scraped_content = Column(Text, nullable=False)
     scraped_image_url = Column(String(1024), nullable=True)
+    article_published_at = Column(DateTime, nullable=True)  # parsed from date_selector, best-effort
     is_processed = Column(Boolean, default=False, nullable=False, server_default="false")
     status = Column(
         SAEnum(ArticleStatus, name="articlestatus"),

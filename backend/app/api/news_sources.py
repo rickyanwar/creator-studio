@@ -14,6 +14,7 @@ class NewsSourceBody(BaseModel):
     category_url: str
     is_active: Optional[bool] = True
     scrape_interval_minutes: Optional[int] = 60
+    max_age_days: Optional[int] = 3
     render_mode: Optional[str] = "static"  # "static" | "js"
     article_list_selector: str
     article_link_attribute: Optional[str] = "href"
@@ -41,6 +42,13 @@ class NewsSourceBody(BaseModel):
     def validate_interval(cls, v):
         if v is not None and v < 15:
             raise ValueError("scrape_interval_minutes must be at least 15")
+        return v
+
+    @field_validator("max_age_days")
+    @classmethod
+    def validate_max_age(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("max_age_days must be at least 1")
         return v
 
 
@@ -75,6 +83,7 @@ def _serialize(source, article_count: int = 0):
         "category_url": source.category_url,
         "is_active": source.is_active,
         "scrape_interval_minutes": source.scrape_interval_minutes,
+        "max_age_days": source.max_age_days,
         "render_mode": source.render_mode.value if source.render_mode else "static",
         "article_list_selector": source.article_list_selector,
         "article_link_attribute": source.article_link_attribute,
@@ -115,6 +124,7 @@ def create_news_source(body: NewsSourceBody, db: DB, _: CurrentUser):
         category_url=body.category_url.strip(),
         is_active=body.is_active if body.is_active is not None else True,
         scrape_interval_minutes=body.scrape_interval_minutes or 60,
+        max_age_days=body.max_age_days or 3,
         render_mode=RenderMode(body.render_mode or "static"),
         article_list_selector=body.article_list_selector.strip(),
         article_link_attribute=(body.article_link_attribute or "href").strip(),
@@ -151,6 +161,8 @@ def update_news_source(source_id: int, body: UpdateNewsSourceBody, db: DB, _: Cu
         source.is_active = body.is_active
     if body.scrape_interval_minutes is not None:
         source.scrape_interval_minutes = body.scrape_interval_minutes
+    if body.max_age_days is not None:
+        source.max_age_days = body.max_age_days
     if body.render_mode is not None:
         source.render_mode = RenderMode(body.render_mode)
     if body.article_list_selector is not None:
@@ -242,6 +254,7 @@ def test_selectors(body: TestSelectorsBody, _: CurrentUser):
         "content_length": len(extracted.content),
         "image_url": extracted.image_url,
         "date_text": extracted.date_text,
+        "published_at": extracted.published_at.isoformat() if extracted.published_at else None,
         "errors": extracted.errors,
     }
 
@@ -269,6 +282,7 @@ def list_articles(
             "scraped_title": a.scraped_title,
             "content_preview": a.scraped_content[:300],
             "scraped_image_url": a.scraped_image_url,
+            "article_published_at": a.article_published_at.replace(tzinfo=timezone.utc).isoformat() if a.article_published_at else None,
             "status": a.status.value,
             "is_processed": a.is_processed,
             "scraped_at": a.scraped_at.replace(tzinfo=timezone.utc).isoformat() if a.scraped_at else None,

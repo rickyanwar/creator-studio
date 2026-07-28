@@ -18,6 +18,11 @@ class NewsSource(Base):
     category_url = Column(String(512), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, server_default="true")
     scrape_interval_minutes = Column(Integer, nullable=False, server_default="60")
+    # Skip articles whose parsed publish date (via date_selector) is older
+    # than this many days — avoids re-litigating stale news through the AI
+    # copywriter/design pipeline. NULL date_text (selector missing/unparseable)
+    # never gets filtered out (fails open).
+    max_age_days = Column(Integer, nullable=False, server_default="3")
     render_mode = Column(
         SAEnum(RenderMode, name="rendermode"),
         nullable=False,
