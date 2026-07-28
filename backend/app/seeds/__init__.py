@@ -8,6 +8,10 @@ that aren't already present — it is idempotent, so it is safe to run repeatedl
 `default_gallery_keywords.json` holds a starter set of gallery search keywords
 (current MotoGP/F1 grids, UFC/boxing champions, NBA stars) tagged with a niche,
 seeded the same idempotent way via `seed_default_gallery_keywords()`.
+
+`default_news_sources.json` holds the news sources (with their scrape CSS
+selectors, verified against the live sites) that should exist on any fresh
+install, seeded the same idempotent way via `seed_default_news_sources()`.
 """
 
 import json
@@ -18,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _SEED_FILE = os.path.join(os.path.dirname(__file__), "default_templates.json")
 _GALLERY_KEYWORDS_SEED_FILE = os.path.join(os.path.dirname(__file__), "default_gallery_keywords.json")
+_NEWS_SOURCES_SEED_FILE = os.path.join(os.path.dirname(__file__), "default_news_sources.json")
 
 
 def load_default_templates() -> list[dict]:
@@ -119,6 +124,66 @@ def seed_default_gallery_keywords(conn) -> int:
                 "min_height": kw.get("min_height", 200),
                 "source_engine": kw.get("source_engine", "9router"),
                 "license_filter": kw.get("license_filter", "commercial,modify"),
+            },
+        )
+        inserted += 1
+    return inserted
+
+
+def load_default_news_sources() -> list[dict]:
+    try:
+        with open(_NEWS_SOURCES_SEED_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.warning("Could not read default_news_sources.json: %s", exc)
+        return []
+
+
+def seed_default_news_sources(conn) -> int:
+    """Insert missing news sources via a raw connection (usable from an
+    Alembic migration). Matched by category_url (the real identity — `name`
+    is just a label). Returns the count inserted."""
+    from sqlalchemy import text
+
+    inserted = 0
+    for src in load_default_news_sources():
+        category_url = (src.get("category_url") or "").strip()
+        name = (src.get("name") or "").strip()
+        if not category_url or not name:
+            continue
+        exists = conn.execute(
+            text("SELECT 1 FROM news_sources WHERE category_url = :u"),
+            {"u": category_url},
+        ).first()
+        if exists:
+            continue
+        conn.execute(
+            text(
+                """
+                INSERT INTO news_sources
+                    (name, category_url, is_active, scrape_interval_minutes, max_age_days,
+                     render_mode, article_list_selector, article_link_attribute,
+                     title_selector, content_selector, image_selector, date_selector,
+                     created_at, updated_at)
+                VALUES
+                    (:name, :category_url, true, :interval, :max_age,
+                     CAST(:render_mode AS rendermode), :list_sel, :link_attr,
+                     :title_sel, :content_sel, :image_sel, :date_sel,
+                     now(), now())
+                """
+            ),
+            {
+                "name": name,
+                "category_url": category_url,
+                "interval": src.get("scrape_interval_minutes", 60),
+                "max_age": src.get("max_age_days", 3),
+                "render_mode": src.get("render_mode", "static"),
+                "list_sel": src.get("article_list_selector"),
+                "link_attr": src.get("article_link_attribute", "href"),
+                "title_sel": src.get("title_selector"),
+                "content_sel": src.get("content_selector"),
+                "image_sel": src.get("image_selector"),
+                "date_sel": src.get("date_selector"),
             },
         )
         inserted += 1

@@ -107,6 +107,22 @@ class ExtractedArticle:
     errors: list[str] = field(default_factory=list)
 
 
+# dateutil's month names are English-only — sites with no machine-readable
+# datetime attribute (only human-formatted text, e.g. "28 luglio 2026") need
+# their month name translated first or the whole string is unparseable.
+_MONTH_TRANSLATIONS = {
+    # Italian
+    "gennaio": "january", "febbraio": "february", "marzo": "march", "aprile": "april",
+    "maggio": "may", "giugno": "june", "luglio": "july", "agosto": "august",
+    "settembre": "september", "ottobre": "october", "novembre": "november", "dicembre": "december",
+    # Spanish (most Spanish sites already ship an ISO datetime attribute, but
+    # cover the text-only case too)
+    "enero": "january", "febrero": "february", "marzo ": "march ", "abril": "april",
+    "mayo": "may", "junio": "june", "julio": "july", "agosto ": "august ",
+    "septiembre": "september", "octubre": "october", "noviembre": "november", "diciembre": "december",
+}
+
+
 def parse_article_date(date_text: str | None) -> datetime | None:
     """Best-effort parse of whatever date_text extraction found (an ISO
     datetime attribute, a formatted string in any language dateutil
@@ -117,7 +133,17 @@ def parse_article_date(date_text: str | None) -> datetime | None:
     try:
         from dateutil import parser as date_parser
 
-        dt = date_parser.parse(date_text, fuzzy=True)
+        text = date_text.lower()
+        for foreign, english in _MONTH_TRANSLATIONS.items():
+            if foreign in text:
+                text = text.replace(foreign, english)
+                break
+        # Some sites show "Published ... (Updated ...)" in one string — the
+        # first date is the one we want; fuzzy parsing on the full string can
+        # otherwise pick up the second (updated) date instead.
+        text = text.split("(")[0]
+
+        dt = date_parser.parse(text, fuzzy=True)
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt

@@ -1,0 +1,93 @@
+[
+  {
+    "name": "motosan",
+    "category_url": "https://www.motosan.es/motogp/",
+    "scrape_interval_minutes": 60,
+    "max_age_days": 3,
+    "render_mode": "static",
+    "article_list_selector": "article a[rel=bookmark]",
+    "article_link_attribute": "href",
+    "title_selector": "h1.title",
+    "content_selector": "div.entry-content",
+    "image_selector": "div.post-thumbnail",
+    "date_selector": "div.posted-on"
+  },
+  {
+    "name": "MotoGP News",
+    "category_url": "https://www.motogpnews.com/news/",
+    "scrape_interval_minutes": 60,
+    "max_age_days": 3,
+    "render_mode": "js",
+    "article_list_selector": "article.article h2 a",
+    "article_link_attribute": "href",
+    "title_selector": ".hero-title h1",
+    "content_selector": "article.single-article",
+    "image_selector": null,
+    "date_selector": "time"
+  },
+  {
+    "name": "Speedweek MotoGP",
+    "category_url": "https://www.speedweek.com/o/motorrad-gp/motogp",
+    "scrape_interval_minutes": 60,
+    "max_age_days": 3,
+    "render_mode": "static",
+    "article_list_selector": "p[data-cp=\"title\"] a",
+    "article_link_attribute": "href",
+    "title_selector": "h1[data-cp=\"title\"]",
+    "content_selector": "div._content_arzpw_1",
+    "image_selector": "#header-image img",
+    "date_selector": "time"
+  },
+  {
+    "name": "MMA Fighting UFC",
+    "category_url": "https://www.mmafighting.com/ufc",
+    "scrape_interval_minutes": 60,
+    "max_age_days": 3,
+    "render_mode": "static",
+    "article_list_selector": "a._1c435ji0",
+    "article_link_attribute": "href",
+    "title_selector": "h1",
+    "content_selector": "div.duet--layout--entry-body",
+    "image_selector": null,
+    "date_selector": "time"
+  },
+  {
+    "name": "RacingNews365 F1",
+    "category_url": "https://racingnews365.com/f1-news",
+    "scrape_interval_minutes": 60,
+    "max_age_days": 3,
+    "render_mode": "static",
+    "article_list_selector": "a.card",
+    "article_link_attribute": "href",
+    "title_selector": "h1",
+    "content_selector": "div.content-fields",
+    "image_selector": null,
+    "date_selector": "time.postdate"
+  },
+  {
+    "name": "GPFans F1",
+    "category_url": "https://www.gpfans.com/en/f1-news/",
+    "scrape_interval_minutes": 60,
+    "max_age_days": 3,
+    "render_mode": "static",
+    "article_list_selector": "div.col-12.headline a",
+    "article_link_attribute": "href",
+    "title_selector": "h1",
+    "content_selector": ".articlecontent_txt",
+    "image_selector": "img.articlephoto",
+    "date_selector": "time[itemprop=\"datePublished\"]"
+  },
+  {
+    "name": "Motosprint MotoGP",
+    "category_url": "https://www.motosprint.it/motomondiale",
+    "scrape_interval_minutes": 60,
+    "max_age_days": 3,
+    "render_mode": "static",
+    "article_list_selector": "h3 a[href*=\"/news/motomondiale/\"]",
+    "article_link_attribute": "href",
+    "title_selector": "h1",
+    "content_selector": "[class*=\"Content_textWrap\"]",
+    "image_selector": null,
+    "date_selector": "p[class*=\"Date_date\"]"
+  }
+]

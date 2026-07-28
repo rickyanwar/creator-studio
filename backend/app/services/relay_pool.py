@@ -83,9 +83,22 @@ def fetch_via_relay(url: str, relay_base: str, timeout: float = _RELAY_TIMEOUT) 
     (a non-2xx from the TARGET site still returns 200 from a well-behaved
     relay with the target's body/status forwarded — callers should still
     treat suspiciously short/blocked-looking bodies as a failure upstream,
-    same as the direct/proxy paths)."""
+    same as the direct/proxy paths).
+
+    The relay's own CDN (Vercel) caches by request URL — since the relay_base
+    is the same for every target and the target only varies via the
+    x-relay-target HEADER (not part of the cache key), a plain GET returns
+    whatever was cached for the FIRST url ever fetched through it, silently
+    serving the wrong page for every different target after that. A unique
+    cache-busting query param forces a fresh fetch every time."""
+    import time
+
     with httpx.Client(timeout=timeout) as client:
-        resp = client.get(relay_base, headers={RELAY_TARGET_HEADER: url})
+        resp = client.get(
+            relay_base,
+            params={"_cb": str(time.time())},
+            headers={RELAY_TARGET_HEADER: url},
+        )
     resp.raise_for_status()
     return resp.text
 
