@@ -45,7 +45,13 @@ class Settings(BaseSettings):
     nine_router_model: str = "auto"   # 9Router auto-picks the model/provider
     # Vision model for classifying IG post images (must be multimodal). Direct
     # Gemini API keys don't work here → route through 9Router.
-    nine_router_vision_model: str = "ag/gemini-3.5-flash-extra-low"
+    # Verified against real photos (see design_images._vision_datauri for the
+    # matching downscale fix that keeps requests under the router's size
+    # limit): "ag/claude-*" models silently ignore the image ("no photo
+    # attached"); "ag/gemini-3.1-flash-image" hallucinates a description
+    # instead of reading the actual photo; plain "ag/gemini-3-flash" replies
+    # empty. "ag/gemini-3.5-flash-low" reads photos correctly and consistently.
+    nine_router_vision_model: str = "ag/gemini-3.5-flash-low"
 
     # ── AI Providers (fallback) ───────────────────
     gemini_api_key: str = ""

@@ -45,6 +45,10 @@ class GalleryImage(Base):
     # designer pick the right kind of photo per news context.
     label = Column(String(16), nullable=True, index=True)
     is_used = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
+    # When this image was last picked for a render — drives the reuse cooldown
+    # (don't reuse within N days) separately from is_used (which only tracks
+    # "has this ever been used", not "how recently").
+    last_used_at = Column(DateTime, nullable=True, index=True)
     downloaded_at = Column(DateTime, server_default=func.now(), nullable=False)
     # Soft delete: the row (and its source_image_url) stays so the same URL is
     # never re-downloaded. local_path/public_url are left as historical

@@ -13,6 +13,7 @@ mode; render_design itself can also be triggered manually from the UI.
 
 import base64
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -31,37 +32,55 @@ _RENDER_TIMEOUT = 120.0
 def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object | None]:
     """Workflow §C cascade. Returns (image_src_data_uri_or_none, gallery_image_or_none).
 
-    1. niche keywords that appear in the article title/content → unused image
-    2. any unused image under the fanpage's subscribed gallery niches
+    1. the article's actual subject (AI-extracted from the title) → a photo of
+       THAT person specifically: gallery vision-match first, fresh Getty search
+       if the gallery has nothing — same subject-sourcing Mode 3 IG-recreate
+       uses (design_images.source_news_main). This is what keeps the photo on
+       the person the headline is actually about instead of a random face from
+       the niche pool.
+    2. niche keywords that literally appear in the article title/content →
+       unused gallery image (covers headlines with no single clear subject)
     3. article hero image (scraped_image_url), downloaded on the fly
     4. None → job needs a manual image
     """
     from sqlalchemy import or_
     from app.models.gallery import GalleryImage
-    from app.services.design_images import niche_keywords
+    from app.services.design_images import niche_keywords, source_news_main, _eligible_rows, _mark_gallery_image_used
+
+    niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+    # Names often land in the subtitle, not the headline (e.g. "X could leave
+    # the team" / "Y reportedly picked over Z for the seat") — give the
+    # subject-extraction both lines, not just the title.
+    heading = job.design_title or article.scraped_title
+    subtitle = job.design_subtitle or ""
+    title = f"{heading}. {subtitle}".strip(". ")
+    try:
+        src, path = source_news_main(db, title, niche)
+        if src:
+            gi = db.query(GalleryImage).filter_by(local_path=path).first() if path else None
+            return src, gi
+    except Exception as exc:
+        logger.warning("Design: subject-photo lookup failed for job %d: %s", job.id, exc)
 
     keywords = niche_keywords(db, fanpage.mode2_gallery_niches or [])
     text = f"{article.scraped_title} {article.scraped_content or ''}".lower()
     matched = [k for k in keywords if k in text]
 
-    for pool in (matched, keywords):
-        if not pool:
-            continue
-        img = (
-            db.query(GalleryImage)
-            .filter(
+    if matched:
+        pool = _eligible_rows(
+            db.query(GalleryImage).filter(
                 # A photo can feature more than one person — also match images
                 # tagged with a pool keyword as a secondary (extra) tag.
-                or_(GalleryImage.keyword.in_(pool), GalleryImage.extra_keywords.overlap(pool)),
-                GalleryImage.is_used == False,
+                or_(GalleryImage.keyword.in_(matched), GalleryImage.extra_keywords.overlap(matched)),
                 GalleryImage.is_deleted == False,
             )
-            .order_by(GalleryImage.downloaded_at.desc())
-            .first()
         )
-        if img:
+        for img in pool:
+            if not img.local_path or not os.path.exists(img.local_path):
+                continue
             try:
                 data = Path(img.local_path).read_bytes()
+                _mark_gallery_image_used(db, img)
                 return f"data:image/jpeg;base64,{base64.b64encode(data).decode()}", img
             except OSError as exc:
                 logger.warning("Design: gallery image %d unreadable (%s) — skipping", img.id, exc)
@@ -101,11 +120,22 @@ def render_design(self, job_id: int):
             db.commit()
             return
 
-        # ── Resolve template: job override → fanpage's default_news_template_id
-        # → shared "news"-category default (see design_images.resolve_template) ──
+        # ── Resolve template: job override → fanpage's default_{category}_template_id
+        # → shared category default (see design_images.resolve_template).
+        # The copywriter classifies each article as "news" or "quote" and pins
+        # job.design_template_id to the matching pool; that template's own
+        # category is the source of truth here (survives falling back to a
+        # shared default, not just the fanpage's own pinned template) — same
+        # pattern as ig_recreate's is_news_template check. ──
+        from app.models.design_templates import DesignTemplate
         from app.services.design_images import resolve_template
 
-        template = resolve_template(db, "news", fanpage=fanpage, job_template_id=job.design_template_id)
+        job_template = (
+            db.query(DesignTemplate).filter_by(id=job.design_template_id).first()
+            if job.design_template_id else None
+        )
+        category = job_template.category if job_template and job_template.category else "news"
+        template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
         if not template or not template.template_json:
             job.last_error = "no design template configured — create one in Template Designer"
             db.commit()

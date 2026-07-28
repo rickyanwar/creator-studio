@@ -3,7 +3,7 @@
 Single-slot templates just get the main photo. Two-slot templates
 (placeholderRole "image" + "image_2", like the manual "GP Today" graphics) also
 get a secondary/related photo: 9Router extracts the second subject from the
-headline (the rival, other rider, bike/brand…) and we pull a matching photo from
+headline (the rival, other rider/driver, bike/car/brand…) and we pull a matching photo from
 the gallery. If nothing fits, the second slot is left empty (graceful).
 """
 
@@ -34,6 +34,86 @@ def find_role_object(template_json, role: str):
 def file_to_datauri(path: str) -> str:
     with open(path, "rb") as f:
         return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
+
+
+def _vision_datauri(image_bytes: bytes, max_dim: int = 768, quality: int = 78) -> str:
+    """Downscaled JPEG data-URI for a 9Router vision call — the gallery/upscaled
+    source photos this app renders with can be multi-megapixel, and bundling
+    several of them in one request (vision_pick_best compares up to 8) blows
+    past the router's request-size limit (413). Vision only needs to compare
+    compositions, not full render resolution, so this is used for the AI call
+    only — callers keep the original bytes for the actual design."""
+    try:
+        import io
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        # Fall back to the original bytes — worst case the call 413s and the
+        # caller's own except-and-fall-back-to-first-candidate logic kicks in.
+        return "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode()
+
+
+# Vision-capable 9Router models, in fallback order — verified against real
+# photos (some models on this router silently ignore images, or hallucinate a
+# description instead of reading the actual photo; see config.py for details).
+# The configured nine_router_vision_model is tried first; these are the
+# backups if it errors or comes back empty.
+_VISION_MODEL_FALLBACKS = [
+    "ag/gemini-3.5-flash-low",
+    "ag/gemini-pro-agent",
+    "ag/gemini-3.1-pro-low",
+    "ag/gemini-3-flash-agent",
+]
+
+
+def _vision_models() -> list[str]:
+    from app.config import get_settings
+
+    primary = get_settings().nine_router_vision_model
+    ordered = [primary] + [m for m in _VISION_MODEL_FALLBACKS if m != primary]
+    seen = set()
+    return [m for m in ordered if m and not (m in seen or seen.add(m))]
+
+
+def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0) -> str:
+    """Chat-completion call against 9Router, trying each vision model in
+    `_vision_models()` in turn until one returns a non-empty response — a
+    single flaky/overloaded/image-blind model shouldn't take down image
+    selection. Raises the last error if every model fails."""
+    from openai import OpenAI  # type: ignore
+    from app.services.nine_router import get_nine_router_config
+
+    cfg = get_nine_router_config()
+    if not cfg.base_url:
+        raise RuntimeError("9Router base URL not configured")
+    # Explicit timeout — without it a hung (not erroring) model blocks on the
+    # SDK's default for way too long, and that cost repeats per fallback model.
+    client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router", timeout=30.0)
+
+    last_exc: Exception | None = None
+    for model in _vision_models():
+        try:
+            c = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": content}],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=30.0,
+            )
+            text = (c.choices[0].message.content or "").strip()
+            if text:
+                return text
+            last_exc = RuntimeError(f"{model}: empty response")
+        except Exception as exc:
+            last_exc = exc
+            logger.debug("vision model %s failed: %s", model, exc)
+    raise last_exc or RuntimeError("no vision models configured")
 
 
 def niche_keywords(db, niches: list[str]) -> list[str]:
@@ -294,7 +374,16 @@ def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | No
     face = _dominant_face_bbox(image_bytes)
 
     if face and (face[3] >= 0.32 or face[1] + face[3] >= 0.78):
-        return fit_with_blur_bg(image_bytes, target_w, target_h, face_bbox=face, face_zoom=50)
+        # pad=0.98 (near-full-bleed) leaves almost no vertical slack for
+        # top_bias to redistribute, so the subject lands wherever it falls —
+        # often right in the bottom text zone. A smaller pad deliberately
+        # shrinks the fitted photo so there's real slack, and a low top_bias
+        # pushes nearly all of it to the BOTTOM (under the text), clearing
+        # the face/chin.
+        return fit_with_blur_bg(
+            image_bytes, target_w, target_h, face_bbox=face, face_zoom=50,
+            pad=0.78, top_bias=0.04,
+        )
 
     if img_ar < slot_ar * 1.15:  # portrait / near-square → cover is fine
         return None
@@ -323,8 +412,8 @@ def extract_secondary_subject(title: str, niche: str) -> str | None:
     prompt = (
         f'This is a {niche} news headline: "{title}".\n'
         "Name the SECOND subject a related side-photo should show — e.g. the "
-        "rival, the other rider, or the bike/brand mentioned — NOT the main "
-        "speaker.\n"
+        "rival, the other rider/driver, or the bike/car/brand mentioned — NOT "
+        "the main speaker.\n"
         'Reply with just the name/subject (2-4 words), or "NONE" if there is no '
         "clear second subject."
     )
@@ -403,33 +492,22 @@ def vision_focus_point(image_bytes: bytes) -> list | None:
     (where the crop should centre — usually the face/head). Returns None on any
     problem so the caller can fall back to OpenCV. Runs on 9Router (no VPS cost)."""
     try:
-        from openai import OpenAI  # type: ignore
-        from app.config import get_settings
-        from app.services.nine_router import get_nine_router_config
-
-        cfg = get_nine_router_config()
-        if not cfg.base_url:
-            return None
-        client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router")
-        b64 = base64.b64encode(image_bytes).decode()
-        c = client.chat.completions.create(
-            model=get_settings().nine_router_vision_model,
-            max_tokens=300,
-            temperature=0,
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text": (
-                    "This photo is the full-bleed background of a news graphic whose "
-                    "headline sits along the BOTTOM. Find the MAIN subject (the "
-                    "person's face/head, or the key object). Reply with ONLY a JSON "
-                    'object {"x":0.00-1.00,"y":0.00-1.00} — the point the crop should '
-                    "centre on so the subject stays fully in frame and clear of the "
-                    "bottom text. x is fraction from left, y from top (the face is "
-                    "usually in the upper half)."
-                )},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ]}],
-        )
-        raw = (c.choices[0].message.content or "").strip()
+        # x/y are fractions of the frame, so a downscaled copy is fine here —
+        # and keeps the request under the router's size limit (see _vision_datauri).
+        datauri = _vision_datauri(image_bytes)
+        content = [
+            {"type": "text", "text": (
+                "This photo is the full-bleed background of a news graphic whose "
+                "headline sits along the BOTTOM. Find the MAIN subject (the "
+                "person's/vehicle's key point — a face/head, or a car/bike). "
+                'Reply with ONLY a JSON object {"x":0.00-1.00,"y":0.00-1.00} — the '
+                "point the crop should centre on so the subject stays fully in "
+                "frame and clear of the bottom text. x is fraction from left, y "
+                "from top (the subject is usually in the upper half)."
+            )},
+            {"type": "image_url", "image_url": {"url": datauri}},
+        ]
+        raw = _vision_chat(content, max_tokens=500).strip()
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
             return None
@@ -465,33 +543,19 @@ def focus_points_for(image_srcs: list) -> list:
 
 def classify_image_type(image_bytes: bytes) -> str:
     """Label a photo at download time: 'face' | 'action' | 'other'.
-    face = clear head/upper-body portrait; action = riding/on the bike; other =
-    everything else. Runs on 9Router vision (no VPS cost)."""
+    face = clear head/upper-body portrait; action = riding/driving/on track;
+    other = everything else. Runs on 9Router vision (no VPS cost)."""
     try:
-        from openai import OpenAI  # type: ignore
-        from app.config import get_settings
-        from app.services.nine_router import get_nine_router_config
-
-        cfg = get_nine_router_config()
-        if not cfg.base_url:
-            return "other"
-        client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router")
-        b64 = base64.b64encode(image_bytes).decode()
-        c = client.chat.completions.create(
-            model=get_settings().nine_router_vision_model,
-            max_tokens=1500,
-            temperature=0,
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text": (
-                    "Label this photo for a sports graphic. Reply ONE word: "
-                    "FACE (clear head / upper-body portrait of a person), "
-                    "ACTION (a rider on a moving bike / on track), or "
-                    "OTHER (anything else)."
-                )},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ]}],
-        )
-        raw = (c.choices[0].message.content or "").upper()
+        content = [
+            {"type": "text", "text": (
+                "Label this photo for a sports graphic. Reply ONE word: "
+                "FACE (clear head / upper-body portrait of a person), "
+                "ACTION (a rider/driver on a moving bike/car / on track), or "
+                "OTHER (anything else)."
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=1500).upper()
         for w in ("FACE", "ACTION", "OTHER"):
             if w in raw:
                 return w.lower()
@@ -513,18 +577,10 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
     if image_type == "face":
         want = f"the clearest close-up FACE / head-and-shoulders portrait of {subject} (calm, looking at or near the camera)"
     elif image_type == "action":
-        want = f"the best ACTION shot of {subject} riding/on the bike"
+        want = f"the best ACTION shot of {subject} riding/driving — on the bike/car or on track"
     else:
         want = f"the best, clearest, sharpest photo of {subject} (ideally face/upper body)"
     try:
-        from openai import OpenAI  # type: ignore
-        from app.config import get_settings
-        from app.services.nine_router import get_nine_router_config
-
-        cfg = get_nine_router_config()
-        if not cfg.base_url:
-            return 0
-        client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router")
         content = [
             {
                 "type": "text",
@@ -536,14 +592,13 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
             }
         ]
         for uri in candidates:
-            content.append({"type": "image_url", "image_url": {"url": uri}})
-        completion = client.chat.completions.create(
-            model=get_settings().nine_router_vision_model,
-            messages=[{"role": "user", "content": content}],
-            max_tokens=1500,
-            temperature=0,
-        )
-        raw = (completion.choices[0].message.content or "")
+            try:
+                raw = base64.b64decode(uri.split(",", 1)[1])
+                small_uri = _vision_datauri(raw)
+            except Exception:
+                small_uri = uri
+            content.append({"type": "image_url", "image_url": {"url": small_uri}})
+        raw = _vision_chat(content, max_tokens=1500)
         m = re.search(r"\d+", raw)
         idx = (int(m.group(0)) - 1) if m else 0
         return idx if 0 <= idx < len(candidates) else 0
@@ -552,10 +607,55 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
         return 0
 
 
+GALLERY_REUSE_COOLDOWN_DAYS = 2
+
+
+def _eligible_rows(base_query, limit: int = 8):
+    """Randomized candidate pool respecting the reuse cooldown: images never
+    used, or not used within GALLERY_REUSE_COOLDOWN_DAYS, come first (in
+    random order, not always the newest download) — the same photo shouldn't
+    reappear every run. Falls back to the least-recently-used images if the
+    cooldown-eligible pool is empty (small keyword pools shouldn't just stop
+    producing images)."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func
+    from app.models.gallery import GalleryImage
+
+    cutoff = datetime.utcnow() - timedelta(days=GALLERY_REUSE_COOLDOWN_DAYS)
+    rows = (
+        base_query.filter(
+            (GalleryImage.last_used_at.is_(None)) | (GalleryImage.last_used_at < cutoff)
+        )
+        .order_by(func.random())
+        .limit(limit)
+        .all()
+    )
+    if rows:
+        return rows
+    # Cooldown pool exhausted (e.g. a niche with very few photos) — reuse the
+    # one used longest ago rather than refuse to produce an image at all.
+    return (
+        base_query.order_by(GalleryImage.last_used_at.asc().nullsfirst())
+        .limit(limit)
+        .all()
+    )
+
+
+def _mark_gallery_image_used(db, gi) -> None:
+    from datetime import datetime
+
+    gi.is_used = True
+    gi.last_used_at = datetime.utcnow()
+    db.commit()
+
+
 def find_gallery_datauri(db, subject: str, exclude_path: str | None = None, use_vision: bool = True, image_type: str | None = None):
-    """Find the best (ideally unused) gallery image whose keyword matches the
-    subject. When several match, 9Router vision picks the best — constrained to
-    `image_type` ("face"/"action") so split layouts stay consistent."""
+    """Find the best gallery image whose keyword matches the subject, honoring
+    the reuse cooldown and picking randomly among eligible candidates (not
+    always the newest download) — see _eligible_rows. When several match,
+    9Router vision picks the best — constrained to `image_type` ("face"/
+    "action") so split layouts stay consistent. Marks the picked image used."""
     from sqlalchemy import func, or_
     from app.models.gallery import GalleryImage
 
@@ -569,14 +669,13 @@ def find_gallery_datauri(db, subject: str, exclude_path: str | None = None, use_
         ),
         GalleryImage.is_deleted == False,
     )
-    order = (GalleryImage.is_used.asc(), GalleryImage.downloaded_at.desc())
 
     rows = []
     # Prefer pre-labelled images matching the wanted type (from download-time vision)
     if image_type in ("face", "action"):
-        rows = base.filter(GalleryImage.label == image_type).order_by(*order).limit(8).all()
+        rows = _eligible_rows(base.filter(GalleryImage.label == image_type))
     if not rows:
-        rows = base.order_by(*order).limit(8).all()
+        rows = _eligible_rows(base)
 
     usable = [gi for gi in rows if gi.local_path and gi.local_path != exclude_path and os.path.exists(gi.local_path)]
     if not usable:
@@ -584,6 +683,7 @@ def find_gallery_datauri(db, subject: str, exclude_path: str | None = None, use_
 
     uris = [file_to_datauri(gi.local_path) for gi in usable]
     best = vision_pick_best(uris, subject, image_type=image_type) if use_vision else 0
+    _mark_gallery_image_used(db, usable[best])
     return uris[best], usable[best]
 
 
@@ -593,12 +693,12 @@ def pick_split_image_type(title: str, niche: str) -> str:
     from app.services.ai_caption import generate_caption
 
     prompt = (
-        f'A {niche} news graphic features two riders. Headline: "{title}".\n'
+        f'A {niche} news graphic features two riders/drivers. Headline: "{title}".\n'
         "Choose the photo style:\n"
         "- FACE: a quote/statement, opinion, contract, rivalry off-track, or "
         "anything personal.\n"
         "- ACTION: on-track performance, a race/qualifying/result, who is fastest "
-        "or favorite to win, riding/bike-focused news.\n"
+        "or favorite to win, riding/driving-focused news.\n"
         "Reply with ONLY one word: FACE or ACTION."
     )
     try:
@@ -616,7 +716,7 @@ def extract_two_subjects(title: str, niche: str):
     prompt = (
         f'This is a {niche} news headline: "{title}".\n'
         "Which specific PEOPLE is it about? If it clearly features TWO distinct "
-        "named people (e.g. a rider and a rival/other rider), reply exactly as "
+        "named people (e.g. a rider/driver and a rival/teammate), reply exactly as "
         '`Name One | Name Two`. If it is about only ONE main person, reply with '
         "just that one name. People only — no teams/brands. No extra words."
     )
@@ -647,7 +747,10 @@ def fetch_subject_datauri(subject: str, image_type: str = "face", niche: str = "
     from app.services.upscaler import upscale_image_bytes
 
     s = get_settings()
-    query = f"{subject} portrait" if image_type == "face" else f"{subject} {niche}"
+    # Always keep the niche in the query, even for portraits — a bare surname
+    # (e.g. "Guevara") can collide with a far more famous unrelated person
+    # (Che Guevara) in stock-photo search results without it.
+    query = f"{subject} {niche} portrait" if image_type == "face" else f"{subject} {niche}"
     url = s.gallery_search_url_template.format(query=quote(query), page=1)
     try:
         md = _9router_fetch_markdown(url)

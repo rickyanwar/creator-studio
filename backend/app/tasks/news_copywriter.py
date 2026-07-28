@@ -76,6 +76,17 @@ def copywrite_article(self, article_id: int):
                 logger.error("Copywriter: article %d fanpage %d failed: %s", article_id, fp.id, exc)
                 continue
 
+            # copy.category ("news"/"quote") picks which template pool this job
+            # renders on — same cascade (job -> fanpage default -> shared
+            # default) that Mode 3 IG-recreate uses; see design_images.resolve_template.
+            from app.services.design_images import resolve_template
+
+            template = resolve_template(db, copy.category, fanpage=fp)
+            logger.info(
+                "Copywriter: article %d fanpage %d classified '%s' → template %s",
+                article_id, fp.id, copy.category, template.id if template else None,
+            )
+
             job = PublishJob(
                 fanpage_id=fp.id,
                 post_id=None,
@@ -85,7 +96,7 @@ def copywrite_article(self, article_id: int):
                 design_subtitle=copy.subtitle,
                 ai_generated_caption=copy.caption,
                 ai_provider_used=copy.provider,
-                design_template_id=fp.default_news_template_id,
+                design_template_id=template.id if template else None,
                 status=PublishJobStatus.pending_design,
             )
             db.add(job)

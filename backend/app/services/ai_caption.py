@@ -130,12 +130,17 @@ def _call_router(prompt: str) -> str:
         base_url=cfg.base_url,
         # OpenAI SDK requires a non-empty key; 9Router may not enforce it.
         api_key=cfg.api_key or "sk-9router",
+        # Explicit timeout — a hung (not erroring) call would otherwise block
+        # on the SDK's default for far too long before the Gemini/Groq fallback
+        # in generate_caption() ever gets a chance to run.
+        timeout=45.0,
     )
     completion = client.chat.completions.create(
         model=cfg.model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=1024,
         temperature=0.7,
+        timeout=45.0,
     )
     return completion.choices[0].message.content.strip()
 

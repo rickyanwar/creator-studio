@@ -118,6 +118,7 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     from app.models.target_fanpages import TargetFanpage
     from app.models.scraped_articles import ScrapedArticle
     from app.models.gallery import GalleryImage
+    from app.models.design_templates import DesignTemplate
     from app.services.design_images import resolve_template
 
     job = db.query(PublishJob).filter_by(id=job_id).first()
@@ -128,10 +129,17 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first() if job.source_article_id else None
 
     # Same cascade as the auto-renderer (design_renderer.render_design): job
-    # override → fanpage's default_news_template_id → shared "news" default.
-    # (ig_recreate jobs always have design_template_id set at creation, so
-    # this only matters for news_content jobs — see resolve_template.)
-    template = resolve_template(db, "news", fanpage=fanpage, job_template_id=job.design_template_id)
+    # override → fanpage's default_{category}_template_id → shared category
+    # default. The copywriter classifies news_content jobs as "news"/"quote"
+    # and pins design_template_id to the matching pool; that template's own
+    # category drives the cascade so it survives falling back to a shared
+    # default (not just the fanpage's own pinned template).
+    job_template = (
+        db.query(DesignTemplate).filter_by(id=job.design_template_id).first()
+        if job.design_template_id else None
+    )
+    category = job_template.category if job_template and job_template.category else "news"
+    template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
 
     # image candidates: fanpage gallery niches first, then the article hero
     candidates: list[dict] = []

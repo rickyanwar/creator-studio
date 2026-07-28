@@ -16,8 +16,6 @@ import logging
 import re
 from typing import Literal, TypedDict
 
-from app.config import get_settings
-
 logger = logging.getLogger(__name__)
 
 ContentType = Literal["news", "quote", "other"]
@@ -58,32 +56,24 @@ def classify_ig_image(image_bytes: bytes, niche: str = "general") -> Classificat
 
     Raises on transport/API/parse error — the caller owns retry/skip policy.
     """
-    from openai import OpenAI  # type: ignore
-
     from app.services.nine_router import get_nine_router_config
 
-    settings = get_settings()
     cfg = get_nine_router_config()
     if not cfg.base_url:
         raise RuntimeError("9Router base URL not configured — cannot classify IG images")
 
-    client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router")
-    b64 = base64.b64encode(image_bytes).decode()
-    completion = client.chat.completions.create(
-        model=settings.nine_router_vision_model,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _PROMPT.format(niche=niche or "general")},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                ],
-            }
-        ],
-        max_tokens=1500,
-        temperature=0,
-    )
-    raw = completion.choices[0].message.content or ""
+    from app.services.design_images import _vision_datauri, _vision_chat
+
+    # Downscaled to stay under the router's request-size limit (413 on
+    # full-res photos) — 1024px keeps on-image quote/headline text readable.
+    datauri = _vision_datauri(image_bytes, max_dim=1024)
+    content = [
+        {"type": "text", "text": _PROMPT.format(niche=niche or "general")},
+        {"type": "image_url", "image_url": {"url": datauri}},
+    ]
+    # Tries several vision-capable models in turn (some models on this router
+    # silently ignore images or hallucinate) — see design_images._vision_chat.
+    raw = _vision_chat(content, max_tokens=1500)
     result = _parse(raw)
     logger.info("IG classify → %s (%d chars)", result["type"], len(result["text"]))
     return result

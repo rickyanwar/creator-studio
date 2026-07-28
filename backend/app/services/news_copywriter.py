@@ -1,7 +1,15 @@
 """News copywriter — rewrite a scraped article into a design headline + FB caption.
 
 One AI call per (article, fanpage) returning structured JSON:
-  {"title": "<short headline for the image design>", "caption": "<FB post text>"}
+  {"type": "news|quote", "title": "...", "subtitle": "...", "caption": "..."}
+
+The same call also classifies the article: a "news" design (headline +
+supporting line) or a "quote" design (a standalone quotable statement from a
+named person in the article + their name for the template's name badge) —
+same two categories, and the same title/subtitle placeholder pair, that
+Mode 3 IG-recreate already classifies into (see ig_content_classifier.py).
+The caller resolves the fanpage's matching default_{quote,news}_template_id
+via design_images.resolve_template.
 
 Reuses the Gemini-primary/Groq-fallback failover from ai_caption.generate_caption
 (spec Phase 2C: "Reuse Gemini+Groq failover"). Uses the fanpage's Mode 2 caption
@@ -27,6 +35,7 @@ class NewsCopy:
     caption: str    # FB post text
     provider: AIProviderName
     subtitle: str = ""  # short sub-headline for the design (may carry **red** markers)
+    category: str = "news"  # "news" | "quote" — which template pool to render on
 
 
 def _effective_title_max_chars(fanpage, article) -> int:
@@ -74,8 +83,13 @@ TITLE: {article.scraped_title}
 CONTENT:
 {content}
 
-TASK: Write copy for a news image post, substantially rewritten in your own words (do not copy sentences from the source):
+TASK 1 — CLASSIFY. Decide which design fits this article best:
+   - "quote": the article contains an actual quoted statement, in quotation marks or clearly attributed dialogue, from a named person — a reaction, promise, criticism, or bold claim that stands strongly on its own as a standalone quote card. Only choose this when a real quote is present in the source; never invent one.
+   - "news": everything else — a headline/announcement design.
 
+TASK 2 — WRITE THE COPY, substantially rewritten in your own words (do not copy sentences from the source). The fields depend on the type you chose:
+
+IF "type" is "news":
 1. "title" — the headline that will be printed ON the image design.
    - Stay close to the source TITLE above: keep all its facts and names, and rewrite it only to make it more engaging (stronger verbs, urgency, hook like "BREAKING:" / "OFFICIAL:" when it fits). Translate to {language} if needed.
    - Keep roughly the SAME LENGTH as the source TITLE (or slightly longer with the hook) — do NOT shorten it or compress it into a vague topic label.
@@ -84,12 +98,19 @@ TASK: Write copy for a news image post, substantially rewritten in your own word
    - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 5 words) in double asterisks so it renders in red, e.g. "Marc Marquez takes **his first pole** at Sachsenring". Mark exactly ONE phrase; leave the rest unmarked.
    - Maximum {_effective_title_max_chars(fanpage, article)} characters (the ** markers do not count)
    - No hashtags, no emoji, no quote marks
-
 2. "subtitle" — one short supporting sentence printed under the headline on the image.
    - Max 120 characters, same language as the title, plain factual detail that supports the headline.
    - HIGHLIGHT the key phrase (2 to 6 words) in double asterisks, same as the title.
 
-3. "caption" — the Facebook post text that accompanies the image (NO asterisk markers here).
+IF "type" is "quote":
+1. "title" — the quote itself, printed on the image next to a large quote-mark icon.
+   - Translate to {language} if needed, tightened for punch but keep the original meaning and claim — do not soften or invent words.
+   - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
+   - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
+   - Maximum 140 characters.
+2. "subtitle" — ONLY the speaker's name, exactly as it should appear on the name badge (add a short role/title if it adds context, e.g. "Marc Marquez, MotoGP Champion"). Max 40 characters. No asterisks.
+
+3. "caption" — the Facebook post text that accompanies the image (NO asterisk markers here), same for either type.
    - Language: {language}
    - Tone: {tone}
    - Maximum length: {max_length} characters
@@ -98,40 +119,45 @@ TASK: Write copy for a news image post, substantially rewritten in your own word
 {attribution_line}
    - Additional notes: {custom_prompt if custom_prompt else "none"}
 
-OUTPUT: only a raw JSON object {{"title": "...", "subtitle": "...", "caption": "..."}} — no markdown fences, no explanation."""
+OUTPUT: only a raw JSON object {{"type": "news|quote", "title": "...", "subtitle": "...", "caption": "..."}} — no markdown fences, no explanation."""
 
 
-def _parse_news_copy(raw: str) -> tuple[str, str, str]:
+def _parse_news_copy(raw: str) -> tuple[str, str, str, str]:
     """Parse the model's JSON output, tolerating markdown fences and stray text.
-    Returns (title, subtitle, caption); subtitle may be empty."""
+    Returns (category, title, subtitle, caption); subtitle may be empty."""
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
     # models occasionally prepend/append prose — grab the outermost JSON object
     match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
     if not match:
         raise ValueError(f"no JSON object in AI output: {raw[:200]!r}")
     data = json.loads(match.group(0))
+    category = str(data.get("type") or "news").strip().lower()
+    if category not in ("news", "quote"):
+        category = "news"
     title = str(data.get("title") or "").strip()
     subtitle = str(data.get("subtitle") or "").strip()
     caption = str(data.get("caption") or "").strip()
     if not title or not caption:
         raise ValueError(f"AI output missing title/caption: {raw[:200]!r}")
-    return title, subtitle, caption
+    return category, title, subtitle, caption
 
 
 def generate_news_copy(fanpage, article, force_provider: AIProviderName | None = None) -> NewsCopy:
-    """Generate headline + caption for one (fanpage, article) pair.
+    """Generate headline + caption for one (fanpage, article) pair, classifying
+    it as a "news" or "quote" design in the same call (see build_news_copy_prompt).
 
     Raises on AI failure (both providers down) or unparseable output —
     the calling task owns retry/backoff.
     """
     prompt = build_news_copy_prompt(fanpage, article)
     raw, provider = generate_caption(prompt, force_provider=force_provider)
-    title, subtitle, caption = _parse_news_copy(raw)
+    category, title, subtitle, caption = _parse_news_copy(raw)
 
     # Length check ignores the ** highlight markers; if we must truncate we drop
-    # the markers (rare) rather than risk splitting a pair.
-    title_max = _effective_title_max_chars(fanpage, article)
+    # the markers (rare) rather than risk splitting a pair. Quote titles use a
+    # fixed short cap (they're a punchy standalone line, not a headline).
+    title_max = 140 if category == "quote" else _effective_title_max_chars(fanpage, article)
     if len(title.replace("**", "")) > title_max:
         title = title.replace("**", "")[: title_max - 1].rstrip() + "…"
 
-    return NewsCopy(title=title, caption=caption, provider=provider, subtitle=subtitle)
+    return NewsCopy(title=title, caption=caption, provider=provider, subtitle=subtitle, category=category)

@@ -424,6 +424,7 @@ function Lightbox({
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const color = avatarColor(fanpage);
   const caption = job.ai_generated_caption ?? "";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate";
   const total = urls.length;
   const createdAt = (job as unknown as Record<string, string>).created_at;
 
