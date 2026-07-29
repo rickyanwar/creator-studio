@@ -35,6 +35,9 @@ function avatarColor(name: string) {
 }
 
 function resolveUrls(job: PublishJob): string[] {
+  if (job.content_type === "news_content" || job.content_type === "ig_recreate") {
+    return job.design_image_url ? [job.design_image_url] : [];
+  }
   const pub = job.image_public_urls ?? [];
   const src = (job as unknown as Record<string, string[]>).image_source_urls ?? [];
   if (pub.length && pub[0].includes("localhost") && src.length) return src;

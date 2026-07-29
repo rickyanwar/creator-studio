@@ -10,7 +10,7 @@ const TABS = [
   { href: "/fanpages",  label: "Fanpages", icon: "mingcute:facebook-fill" },
   { href: "/queue",     label: "Queue",    icon: "solar:clock-circle-bold-duotone" },
   { href: "/history",   label: "History",  icon: "solar:history-bold-duotone" },
-  { href: "/burners",   label: "Burners",  icon: "solar:users-group-rounded-bold-duotone" },
+  { href: "/gallery",   label: "Gallery",  icon: "solar:gallery-wide-bold-duotone" },
   { href: "/settings",  label: "Settings", icon: "solar:settings-bold-duotone" },
 ];
 
