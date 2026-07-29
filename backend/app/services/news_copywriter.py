@@ -28,6 +28,28 @@ logger = logging.getLogger(__name__)
 # Keep prompts bounded — long articles don't improve copy quality
 _MAX_CONTENT_CHARS = 4000
 
+# Role/descriptor words the AI occasionally tacks onto a quote's name-badge
+# subtitle despite instructions not to (e.g. "Marc Marquez World Champion").
+# Stripped as a deterministic safety net since the badge should show only the
+# speaker's name.
+_NAME_ROLE_SUFFIX_RE = re.compile(
+    r"\s*[,\-–—(]\s*.*$|"
+    r"\s+\b(world\s+champion(s)?|champion(s)?|winner|title\s*holder|"
+    r"ceo|president|founder|coach|manager|captain|coordinator|"
+    r"team\s+principal|spokesperson|director|chairman|"
+    r"motogp\s+rider|rider|driver|player|athlete|star|legend|icon)\b.*$",
+    flags=re.IGNORECASE,
+)
+
+
+def _clean_quote_subtitle(subtitle: str) -> str:
+    """Strip a trailing role/title descriptor from a quote card's name-badge
+    text, keeping only the speaker's name (see _NAME_ROLE_SUFFIX_RE)."""
+    # A comma almost always separates "Name, Role" — cut there first.
+    name = subtitle.split(",")[0].strip()
+    name = _NAME_ROLE_SUFFIX_RE.sub("", name).strip()
+    return name or subtitle.strip()
+
 
 @dataclass
 class NewsCopy:
@@ -108,7 +130,10 @@ IF "type" is "quote":
    - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
    - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
    - Maximum 140 characters.
-2. "subtitle" — ONLY the speaker's name, exactly as it should appear on the name badge (add a short role/title if it adds context, e.g. "Marc Marquez, MotoGP Champion"). Max 40 characters. No asterisks.
+2. "subtitle" — ONLY the speaker's full name, exactly as it appears in the article, and NOTHING else — no role, title, team, or descriptor of any kind, and no comma.
+   - GOOD: "Marc Marquez"
+   - BAD: "Marc Marquez World Champion", "Marc Marquez, MotoGP Champion", "Marc Marquez (Ducati)"
+   - Max 40 characters. No asterisks.
 
 3. "caption" — the Facebook post text that accompanies the image (NO asterisk markers here), same for either type.
    - Language: {language}
@@ -152,6 +177,9 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     prompt = build_news_copy_prompt(fanpage, article)
     raw, provider = generate_caption(prompt, force_provider=force_provider)
     category, title, subtitle, caption = _parse_news_copy(raw)
+
+    if category == "quote" and subtitle:
+        subtitle = _clean_quote_subtitle(subtitle)
 
     # Length check ignores the ** highlight markers; if we must truncate we drop
     # the markers (rare) rather than risk splitting a pair. Quote titles use a
