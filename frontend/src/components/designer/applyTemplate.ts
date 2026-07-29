@@ -192,17 +192,27 @@ export async function applyTemplateContent(args: ApplyArgs): Promise<void> {
   }
 
   // ── Watermark (top-left text) ──
+  // Textbox (not Text) so long watermark strings wrap instead of running off
+  // the canvas edge; shrink the font until it wraps to at most 2 lines. Keep
+  // in sync with renderer/inject.js's addWatermark.
   if (watermark) {
-    const wm = new fabric.Text(String(watermark).toUpperCase(), {
+    const wm = new fabric.Textbox(String(watermark).toUpperCase(), {
       left: Math.round(width * 0.052),
       top: Math.round(width * 0.045),
+      width: Math.round(width * 0.6),
       fontFamily: "Poppins",
       fontWeight: "bold",
       fontSize: Math.round(width * 0.032),
+      lineHeight: 1.15,
       fill: "rgba(255,255,255,0.6)",
       charSpacing: 60,
       selectable: false,
     });
+    wm.initDimensions();
+    while (wm.textLines.length > 2 && wm.fontSize > 10) {
+      wm.set("fontSize", wm.fontSize - 1);
+      wm.initDimensions();
+    }
     canvas.add(wm);
   }
 

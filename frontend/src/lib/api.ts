@@ -118,7 +118,9 @@ export const deleteIGSource = (sourceId: number) =>
 export const uploadWatermarkImage = (fanpageId: number, file: File) => {
   const fd = new FormData();
   fd.append("file", file);
-  return api.post(`/fanpages/${fanpageId}/watermark-image`, fd);
+  return api.post(`/fanpages/${fanpageId}/watermark-image`, fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
 };
 export const deleteWatermarkImage = (fanpageId: number) =>
   api.delete(`/fanpages/${fanpageId}/watermark-image`);

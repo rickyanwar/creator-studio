@@ -37,17 +37,28 @@ window.renderTemplate = function renderTemplate(args) {
       }
     }
     if (watermark) {
-      const wm = new fabric.Text(String(watermark).toUpperCase(), {
+      // Textbox (not Text) so long watermark strings wrap instead of running
+      // off the canvas edge. Auto-fit: shrink the font until the text wraps
+      // to at most 2 lines within the box, so a short handle stays big and a
+      // longer tagline (e.g. a full sentence) shrinks and wraps to 2 lines.
+      const wm = new fabric.Textbox(String(watermark).toUpperCase(), {
         left: Math.round(width * 0.052),
         top: Math.round(width * 0.045),
+        width: Math.round(width * 0.6),
         fontFamily: "Poppins",
         fontWeight: "bold",
         fontSize: Math.round(width * 0.032),
+        lineHeight: 1.15,
         fill: "rgba(255,255,255,0.6)",
         charSpacing: 60,
         selectable: false,
         shadow: new fabric.Shadow({ color: "rgba(0,0,0,0.55)", blur: 8, offsetX: 0, offsetY: 1 }),
       });
+      wm.initDimensions();
+      while (wm.textLines.length > 2 && wm.fontSize > 10) {
+        wm.set("fontSize", wm.fontSize - 1);
+        wm.initDimensions();
+      }
       canvas.add(wm);
       canvas.renderAll();
     }

@@ -266,8 +266,10 @@ export default function FanpageEditPage() {
     try {
       await uploadWatermarkImage(fanpageId, file);
       await mutate();
-    } catch {
-      alert("Upload failed — make sure the file is a valid image.");
+    } catch (ex: any) {
+      alert(
+        `Upload failed: ${ex.response?.data?.detail ?? "make sure the file is a valid image."}`
+      );
     } finally {
       setWmUploading(false);
     }
