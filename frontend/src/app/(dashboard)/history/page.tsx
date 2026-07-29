@@ -357,7 +357,7 @@ function HistoryCard({
             {job.last_error}
           </p>
         ) : caption ? (
-          <p className={`text-xs text-text-secondary leading-relaxed line-clamp-3 ${blurred ? blur : ""}`}>{caption}</p>
+          <p className={`text-xs text-text-secondary leading-relaxed line-clamp-3 whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
         ) : (
           <p className="text-xs text-text-disabled italic">No caption</p>
         )}
@@ -467,7 +467,7 @@ function HistoryLightbox({
             {job.last_error ? (
               <p className="text-error-light text-xs leading-relaxed line-clamp-3">{job.last_error}</p>
             ) : caption ? (
-              <p className={`text-white/90 text-xs leading-relaxed line-clamp-4 ${blurred ? blur : ""}`}>{caption}</p>
+              <p className={`text-white/90 text-xs leading-relaxed line-clamp-4 whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
             ) : (
               <p className="text-white/40 text-xs italic">No caption</p>
             )}

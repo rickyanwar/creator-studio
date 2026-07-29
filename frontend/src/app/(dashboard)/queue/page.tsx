@@ -352,7 +352,7 @@ function QueueCard({
             {caption ? (
               <>
                 <p
-                  className={`text-xs text-text-secondary leading-relaxed cursor-pointer ${isExpanded ? "" : "line-clamp-3"}`}
+                  className={`text-xs text-text-secondary leading-relaxed cursor-pointer whitespace-pre-line ${isExpanded ? "" : "line-clamp-3"}`}
                   onClick={onToggleExpand}
                 >
                   {caption}
@@ -512,7 +512,7 @@ function Lightbox({
 
             {/* Caption */}
             {caption ? (
-              <p className="text-white/90 text-xs leading-relaxed line-clamp-4">{caption}</p>
+              <p className="text-white/90 text-xs leading-relaxed line-clamp-4 whitespace-pre-line">{caption}</p>
             ) : (
               <p className="text-white/40 text-xs italic">No caption generated yet</p>
             )}

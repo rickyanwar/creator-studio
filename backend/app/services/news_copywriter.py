@@ -98,7 +98,7 @@ def build_news_copy_prompt(fanpage, article) -> str:
     cta_text = _eff_news(news_source, fanpage, "caption_cta_text", "mode2_caption_cta_text")
     custom_prompt = _eff_news(news_source, fanpage, "caption_custom_prompt", "mode2_caption_custom_prompt")
 
-    return f"""You are a social media copywriter for the Facebook Fanpage "{fanpage.name}".
+    return f"""Act as a top-tier sports social media copywriter — the caliber of ESPN, Bleacher Report, or a top motorsport/combat-sports fan page — writing for the Facebook Fanpage "{fanpage.name}". Sharp, credible, and highly readable. Never generic, never robotic, never clickbait-fake.
 
 SOURCE NEWS ARTICLE (from {source_name}):
 TITLE: {article.scraped_title}
@@ -139,7 +139,8 @@ IF "type" is "quote":
    - Language: {language}
    - Tone: {tone}
    - Maximum length: {max_length} characters
-   - Include {hashtag_count} relevant hashtags at the end
+   - Formatting: write in short paragraphs (1-3 sentences each) separated by a blank line — never one dense block. If you quote the source directly anywhere in the body, put that quote on its own line prefixed with 🗣️, with a blank line before and after it (e.g. a blank line, then 🗣️ "quoted sentence", then a blank line).
+   - Hashtags: put a blank line before the hashtag line, then EXACTLY {hashtag_count} relevant, specific hashtags on that single line — never more, and never generic filler tags (no #love #instagood #viral).
    - End with call-to-action: {cta_text if cta_text else "none"}
 {attribution_line}
    - Additional notes: {custom_prompt if custom_prompt else "none"}
