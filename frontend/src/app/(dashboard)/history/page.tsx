@@ -611,6 +611,8 @@ function HistoryLightbox({
   const showScheduled = job.status === "published" && isPendingLive;
   const canReedit = job.content_type === "news_content" && job.status === "published";
 
+  const [expanded, setExpanded] = useState(true);
+
   const blur = "blur-sm select-none transition-all duration-200";
   const blurImg = "blur-xl transition-all duration-200";
 
@@ -620,11 +622,11 @@ function HistoryLightbox({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl rounded-2xl overflow-hidden shadow-dropdown"
+        className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden shadow-dropdown bg-bg-paper"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Image — fixed 4:3 */}
-        <div className="relative bg-black aspect-[4/3]">
+        {/* Image — pure photo, no text overlaid on it (floating controls only) */}
+        <div className="relative bg-black aspect-[4/3] flex-shrink-0">
           {total > 0 ? (
             <img
               src={urls[idx]}
@@ -653,7 +655,7 @@ function HistoryLightbox({
             <Icon icon="solar:close-bold" width={16} />
           </button>
 
-          {/* Prev / Next */}
+          {/* Prev / Next (this post's own photo album, e.g. an IG carousel) */}
           {total > 1 && idx > 0 && (
             <button onClick={onPrev}
               className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors">
@@ -667,114 +669,118 @@ function HistoryLightbox({
             </button>
           )}
 
-          {/* Counter */}
+          {/* Album counter + dots */}
           {total > 1 && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full">
-              {idx + 1} / {total}
-            </div>
-          )}
-
-          {/* Caption overlay */}
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-16 pb-4 px-5">
-            <div className="flex items-center gap-2.5 mb-2">
-              {job.fanpage_picture_url ? (
-                <img src={job.fanpage_picture_url} alt={fanpage}
-                  className={`w-7 h-7 rounded-full object-cover flex-shrink-0 ${blurred ? blurImg : ""}`} />
-              ) : (
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${blurred ? "blur-sm" : ""}`}
-                  style={{ background: color }}>
-                  {fanpage[0]?.toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className={`text-white text-xs font-semibold leading-none ${blurred ? blur : ""}`}>{fanpage}</p>
-                <p className={`text-white/60 text-[10px] mt-0.5 ${blurred ? blur : ""}`}>
-                  @{job.ig_username}
-                  {queuedDate ? ` · ${format(queuedDate, "MMM d, yyyy HH:mm")}` : ""}
-                </p>
-                {differs && scheduledDate && (
-                  <p className={`text-[10px] mt-0.5 flex items-center gap-1 ${isPendingLive ? "text-warning-light" : "text-white/40"} ${blurred ? blur : ""}`}>
-                    <Icon icon="solar:clock-circle-bold-duotone" width={10} />
-                    {isPendingLive ? "Goes live" : "Went live"} {format(scheduledDate, "MMM d, yyyy HH:mm")}
-                  </p>
-                )}
+            <>
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full">
+                {idx + 1} / {total}
               </div>
-              {showScheduled ? (
-                <span className="badge-yellow flex items-center gap-1 flex-shrink-0">
-                  <Icon icon="solar:clock-circle-bold-duotone" width={11} />
-                  Scheduled
-                </span>
-              ) : (
-                <span className={`${cfg.badge} flex items-center gap-1 flex-shrink-0`}>
-                  <Icon icon={cfg.icon} width={11} />
-                  {job.status}
-                </span>
-              )}
-            </div>
-
-            {job.last_error ? (
-              <p className="text-error-light text-xs leading-relaxed max-h-24 overflow-y-auto">{job.last_error}</p>
-            ) : caption ? (
-              // Full caption (scrollable, not clipped) — this is the "what
-              // actually got posted" view, unlike the card grid's clamped preview.
-              <p className={`text-white/90 text-xs leading-relaxed max-h-32 overflow-y-auto whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
-            ) : (
-              <p className="text-white/40 text-xs italic">No caption</p>
-            )}
-          </div>
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+                {urls.map((_, i) => (
+                  <div key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? "bg-white w-4" : "bg-white/40 w-1.5"}`} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Dot indicators */}
-        {total > 1 && (
-          <div className="flex justify-center gap-1.5 py-2.5 bg-black">
-            {urls.map((_, i) => (
-              <div key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? "bg-primary-main w-4" : "bg-white/30 w-1.5"}`} />
-            ))}
+        {/* Info panel — below the image, not on top of it */}
+        <div className="flex flex-col min-h-0 overflow-y-auto">
+          {/* Header: always visible — who, when, status */}
+          <div className="flex items-center gap-3 px-5 pt-4 pb-3">
+            {job.fanpage_picture_url ? (
+              <img src={job.fanpage_picture_url} alt={fanpage}
+                className={`w-9 h-9 rounded-full object-cover flex-shrink-0 ${blurred ? blurImg : ""}`} />
+            ) : (
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${blurred ? "blur-sm" : ""}`}
+                style={{ background: color }}>
+                {fanpage[0]?.toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className={`text-sm font-semibold text-text-primary leading-tight truncate ${blurred ? blur : ""}`}>{fanpage}</p>
+              <p className={`text-xs text-text-secondary mt-0.5 truncate ${blurred ? blur : ""}`}>
+                @{job.ig_username}
+                {queuedDate ? ` · ${format(queuedDate, "MMM d, yyyy HH:mm")}` : ""}
+              </p>
+              {differs && scheduledDate && (
+                <p className={`text-xs mt-0.5 flex items-center gap-1 ${isPendingLive ? "text-warning-dark" : "text-text-disabled"} ${blurred ? blur : ""}`}>
+                  <Icon icon="solar:clock-circle-bold-duotone" width={11} />
+                  {isPendingLive ? "Goes live" : "Went live"} {format(scheduledDate, "MMM d, yyyy HH:mm")}
+                </p>
+              )}
+            </div>
+            {showScheduled ? (
+              <span className="badge-yellow flex items-center gap-1 flex-shrink-0">
+                <Icon icon="solar:clock-circle-bold-duotone" width={11} />
+                Scheduled
+              </span>
+            ) : (
+              <span className={`${cfg.badge} flex items-center gap-1 flex-shrink-0`}>
+                <Icon icon={cfg.icon} width={11} />
+                {job.status}
+              </span>
+            )}
           </div>
-        )}
 
-        {/* Info bar */}
-        <div className="flex items-center gap-3 px-5 py-4 bg-bg-paper">
-          {src && !blurred && (
-            <a
-              href={src.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={src.url}
-              className="flex items-center gap-1.5 text-xs text-primary-main hover:underline truncate max-w-[45%]"
-            >
-              <Icon icon={src.icon} width={13} className="flex-shrink-0" />
-              <span className="truncate">{src.label}</span>
-            </a>
-          )}
-          {job.repliz_schedule_id && (
-            <div className="flex items-center gap-1.5 text-xs text-text-secondary">
-              <Icon icon="solar:link-bold-duotone" width={13} />
-              Repliz ID: <span className={`font-mono text-text-primary ${blurred ? blur : ""}`}>{job.repliz_schedule_id.slice(-12)}</span>
+          {/* Show/hide details toggle */}
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-paper-hover border-y border-divider-soft transition-colors"
+          >
+            {expanded ? "Hide details" : "Show details"}
+            <Icon icon={expanded ? "solar:alt-arrow-up-bold" : "solar:alt-arrow-down-bold"} width={12} />
+          </button>
+
+          {/* Details: caption/error + source link + repliz id */}
+          {expanded && (
+            <div className="px-5 py-3 space-y-2.5 border-b border-divider-soft">
+              {job.last_error ? (
+                <p className="text-error-main text-xs leading-relaxed bg-error-main/8 rounded-md px-3 py-2">{job.last_error}</p>
+              ) : caption ? (
+                <p className={`text-text-secondary text-xs leading-relaxed whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
+              ) : (
+                <p className="text-text-disabled text-xs italic">No caption</p>
+              )}
+              {src && !blurred && (
+                <a
+                  href={src.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={src.url}
+                  className="flex items-center gap-1.5 text-xs text-primary-main hover:underline"
+                >
+                  <Icon icon={src.icon} width={13} className="flex-shrink-0" />
+                  <span className="truncate">{src.label}</span>
+                </a>
+              )}
+              {job.repliz_schedule_id && (
+                <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+                  <Icon icon="solar:link-bold-duotone" width={13} />
+                  Repliz ID: <span className={`font-mono text-text-primary ${blurred ? blur : ""}`}>{job.repliz_schedule_id.slice(-12)}</span>
+                </div>
+              )}
             </div>
           )}
-          {canReedit && (
+
+          {/* Actions — always visible regardless of expand state */}
+          <div className="flex items-center gap-2 px-5 py-3">
+            {canReedit && (
+              <button
+                onClick={onReedit}
+                title="Re-edit with a new image"
+                className="p-1.5 rounded-md text-text-disabled hover:text-primary-main hover:bg-primary-main/10 transition-colors"
+              >
+                <Icon icon="solar:gallery-edit-bold-duotone" width={16} />
+              </button>
+            )}
             <button
-              onClick={onReedit}
-              title="Re-edit with a new image"
-              className="p-1.5 rounded-md text-text-disabled hover:text-primary-main hover:bg-primary-main/10 transition-colors"
+              onClick={onDelete}
+              title="Delete from history"
+              className="p-1.5 rounded-md text-text-disabled hover:text-error-main hover:bg-error-main/10 transition-colors"
             >
-              <Icon icon="solar:gallery-edit-bold-duotone" width={14} />
+              <Icon icon="solar:trash-bin-trash-bold-duotone" width={16} />
             </button>
-          )}
-          <button
-            onClick={onDelete}
-            title="Delete from history"
-            className="p-1.5 rounded-md text-text-disabled hover:text-error-main hover:bg-error-main/10 transition-colors"
-          >
-            <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
-          </button>
-          <div
-            className="ml-auto flex items-center gap-1.5 text-xs"
-            style={{ color: showScheduled ? "#B76E00" : cfg.iconClass === "text-primary-main" ? "#00A76F" : cfg.iconClass === "text-error-main" ? "#FF5630" : "#637381" }}
-          >
-            <Icon icon={showScheduled ? "solar:clock-circle-bold-duotone" : cfg.icon} width={14} />
-            <span className="font-semibold capitalize">{showScheduled ? "Scheduled" : job.status}</span>
           </div>
         </div>
       </div>
