@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     # older and already downloaded too. Set 0 to disable this early-stop.
     gallery_stop_after_consecutive_dupes: int = 20
 
+    # ── Editorial AI gate (opt-in per fanpage, via 9Router web-fetch) ──
+    # A general web-results search (NOT image search) used to ground the
+    # fact-check pass in app/services/editorial_gate.py — plain Google results
+    # give title/snippet/URL text for jina-reader to render as markdown.
+    editorial_factcheck_search_url_template: str = "https://www.google.com/search?q={query}"
+
     # ── AI Failover ───────────────────────────────
     ai_fallback_after_failures: int = 3
     ai_fallback_reset_after_minutes: int = 15

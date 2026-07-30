@@ -67,6 +67,7 @@ export interface Fanpage {
   mode2_caption_custom_prompt: string;
   mode2_title_max_chars: number;
   mode2_source_attribution: boolean;
+  mode2_editorial_gate_enabled: boolean;
 }
 
 export interface NewsSourceRef {

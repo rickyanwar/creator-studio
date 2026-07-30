@@ -987,6 +987,30 @@ export default function FanpageEditPage() {
               </div>
             </div>
 
+            {/* Editorial AI gate */}
+            <div className="border-t border-hairline pt-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-text-primary">AI Editorial Gate</p>
+                  <p className="text-xs text-text-secondary mt-0.5 max-w-md">
+                    Before copywriting, 9Router web-searches to fact-check each article and judges whether it&apos;s worth posting (likely engagement) — rejected articles get no post for this fanpage. Adds 2 AI calls per article.
+                  </p>
+                </div>
+                <button
+                  onClick={() => set("mode2_editorial_gate_enabled", !form.mode2_editorial_gate_enabled)}
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+                    form.mode2_editorial_gate_enabled ? "bg-primary-main" : "bg-hairline"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                      form.mode2_editorial_gate_enabled ? "translate-x-5" : ""
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
             {/* News copy preview */}
             <div className="border-t border-hairline pt-4 space-y-3">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">

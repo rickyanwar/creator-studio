@@ -75,6 +75,11 @@ class TargetFanpage(Base):
     mode2_caption_custom_prompt = Column(Text, default="", nullable=False, server_default="")
     mode2_title_max_chars = Column(Integer, default=80, nullable=False, server_default="80")
     mode2_source_attribution = Column(Boolean, default=True, nullable=False, server_default="true")
+    # Opt-in editorial AI gate: before copywriting, 9Router web-search-fact-checks
+    # the article and judges whether it's worth posting/likely engagement — a
+    # rejected article gets no PublishJob for this fanpage (see
+    # editorial_gate.evaluate_article, wired in news_copywriter.copywrite_article).
+    mode2_editorial_gate_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # ── Mode 3: IG content recreate ───────────────
     # Classify each scraped IG post image (9Router vision) → recreate it on a

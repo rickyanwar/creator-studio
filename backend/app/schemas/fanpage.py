@@ -45,6 +45,7 @@ class FanpageBase(BaseModel):
     mode2_caption_custom_prompt: str = ""
     mode2_title_max_chars: int = 80
     mode2_source_attribution: bool = True
+    mode2_editorial_gate_enabled: bool = False
 
     # ── Mode 3: IG content recreate ──
     ig_recreate_enabled: bool = False

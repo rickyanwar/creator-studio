@@ -19,7 +19,10 @@ export default function Toast({ toast, onClose }: { toast: ToastData | null; onC
     <div className="fixed bottom-6 right-6 z-[60] max-w-sm">
       <div
         className={`flex items-start gap-2.5 rounded-lg shadow-lg px-4 py-3 text-sm ${
-          isError ? "bg-error-main text-white" : "bg-ink text-white"
+          // Fixed dark surface (not the theme-reactive `ink`/text-primary token,
+          // which flips to white in dark mode and washes the white text out)
+          // — a Snackbar reads dark regardless of the active theme.
+          isError ? "bg-error-main text-white" : "bg-[#1C252E] text-white"
         }`}
       >
         <Icon

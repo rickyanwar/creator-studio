@@ -79,6 +79,28 @@ def copywrite_article(self, article_id: int):
             if existing:
                 continue
 
+            if fp.mode2_editorial_gate_enabled:
+                from app.services.editorial_gate import evaluate_article
+
+                niche = (fp.mode2_gallery_niches or [None])[0] or fp.name
+                try:
+                    verdict = evaluate_article(article, niche)
+                    logger.info(
+                        "Copywriter: editorial gate article %d fanpage %d — "
+                        "post_worthy=%s engagement=%s fact_check=%s (%s) reason=%s",
+                        article_id, fp.id, verdict.post_worthy, verdict.engagement,
+                        verdict.fact_check, verdict.fact_check_note, verdict.reason,
+                    )
+                    if not verdict.post_worthy:
+                        continue
+                except Exception as exc:
+                    # Flaky 9Router call shouldn't silently block every article —
+                    # let it through and fall back to the normal copy/design flow.
+                    logger.warning(
+                        "Copywriter: editorial gate failed for article %d fanpage %d — letting it through: %s",
+                        article_id, fp.id, exc,
+                    )
+
             try:
                 copy = generate_news_copy(fp, article)
             except GroqRateLimitError:

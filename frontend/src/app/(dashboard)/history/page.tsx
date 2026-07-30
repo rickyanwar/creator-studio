@@ -85,7 +85,10 @@ const PAGE_SIZE = 30;
 export default function HistoryPage() {
   const [activeStatus, setActiveStatus] = useState<PublishJobStatus>("published");
   const [fanpageFilter, setFanpageFilter] = useState<string>("");
-  const [lightboxJob, setLightboxJob] = useState<{ job: PublishJob; urls: string[]; idx: number } | null>(null);
+  // jobIndex points into the flat `jobs` list below (so Left/Right can browse
+  // every loaded post, not just images within one post's album); imgIdx is
+  // the position within THAT job's own album (multi-photo IG carousel posts).
+  const [lightbox, setLightbox] = useState<{ jobIndex: number; imgIdx: number } | null>(null);
   const [blurred, setBlurred] = useState(false);
 
   const { data: fanpages = [] } = useSWR<FanpageLite[]>(
@@ -142,6 +145,30 @@ export default function HistoryPage() {
     return () => obs.disconnect();
   }, [reachedEnd, loadingMore, setSize]);
 
+  const lightboxJobData = lightbox ? jobs[lightbox.jobIndex] ?? null : null;
+  const lightboxUrls = lightboxJobData ? resolveUrls(lightboxJobData) : [];
+
+  // Left/Right browses between POSTS (like the Gallery lightbox), Escape closes.
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLightbox(null);
+      } else if (e.key === "ArrowLeft") {
+        setLightbox((l) => (l && l.jobIndex > 0 ? { jobIndex: l.jobIndex - 1, imgIdx: 0 } : l));
+      } else if (e.key === "ArrowRight") {
+        setLightbox((l) => {
+          if (!l) return l;
+          if (l.jobIndex < jobs.length - 1) return { jobIndex: l.jobIndex + 1, imgIdx: 0 };
+          if (!reachedEnd) setSize((s) => s + 1); // ran off the loaded list — fetch more
+          return l;
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox, jobs.length, reachedEnd, setSize]);
+
   const [confirmDeleteJob, setConfirmDeleteJob] = useState<PublishJob | null>(null);
   const [deletingJob, setDeletingJob] = useState(false);
   const [confirmReeditJob, setConfirmReeditJob] = useState<PublishJob | null>(null);
@@ -162,7 +189,7 @@ export default function HistoryPage() {
       } else {
         notify("Deleted from history.", "success");
       }
-      if (lightboxJob?.job.id === confirmDeleteJob.id) setLightboxJob(null);
+      if (lightboxJobData?.id === confirmDeleteJob.id) setLightbox(null);
       mutateJobs();
     } catch {
       notify("Delete failed. Please try again.", "error");
@@ -178,7 +205,7 @@ export default function HistoryPage() {
     try {
       await reeditJob(confirmReeditJob.id);
       notify("Sent back for redesign with a different image — check the Queue shortly.", "success");
-      if (lightboxJob?.job.id === confirmReeditJob.id) setLightboxJob(null);
+      if (lightboxJobData?.id === confirmReeditJob.id) setLightbox(null);
       mutateJobs();
     } catch {
       notify("Re-edit failed. Please try again.", "error");
@@ -293,14 +320,15 @@ export default function HistoryPage() {
         {/* Card grid */}
         {!isLoading && jobs.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {jobs.map((job) => (
+            {jobs.map((job, jobIndex) => (
               <HistoryCard
                 key={job.id}
                 job={job}
                 blurred={blurred}
                 onImageClick={(idx) => {
-                  const urls = resolveUrls(job);
-                  if (urls.length) setLightboxJob({ job, urls, idx });
+                  // Always open — even a job with no image (e.g. still missing
+                  // a design) should be inspectable, not silently do nothing.
+                  setLightbox({ jobIndex, imgIdx: idx });
                 }}
                 onDelete={() => setConfirmDeleteJob(job)}
                 onReedit={() => setConfirmReeditJob(job)}
@@ -327,15 +355,16 @@ export default function HistoryPage() {
       </div>
 
       {/* Lightbox */}
-      {lightboxJob && (
+      {lightbox && lightboxJobData && (
         <HistoryLightbox
-          state={lightboxJob}
+          state={{ job: lightboxJobData, urls: lightboxUrls, idx: lightbox.imgIdx }}
+          postPosition={{ index: lightbox.jobIndex, total: jobs.length, hasMore: !reachedEnd }}
           blurred={blurred}
-          onClose={() => setLightboxJob(null)}
-          onPrev={() => setLightboxJob((l) => l && l.idx > 0 ? { ...l, idx: l.idx - 1 } : l)}
-          onNext={() => setLightboxJob((l) => l && l.idx < l.urls.length - 1 ? { ...l, idx: l.idx + 1 } : l)}
-          onDelete={() => setConfirmDeleteJob(lightboxJob.job)}
-          onReedit={() => setConfirmReeditJob(lightboxJob.job)}
+          onClose={() => setLightbox(null)}
+          onPrev={() => setLightbox((l) => (l && l.imgIdx > 0 ? { ...l, imgIdx: l.imgIdx - 1 } : l))}
+          onNext={() => setLightbox((l) => (l && l.imgIdx < lightboxUrls.length - 1 ? { ...l, imgIdx: l.imgIdx + 1 } : l))}
+          onDelete={() => setConfirmDeleteJob(lightboxJobData)}
+          onReedit={() => setConfirmReeditJob(lightboxJobData)}
         />
       )}
 
@@ -554,6 +583,7 @@ function HistoryCard({
 /* ── History lightbox (view-only, no actions) ─────── */
 function HistoryLightbox({
   state,
+  postPosition,
   blurred,
   onClose,
   onPrev,
@@ -562,6 +592,7 @@ function HistoryLightbox({
   onReedit,
 }: {
   state: { job: PublishJob; urls: string[]; idx: number };
+  postPosition: { index: number; total: number; hasMore: boolean };
   blurred: boolean;
   onClose: () => void;
   onPrev: () => void;
@@ -594,11 +625,25 @@ function HistoryLightbox({
       >
         {/* Image — fixed 4:3 */}
         <div className="relative bg-black aspect-[4/3]">
-          <img
-            src={urls[idx]}
-            alt={`Image ${idx + 1}`}
-            className={`absolute inset-0 w-full h-full object-contain ${blurred ? blurImg : ""}`}
-          />
+          {total > 0 ? (
+            <img
+              src={urls[idx]}
+              alt={`Image ${idx + 1}`}
+              className={`absolute inset-0 w-full h-full object-contain ${blurred ? blurImg : ""}`}
+            />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/40">
+              <Icon icon="solar:gallery-bold-duotone" width={40} />
+              <p className="text-xs">No image for this post</p>
+            </div>
+          )}
+
+          {/* Post position — ← → browses the whole loaded history, not just this post's album */}
+          <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full">
+            <Icon icon="solar:alt-arrow-left-linear" width={12} className="opacity-60" />
+            {postPosition.index + 1} / {postPosition.total}{postPosition.hasMore ? "+" : ""}
+            <Icon icon="solar:alt-arrow-right-linear" width={12} className="opacity-60" />
+          </div>
 
           {/* Close */}
           <button
@@ -668,9 +713,11 @@ function HistoryLightbox({
             </div>
 
             {job.last_error ? (
-              <p className="text-error-light text-xs leading-relaxed line-clamp-3">{job.last_error}</p>
+              <p className="text-error-light text-xs leading-relaxed max-h-24 overflow-y-auto">{job.last_error}</p>
             ) : caption ? (
-              <p className={`text-white/90 text-xs leading-relaxed line-clamp-4 whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
+              // Full caption (scrollable, not clipped) — this is the "what
+              // actually got posted" view, unlike the card grid's clamped preview.
+              <p className={`text-white/90 text-xs leading-relaxed max-h-32 overflow-y-auto whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
             ) : (
               <p className="text-white/40 text-xs italic">No caption</p>
             )}
