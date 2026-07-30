@@ -20,6 +20,7 @@ class PublishJobOut(BaseModel):
     attempt_count: int
     last_error: Optional[str] = None
     published_at: Optional[datetime] = None
+    scheduled_for: Optional[datetime] = None
     cleanup_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -31,6 +32,9 @@ class PublishJobOut(BaseModel):
     image_public_urls: list[str] = []
     image_source_urls: list[str] = []
     media_type: Optional[str] = None
+    ig_post_url: Optional[str] = None
+    article_url: Optional[str] = None
+    article_source_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

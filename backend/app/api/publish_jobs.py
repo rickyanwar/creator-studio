@@ -11,10 +11,14 @@ def _enrich_job(job, db) -> PublishJobOut:
     from app.models.posts import Post
     from app.models.target_fanpages import TargetFanpage
     from app.models.ig_sources import IGSource
+    from app.models.scraped_articles import ScrapedArticle
+    from app.models.news_sources import NewsSource
 
     post = db.query(Post).filter_by(id=job.post_id).first()
     fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
     ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first() if post else None
+    article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first() if job.source_article_id else None
+    news_source = db.query(NewsSource).filter_by(id=article.news_source_id).first() if article else None
 
     out = PublishJobOut.model_validate(job)
     out.fanpage_name = fanpage.name if fanpage else None
@@ -23,6 +27,9 @@ def _enrich_job(job, db) -> PublishJobOut:
     out.image_public_urls = list(post.image_public_urls) if post and post.image_public_urls else []
     out.image_source_urls = list(post.image_source_urls) if post and post.image_source_urls else []
     out.media_type = post.media_type.value if post else None
+    out.ig_post_url = post.ig_post_url if post else None
+    out.article_url = article.article_url if article else None
+    out.article_source_name = news_source.name if news_source else None
     return out
 
 

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import useSWR from "swr";
-import { listJobs, deletePublishJob } from "@/lib/api";
+import useSWRInfinite from "swr/infinite";
+import { listJobs, listFanpages, deletePublishJob } from "@/lib/api";
 import type { PublishJob, PublishJobStatus } from "@/lib/types";
 import { format } from "date-fns";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -11,6 +12,22 @@ import Toast, { type ToastData } from "@/components/ui/Toast";
 const parseUtc = (s: string) =>
   new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
 import { Icon } from "@iconify/react";
+
+type FanpageLite = { id: number; name: string };
+
+// A job is marked `published` as soon as we hand it to Repliz, but the fanpage's
+// sleep-window / daily-cap pacing (see publisher._next_schedule_at) can push the
+// real Facebook go-live time (scheduled_for) well after that. Surface both so
+// "published" in the UI doesn't read as "already live on Facebook".
+function jobTimes(job: PublishJob) {
+  const queuedRaw = job.published_at ?? (job as unknown as Record<string, string>).updated_at;
+  const queuedDate = queuedRaw ? parseUtc(queuedRaw) : null;
+  const scheduledDate = job.scheduled_for ? parseUtc(job.scheduled_for) : null;
+  const isPendingLive = !!scheduledDate && scheduledDate.getTime() > Date.now() + 60_000;
+  const differs =
+    !!scheduledDate && !!queuedDate && Math.abs(scheduledDate.getTime() - queuedDate.getTime()) > 120_000;
+  return { queuedDate, scheduledDate, isPendingLive, differs };
+}
 
 const STATUSES: { value: PublishJobStatus; label: string; icon: string }[] = [
   { value: "published", label: "Published", icon: "solar:verified-check-bold-duotone" },
@@ -44,19 +61,86 @@ function resolveUrls(job: PublishJob): string[] {
   return pub;
 }
 
-const fetcher = (status: string) =>
-  listJobs({ status, limit: 100 }).then((r) => r.data as PublishJob[]);
+// Link back to where the content originally came from — a scraped article for
+// news_content jobs, or the original Instagram post/profile for ig_repost/ig_recreate.
+function sourceLink(job: PublishJob): { url: string; label: string; icon: string } | null {
+  if (job.article_url) {
+    return {
+      url: job.article_url,
+      label: job.article_source_name ? `Source: ${job.article_source_name}` : "Source article",
+      icon: "solar:global-bold-duotone",
+    };
+  }
+  if (job.ig_post_url) {
+    return { url: job.ig_post_url, label: "Original IG post", icon: "mdi:instagram" };
+  }
+  if (job.ig_username) {
+    return { url: `https://instagram.com/${job.ig_username}`, label: `@${job.ig_username}`, icon: "mdi:instagram" };
+  }
+  return null;
+}
+
+const PAGE_SIZE = 30;
 
 export default function HistoryPage() {
   const [activeStatus, setActiveStatus] = useState<PublishJobStatus>("published");
+  const [fanpageFilter, setFanpageFilter] = useState<string>("");
   const [lightboxJob, setLightboxJob] = useState<{ job: PublishJob; urls: string[]; idx: number } | null>(null);
   const [blurred, setBlurred] = useState(false);
 
-  const { data: jobs = [], isLoading, mutate } = useSWR(
-    `history-${activeStatus}`,
-    () => fetcher(activeStatus),
-    { refreshInterval: 60000 }
+  const { data: fanpages = [] } = useSWR<FanpageLite[]>(
+    "history-fanpages",
+    () => listFanpages().then((r) => r.data as FanpageLite[])
   );
+
+  // ── Infinite scroll (offset pagination) — mirrors the Gallery page so History
+  // doesn't dump hundreds of post cards into the DOM at once ──
+  const {
+    data: pages,
+    size,
+    setSize,
+    mutate: mutateJobs,
+    isValidating,
+  } = useSWRInfinite<PublishJob[]>(
+    (index, prev: PublishJob[] | null) => {
+      if (prev && prev.length < PAGE_SIZE) return null; // no more pages
+      return ["history-jobs", activeStatus, fanpageFilter, index] as const;
+    },
+    ([, status, fanpageId, index]) =>
+      listJobs({
+        status: status as string,
+        fanpage_id: fanpageId ? Number(fanpageId) : undefined,
+        limit: PAGE_SIZE,
+        offset: (index as number) * PAGE_SIZE,
+      }).then((r) => r.data as PublishJob[]),
+    { refreshInterval: 60000, revalidateFirstPage: false }
+  );
+
+  const jobs = pages ? pages.flat() : [];
+  const lastPage = pages?.[pages.length - 1];
+  const reachedEnd = !!lastPage && lastPage.length < PAGE_SIZE;
+  const loadingMore = isValidating;
+  const isLoading = !pages;
+
+  // Reset to first page whenever the status/fanpage filter changes
+  useEffect(() => {
+    setSize(1);
+  }, [activeStatus, fanpageFilter, setSize]);
+
+  // Load next page when the sentinel scrolls into view
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || reachedEnd) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loadingMore) setSize((s) => s + 1);
+      },
+      { rootMargin: "600px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [reachedEnd, loadingMore, setSize]);
 
   const [confirmDeleteJob, setConfirmDeleteJob] = useState<PublishJob | null>(null);
   const [deletingJob, setDeletingJob] = useState(false);
@@ -77,7 +161,7 @@ export default function HistoryPage() {
         notify("Deleted from history.", "success");
       }
       if (lightboxJob?.job.id === confirmDeleteJob.id) setLightboxJob(null);
-      mutate();
+      mutateJobs();
     } catch {
       notify("Delete failed. Please try again.", "error");
     } finally {
@@ -94,7 +178,9 @@ export default function HistoryPage() {
           <div>
             <h1 className="text-2xl font-bold text-text-primary">Publish History</h1>
             <p className="text-sm text-text-secondary mt-0.5">
-              {isLoading ? "Loading…" : `${jobs.length} ${activeStatus} post${jobs.length !== 1 ? "s" : ""}`}
+              {isLoading
+                ? "Loading…"
+                : `${jobs.length}${reachedEnd ? "" : "+"} ${activeStatus} post${jobs.length !== 1 ? "s" : ""}`}
             </p>
           </div>
 
@@ -116,8 +202,8 @@ export default function HistoryPage() {
           </button>
         </div>
 
-        {/* Status tabs */}
-        <div className="flex items-center gap-2">
+        {/* Status tabs + fanpage filter */}
+        <div className="flex items-center gap-2 flex-wrap">
           {STATUSES.map(({ value, label, icon }) => (
             <button
               key={value}
@@ -132,6 +218,17 @@ export default function HistoryPage() {
               {label}
             </button>
           ))}
+
+          <select
+            value={fanpageFilter}
+            onChange={(e) => setFanpageFilter(e.target.value)}
+            className="input-rect py-2 text-sm ml-auto w-48"
+          >
+            <option value="">All fanpages</option>
+            {fanpages.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
         </div>
 
         {/* Skeleton */}
@@ -192,6 +289,22 @@ export default function HistoryPage() {
             ))}
           </div>
         )}
+
+        {/* Infinite-scroll sentinel + status */}
+        {!isLoading && jobs.length > 0 && (
+          <>
+            <div ref={sentinelRef} className="h-10" />
+            <div className="text-center py-2 text-xs text-text-secondary">
+              {loadingMore ? (
+                <span className="inline-flex items-center gap-2">
+                  <Icon icon="svg-spinners:180-ring" width={16} /> Loading more…
+                </span>
+              ) : reachedEnd ? (
+                `All ${jobs.length} post${jobs.length !== 1 ? "s" : ""} loaded`
+              ) : null}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Lightbox */}
@@ -244,8 +357,9 @@ function HistoryCard({
   const albumCount = urls.length;
   const caption = job.ai_generated_caption ?? "";
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
+  const src = sourceLink(job);
 
-  const publishedDate = job.published_at ?? (job as unknown as Record<string, string>).updated_at;
+  const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
 
   const blur = "blur-sm select-none transition-all duration-200";
   const blurImg = "blur-md transition-all duration-200";
@@ -272,17 +386,31 @@ function HistoryCard({
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-semibold text-text-primary truncate ${blurred ? blur : ""}`}>{fanpage}</p>
           <p className={`text-xs text-text-secondary truncate ${blurred ? blur : ""}`}>
-            {publishedDate
-              ? format(parseUtc(publishedDate), "MMM d, yyyy · HH:mm")
+            {queuedDate
+              ? format(queuedDate, "MMM d, yyyy · HH:mm")
               : `@${job.ig_username}`}
           </p>
+          {differs && scheduledDate && (
+            <p className={`text-[11px] truncate flex items-center gap-1 mt-0.5 ${isPendingLive ? "text-warning-dark" : "text-text-disabled"} ${blurred ? blur : ""}`}>
+              <Icon icon="solar:clock-circle-bold-duotone" width={11} />
+              {isPendingLive ? "Goes live" : "Went live"} {format(scheduledDate, "MMM d, HH:mm")}
+            </p>
+          )}
         </div>
 
         {/* Status badge */}
-        <span className={`${cfg.badge} flex-shrink-0 flex items-center gap-1`}>
-          <Icon icon={cfg.icon} width={11} />
-          {job.status}
-        </span>
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <span className={`${cfg.badge} flex items-center gap-1`}>
+            <Icon icon={cfg.icon} width={11} />
+            {job.status}
+          </span>
+          {job.status === "published" && isPendingLive && (
+            <span className="badge-yellow flex items-center gap-1" title="Sent to Repliz, but Facebook hasn't published it yet">
+              <Icon icon="solar:clock-circle-bold-duotone" width={10} />
+              Scheduled
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Meta */}
@@ -296,6 +424,19 @@ function HistoryCard({
             <Icon icon="solar:gallery-bold-duotone" width={12} />
             {albumCount} photos
           </span>
+        )}
+        {src && !blurred && (
+          <a
+            href={src.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={src.url}
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 text-xs text-primary-main hover:underline truncate max-w-[45%]"
+          >
+            <Icon icon={src.icon} width={12} className="flex-shrink-0" />
+            <span className="truncate">{src.label}</span>
+          </a>
         )}
         <div className="ml-auto flex items-center gap-2">
           {job.repliz_schedule_id && (
@@ -391,7 +532,8 @@ function HistoryLightbox({
   const caption = job.ai_generated_caption ?? "";
   const total = urls.length;
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
-  const publishedDate = job.published_at ?? (job as unknown as Record<string, string>).updated_at;
+  const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
+  const src = sourceLink(job);
 
   const blur = "blur-sm select-none transition-all duration-200";
   const blurImg = "blur-xl transition-all duration-200";
@@ -458,8 +600,14 @@ function HistoryLightbox({
                 <p className={`text-white text-xs font-semibold leading-none ${blurred ? blur : ""}`}>{fanpage}</p>
                 <p className={`text-white/60 text-[10px] mt-0.5 ${blurred ? blur : ""}`}>
                   @{job.ig_username}
-                  {publishedDate ? ` · ${format(parseUtc(publishedDate), "MMM d, yyyy HH:mm")}` : ""}
+                  {queuedDate ? ` · ${format(queuedDate, "MMM d, yyyy HH:mm")}` : ""}
                 </p>
+                {differs && scheduledDate && (
+                  <p className={`text-[10px] mt-0.5 flex items-center gap-1 ${isPendingLive ? "text-warning-light" : "text-white/40"} ${blurred ? blur : ""}`}>
+                    <Icon icon="solar:clock-circle-bold-duotone" width={10} />
+                    {isPendingLive ? "Goes live" : "Went live"} {format(scheduledDate, "MMM d, yyyy HH:mm")}
+                  </p>
+                )}
               </div>
               <span className={`${cfg.badge} flex items-center gap-1 flex-shrink-0`}>
                 <Icon icon={cfg.icon} width={11} />
@@ -488,6 +636,18 @@ function HistoryLightbox({
 
         {/* Info bar */}
         <div className="flex items-center gap-3 px-5 py-4 bg-bg-paper">
+          {src && !blurred && (
+            <a
+              href={src.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={src.url}
+              className="flex items-center gap-1.5 text-xs text-primary-main hover:underline truncate max-w-[45%]"
+            >
+              <Icon icon={src.icon} width={13} className="flex-shrink-0" />
+              <span className="truncate">{src.label}</span>
+            </a>
+          )}
           {job.repliz_schedule_id && (
             <div className="flex items-center gap-1.5 text-xs text-text-secondary">
               <Icon icon="solar:link-bold-duotone" width={13} />

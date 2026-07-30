@@ -126,6 +126,7 @@ export interface PublishJob {
   attempt_count: number;
   last_error: string | null;
   published_at: string | null;
+  scheduled_for: string | null;
   cleanup_at: string | null;
   created_at: string;
   updated_at: string;
@@ -135,6 +136,9 @@ export interface PublishJob {
   ig_username: string | null;
   image_public_urls: string[];
   media_type: MediaType | null;
+  ig_post_url: string | null;
+  article_url: string | null;
+  article_source_name: string | null;
 }
 
 export interface DashboardStats {
