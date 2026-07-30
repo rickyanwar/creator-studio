@@ -67,6 +67,12 @@ class PublishJob(Base):
     attempt_count = Column(Integer, default=0, nullable=False)
     last_error = Column(Text, nullable=True)
 
+    # Which image the design pipeline actually used last render (e.g.
+    # "gallery:123" or "scraped:https://..."), so a History "Re-edit with new
+    # image" retry can tell select_image_for_job to skip it — see
+    # design_renderer.select_image_for_job.
+    last_image_marker = Column(Text, nullable=True)
+
     published_at = Column(DateTime, nullable=True)
     cleanup_at = Column(DateTime, nullable=True)   # published_at + 4 days
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

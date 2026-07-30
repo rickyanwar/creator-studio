@@ -77,6 +77,14 @@ _IMG_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Broader fallback for markdown image links whose URL has no recognizable file
+# extension — e.g. Google Images' thumbnail proxy
+# (`https://encrypted-tbn0.gstatic.com/images?q=tbn:...`) has no .jpg/.png
+# suffix for _IMG_URL_RE to match. Captures the URL inside markdown image
+# syntax ![...](url) regardless of extension. Only used for sources where
+# _IMG_URL_RE comes back empty (see design_images.fetch_topic_datauri).
+_MD_IMG_ANY_RE = re.compile(r"!\[[^\]]*\]\((https?://[^\s)\"'<>]+)\)")
+
 
 def _dedup_key(url: str) -> str:
     """Stable per-image dedup key. Getty signs each media URL with a `c=`

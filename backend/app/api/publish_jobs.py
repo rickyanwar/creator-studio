@@ -319,3 +319,61 @@ def delete_job(job_id: int, db: DB, _: CurrentUser):
     db.commit()
 
     return {"ok": True, "repliz_deleted": repliz_deleted, "repliz_error": repliz_error}
+
+
+@router.post("/{job_id}/reedit", response_model=PublishJobOut)
+def reedit_job(job_id: int, db: DB, _: CurrentUser):
+    """History "Re-edit with new image": cancel the job on Repliz (whether
+    it's already live or still sitting in its scheduled slot there), then send
+    it back through the design pipeline for a fresh render — job.last_image_marker
+    is left as-is so select_image_for_job (design_renderer.py) skips the exact
+    photo it picked last time instead of landing on the same one again.
+
+    Only news_content jobs: the image-sourcing cascade (gallery/Getty/Google
+    search) is what makes "pick a different photo" meaningful. ig_repost/
+    ig_recreate posts use the source's own photo, which re-rendering can't swap."""
+    import logging
+    from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
+
+    logger = logging.getLogger(__name__)
+
+    job = db.query(PublishJob).filter_by(id=job_id, is_deleted=False).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.content_type != ContentType.news_content:
+        raise HTTPException(status_code=400, detail="Re-edit is only available for news_content jobs")
+    if job.status != PublishJobStatus.published:
+        raise HTTPException(status_code=400, detail=f"Cannot re-edit a job in status: {job.status.value}")
+
+    if job.repliz_schedule_id:
+        try:
+            from app.services.repliz_client import get_repliz_client_from_db
+
+            with get_repliz_client_from_db(db) as client:
+                client.delete_schedule(job.repliz_schedule_id)
+        except Exception as exc:
+            # Not fatal — proceed with the local reset either way; if the post
+            # was already live this can leave a stale Facebook post the admin
+            # has to remove by hand, but blocking the re-edit helps no one.
+            logger.warning(
+                "Repliz delete failed during re-edit for job %d (schedule %s): %s",
+                job_id, job.repliz_schedule_id, exc,
+            )
+
+    job.status = PublishJobStatus.pending_design
+    job.repliz_schedule_id = None
+    job.repliz_response_json = None
+    job.published_at = None
+    job.scheduled_for = None
+    job.design_image_path = None
+    job.design_image_url = None
+    job.last_error = None
+    # last_image_marker is deliberately left untouched here — it's what the
+    # next select_image_for_job call excludes.
+    db.commit()
+    db.refresh(job)
+
+    from app.tasks.design_renderer import render_design
+    render_design.delay(job.id)
+
+    return _enrich_job(job, db)

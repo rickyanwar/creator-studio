@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     gallery_search_url_template: str = (
         "https://www.gettyimages.com/search/2/image?family=editorial&phrase={query}&sort=newest&page={page}"
     )
+    # Second source tried only when a topic search (design_images.fetch_topic_datauri)
+    # finds nothing on Getty — covers stories with no matching editorial stock photo.
+    gallery_search_url_template_google: str = "https://www.google.com/search?q={query}&tbm=isch"
     gallery_max_pages: int = 10
     # Upscale small gallery images (e.g. Getty 612px comps) via FSRCNN x2 + sharpen.
     # FSRCNN is ~0.9s/img on CPU (EDSR is ~80x heavier). Default model in

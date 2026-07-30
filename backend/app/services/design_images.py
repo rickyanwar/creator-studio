@@ -607,6 +607,41 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
         return 0
 
 
+def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> dict:
+    """Ask 9Router vision whether a candidate photo actually depicts this news
+    story (same person(s)/team/vehicle/event) rather than a generic or
+    unrelated stock photo. Used to gate the article's scraped hero image and
+    fresh topic-search results before trusting them — see
+    design_renderer.select_image_for_job and fetch_topic_datauri.
+
+    Returns {"match": bool, "confidence": 0.0-1.0}. Fails OPEN (match=True) on
+    any parse/API error — a flaky vision call shouldn't block the whole
+    pipeline, only an explicit "no" from the model should veto the image."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                f'News headline: "{title[:200]}"\n'
+                + (f'Article excerpt: "{excerpt[:400]}"\n' if excerpt else "")
+                + "Does this photo actually depict THIS story's subject — the "
+                "same named person(s), team, vehicle, or event/scene the "
+                "headline is about? A generic/unrelated stock photo, or a "
+                "photo of a clearly different person or team, is NOT a match.\n"
+                'Reply with ONLY a JSON object {"match": true|false, "confidence": 0.00-1.00}.'
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=500)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return {"match": True, "confidence": 0.0}
+        import json as _json
+        d = _json.loads(m.group(0))
+        return {"match": bool(d.get("match")), "confidence": float(d.get("confidence") or 0)}
+    except Exception as exc:
+        logger.warning("vision_verify_match failed: %s", exc)
+        return {"match": True, "confidence": 0.0}
+
+
 GALLERY_REUSE_COOLDOWN_DAYS = 2
 
 
@@ -782,6 +817,75 @@ def fetch_subject_datauri(subject: str, image_type: str = "face", niche: str = "
     best = vision_pick_best(uris, subject, image_type=image_type)
     logger.info("fetch_subject_datauri: %r (%s) → %d candidates, picked %d", subject, image_type, len(uris), best)
     return uris[best]
+
+
+def fetch_topic_datauri(title: str, niche: str, excerpt: str = "", max_candidates: int = 6):
+    """Last-resort fresh search when neither a subject-specific photo nor a
+    gallery keyword match was found: search stock photos for the article's
+    TOPIC itself (the whole headline, not a named person) — Getty first, a
+    Google Images search as a second source if Getty comes back empty — and
+    keep only the candidates 9Router vision confirms actually match this
+    story (see vision_verify_match). An unrelated stock photo is worse than
+    falling through to the article's own (also vision-checked) hero image, so
+    this returns None rather than guess if nothing verifies.
+    """
+    from urllib.parse import quote
+
+    import httpx
+
+    from app.config import get_settings
+    from app.services.image_downloader import (
+        _9router_fetch_markdown, _IMG_URL_RE, _MD_IMG_ANY_RE, _dedup_key, _UA,
+    )
+    from app.services.upscaler import upscale_image_bytes
+
+    s = get_settings()
+    query = f"{title} {niche}".strip()[:150]
+
+    def _collect(url: str, pattern, group: int) -> list[str]:
+        try:
+            md = _9router_fetch_markdown(url)
+        except Exception as exc:
+            logger.warning("fetch_topic_datauri: fetch failed for %r: %s", query, exc)
+            return []
+        seen: set = set()
+        urls: list[str] = []
+        for m in pattern.finditer(md):
+            u = m.group(group)
+            k = _dedup_key(u)
+            if k in seen:
+                continue
+            seen.add(k)
+            urls.append(u)
+        return urls
+
+    candidate_urls = _collect(s.gallery_search_url_template.format(query=quote(query), page=1), _IMG_URL_RE, 0)
+    if not candidate_urls:
+        candidate_urls = _collect(s.gallery_search_url_template_google.format(query=quote(query)), _MD_IMG_ANY_RE, 1)
+
+    verified: list[str] = []
+    checked = 0
+    for u in candidate_urls:
+        if checked >= max_candidates * 2 or len(verified) >= max_candidates:
+            break
+        try:
+            r = httpx.get(u, headers={"User-Agent": _UA}, timeout=20, follow_redirects=True)
+            if r.status_code != 200 or not r.headers.get("content-type", "").startswith("image"):
+                continue
+            data = upscale_image_bytes(r.content)
+        except Exception:
+            continue
+        checked += 1
+        check = vision_verify_match(data, title, excerpt)
+        if check["match"]:
+            verified.append("data:image/jpeg;base64," + base64.b64encode(data).decode())
+
+    if not verified:
+        logger.info("fetch_topic_datauri: no verified match for %r among %d checked", query, checked)
+        return None
+    best = vision_pick_best(verified, title[:60])
+    logger.info("fetch_topic_datauri: %r → %d verified candidates, picked %d", query, len(verified), best)
+    return verified[best]
 
 
 def source_news_main(db, title: str, niche: str, use_vision: bool = True):

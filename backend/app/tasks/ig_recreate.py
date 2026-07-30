@@ -214,7 +214,10 @@ def render_ig_recreate(self, job_id: int):
                 "title": job.design_title,
                 "subtitle": job.design_subtitle or "",
                 "caption": job.design_caption or "",
-                "watermark": fanpage.watermark_text or fanpage.username or fanpage.name or "",
+                # No fallback to fanpage name/username — a fanpage that hasn't
+                # set an explicit watermark_text/watermark_image gets NO
+                # watermark on the design at all.
+                "watermark": fanpage.watermark_text or "",
                 "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,
                 "focus_points": focus_points_for(image_srcs),

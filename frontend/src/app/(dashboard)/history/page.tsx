@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
-import { listJobs, listFanpages, deletePublishJob } from "@/lib/api";
+import { listJobs, listFanpages, deletePublishJob, reeditJob } from "@/lib/api";
 import type { PublishJob, PublishJobStatus } from "@/lib/types";
 import { format } from "date-fns";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -144,6 +144,8 @@ export default function HistoryPage() {
 
   const [confirmDeleteJob, setConfirmDeleteJob] = useState<PublishJob | null>(null);
   const [deletingJob, setDeletingJob] = useState(false);
+  const [confirmReeditJob, setConfirmReeditJob] = useState<PublishJob | null>(null);
+  const [reeditingJob, setReeditingJob] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
   const notify = (message: string, type?: ToastData["type"]) => setToast({ message, type });
 
@@ -167,6 +169,22 @@ export default function HistoryPage() {
     } finally {
       setDeletingJob(false);
       setConfirmDeleteJob(null);
+    }
+  }
+
+  async function confirmReeditJobAction() {
+    if (!confirmReeditJob) return;
+    setReeditingJob(true);
+    try {
+      await reeditJob(confirmReeditJob.id);
+      notify("Sent back for redesign with a different image — check the Queue shortly.", "success");
+      if (lightboxJob?.job.id === confirmReeditJob.id) setLightboxJob(null);
+      mutateJobs();
+    } catch {
+      notify("Re-edit failed. Please try again.", "error");
+    } finally {
+      setReeditingJob(false);
+      setConfirmReeditJob(null);
     }
   }
 
@@ -285,6 +303,7 @@ export default function HistoryPage() {
                   if (urls.length) setLightboxJob({ job, urls, idx });
                 }}
                 onDelete={() => setConfirmDeleteJob(job)}
+                onReedit={() => setConfirmReeditJob(job)}
               />
             ))}
           </div>
@@ -316,6 +335,7 @@ export default function HistoryPage() {
           onPrev={() => setLightboxJob((l) => l && l.idx > 0 ? { ...l, idx: l.idx - 1 } : l)}
           onNext={() => setLightboxJob((l) => l && l.idx < l.urls.length - 1 ? { ...l, idx: l.idx + 1 } : l)}
           onDelete={() => setConfirmDeleteJob(lightboxJob.job)}
+          onReedit={() => setConfirmReeditJob(lightboxJob.job)}
         />
       )}
 
@@ -333,6 +353,15 @@ export default function HistoryPage() {
         onConfirm={confirmDeleteJobAction}
         onCancel={() => setConfirmDeleteJob(null)}
       />
+      <ConfirmDialog
+        open={!!confirmReeditJob}
+        title="Re-edit with a new image?"
+        message="This removes the post from Repliz (whether it's live or still waiting in its scheduled slot) and sends it back for a fresh design with a different photo. It won't go out again until it's re-published."
+        confirmLabel="Re-edit"
+        loading={reeditingJob}
+        onConfirm={confirmReeditJobAction}
+        onCancel={() => setConfirmReeditJob(null)}
+      />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </>
   );
@@ -344,11 +373,13 @@ function HistoryCard({
   blurred,
   onImageClick,
   onDelete,
+  onReedit,
 }: {
   job: PublishJob;
   blurred: boolean;
   onImageClick: (idx: number) => void;
   onDelete: () => void;
+  onReedit: () => void;
 }) {
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const color = avatarColor(fanpage);
@@ -358,6 +389,7 @@ function HistoryCard({
   const caption = job.ai_generated_caption ?? "";
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
   const src = sourceLink(job);
+  const canReedit = job.content_type === "news_content" && job.status === "published";
 
   const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
 
@@ -398,19 +430,19 @@ function HistoryCard({
           )}
         </div>
 
-        {/* Status badge */}
-        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          <span className={`${cfg.badge} flex items-center gap-1`}>
+        {/* Status badge — one at a time: "Scheduled" while still pending the
+            real Facebook go-live time, else the actual job status */}
+        {job.status === "published" && isPendingLive ? (
+          <span className="badge-yellow flex-shrink-0 flex items-center gap-1" title="Sent to Repliz, but Facebook hasn't published it yet">
+            <Icon icon="solar:clock-circle-bold-duotone" width={11} />
+            Scheduled
+          </span>
+        ) : (
+          <span className={`${cfg.badge} flex-shrink-0 flex items-center gap-1`}>
             <Icon icon={cfg.icon} width={11} />
             {job.status}
           </span>
-          {job.status === "published" && isPendingLive && (
-            <span className="badge-yellow flex items-center gap-1" title="Sent to Repliz, but Facebook hasn't published it yet">
-              <Icon icon="solar:clock-circle-bold-duotone" width={10} />
-              Scheduled
-            </span>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Meta */}
@@ -444,6 +476,15 @@ function HistoryCard({
               <Icon icon="solar:link-bold-duotone" width={11} />
               {job.repliz_schedule_id.slice(-8)}
             </span>
+          )}
+          {canReedit && (
+            <button
+              onClick={onReedit}
+              title="Re-edit with a new image"
+              className="p-1 rounded-md text-text-disabled hover:text-primary-main hover:bg-primary-main/10 transition-colors"
+            >
+              <Icon icon="solar:gallery-edit-bold-duotone" width={14} />
+            </button>
           )}
           <button
             onClick={onDelete}
@@ -518,6 +559,7 @@ function HistoryLightbox({
   onPrev,
   onNext,
   onDelete,
+  onReedit,
 }: {
   state: { job: PublishJob; urls: string[]; idx: number };
   blurred: boolean;
@@ -525,6 +567,7 @@ function HistoryLightbox({
   onPrev: () => void;
   onNext: () => void;
   onDelete: () => void;
+  onReedit: () => void;
 }) {
   const { job, urls, idx } = state;
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
@@ -534,6 +577,8 @@ function HistoryLightbox({
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
   const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
   const src = sourceLink(job);
+  const showScheduled = job.status === "published" && isPendingLive;
+  const canReedit = job.content_type === "news_content" && job.status === "published";
 
   const blur = "blur-sm select-none transition-all duration-200";
   const blurImg = "blur-xl transition-all duration-200";
@@ -609,10 +654,17 @@ function HistoryLightbox({
                   </p>
                 )}
               </div>
-              <span className={`${cfg.badge} flex items-center gap-1 flex-shrink-0`}>
-                <Icon icon={cfg.icon} width={11} />
-                {job.status}
-              </span>
+              {showScheduled ? (
+                <span className="badge-yellow flex items-center gap-1 flex-shrink-0">
+                  <Icon icon="solar:clock-circle-bold-duotone" width={11} />
+                  Scheduled
+                </span>
+              ) : (
+                <span className={`${cfg.badge} flex items-center gap-1 flex-shrink-0`}>
+                  <Icon icon={cfg.icon} width={11} />
+                  {job.status}
+                </span>
+              )}
             </div>
 
             {job.last_error ? (
@@ -654,6 +706,15 @@ function HistoryLightbox({
               Repliz ID: <span className={`font-mono text-text-primary ${blurred ? blur : ""}`}>{job.repliz_schedule_id.slice(-12)}</span>
             </div>
           )}
+          {canReedit && (
+            <button
+              onClick={onReedit}
+              title="Re-edit with a new image"
+              className="p-1.5 rounded-md text-text-disabled hover:text-primary-main hover:bg-primary-main/10 transition-colors"
+            >
+              <Icon icon="solar:gallery-edit-bold-duotone" width={14} />
+            </button>
+          )}
           <button
             onClick={onDelete}
             title="Delete from history"
@@ -661,9 +722,12 @@ function HistoryLightbox({
           >
             <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
           </button>
-          <div className="ml-auto flex items-center gap-1.5 text-xs" style={{ color: cfg.iconClass === "text-primary-main" ? "#00A76F" : cfg.iconClass === "text-error-main" ? "#FF5630" : "#637381" }}>
-            <Icon icon={cfg.icon} width={14} />
-            <span className="font-semibold capitalize">{job.status}</span>
+          <div
+            className="ml-auto flex items-center gap-1.5 text-xs"
+            style={{ color: showScheduled ? "#B76E00" : cfg.iconClass === "text-primary-main" ? "#00A76F" : cfg.iconClass === "text-error-main" ? "#FF5630" : "#637381" }}
+          >
+            <Icon icon={showScheduled ? "solar:clock-circle-bold-duotone" : cfg.icon} width={14} />
+            <span className="font-semibold capitalize">{showScheduled ? "Scheduled" : job.status}</span>
           </div>
         </div>
       </div>

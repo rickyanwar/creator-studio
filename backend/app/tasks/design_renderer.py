@@ -29,8 +29,8 @@ settings = get_settings()
 _RENDER_TIMEOUT = 120.0
 
 
-def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object | None]:
-    """Workflow §C cascade. Returns (image_src_data_uri_or_none, gallery_image_or_none).
+def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None = None) -> tuple[str | None, object | None, str | None]:
+    """Workflow §C cascade. Returns (image_src_data_uri_or_none, gallery_image_or_none, marker).
 
     1. the article's actual subject (AI-extracted from the title) → a photo of
        THAT person specifically: gallery vision-match first, fresh Getty search
@@ -40,12 +40,37 @@ def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object 
        the niche pool.
     2. niche keywords that literally appear in the article title/content →
        unused gallery image (covers headlines with no single clear subject)
-    3. article hero image (scraped_image_url), downloaded on the fly
-    4. None → job needs a manual image
+    3. no gallery match at all → fresh topic search (Getty, then Google Images)
+       on the headline itself, kept only if 9Router vision confirms the result
+       actually matches this story (design_images.fetch_topic_datauri) — this
+       is what used to fall straight through to the raw article image below.
+    4. article hero image (scraped_image_url), downloaded on the fly and
+       ALSO vision-checked against the headline before being trusted — an
+       article's og:image is sometimes a section banner/unrelated photo, not
+       an image of the actual story.
+    5. None → job needs a manual image
+
+    `exclude_marker` (from job.last_image_marker) is whatever this function
+    returned as the marker last time it ran for this job — the History
+    "Re-edit with new image" action resets the job to pending_design without
+    clearing it, specifically so this retry skips landing on the exact same
+    photo again: the matching GalleryImage row is skipped in tier 2, and tier
+    4 is skipped entirely if it's the same scraped_image_url as before (both
+    are otherwise-deterministic picks; tiers 1/3 are a fresh AI search each
+    call already, so no exclusion is needed there).
     """
     from sqlalchemy import or_
     from app.models.gallery import GalleryImage
-    from app.services.design_images import niche_keywords, source_news_main, _eligible_rows, _mark_gallery_image_used
+    from app.services.design_images import (
+        niche_keywords, source_news_main, fetch_topic_datauri, vision_verify_match,
+        _eligible_rows, _mark_gallery_image_used,
+    )
+
+    excluded_gallery_id = (
+        int(exclude_marker.split(":", 1)[1])
+        if exclude_marker and exclude_marker.startswith("gallery:")
+        else None
+    )
 
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     # Names often land in the subtitle, not the headline (e.g. "X could leave
@@ -58,7 +83,7 @@ def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object 
         src, path = source_news_main(db, title, niche)
         if src:
             gi = db.query(GalleryImage).filter_by(local_path=path).first() if path else None
-            return src, gi
+            return src, gi, (f"gallery:{gi.id}" if gi else "search")
     except Exception as exc:
         logger.warning("Design: subject-photo lookup failed for job %d: %s", job.id, exc)
 
@@ -76,16 +101,28 @@ def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object 
             )
         )
         for img in pool:
+            if excluded_gallery_id is not None and img.id == excluded_gallery_id:
+                continue
             if not img.local_path or not os.path.exists(img.local_path):
                 continue
             try:
                 data = Path(img.local_path).read_bytes()
                 _mark_gallery_image_used(db, img)
-                return f"data:image/jpeg;base64,{base64.b64encode(data).decode()}", img
+                return f"data:image/jpeg;base64,{base64.b64encode(data).decode()}", img, f"gallery:{img.id}"
             except OSError as exc:
                 logger.warning("Design: gallery image %d unreadable (%s) — skipping", img.id, exc)
 
-    if article.scraped_image_url:
+    # No gallery image at all (subject-specific AND niche-keyword both came up
+    # empty) — search fresh instead of jumping straight to the raw article photo.
+    excerpt = (article.scraped_content or "")[:600]
+    try:
+        uri = fetch_topic_datauri(title, niche, excerpt=excerpt)
+        if uri:
+            return uri, None, "search"
+    except Exception as exc:
+        logger.warning("Design: topic-photo search failed for job %d: %s", job.id, exc)
+
+    if article.scraped_image_url and exclude_marker != f"scraped:{article.scraped_image_url}":
         try:
             resp = httpx.get(
                 article.scraped_image_url,
@@ -94,11 +131,18 @@ def select_image_for_job(db, job, fanpage, article) -> tuple[str | None, object 
             )
             resp.raise_for_status()
             mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
-            return f"data:{mime};base64,{base64.b64encode(resp.content).decode()}", None
+            content = resp.content
+            check = vision_verify_match(content, title, excerpt=excerpt)
+            if check["match"]:
+                return f"data:{mime};base64,{base64.b64encode(content).decode()}", None, f"scraped:{article.scraped_image_url}"
+            logger.info(
+                "Design: article hero image failed vision context-check for job %d (%s) — discarding",
+                job.id, check,
+            )
         except Exception as exc:
             logger.warning("Design: hero image fetch failed for job %d: %s", job.id, exc)
 
-    return None, None
+    return None, None, None
 
 
 @celery_app.task(name="app.tasks.design_renderer.render_design", bind=True, max_retries=2)
@@ -143,7 +187,9 @@ def render_design(self, job_id: int):
             return
 
         # ── Image selection (workflow §C) ──
-        image_src, gallery_image = select_image_for_job(db, job, fanpage, article)
+        image_src, gallery_image, image_marker = select_image_for_job(
+            db, job, fanpage, article, exclude_marker=job.last_image_marker,
+        )
         if not image_src:
             job.last_error = "needs manual image — no gallery match and no article hero image"
             db.commit()
@@ -171,7 +217,10 @@ def render_design(self, job_id: int):
                 "title": title,
                 "subtitle": job.design_subtitle or "",
                 "caption": job.design_caption or "",
-                "watermark": fanpage.watermark_text or fanpage.username or fanpage.name or "",
+                # No fallback to fanpage name/username — a fanpage that hasn't
+                # set an explicit watermark_text/watermark_image gets NO
+                # watermark on the design at all.
+                "watermark": fanpage.watermark_text or "",
                 "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,
                 "focus_points": focus_points_for(image_srcs),
@@ -190,6 +239,7 @@ def render_design(self, job_id: int):
         job.design_image_path = str(designs_dir / filename)
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
         job.design_template_id = template.id
+        job.last_image_marker = image_marker
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
         if gallery_image:

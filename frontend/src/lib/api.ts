@@ -92,6 +92,7 @@ export const publishJob = (id: number) => api.post(`/publish-jobs/${id}/publish`
 export const skipJob = (id: number) => api.post(`/publish-jobs/${id}/skip`);
 export const deletePublishJob = (id: number) =>
   api.delete(`/publish-jobs/${id}`) as Promise<{ data: { ok: boolean; repliz_deleted: boolean | null; repliz_error: string | null } }>;
+export const reeditJob = (id: number) => api.post(`/publish-jobs/${id}/reedit`);
 
 // ── IG Sources ───────────────────────────────────────────────────────────────
 export const listIGSources = (orphanOnly?: boolean) =>
