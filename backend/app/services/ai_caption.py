@@ -69,9 +69,18 @@ def _eff(source, fanpage, field: str):
     return getattr(fanpage, field)
 
 
-def build_caption_prompt(fanpage, source_username: str, original_caption: str, source=None) -> str:
+def build_caption_prompt(
+    fanpage, source_username: str, original_caption: str, source=None, quote_text: str | None = None,
+) -> str:
     """Build the AI prompt from fanpage criteria + source context. When `source`
-    (an IGSource) has its own caption criteria set, those override the fanpage's."""
+    (an IGSource) has its own caption criteria set, those override the fanpage's.
+
+    `quote_text`: for IG-recreate quote posts, this is the EXACT quote already
+    rendered onto the design image (ig_recreate._translate_quote's output).
+    Passing it forces the caption to literally repeat that same quote instead
+    of independently paraphrasing the source text — otherwise the AI is free
+    to summarize/rephrase and the caption ends up saying something different
+    from what the image shows, which reads as a mismatch between the two."""
     attribution_line = ""
     if fanpage.use_attribution:
         attribution_line = (
@@ -89,6 +98,15 @@ def build_caption_prompt(fanpage, source_username: str, original_caption: str, s
     cta_text = _eff(source, fanpage, "caption_cta_text")
     custom_prompt = _eff(source, fanpage, "caption_custom_prompt")
 
+    quote_line = (
+        f'- This post\'s IMAGE already shows the quote: "{quote_text}". The caption MUST '
+        f"reproduce this exact quote verbatim (same wording, in quotation marks, with its "
+        f"speaker attribution) somewhere in the text — do not paraphrase or summarize it "
+        f"away, since the caption and the image need to say the same thing. You may add "
+        f"context/commentary around it.\n"
+        if quote_text else ""
+    )
+
     return f"""You are a social media copywriter for the Facebook Fanpage "{fanpage.name}".
 
 ORIGINAL POST CONTEXT (from Instagram @{source_username}):
@@ -103,7 +121,7 @@ TASK: Rewrite the caption for the Facebook Fanpage above with these criteria:
 - Include {hashtag_count} relevant hashtags at the end
 - End with call-to-action: {cta_text if cta_text else "none"}
 {attribution_line}
-- Additional notes: {custom_prompt if custom_prompt else "none"}
+{quote_line}- Additional notes: {custom_prompt if custom_prompt else "none"}
 
 OUTPUT: only the final caption, no explanation, no quote marks."""
 

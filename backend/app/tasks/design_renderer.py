@@ -153,13 +153,30 @@ def render_design(self, job_id: int):
         from app.models.target_fanpages import TargetFanpage
         from app.models.scraped_articles import ScrapedArticle, ArticleStatus
 
-        job = db.query(PublishJob).filter_by(id=job_id).first()
-        if not job or job.status != PublishJobStatus.pending_design or job.content_type != ContentType.news_content:
+        # Atomic claim: pending_design -> rendering. If another runner (a
+        # slow prior attempt still in flight when the beat sweep re-dispatched
+        # it, a retry, a manual render-now click) already claimed this job,
+        # this UPDATE matches zero rows and we exit — preventing two renders
+        # (and two downstream publishes) for the same job.
+        claimed = (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.id == job_id,
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.news_content,
+            )
+            .update({"status": PublishJobStatus.rendering}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
             return
+
+        job = db.query(PublishJob).filter_by(id=job_id).first()
 
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
         article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
         if not fanpage or not article:
+            job.status = PublishJobStatus.pending_design
             job.last_error = "fanpage or article missing"
             db.commit()
             return
@@ -181,6 +198,7 @@ def render_design(self, job_id: int):
         category = job_template.category if job_template and job_template.category else "news"
         template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
         if not template or not template.template_json:
+            job.status = PublishJobStatus.pending_design
             job.last_error = "no design template configured — create one in Template Designer"
             db.commit()
             logger.warning("Design: job %d has no usable template", job_id)
@@ -191,6 +209,7 @@ def render_design(self, job_id: int):
             db, job, fanpage, article, exclude_marker=job.last_image_marker,
         )
         if not image_src:
+            job.status = PublishJobStatus.pending_design
             job.last_error = "needs manual image — no gallery match and no article hero image"
             db.commit()
             logger.warning("Design: job %d needs a manual image", job_id)
@@ -262,6 +281,17 @@ def render_design(self, job_id: int):
             raise
         db.rollback()
         logger.error("Design: job %d render failed: %s", job_id, exc, exc_info=True)
+        try:
+            from app.models.publish_jobs import PublishJob, PublishJobStatus
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            # Release the claim so the retry (or, once retries are exhausted,
+            # the next beat sweep) can pick this job up again — otherwise it
+            # would be stranded in 'rendering' forever, invisible to both.
+            if job and job.status == PublishJobStatus.rendering:
+                job.status = PublishJobStatus.pending_design
+                db.commit()
+        except Exception:
+            db.rollback()
         raise self.retry(exc=exc, countdown=180)
     finally:
         db.close()

@@ -41,6 +41,30 @@ def _rewrite_news_title(text: str, fanpage) -> str:
     return title.strip().strip('"')
 
 
+def _translate_quote(text: str, fanpage) -> str:
+    """Quote extraction deliberately keeps the source language (see
+    ig_content_classifier._PROMPT) so it isn't paraphrased before we even know
+    it's a quote. This step then translates it to the fanpage's configured
+    language — mirroring _rewrite_news_title above — while preserving meaning
+    and attribution exactly, since a quote must stay accurate (unlike a
+    headline, which is allowed to be rewritten for punch)."""
+    from app.services.ai_caption import generate_caption
+
+    if not fanpage.caption_language:
+        return text
+
+    prompt = (
+        f'Translate this quote to {fanpage.caption_language} for the Facebook page "{fanpage.name}".\n'
+        f'QUOTE: {text}\n'
+        f"- Preserve the exact meaning and the speaker's name/attribution — do not paraphrase or embellish.\n"
+        f"- If it's already in {fanpage.caption_language}, return it unchanged.\n"
+        f"- Keep the same `Speaker: \"the quote\"` format if the source has one.\n"
+        f"Output ONLY the translated quote — no explanation."
+    )
+    translated, _ = generate_caption(prompt)
+    return translated.strip().strip('"')
+
+
 @celery_app.task(name="app.tasks.ig_recreate.recreate_post_for_fanpage", bind=True, max_retries=3)
 def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int):
     db = SessionLocal()
@@ -83,7 +107,10 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int):
         from app.services.design_images import resolve_template
 
         if ctype == "quote":
-            design_title = cls["text"]
+            try:
+                design_title = _translate_quote(cls["text"], fanpage)
+            except GroqRateLimitError:
+                raise self.retry(countdown=120)
         else:  # news
             try:
                 design_title = _rewrite_news_title(cls["text"], fanpage)
@@ -99,10 +126,18 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int):
             return
         template_id = template.id
 
-        # FB caption (per-source caption criteria override the fanpage's Mode-1)
+        # FB caption (per-source caption criteria override the fanpage's Mode-1).
+        # For quote posts, feed the ALREADY-TRANSLATED design_title (what's
+        # actually rendered on the image) as both the context and the
+        # verbatim quote to reproduce — using the raw pre-translation cls["text"]
+        # here would let the caption drift from what the image shows.
+        caption_context = design_title if ctype == "quote" else cls["text"]
         try:
             caption, provider = generate_caption(
-                build_caption_prompt(fanpage, niche, cls["text"], source=ig_source)
+                build_caption_prompt(
+                    fanpage, niche, caption_context, source=ig_source,
+                    quote_text=design_title if ctype == "quote" else None,
+                )
             )
         except GroqRateLimitError:
             raise self.retry(countdown=120)
@@ -142,9 +177,22 @@ def render_ig_recreate(self, job_id: int):
         from app.models.posts import Post
         from app.models.design_templates import DesignTemplate
 
-        job = db.query(PublishJob).filter_by(id=job_id).first()
-        if not job or job.status != PublishJobStatus.pending_design or job.content_type != ContentType.ig_recreate:
+        # Atomic claim: pending_design -> rendering (see design_renderer.render_design
+        # for why — prevents the same job being rendered/published twice).
+        claimed = (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.id == job_id,
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.ig_recreate,
+            )
+            .update({"status": PublishJobStatus.rendering}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
             return
+
+        job = db.query(PublishJob).filter_by(id=job_id).first()
 
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
         post = db.query(Post).filter_by(id=job.post_id).first()
@@ -153,10 +201,12 @@ def render_ig_recreate(self, job_id: int):
             if job.design_template_id else None
         )
         if not fanpage or not post or not template or not template.template_json:
+            job.status = PublishJobStatus.pending_design
             job.last_error = "missing fanpage/post/template for IG-recreate"
             db.commit()
             return
         if not post.image_local_paths:
+            job.status = PublishJobStatus.pending_design
             job.last_error = "post has no image"
             db.commit()
             return
@@ -250,6 +300,14 @@ def render_ig_recreate(self, job_id: int):
             raise
         db.rollback()
         logger.error("IG-recreate render job %d failed: %s", job_id, exc, exc_info=True)
+        try:
+            from app.models.publish_jobs import PublishJob, PublishJobStatus
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            if job and job.status == PublishJobStatus.rendering:
+                job.status = PublishJobStatus.pending_design
+                db.commit()
+        except Exception:
+            db.rollback()
         raise self.retry(exc=exc, countdown=180)
     finally:
         db.close()

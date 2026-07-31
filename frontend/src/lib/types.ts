@@ -5,8 +5,10 @@ export type PublishJobStatus =
   | "pending_watermark"
   | "pending_caption"
   | "pending_design"
+  | "rendering"
   | "pending_review"
   | "pending_publish"
+  | "publishing"
   | "published"
   | "failed"
   | "skipped";

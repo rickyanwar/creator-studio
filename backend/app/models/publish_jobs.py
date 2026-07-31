@@ -9,8 +9,10 @@ class PublishJobStatus(str, enum.Enum):
     pending_watermark = "pending_watermark"
     pending_caption = "pending_caption"
     pending_design = "pending_design"   # news_content: waiting for template render (Phase 2D)
+    rendering = "rendering"       # claimed lease: render_design/render_ig_recreate is running now
     pending_review = "pending_review"
     pending_publish = "pending_publish"
+    publishing = "publishing"     # claimed lease: publish_job is running now
     published = "published"
     failed = "failed"
     skipped = "skipped"

@@ -44,79 +44,79 @@ def _push_past_sleep(dt_wib: datetime, start: int, end: int) -> datetime:
     return target
 
 
-def _apply_fanpage_pacing(db, candidate: datetime, fanpage) -> datetime:
-    """candidate is naive UTC. Pushes it past the fanpage's WIB sleep window
-    and, if today's WIB quota is already used, to the start of the next WIB
-    day — looping since one push can land inside the other constraint."""
-    from app.models.publish_jobs import PublishJob
-
-    daily_limit = fanpage.publish_daily_limit or _DEFAULT_DAILY_LIMIT
-    sleep_start = fanpage.publish_sleep_start_hour
-    sleep_end = fanpage.publish_sleep_end_hour
-
-    for _ in range(10):  # bounded hop count — a real backlog won't need more
-        moved = False
-        candidate_wib = candidate.replace(tzinfo=timezone.utc).astimezone(WIB)
-
-        if sleep_start is not None and sleep_end is not None:
-            pushed_wib = _push_past_sleep(candidate_wib, sleep_start, sleep_end)
-            if pushed_wib != candidate_wib:
-                candidate = pushed_wib.astimezone(timezone.utc).replace(tzinfo=None)
-                candidate_wib = pushed_wib
-                moved = True
-
-        day_start_wib = candidate_wib.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end_wib = day_start_wib + timedelta(days=1)
-        day_start_utc = day_start_wib.astimezone(timezone.utc).replace(tzinfo=None)
-        day_end_utc = day_end_wib.astimezone(timezone.utc).replace(tzinfo=None)
-
-        count_today = (
-            db.query(PublishJob)
-            .filter(
-                PublishJob.fanpage_id == fanpage.id,
-                PublishJob.scheduled_for >= day_start_utc,
-                PublishJob.scheduled_for < day_end_utc,
-            )
-            .count()
-        )
-        if count_today >= daily_limit:
-            candidate = day_end_utc  # roll to next WIB day; re-checked (incl. sleep) next loop
-            moved = True
-
-        if not moved:
-            break
-
-    return candidate
+_MAX_DAY_HOPS = 60  # bounded — even a multi-week backlog resolves well inside this
 
 
 def _next_schedule_at(db, fanpage_id: int) -> datetime:
-    """This fanpage's next Facebook go-live slot: never earlier than now+60s,
-    never closer than a random 10-20 min gap after its own last scheduled
-    post (scheduled_for, not published_at — that's when we called the API,
-    not the actual future slot, which may itself have been pushed out), and
-    never inside its WIB sleep window or past its daily publish cap."""
+    """This fanpage's next Facebook go-live slot: the EARLIEST WIB day (starting
+    from now) that still has room under the daily cap, with the actual time
+    spaced a random 10-20 min gap after THAT DAY's own latest scheduled post,
+    never inside the WIB sleep window.
+
+    Deliberately scoped per-day rather than chained off the fanpage's single
+    all-time latest scheduled_for (the old behavior): a burst of renders
+    finishing in a short window (e.g. a lot of source posts on the same day)
+    used to push every later post's slot forward from wherever that burst's
+    tail landed — permanently, since the next call always anchored off that
+    same ever-advancing marker regardless of how much spare capacity a later,
+    quieter day still had under its own cap. That turned one busy day into a
+    multi-day publish lag with no way to self-correct. Scanning day-by-day and
+    anchoring the gap to each day's own last post lets a lower-volume day
+    absorb the catch-up instead of the backlog only ever growing.
+    """
     from sqlalchemy import func
     from app.models.publish_jobs import PublishJob
     from app.models.target_fanpages import TargetFanpage
 
     fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    daily_limit = (fanpage.publish_daily_limit if fanpage else None) or _DEFAULT_DAILY_LIMIT
+    sleep_start = fanpage.publish_sleep_start_hour if fanpage else None
+    sleep_end = fanpage.publish_sleep_end_hour if fanpage else None
 
-    floor = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
-    last = (
-        db.query(func.max(PublishJob.scheduled_for))
-        .filter(PublishJob.fanpage_id == fanpage_id)
-        .scalar()
-    )
-    if last:
+    floor_utc = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
+    day_wib = floor_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
+
+    for _ in range(_MAX_DAY_HOPS):
+        day_start_wib = day_wib.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end_wib = day_start_wib + timedelta(days=1)
+        day_start_utc = day_start_wib.astimezone(timezone.utc).replace(tzinfo=None)
+        day_end_utc = day_end_wib.astimezone(timezone.utc).replace(tzinfo=None)
+
+        count_today, last_today = (
+            db.query(func.count(PublishJob.id), func.max(PublishJob.scheduled_for))
+            .filter(
+                PublishJob.fanpage_id == fanpage_id,
+                PublishJob.scheduled_for >= day_start_utc,
+                PublishJob.scheduled_for < day_end_utc,
+            )
+            .one()
+        )
+        if count_today >= daily_limit:
+            day_wib = day_end_wib
+            continue
+
         gap = timedelta(seconds=random.randint(_MIN_POST_GAP_SECONDS, _MAX_POST_GAP_SECONDS))
-        candidate = max(floor, last + gap)
-    else:
-        candidate = floor
+        earliest_today_utc = max(floor_utc, day_start_utc)
+        candidate_utc = max(earliest_today_utc, last_today + gap) if last_today else earliest_today_utc
 
-    if fanpage:
-        candidate = _apply_fanpage_pacing(db, candidate, fanpage)
+        if candidate_utc >= day_end_utc:
+            day_wib = day_end_wib
+            continue
 
-    return candidate
+        if sleep_start is not None and sleep_end is not None:
+            candidate_wib = candidate_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
+            pushed_wib = _push_past_sleep(candidate_wib, sleep_start, sleep_end)
+            if pushed_wib != candidate_wib:
+                pushed_utc = pushed_wib.astimezone(timezone.utc).replace(tzinfo=None)
+                if pushed_utc >= day_end_utc:
+                    day_wib = day_end_wib
+                    continue
+                candidate_utc = pushed_utc
+
+        return candidate_utc
+
+    # Pathological backlog (>60 days deep) — fall back to "now" rather than loop forever.
+    return floor_utc
 
 
 @celery_app.task(name="app.tasks.publisher.publish_job", bind=True, max_retries=3)
@@ -129,9 +129,21 @@ def publish_job(self, job_id: int):
         from app.models.posts import Post, PostStatus
         from app.services.repliz_client import get_repliz_client_from_db
 
-        job = db.query(PublishJob).filter_by(id=job_id).first()
-        if not job or job.status != PublishJobStatus.pending_publish:
+        # Atomic claim: pending_publish -> publishing. Guards against the same
+        # job being sent to Repliz twice — e.g. a slow render dispatching
+        # publish_job twice (see design_renderer.render_design), a manual
+        # "Publish" double-click, or a Celery redelivery after the DB commit
+        # was lost. A second concurrent call sees 0 rows updated and exits.
+        claimed = (
+            db.query(PublishJob)
+            .filter(PublishJob.id == job_id, PublishJob.status == PublishJobStatus.pending_publish)
+            .update({"status": PublishJobStatus.publishing}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
             return
+
+        job = db.query(PublishJob).filter_by(id=job_id).first()
 
         from app.models.publish_jobs import ContentType
         # news_content and ig_recreate both publish a single rendered design PNG
@@ -220,6 +232,11 @@ def publish_job(self, job_id: int):
                 job.last_error = str(exc)
                 if attempt + 1 >= self.max_retries:
                     job.status = PublishJobStatus.failed
+                elif job.status == PublishJobStatus.publishing:
+                    # Release the claim so the retry's atomic claim can
+                    # succeed again — otherwise it'd find status != pending_publish
+                    # and silently no-op every retry attempt.
+                    job.status = PublishJobStatus.pending_publish
                 db.commit()
         except Exception:
             db.rollback()
@@ -248,7 +265,10 @@ def _publish_news_job(db, job):
 
     if "localhost" in job.design_image_url or "127.0.0.1" in job.design_image_url:
         # Repliz fetches medias server-side — a localhost URL would create a
-        # broken schedule against the real fanpage. Hold at pending_publish.
+        # broken schedule against the real fanpage. Hold at pending_publish
+        # (release the 'publishing' claim so a later manual/auto retry can
+        # actually re-claim it instead of finding it stuck).
+        job.status = PublishJobStatus.pending_publish
         job.last_error = (
             "design image URL is localhost — not reachable by Repliz. "
             "Serve media from a public URL (VPS / tunnel) to publish."
