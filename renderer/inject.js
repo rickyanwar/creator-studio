@@ -221,6 +221,14 @@ window.renderTemplate = function renderTemplate(args) {
           if (accent) {
             for (const [s, e] of parsed.ranges) captionObj.setSelectionStyles({ fill: accent }, s, e);
           }
+        } else if (captionObj) {
+          // No caption data for this job (the common case for quote cards —
+          // design_caption is rarely populated) — hide the placeholder
+          // instead of leaving the template's own seed/sample text (e.g.
+          // "Caption goes here, a short line of context under the name")
+          // baked into the final PNG. Same "no value = no element" rule
+          // already applied to the watermark above.
+          captionObj.set({ visible: false });
         }
 
         // ── Text scrim: keep the dark overlay hugging the TEXT only ──

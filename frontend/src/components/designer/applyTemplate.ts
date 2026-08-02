@@ -133,6 +133,11 @@ export async function applyTemplateContent(args: ApplyArgs): Promise<void> {
     }
     const accent = captionObj.titleAccentColor;
     if (accent) for (const [s, e] of parsed.ranges) captionObj.setSelectionStyles({ fill: accent }, s, e);
+  } else if (captionObj) {
+    // No caption data for this job (the common case for quote cards) — hide
+    // the placeholder instead of leaving the template's own seed/sample text
+    // baked into the preview. Mirrors renderer/inject.js.
+    captionObj.set({ visible: false });
   }
 
   // ── Text scrim (hug the text) ──
