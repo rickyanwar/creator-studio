@@ -51,6 +51,29 @@ def _clean_quote_subtitle(subtitle: str) -> str:
     return name or subtitle.strip()
 
 
+_QUOTE_LINE_RE = re.compile(r"^\s*🗣️.*$", re.MULTILINE)
+
+
+def _sync_caption_quote(caption: str, title: str) -> str:
+    """Force the caption's 🗣️ line to be exactly the same text as the design's
+    quote (title) — the prompt ASKS the model to reuse it verbatim, but a
+    single generation call doesn't reliably keep two fields byte-identical
+    (it tends to paste the fuller/original-language quote here instead of the
+    tightened, translated title), which is exactly the image/caption mismatch
+    this exists to prevent. Doing it deterministically in code guarantees it
+    regardless of what the model actually wrote."""
+    clean_title = title.replace("**", "").strip()
+    replacement = f'🗣️ "{clean_title}"'
+    if _QUOTE_LINE_RE.search(caption):
+        return _QUOTE_LINE_RE.sub(replacement, caption, count=1)
+    # Model didn't include a 🗣️ line at all — insert one after the first
+    # paragraph so it still reads naturally instead of just tacking it on.
+    parts = caption.split("\n\n", 1)
+    if len(parts) == 2:
+        return f"{parts[0]}\n\n{replacement}\n\n{parts[1]}"
+    return f"{caption}\n\n{replacement}"
+
+
 @dataclass
 class NewsCopy:
     title: str      # short headline placed on the image design (may carry **red** markers)
@@ -106,8 +129,9 @@ CONTENT:
 {content}
 
 TASK 1 — CLASSIFY. Decide which design fits this article best:
-   - "quote": the article contains an actual quoted statement, in quotation marks or clearly attributed dialogue, from a named person — a reaction, promise, criticism, or bold claim that stands strongly on its own as a standalone quote card. Only choose this when a real quote is present in the source; never invent one.
-   - "news": everything else — a headline/announcement design.
+   - "quote": choose this ONLY when a quoted statement from a named person IS the actual news — the headline-worthy hook is what someone SAID (a bold reaction, callout, promise, controversial claim), not something that happened. Ask: "if I had to headline this in one line, would it be the quote itself?" — only then is it "quote".
+   - "news": everything else, INCLUDING articles that happen to contain a quote as supporting color. If the headline-worthy hook is an event — a result, transfer, signing, injury, ranking, schedule change, announcement — classify it "news" even if a person is quoted somewhere in the body reacting to it. A quote can still appear in the caption body either way (see TASK 2, item 3).
+   - Default to "news" when unsure. Most articles are "news" — "quote" is the minority case where a person's own words are themselves the story, not commentary on the story.
 
 TASK 2 — WRITE THE COPY, substantially rewritten in your own words (do not copy sentences from the source). The fields depend on the type you chose:
 
@@ -130,6 +154,7 @@ IF "type" is "quote":
    - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
    - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
    - Maximum 140 characters.
+   - IMPORTANT: this exact text (words, language) is reused verbatim as the caption's 🗣️ line below — write it as a real, accurate quote, not a mashed-up paraphrase that adds claims from elsewhere in the article.
 2. "subtitle" — ONLY the speaker's full name, exactly as it appears in the article, and NOTHING else — no role, title, team, or descriptor of any kind, and no comma.
    - GOOD: "Marc Marquez"
    - BAD: "Marc Marquez World Champion", "Marc Marquez, MotoGP Champion", "Marc Marquez (Ducati)"
@@ -139,7 +164,9 @@ IF "type" is "quote":
    - Language: {language}
    - Tone: {tone}
    - Maximum length: {max_length} characters
-   - Formatting: write in short paragraphs (1-3 sentences each) separated by a blank line — never one dense block. If you quote the source directly anywhere in the body, put that quote on its own line prefixed with 🗣️, with a blank line before and after it (e.g. a blank line, then 🗣️ "quoted sentence", then a blank line).
+   - Formatting: write in short paragraphs (1-3 sentences each) separated by a blank line — never one dense block.
+   - If "type" is "quote": the 🗣️ quoted line is REQUIRED, on its own line with a blank line before and after (e.g. a blank line, then the 🗣️ line, then a blank line), and it MUST be word-for-word the same text as the "title" field above (strip the ** markers, same {language} wording — do not re-translate it separately, re-phrase it, or fall back to the source language). The image and the caption must show the reader the exact same quote.
+   - If "type" is "news" and you choose to quote the source directly anywhere in the body, that quote is optional, may be any relevant line from the source (not tied to "title"), and follows the same 🗣️ on-its-own-line formatting.
    - Hashtags: put a blank line before the hashtag line, then EXACTLY {hashtag_count} relevant, specific hashtags on that single line — never more, and never generic filler tags (no #love #instagood #viral).
    - End with call-to-action: {cta_text if cta_text else "none"}
 {attribution_line}
@@ -188,5 +215,8 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     title_max = 140 if category == "quote" else _effective_title_max_chars(fanpage, article)
     if len(title.replace("**", "")) > title_max:
         title = title.replace("**", "")[: title_max - 1].rstrip() + "…"
+
+    if category == "quote":
+        caption = _sync_caption_quote(caption, title)
 
     return NewsCopy(title=title, caption=caption, provider=provider, subtitle=subtitle, category=category)
