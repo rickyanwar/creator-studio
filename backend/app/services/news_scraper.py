@@ -191,6 +191,64 @@ def fetch_html(url: str, render_mode: str = "static") -> str:
         raise
 
 
+def fetch_rss(url: str, timeout: float = FETCH_TIMEOUT) -> str:
+    """Fetch a feed URL and return the raw response text, unmodified.
+
+    Deliberately does NOT reuse fetch_html()'s Scrapling-based tier: Scrapling
+    parses every response through an HTML lens and wraps raw XML in a
+    synthetic <html><body> shell to cope with it — confirmed live on
+    mmaweekly.com's feed, this emptied every single <title> in the document
+    (bozo parse errors, "mismatched tag"), silently breaking feedparser's
+    extraction even though the feed itself is perfectly well-formed XML.
+    Feeds are also typically not behind the same bot protection as the HTML
+    pages they list (see render_mode="rss"'s docstring), so this plain
+    direct -> proxy -> relay chain is normally enough without needing
+    Scrapling's TLS-fingerprint impersonation at all.
+    """
+    if not _robots_allowed(url):
+        raise PermissionError(f"robots.txt disallows fetching {url}")
+
+    last_exc: Exception | None = None
+
+    try:
+        with httpx.Client(timeout=timeout, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
+            resp = client.get(url)
+        if resp.status_code in _BLOCK_STATUSES:
+            raise RuntimeError(f"blocked (HTTP {resp.status_code})")
+        resp.raise_for_status()
+        return resp.text
+    except Exception as exc:
+        last_exc = exc
+        logger.warning("Scraper: RSS direct fetch failed for %s: %s", url, exc)
+
+    for _ in range(_POOL_TRIES):
+        proxy = pick_proxy()
+        if not proxy:
+            break
+        try:
+            with httpx.Client(
+                timeout=timeout, headers={"User-Agent": USER_AGENT}, follow_redirects=True, proxy=proxy
+            ) as client:
+                resp = client.get(url)
+            resp.raise_for_status()
+            return resp.text
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("Scraper: RSS proxy fetch failed for %s via %s: %s", url, _proxy_host(proxy), exc)
+
+    for _ in range(_POOL_TRIES):
+        relay = pick_relay()
+        if not relay:
+            break
+        try:
+            return fetch_via_relay(url, relay, timeout=timeout)
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("Scraper: RSS relay fetch failed for %s via %s: %s", url, _relay_host(relay), exc)
+
+    raise last_exc if last_exc else RuntimeError(f"failed to fetch {url}")
+
+
 def _fetch_html_playwright(url: str) -> str:
     try:
         from playwright.sync_api import sync_playwright

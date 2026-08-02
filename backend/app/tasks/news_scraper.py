@@ -153,7 +153,7 @@ def _collect_rss_items(engine, source):
     """RSS path: one feed fetch returns every item fully populated already.
     Returns (extracted_list, link_count, fetch_error)."""
     try:
-        xml = engine.fetch_html(source.category_url, "static")
+        xml = engine.fetch_rss(source.category_url)
         items = engine.extract_rss_items(xml)
     except Exception as exc:
         return [], 0, str(exc)

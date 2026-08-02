@@ -284,7 +284,7 @@ def test_rss(body: TestRssBody, _: CurrentUser):
     from app.services import news_scraper as engine
 
     try:
-        xml = engine.fetch_html(body.category_url, "static")
+        xml = engine.fetch_rss(body.category_url)
         items = engine.extract_rss_items(xml)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
