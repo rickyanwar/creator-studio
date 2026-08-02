@@ -54,10 +54,13 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
     returned as the marker last time it ran for this job — the History
     "Re-edit with new image" action resets the job to pending_design without
     clearing it, specifically so this retry skips landing on the exact same
-    photo again: the matching GalleryImage row is skipped in tier 2, and tier
-    4 is skipped entirely if it's the same scraped_image_url as before (both
-    are otherwise-deterministic picks; tiers 1/3 are a fresh AI search each
-    call already, so no exclusion is needed there).
+    photo again: tier 1 excludes it via source_news_main's exclude_path (its
+    gallery lookup is NOT a fresh search — it hits the same downloaded photos
+    first, so without this a subject with only one or two gallery images
+    would just get the same one back forever), the matching GalleryImage row
+    is skipped in tier 2, and tier 4 is skipped entirely if it's the same
+    scraped_image_url as before. Tier 3 is a genuinely fresh AI search each
+    call already, so no exclusion is needed there.
     """
     from sqlalchemy import or_
     from app.models.gallery import GalleryImage
@@ -71,6 +74,11 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
         if exclude_marker and exclude_marker.startswith("gallery:")
         else None
     )
+    excluded_local_path = (
+        db.query(GalleryImage.local_path).filter_by(id=excluded_gallery_id).scalar()
+        if excluded_gallery_id is not None
+        else None
+    )
 
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     # Names often land in the subtitle, not the headline (e.g. "X could leave
@@ -80,7 +88,7 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
     subtitle = job.design_subtitle or ""
     title = f"{heading}. {subtitle}".strip(". ")
     try:
-        src, path = source_news_main(db, title, niche)
+        src, path = source_news_main(db, title, niche, exclude_path=excluded_local_path)
         if src:
             gi = db.query(GalleryImage).filter_by(local_path=path).first() if path else None
             return src, gi, (f"gallery:{gi.id}" if gi else "search")

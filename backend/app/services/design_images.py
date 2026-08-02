@@ -921,7 +921,7 @@ def fetch_topic_datauri(title: str, niche: str, excerpt: str = "", max_candidate
     return verified[best]
 
 
-def source_news_main(db, title: str, niche: str, use_vision: bool = True):
+def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclude_path: str | None = None):
     """Source the MAIN photo for a recreated news card by its subject — so the
     card shows a clean, relevant photo instead of the original IG screenshot
     (which often carries the source page's own text/branding).
@@ -929,12 +929,20 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True):
     Order: a matching gallery image we already downloaded (vision-picked) →
     a fresh Getty search if the gallery has nothing good. Returns (datauri, path)
     or (None, None) so the caller can fall back to the IG image.
+
+    `exclude_path` (a GalleryImage.local_path) is forwarded to
+    find_gallery_datauri so a History "Re-edit with new image" retry can rule
+    out the exact photo it picked last time — without this, a subject with
+    only one or two gallery photos would just get the same one back forever,
+    since find_gallery_datauri's own reuse-cooldown pool only ever falls
+    through to a fresh search when it has ZERO eligible candidates, not when
+    it's excluding one specific already-used photo.
     """
     primary, _ = extract_two_subjects(title, niche)
     if not primary:
         return None, None
     image_type = pick_split_image_type(title, niche)  # "face" or "action"
-    uri, gi = find_gallery_datauri(db, primary, use_vision=use_vision, image_type=image_type)
+    uri, gi = find_gallery_datauri(db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type)
     if uri:
         logger.info("Recreate main: gallery photo for %r (%s)", primary, image_type)
         return uri, (gi.local_path if gi else None)
