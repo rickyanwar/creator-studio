@@ -19,6 +19,7 @@ import logging
 import urllib.robotparser
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Callable
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -220,9 +221,24 @@ def _fetch_html_playwright(url: str) -> str:
             browser.close()
 
 
+def _soup_with_fallback(html: str, found: Callable[[BeautifulSoup], bool]) -> BeautifulSoup:
+    """Parse with lxml first (fast); if the caller's `found` check says lxml
+    came up empty, reparse with the stdlib html.parser instead. lxml's HTML
+    parser is strict about tree structure and can silently misplace/drop
+    elements on real-world "tag soup" markup (seen on sportskeeda.com: a
+    perfectly well-formed `<h1 id="heading">` earlier in the same document
+    that lxml's soup.find() simply never returns, while html.parser finds it
+    immediately) — since that failure mode is a wrong empty result rather
+    than an exception, callers can't just try/except their way out of it."""
+    soup = BeautifulSoup(html, "lxml")
+    if found(soup):
+        return soup
+    return BeautifulSoup(html, "html.parser")
+
+
 def extract_article_links(html: str, base_url: str, list_selector: str, link_attribute: str = "href") -> list[str]:
     """Extract absolute, deduplicated article URLs from a category page."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = _soup_with_fallback(html, lambda s: bool(s.select(list_selector)))
     links: list[str] = []
     seen: set[str] = set()
 
@@ -251,7 +267,9 @@ def extract_article(
     date_selector: str | None = None,
 ) -> ExtractedArticle:
     """Extract title/content/hero-image from an article page using CSS selectors."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = _soup_with_fallback(
+        html, lambda s: bool(s.select_one(title_selector)) and bool(s.select_one(content_selector))
+    )
     result = ExtractedArticle(url=url)
 
     title_el = soup.select_one(title_selector)
