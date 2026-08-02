@@ -71,7 +71,7 @@ export default function DashboardPage() {
     setCrawlMsg(null);
     try {
       await triggerCrawl();
-      setCrawlMsg("Crawl queued — sources will be checked in a few seconds.");
+      setCrawlMsg("IG crawl queued — Instagram sources will be checked in a few seconds.");
       mutate();
       setTimeout(() => mutateHealth(), 5000);
     } catch {
@@ -94,9 +94,14 @@ export default function DashboardPage() {
             <Icon icon="solar:refresh-bold-duotone" width={14} className={loadingSync ? "animate-spin" : ""} />
             <span className="hidden sm:inline">{loadingSync ? "Syncing…" : "Sync"}</span>
           </button>
-          <button onClick={handleCrawl} disabled={loadingCrawl} className="btn-primary">
+          <button
+            onClick={handleCrawl}
+            disabled={loadingCrawl}
+            className="btn-primary"
+            title="Checks Instagram source accounts (Mode 1 repost) for new posts — not the news scraper"
+          >
             <Icon icon={loadingCrawl ? "solar:refresh-bold-duotone" : "solar:play-bold-duotone"} width={14} className={loadingCrawl ? "animate-spin" : ""} />
-            {loadingCrawl ? "Crawling…" : "Crawl Now"}
+            {loadingCrawl ? "Crawling…" : "Crawl IG Sources"}
           </button>
         </div>
       </div>
@@ -326,7 +331,7 @@ function CrawlerHealthCard({
   }
 
   function fmtNextCrawl() {
-    if (status === "dead") return "Waiting — click Run Crawl Now";
+    if (status === "dead") return "Waiting — click Run IG Crawl";
     if (status === "sleep") {
       const wib = new Date(server_time_wib);
       const wakeH = sleep_end_wib;
@@ -354,7 +359,7 @@ function CrawlerHealthCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className={`text-sm font-bold ${statusConfig.labelClass}`}>
-              Crawler — {statusConfig.label}
+              IG Crawler — {statusConfig.label}
             </span>
             {status === "dead" && (
               <span className="text-xs text-error-main bg-[rgba(255,86,48,0.12)] px-2 py-0.5 rounded-full font-medium">
@@ -377,7 +382,7 @@ function CrawlerHealthCard({
             </span>
             <span className="text-xs text-text-disabled hidden sm:inline">·</span>
             <span className="text-xs text-text-secondary">
-              Sources: <span className="font-medium text-text-primary">{active_sources} active</span>
+              IG sources: <span className="font-medium text-text-primary">{active_sources} active</span>
             </span>
             <span className="text-xs text-text-disabled hidden sm:inline">·</span>
             <span className="text-xs text-text-secondary">
@@ -407,9 +412,10 @@ function CrawlerHealthCard({
           onClick={onCrawlNow}
           disabled={crawling}
           className="btn-primary text-xs py-1.5 px-3"
+          title="Checks Instagram source accounts (Mode 1 repost) for new posts — not the news scraper"
         >
           <Icon icon={crawling ? "solar:refresh-bold-duotone" : "solar:play-bold-duotone"} width={13} className={crawling ? "animate-spin" : ""} />
-          {crawling ? "Crawling…" : "Run Crawl Now"}
+          {crawling ? "Crawling…" : "Run IG Crawl"}
         </button>
       </div>
     </div>
