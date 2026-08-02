@@ -128,3 +128,56 @@ def download_keyword(self, keyword_id: int):
         raise self.retry(exc=exc, countdown=300)
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.gallery_downloader.scan_gallery_closeup_filter", bind=True, max_retries=1)
+def scan_gallery_closeup_filter(self, criteria: str, keyword: str | None = None) -> dict:
+    """Manual, on-demand AI scan (never automatic) — checks every non-deleted
+    gallery image against an admin-typed criteria and reports which ones
+    DON'T match. `keyword=None` scans the whole gallery; a specific keyword
+    string scopes it to just that one. Read-only: nothing is ever deleted
+    here. The API dispatches this and polls task state for progress
+    ({"done", "total"} while running); the final return value is the
+    candidate list the admin reviews and confirms via
+    POST /gallery/images/bulk-delete — this task never deletes anything
+    itself, by design, since a global scan can span the whole gallery."""
+    db = SessionLocal()
+    try:
+        from app.models.gallery import GalleryImage
+        from app.services.design_images import classify_closeup_match
+
+        q = db.query(GalleryImage).filter(GalleryImage.is_deleted == False)
+        if keyword:
+            q = q.filter(GalleryImage.keyword == keyword)
+        images = q.all()
+        total = len(images)
+
+        candidates = []
+        for i, image in enumerate(images):
+            self.update_state(state="PROGRESS", meta={"done": i, "total": total})
+            try:
+                image_bytes = Path(image.local_path).read_bytes()
+            except OSError as exc:
+                logger.warning("Gallery: AI filter scan — image %d unreadable (%s), skipping", image.id, exc)
+                continue
+
+            result = classify_closeup_match(image_bytes, criteria)
+            if not result["match"]:
+                candidates.append({
+                    "id": image.id,
+                    "public_url": image.public_url,
+                    "keyword": image.keyword,
+                    "confidence": result["confidence"],
+                })
+
+        logger.info(
+            "Gallery: AI filter scan (%s) — %d/%d flagged for review",
+            keyword or "ALL KEYWORDS", len(candidates), total,
+        )
+        return {"done": total, "total": total, "candidates": candidates}
+
+    except Exception as exc:
+        logger.error("Gallery: AI filter scan failed (keyword=%s): %s", keyword, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=60)
+    finally:
+        db.close()

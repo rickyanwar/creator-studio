@@ -564,6 +564,39 @@ def classify_image_type(image_bytes: bytes) -> str:
     return "other"
 
 
+def classify_closeup_match(image_bytes: bytes, criteria: str) -> dict:
+    """Ask 9Router vision whether a gallery photo matches an admin-typed
+    filter criteria (e.g. "close-up headshot of a person's face, not
+    full-body/action/crowd shots") — used by the manual, on-demand "Run AI
+    Filter" tool on the Gallery page (see
+    tasks/gallery_downloader.scan_gallery_closeup_filter), which scans the
+    whole gallery or one keyword and returns non-matches for the admin to
+    review before anything is deleted.
+
+    Returns {"match": bool, "confidence": 0.0-1.0}. Fails OPEN (match=True) on
+    any parse/API error, same as vision_verify_match — a flaky vision call
+    should never get an image flagged for deletion."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                f"Filter criteria for this photo gallery: {criteria.strip()}\n"
+                "Does this photo satisfy that criteria?\n"
+                'Reply with ONLY a JSON object {"match": true|false, "confidence": 0.00-1.00}.'
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=500)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return {"match": True, "confidence": 0.0}
+        import json as _json
+        d = _json.loads(m.group(0))
+        return {"match": bool(d.get("match")), "confidence": float(d.get("confidence") or 0)}
+    except Exception as exc:
+        logger.warning("classify_closeup_match failed: %s", exc)
+        return {"match": True, "confidence": 0.0}
+
+
 def vision_pick_best(candidates: list, subject: str, image_type: str | None = None) -> int:
     """Ask 9Router vision which candidate photo is best for a news graphic.
 

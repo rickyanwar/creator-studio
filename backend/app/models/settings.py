@@ -52,6 +52,11 @@ class Settings(Base):
     # Global kill switch — pauses the scheduled sweep (download_all_keywords)
     # entirely. Does NOT block an explicit "Download Now" from the UI.
     gallery_scraping_paused = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Last-used text for the manual "Run AI Filter" tool on the Gallery page
+    # (app/tasks/gallery_downloader.scan_gallery_closeup_filter) — remembered
+    # so the admin doesn't have to retype it every time; not itself used to
+    # drive any automatic behavior.
+    gallery_ai_filter_last_criteria = Column(Text, nullable=True)
 
     # ── 9Router (primary AI, OpenAI-compatible) ───────────────────────────────
     # When set here, these override the NINE_ROUTER_* env vars. Base URL should

@@ -44,6 +44,7 @@ def get_settings(db: DB, _: CurrentUser):
         scraper_relays=row.scraper_relays,
         scraper_relay_count=len(parse_relays(row.scraper_relays)),
         gallery_scraping_paused=row.gallery_scraping_paused,
+        gallery_ai_filter_last_criteria=row.gallery_ai_filter_last_criteria,
         nine_router_base_url=row.nine_router_base_url,
         nine_router_model=row.nine_router_model,
         has_nine_router_key=bool(row.nine_router_api_key_encrypted),

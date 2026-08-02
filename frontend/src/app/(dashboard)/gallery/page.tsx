@@ -12,6 +12,9 @@ import {
   updateGalleryKeyword,
   deleteGalleryKeyword,
   downloadGalleryKeywordNow,
+  startAIFilterScan,
+  getAIFilterScanStatus,
+  bulkDeleteGalleryImages,
   bulkImportGalleryKeywords,
   listGalleryImages,
   uploadGalleryImage,
@@ -53,6 +56,8 @@ type GalleryImage = {
   downloaded_at: string | null;
 };
 
+type FilterCandidate = { id: number; public_url: string; keyword: string; confidence: number };
+
 const emptyForm = {
   keyword: "",
   niche: "",
@@ -73,7 +78,10 @@ export default function GalleryPage() {
   );
   const { data: appSettings, mutate: mutateSettings } = useSWR(
     "settings",
-    () => getSettings().then((r) => r.data as { gallery_scraping_paused: boolean }),
+    () =>
+      getSettings().then(
+        (r) => r.data as { gallery_scraping_paused: boolean; gallery_ai_filter_last_criteria: string | null }
+      ),
   );
   const [pauseToggling, setPauseToggling] = useState(false);
   async function toggleScrapingPause() {
@@ -182,6 +190,20 @@ export default function GalleryPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState<number | null>(null);
+
+  // ── Manual AI closeup filter (standalone tool, not tied to any keyword's
+  // config) — setup modal (criteria + scope) -> scanning -> review modal. ──
+  const [showAIFilterSetup, setShowAIFilterSetup] = useState(false);
+  const [aiFilterCriteria, setAIFilterCriteria] = useState("");
+  const [aiFilterScope, setAIFilterScope] = useState(""); // "" = all keywords
+  const [aiFilterScanning, setAIFilterScanning] = useState(false);
+  const [aiFilterProgress, setAIFilterProgress] = useState<{ done: number; total: number } | null>(null);
+  const [filterReview, setFilterReview] = useState<{
+    scopeLabel: string;
+    candidates: FilterCandidate[];
+    selected: Set<number>;
+  } | null>(null);
+  const [filterConfirming, setFilterConfirming] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -279,6 +301,104 @@ export default function GalleryPage() {
       notify("Download queued — new images will appear within a few minutes.", "success");
     } finally {
       setDownloading(null);
+    }
+  }
+
+  async function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function openAIFilterSetup() {
+    setAIFilterCriteria(appSettings?.gallery_ai_filter_last_criteria ?? "");
+    setAIFilterScope("");
+    setAIFilterProgress(null);
+    setShowAIFilterSetup(true);
+  }
+
+  async function handleStartAIFilterScan() {
+    const criteria = aiFilterCriteria.trim();
+    if (!criteria) {
+      notify("Enter a filter criteria first.", "error");
+      return;
+    }
+    setAIFilterScanning(true);
+    setAIFilterProgress(null);
+    try {
+      const res = await startAIFilterScan(criteria, aiFilterScope || undefined);
+      const taskId = (res.data as { task_id: string }).task_id;
+
+      let candidates: FilterCandidate[] | null = null;
+      // Poll for up to ~10 minutes — a global scan can span the whole
+      // gallery (thousands of images), each needing its own AI vision call.
+      for (let i = 0; i < 300; i++) {
+        const r = await getAIFilterScanStatus(taskId);
+        const data = r.data as { status: string; done: number; total: number; candidates: FilterCandidate[] | null };
+        if (data.status === "SUCCESS") {
+          candidates = data.candidates ?? [];
+          break;
+        }
+        if (data.status === "FAILURE") {
+          throw new Error("AI filter task failed");
+        }
+        if (data.status === "PROGRESS") {
+          setAIFilterProgress({ done: data.done, total: data.total });
+        }
+        await sleep(2000);
+      }
+
+      if (candidates === null) {
+        notify("AI filter is taking longer than expected — try again shortly.", "error");
+        return;
+      }
+      mutateSettings();
+      if (candidates.length === 0) {
+        notify("No images flagged — everything already matches the criteria.", "success");
+        setShowAIFilterSetup(false);
+        return;
+      }
+      setShowAIFilterSetup(false);
+      setFilterReview({
+        scopeLabel: aiFilterScope || "all keywords",
+        candidates,
+        selected: new Set(candidates.map((c) => c.id)),
+      });
+    } catch {
+      notify("Failed to run AI filter.", "error");
+    } finally {
+      setAIFilterScanning(false);
+      setAIFilterProgress(null);
+    }
+  }
+
+  function toggleFilterCandidate(id: number) {
+    setFilterReview((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev.selected);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { ...prev, selected: next };
+    });
+  }
+
+  async function confirmFilterDelete() {
+    if (!filterReview) return;
+    const ids = Array.from(filterReview.selected);
+    if (ids.length === 0) {
+      setFilterReview(null);
+      return;
+    }
+    setFilterConfirming(true);
+    try {
+      const res = await bulkDeleteGalleryImages(ids);
+      const deleted = (res.data as { deleted: number }).deleted;
+      notify(`Deleted ${deleted} image(s).`, "success");
+      setFilterReview(null);
+      mutateKeywords();
+      mutateImages();
+    } catch {
+      notify("Bulk delete failed. Please try again.", "error");
+    } finally {
+      setFilterConfirming(false);
     }
   }
 
@@ -485,6 +605,10 @@ export default function GalleryPage() {
           >
             {uploading ? <Icon icon="svg-spinners:ring-resize" width={16} /> : <Icon icon="solar:upload-bold-duotone" width={16} />}
             Upload Image
+          </button>
+          <button onClick={openAIFilterSetup} className="btn btn-secondary flex items-center gap-2">
+            <Icon icon="solar:filter-bold-duotone" width={16} />
+            Run AI Filter
           </button>
           <button onClick={openBulkModal} className="btn btn-secondary flex items-center gap-2">
             <Icon icon="solar:code-bold-duotone" width={16} />
@@ -948,6 +1072,186 @@ export default function GalleryPage() {
                   Save
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI filter setup modal (criteria + scope, then scan) ── */}
+      {showAIFilterSetup && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !aiFilterScanning && setShowAIFilterSetup(false)}
+        >
+          <div className="card w-full max-w-lg p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-ink">Run AI Filter</h2>
+                <p className="text-[11px] text-ink-48 mt-0.5">
+                  Nothing is deleted automatically — you&apos;ll get a list to review and confirm first.
+                </p>
+              </div>
+              <button
+                onClick={() => !aiFilterScanning && setShowAIFilterSetup(false)}
+                className="text-ink-48 hover:text-ink shrink-0"
+              >
+                <Icon icon="solar:close-circle-bold-duotone" width={20} />
+              </button>
+            </div>
+
+            <div>
+              <label className={labelCls}>Filter Criteria</label>
+              <textarea
+                className={inputCls}
+                rows={3}
+                value={aiFilterCriteria}
+                onChange={(e) => setAIFilterCriteria(e.target.value)}
+                placeholder="e.g. close-up headshot of a person's face, not full-body/action/crowd shots"
+                disabled={aiFilterScanning}
+              />
+            </div>
+
+            <div>
+              <label className={labelCls}>Scope</label>
+              <select
+                className={inputCls}
+                value={aiFilterScope}
+                onChange={(e) => setAIFilterScope(e.target.value)}
+                disabled={aiFilterScanning}
+              >
+                <option value="">All keywords (entire gallery)</option>
+                {keywords.map((k) => (
+                  <option key={k.id} value={k.keyword}>{k.keyword}</option>
+                ))}
+              </select>
+            </div>
+
+            {aiFilterScanning && (
+              <div className="rounded-lg bg-parchment px-3 py-2 text-xs text-ink-80 flex items-center gap-2">
+                <Icon icon="svg-spinners:ring-resize" width={14} />
+                {aiFilterProgress
+                  ? `Scanning ${aiFilterProgress.done} of ${aiFilterProgress.total} images…`
+                  : "Starting scan…"}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 border-t border-hairline pt-4">
+              <button
+                onClick={() => setShowAIFilterSetup(false)}
+                disabled={aiFilterScanning}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleStartAIFilterScan}
+                disabled={aiFilterScanning || !aiFilterCriteria.trim()}
+                className="btn btn-primary flex items-center gap-2"
+              >
+                {aiFilterScanning && <Icon icon="svg-spinners:ring-resize" width={14} />}
+                Scan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI closeup filter review modal ── */}
+      {filterReview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !filterConfirming && setFilterReview(null)}
+        >
+          <div
+            className="card w-full max-w-3xl max-h-[85vh] flex flex-col p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-ink">
+                  AI Filter Review — {filterReview.scopeLabel}
+                </h2>
+                <p className="text-[11px] text-ink-48 mt-0.5">
+                  {filterReview.candidates.length} image(s) did NOT match the filter criteria. Checked images
+                  will be deleted — uncheck any you want to keep.
+                </p>
+              </div>
+              <button
+                onClick={() => !filterConfirming && setFilterReview(null)}
+                className="text-ink-48 hover:text-ink shrink-0"
+              >
+                <Icon icon="solar:close-circle-bold-duotone" width={20} />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs">
+              <button
+                onClick={() =>
+                  setFilterReview((prev) =>
+                    prev ? { ...prev, selected: new Set(prev.candidates.map((c) => c.id)) } : prev
+                  )
+                }
+                className="text-primary-main hover:underline font-medium"
+              >
+                Select all
+              </button>
+              <button
+                onClick={() => setFilterReview((prev) => (prev ? { ...prev, selected: new Set() } : prev))}
+                className="text-primary-main hover:underline font-medium"
+              >
+                Select none
+              </button>
+              <span className="text-ink-48">{filterReview.selected.size} of {filterReview.candidates.length} selected for deletion</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {filterReview.candidates.map((c) => {
+                  const checked = filterReview.selected.has(c.id);
+                  return (
+                    <label
+                      key={c.id}
+                      className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-colors ${
+                        checked ? "border-red-500" : "border-transparent"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="absolute top-1.5 left-1.5 z-10 w-4 h-4 accent-red-600"
+                        checked={checked}
+                        onChange={() => toggleFilterCandidate(c.id)}
+                      />
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={c.public_url} alt="" className="w-full h-28 object-cover" loading="lazy" />
+                      <div className={`absolute inset-0 pointer-events-none ${checked ? "bg-red-600/20" : ""}`} />
+                      <span className="absolute bottom-1 left-1.5 text-[9px] font-medium text-white bg-black/60 rounded px-1 py-0.5 truncate max-w-[70%]">
+                        {c.keyword}
+                      </span>
+                      <span className="absolute bottom-1 right-1.5 text-[9px] font-semibold text-white bg-black/60 rounded px-1 py-0.5">
+                        {Math.round(c.confidence * 100)}%
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-hairline pt-4">
+              <button
+                onClick={() => setFilterReview(null)}
+                disabled={filterConfirming}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmFilterDelete}
+                disabled={filterConfirming || filterReview.selected.size === 0}
+                className="btn btn-primary bg-red-600 hover:bg-red-700 flex items-center gap-2"
+              >
+                {filterConfirming && <Icon icon="svg-spinners:ring-resize" width={14} />}
+                Delete Selected ({filterReview.selected.size})
+              </button>
             </div>
           </div>
         </div>

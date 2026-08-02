@@ -166,6 +166,12 @@ export const deleteGalleryKeyword = (id: number) =>
   api.delete(`/gallery/keywords/${id}`);
 export const downloadGalleryKeywordNow = (id: number) =>
   api.post(`/gallery/keywords/${id}/download-now`);
+export const startAIFilterScan = (criteria: string, keyword?: string) =>
+  api.post("/gallery/ai-filter/scan", { criteria, keyword: keyword || undefined });
+export const getAIFilterScanStatus = (taskId: string) =>
+  api.get(`/gallery/ai-filter/scan/${taskId}`);
+export const bulkDeleteGalleryImages = (imageIds: number[]) =>
+  api.post("/gallery/images/bulk-delete", { image_ids: imageIds });
 export const bulkImportGalleryKeywords = (items: Record<string, unknown>[]) =>
   api.post("/gallery/keywords/bulk-import", items);
 export const listGalleryImages = (params: {

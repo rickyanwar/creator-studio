@@ -48,6 +48,7 @@ class SettingsOut(BaseModel):
     scraper_relays: Optional[str] = None    # raw text so the UI can edit the pool
     scraper_relay_count: int = 0
     gallery_scraping_paused: bool = False
+    gallery_ai_filter_last_criteria: Optional[str] = None
     nine_router_base_url: Optional[str] = None
     nine_router_model: Optional[str] = None
     has_nine_router_key: bool = False

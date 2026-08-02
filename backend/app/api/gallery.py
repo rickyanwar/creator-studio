@@ -265,6 +265,65 @@ def download_now(keyword_id: int, db: DB, _: CurrentUser):
     return {"ok": True, "message": f"Download queued for '{kw.keyword}'"}
 
 
+# ── AI closeup filter (manual, on-demand only — see scan_gallery_closeup_filter) ──
+
+class AIFilterScanBody(BaseModel):
+    criteria: str
+    keyword: Optional[str] = None  # None/omitted = scan the whole gallery
+
+
+@router.post("/ai-filter/scan")
+def start_ai_filter_scan(body: AIFilterScanBody, db: DB, _: CurrentUser):
+    """Kick off a read-only AI pass over the gallery (or one keyword, if
+    given) against an admin-typed criteria. Nothing is deleted here — poll
+    GET /ai-filter/scan/{task_id} for progress and the final candidate list
+    (images that DON'T match), then let the admin review/uncheck before
+    deleting via POST /images/bulk-delete."""
+    from app.models.settings import Settings
+    from app.tasks.gallery_downloader import scan_gallery_closeup_filter
+
+    criteria = body.criteria.strip()
+    if not criteria:
+        raise HTTPException(status_code=400, detail="criteria is required")
+
+    row = db.query(Settings).filter_by(id=1).first()
+    if not row:
+        row = Settings(id=1)
+        db.add(row)
+    row.gallery_ai_filter_last_criteria = criteria
+    db.commit()
+
+    keyword = (body.keyword or "").strip().lower() or None
+    task = scan_gallery_closeup_filter.delay(criteria, keyword)
+    return {"task_id": task.id}
+
+
+@router.get("/ai-filter/scan/{task_id}")
+def get_ai_filter_scan_status(task_id: str, _: CurrentUser):
+    """Poll a scan's progress/result. `status` is a Celery state
+    (PENDING/STARTED/PROGRESS/SUCCESS/FAILURE); `done`/`total` fill in while
+    running; `candidates` ({id, public_url, keyword, confidence}[]) is only
+    populated once SUCCESS."""
+    from app.tasks.celery_app import celery_app
+    from celery.result import AsyncResult
+
+    result = AsyncResult(task_id, app=celery_app)
+    if result.state == "PROGRESS":
+        meta = result.info or {}
+        return {"status": "PROGRESS", "done": meta.get("done", 0), "total": meta.get("total", 0), "candidates": None}
+    if not result.ready():
+        return {"status": result.status, "done": 0, "total": 0, "candidates": None}
+    if result.failed():
+        return {"status": "FAILURE", "done": 0, "total": 0, "candidates": None}
+    data = result.result or {}
+    return {
+        "status": "SUCCESS",
+        "done": data.get("done", 0),
+        "total": data.get("total", 0),
+        "candidates": data.get("candidates", []),
+    }
+
+
 # ── Images ───────────────────────────────────────────────────────────────────
 
 @router.get("/images")
@@ -425,3 +484,31 @@ def delete_image(image_id: int, db: DB, _: CurrentUser):
     img.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     return {"ok": True}
+
+
+class BulkDeleteImagesBody(BaseModel):
+    image_ids: list[int]
+
+
+@router.post("/images/bulk-delete")
+def bulk_delete_images(body: BulkDeleteImagesBody, db: DB, _: CurrentUser):
+    """Soft-delete several images at once — same sequence as delete_image,
+    batched. Used to confirm the AI filter's reviewed candidate list (see
+    start_ai_filter_scan), but works for any id list."""
+    from app.models.gallery import GalleryImage
+
+    if not body.image_ids:
+        raise HTTPException(status_code=400, detail="image_ids is required")
+
+    imgs = (
+        db.query(GalleryImage)
+        .filter(GalleryImage.id.in_(body.image_ids), GalleryImage.is_deleted == False)
+        .all()
+    )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for img in imgs:
+        Path(img.local_path).unlink(missing_ok=True)
+        img.is_deleted = True
+        img.deleted_at = now
+    db.commit()
+    return {"deleted": len(imgs)}
