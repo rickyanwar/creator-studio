@@ -27,6 +27,12 @@ httpx==0.28.1
 # ── News scraping ──────────────────────────────
 beautifulsoup4==4.12.3
 lxml==5.3.0
+# RSS/Atom parsing for render_mode="rss" sources (news_scraper.extract_rss_items)
+# — real-world feeds routinely have malformed/unescaped content (embedded
+# tweet HTML, stray entities) that breaks a strict XML tree parse partway
+# through the document; feedparser's lenient, purpose-built parser handles
+# that robustly instead of silently corrupting element boundaries.
+feedparser==6.0.11
 playwright==1.61.0
 # Fetcher (TLS-fingerprint impersonation) bypasses bot-detection on sites that
 # block plain httpx/proxy requests — see app/services/news_scraper.py

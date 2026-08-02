@@ -325,47 +325,57 @@ def extract_article(
 
 
 def extract_rss_items(xml_text: str, max_items: int = 50) -> list[ExtractedArticle]:
-    """Parse an RSS 2.0 (or Atom-ish) feed directly into ExtractedArticle
-    records — no per-article fetch needed, since title/content/image/date
-    all live in the feed itself.
+    """Parse an RSS 2.0/Atom feed directly into ExtractedArticle records — no
+    per-article fetch needed, since title/content/image/date all live in the
+    feed itself.
 
     For render_mode="rss" sources: some sites put bot protection (DataDome,
     AWS WAF, etc.) in front of their article pages but not their feed, since
     a feed is explicitly meant for automated consumption (feed readers,
     aggregators) — see mmaweekly.com, whose article pages 403 unconditionally
-    but whose /feed redirects to a plain RSS XML endpoint with the full
+    but whose /feed redirects to a plain RSS endpoint with the full
     <content:encoded> body inline.
 
-    Must parse with BeautifulSoup's "xml" builder (lxml's XML mode), not
-    "html.parser" or plain "lxml" — both mishandle bare RSS tags like <link>
-    (a void element in HTML, but a text-content element in RSS), which comes
-    back empty otherwise.
+    Uses feedparser rather than hand-rolled BeautifulSoup/XML traversal:
+    real-world feeds routinely have malformed or unescaped content (an
+    embedded tweet's raw HTML, a stray `&` in a quote) that breaks a strict
+    XML tree parse partway through the document — confirmed on a live
+    mmaweekly.com item, where a single malformed item silently corrupted
+    element boundaries for every field after it (title.get_text() ended up
+    swallowing the link, pubDate, AND the entire article body into one
+    string). feedparser's lenient, purpose-built parser handles that
+    correctly instead of silently producing garbage.
     """
-    soup = BeautifulSoup(xml_text, "xml")
+    import calendar
+    from datetime import datetime as _datetime
+
+    import feedparser
+
+    parsed = feedparser.parse(xml_text)
     results: list[ExtractedArticle] = []
 
-    for item in soup.find_all("item")[:max_items]:
-        link_el = item.find("link")
-        url = link_el.get_text(strip=True) if link_el else None
-        if not url:
-            guid = item.find("guid")
-            url = guid.get_text(strip=True) if guid else None
+    for entry in parsed.entries[:max_items]:
+        url = entry.get("link")
         if not url:
             continue
 
         result = ExtractedArticle(url=url)
 
-        title_el = item.find("title")
-        result.title = title_el.get_text(strip=True) if title_el else ""
+        result.title = (entry.get("title") or "").strip()
         if not result.title:
             result.errors.append("rss item missing <title>")
 
-        # content:encoded (bs4's xml parser drops the namespace prefix) holds
-        # the full HTML body; description/summary is a fallback for feeds
-        # that only publish an excerpt.
-        content_el = item.find("encoded") or item.find("description") or item.find("summary")
-        if content_el:
-            fragment = BeautifulSoup(content_el.get_text(), "html.parser")
+        # content:encoded (feedparser exposes it as entry.content[0].value,
+        # regardless of namespace prefix) holds the full HTML body; summary
+        # is a fallback for feeds that only publish an excerpt.
+        raw_html = None
+        if entry.get("content"):
+            raw_html = entry["content"][0].get("value")
+        if not raw_html:
+            raw_html = entry.get("summary")
+
+        if raw_html:
+            fragment = BeautifulSoup(raw_html, "html.parser")
             for noise in fragment.select("script, style, iframe, figure figcaption, .ads, .advertisement"):
                 noise.decompose()
             paragraphs = [p.get_text(" ", strip=True) for p in fragment.find_all("p")]
@@ -374,21 +384,24 @@ def extract_rss_items(xml_text: str, max_items: int = 50) -> list[ExtractedArtic
         else:
             result.errors.append("rss item missing <content:encoded>/<description>")
 
-        enclosure = item.find("enclosure")
-        if enclosure and enclosure.get("url"):
-            result.image_url = enclosure["url"]
-        else:
-            media_content = item.find("content") or item.find("thumbnail")  # media:content/media:thumbnail
-            if media_content and media_content.get("url"):
-                result.image_url = media_content["url"]
-        if not result.image_url and content_el:
-            first_img = BeautifulSoup(content_el.get_text(), "html.parser").find("img")
+        image_url = None
+        for enc in entry.get("enclosures", []) or []:
+            image_url = enc.get("href") or enc.get("url")
+            if image_url:
+                break
+        if not image_url and entry.get("media_content"):
+            image_url = entry["media_content"][0].get("url")
+        if not image_url and raw_html:
+            first_img = BeautifulSoup(raw_html, "html.parser").find("img")
             if first_img and first_img.get("src"):
-                result.image_url = first_img["src"]
+                image_url = first_img["src"]
+        result.image_url = image_url
 
-        date_el = item.find("pubDate") or item.find("published") or item.find("updated")
-        result.date_text = date_el.get_text(strip=True) if date_el else None
-        result.published_at = parse_article_date(result.date_text)
+        result.date_text = entry.get("published") or entry.get("updated")
+        if entry.get("published_parsed"):
+            result.published_at = _datetime.utcfromtimestamp(calendar.timegm(entry.published_parsed))
+        else:
+            result.published_at = parse_article_date(result.date_text)
 
         results.append(result)
 
