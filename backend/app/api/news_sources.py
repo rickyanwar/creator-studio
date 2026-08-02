@@ -15,11 +15,13 @@ class NewsSourceBody(BaseModel):
     is_active: Optional[bool] = True
     scrape_interval_minutes: Optional[int] = 60
     max_age_days: Optional[int] = 3
-    render_mode: Optional[str] = "static"  # "static" | "js"
-    article_list_selector: str
+    render_mode: Optional[str] = "static"  # "static" | "js" | "rss"
+    # Required for "static"/"js"; unused (may be omitted) for "rss" — see
+    # validate_selectors_required below.
+    article_list_selector: Optional[str] = None
     article_link_attribute: Optional[str] = "href"
-    title_selector: str
-    content_selector: str
+    title_selector: Optional[str] = None
+    content_selector: Optional[str] = None
     image_selector: Optional[str] = None
     date_selector: Optional[str] = None
     # Per-source caption criteria (override the fanpage's Mode-2 news criteria)
@@ -33,8 +35,8 @@ class NewsSourceBody(BaseModel):
     @field_validator("render_mode")
     @classmethod
     def validate_render_mode(cls, v):
-        if v not in (None, "static", "js"):
-            raise ValueError("render_mode must be 'static' or 'js'")
+        if v not in (None, "static", "js", "rss"):
+            raise ValueError("render_mode must be 'static', 'js', or 'rss'")
         return v
 
     @field_validator("scrape_interval_minutes")
@@ -119,17 +121,29 @@ def list_news_sources(db: DB, _: CurrentUser):
 def create_news_source(body: NewsSourceBody, db: DB, _: CurrentUser):
     from app.models.news_sources import NewsSource, RenderMode
 
+    render_mode = body.render_mode or "static"
+    if render_mode != "rss":
+        missing = [
+            f for f in ("article_list_selector", "title_selector", "content_selector")
+            if not getattr(body, f)
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"required for render_mode={render_mode!r}: {', '.join(missing)}",
+            )
+
     source = NewsSource(
         name=body.name.strip(),
         category_url=body.category_url.strip(),
         is_active=body.is_active if body.is_active is not None else True,
         scrape_interval_minutes=body.scrape_interval_minutes or 60,
         max_age_days=body.max_age_days or 3,
-        render_mode=RenderMode(body.render_mode or "static"),
-        article_list_selector=body.article_list_selector.strip(),
+        render_mode=RenderMode(render_mode),
+        article_list_selector=body.article_list_selector.strip() if body.article_list_selector else None,
         article_link_attribute=(body.article_link_attribute or "href").strip(),
-        title_selector=body.title_selector.strip(),
-        content_selector=body.content_selector.strip(),
+        title_selector=body.title_selector.strip() if body.title_selector else None,
+        content_selector=body.content_selector.strip() if body.content_selector else None,
         image_selector=body.image_selector.strip() if body.image_selector else None,
         date_selector=body.date_selector.strip() if body.date_selector else None,
         caption_tone=body.caption_tone or None,
@@ -256,6 +270,39 @@ def test_selectors(body: TestSelectorsBody, _: CurrentUser):
         "date_text": extracted.date_text,
         "published_at": extracted.published_at.isoformat() if extracted.published_at else None,
         "errors": extracted.errors,
+    }
+
+
+class TestRssBody(BaseModel):
+    category_url: str
+
+
+@router.post("/test-rss")
+def test_rss(body: TestRssBody, _: CurrentUser):
+    """Fetch a feed URL and show what render_mode='rss' would extract —
+    parity with test-list-selector/test-selectors for the CSS-selector modes."""
+    from app.services import news_scraper as engine
+
+    try:
+        xml = engine.fetch_html(body.category_url, "static")
+        items = engine.extract_rss_items(xml)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "item_count": len(items),
+        "items": [
+            {
+                "url": it.url,
+                "title": it.title,
+                "content_length": len(it.content),
+                "content_preview": it.content[:500],
+                "image_url": it.image_url,
+                "published_at": it.published_at.isoformat() if it.published_at else None,
+                "errors": it.errors,
+            }
+            for it in items[:20]
+        ],
     }
 
 

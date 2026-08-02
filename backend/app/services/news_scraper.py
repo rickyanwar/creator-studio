@@ -322,3 +322,74 @@ def extract_article(
     result.published_at = parse_article_date(result.date_text)
 
     return result
+
+
+def extract_rss_items(xml_text: str, max_items: int = 50) -> list[ExtractedArticle]:
+    """Parse an RSS 2.0 (or Atom-ish) feed directly into ExtractedArticle
+    records — no per-article fetch needed, since title/content/image/date
+    all live in the feed itself.
+
+    For render_mode="rss" sources: some sites put bot protection (DataDome,
+    AWS WAF, etc.) in front of their article pages but not their feed, since
+    a feed is explicitly meant for automated consumption (feed readers,
+    aggregators) — see mmaweekly.com, whose article pages 403 unconditionally
+    but whose /feed redirects to a plain RSS XML endpoint with the full
+    <content:encoded> body inline.
+
+    Must parse with BeautifulSoup's "xml" builder (lxml's XML mode), not
+    "html.parser" or plain "lxml" — both mishandle bare RSS tags like <link>
+    (a void element in HTML, but a text-content element in RSS), which comes
+    back empty otherwise.
+    """
+    soup = BeautifulSoup(xml_text, "xml")
+    results: list[ExtractedArticle] = []
+
+    for item in soup.find_all("item")[:max_items]:
+        link_el = item.find("link")
+        url = link_el.get_text(strip=True) if link_el else None
+        if not url:
+            guid = item.find("guid")
+            url = guid.get_text(strip=True) if guid else None
+        if not url:
+            continue
+
+        result = ExtractedArticle(url=url)
+
+        title_el = item.find("title")
+        result.title = title_el.get_text(strip=True) if title_el else ""
+        if not result.title:
+            result.errors.append("rss item missing <title>")
+
+        # content:encoded (bs4's xml parser drops the namespace prefix) holds
+        # the full HTML body; description/summary is a fallback for feeds
+        # that only publish an excerpt.
+        content_el = item.find("encoded") or item.find("description") or item.find("summary")
+        if content_el:
+            fragment = BeautifulSoup(content_el.get_text(), "html.parser")
+            for noise in fragment.select("script, style, iframe, figure figcaption, .ads, .advertisement"):
+                noise.decompose()
+            paragraphs = [p.get_text(" ", strip=True) for p in fragment.find_all("p")]
+            paragraphs = [p for p in paragraphs if p]
+            result.content = "\n\n".join(paragraphs) if paragraphs else fragment.get_text(" ", strip=True)
+        else:
+            result.errors.append("rss item missing <content:encoded>/<description>")
+
+        enclosure = item.find("enclosure")
+        if enclosure and enclosure.get("url"):
+            result.image_url = enclosure["url"]
+        else:
+            media_content = item.find("content") or item.find("thumbnail")  # media:content/media:thumbnail
+            if media_content and media_content.get("url"):
+                result.image_url = media_content["url"]
+        if not result.image_url and content_el:
+            first_img = BeautifulSoup(content_el.get_text(), "html.parser").find("img")
+            if first_img and first_img.get("src"):
+                result.image_url = first_img["src"]
+
+        date_el = item.find("pubDate") or item.find("published") or item.find("updated")
+        result.date_text = date_el.get_text(strip=True) if date_el else None
+        result.published_at = parse_article_date(result.date_text)
+
+        results.append(result)
+
+    return results

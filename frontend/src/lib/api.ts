@@ -151,6 +151,8 @@ export const testNewsSelectors = (data: {
   date_selector?: string;
   render_mode?: string;
 }) => api.post("/news-sources/test-selectors", data);
+export const testNewsRss = (data: { category_url: string }) =>
+  api.post("/news-sources/test-rss", data);
 export const listNewsArticles = (sourceId: number, limit = 20) =>
   api.get(`/news-sources/${sourceId}/articles`, { params: { limit } });
 

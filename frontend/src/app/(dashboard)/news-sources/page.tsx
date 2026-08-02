@@ -12,6 +12,7 @@ import {
   scrapeNewsSourceNow,
   testNewsListSelector,
   testNewsSelectors,
+  testNewsRss,
   listNewsArticles,
 } from "@/lib/api";
 import { CaptionCriteriaEditor } from "@/components/CaptionCriteriaEditor";
@@ -24,10 +25,10 @@ type NewsSource = {
   scrape_interval_minutes: number;
   max_age_days: number;
   render_mode: string;
-  article_list_selector: string;
+  article_list_selector: string | null;
   article_link_attribute: string;
-  title_selector: string;
-  content_selector: string;
+  title_selector: string | null;
+  content_selector: string | null;
   image_selector: string | null;
   date_selector: string | null;
   last_scraped_at: string | null;
@@ -97,6 +98,17 @@ export default function NewsSourcesPage() {
   const [listTesting, setListTesting] = useState(false);
   const [listResult, setListResult] = useState<{ link_count: number; links: string[] } | null>(null);
 
+  // RSS feed tester state (render_mode="rss")
+  const [rssTesting, setRssTesting] = useState(false);
+  const [rssResult, setRssResult] = useState<{
+    item_count: number;
+    items: {
+      url: string; title: string; content_length: number; content_preview: string;
+      image_url: string | null; published_at: string | null; errors: string[];
+    }[];
+  } | null>(null);
+  const [rssError, setRssError] = useState<string | null>(null);
+
   function set(field: string, value: unknown) {
     setForm((f) => ({ ...f, [field]: value }));
   }
@@ -107,6 +119,8 @@ export default function NewsSourcesPage() {
     setTestResult(null);
     setListResult(null);
     setTestError(null);
+    setRssResult(null);
+    setRssError(null);
     setShowForm(true);
   }
 
@@ -118,10 +132,10 @@ export default function NewsSourcesPage() {
       scrape_interval_minutes: s.scrape_interval_minutes,
       max_age_days: s.max_age_days,
       render_mode: s.render_mode,
-      article_list_selector: s.article_list_selector,
+      article_list_selector: s.article_list_selector ?? "",
       article_link_attribute: s.article_link_attribute,
-      title_selector: s.title_selector,
-      content_selector: s.content_selector,
+      title_selector: s.title_selector ?? "",
+      content_selector: s.content_selector ?? "",
       image_selector: s.image_selector ?? "",
       date_selector: s.date_selector ?? "",
       caption_tone: s.caption_tone ?? "",
@@ -135,12 +149,18 @@ export default function NewsSourcesPage() {
     setTestResult(null);
     setListResult(null);
     setTestError(null);
+    setRssResult(null);
+    setRssError(null);
     setShowForm(true);
   }
 
   async function handleSave() {
-    if (!form.name || !form.category_url || !form.article_list_selector || !form.title_selector || !form.content_selector) {
-      alert("Name, category URL, list selector, title selector and content selector are required.");
+    if (!form.name || !form.category_url) {
+      alert("Name and category URL are required.");
+      return;
+    }
+    if (form.render_mode !== "rss" && (!form.article_list_selector || !form.title_selector || !form.content_selector)) {
+      alert("List selector, title selector and content selector are required for static/JS render modes.");
       return;
     }
     setSaving(true);
@@ -244,6 +264,25 @@ export default function NewsSourcesPage() {
     }
   }
 
+  async function handleTestRss() {
+    if (!form.category_url) {
+      alert("Enter the feed URL in Category URL first.");
+      return;
+    }
+    setRssTesting(true);
+    setRssResult(null);
+    setRssError(null);
+    try {
+      const r = await testNewsRss({ category_url: form.category_url });
+      setRssResult(r.data);
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      setRssError(err.response?.data?.detail ?? "Test failed");
+    } finally {
+      setRssTesting(false);
+    }
+  }
+
   const inputCls = "input-rect py-2";
   const labelCls = "block text-xs font-semibold text-ink-80 mb-1";
 
@@ -304,14 +343,20 @@ export default function NewsSourcesPage() {
               <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Motosan MotoGP" />
             </div>
             <div>
-              <label className={labelCls}>Category URL</label>
-              <input className={inputCls} value={form.category_url} onChange={(e) => set("category_url", e.target.value)} placeholder="https://www.motosan.es/motogp" />
+              <label className={labelCls}>{form.render_mode === "rss" ? "Feed URL" : "Category URL"}</label>
+              <input
+                className={inputCls}
+                value={form.category_url}
+                onChange={(e) => set("category_url", e.target.value)}
+                placeholder={form.render_mode === "rss" ? "https://example.com/feed" : "https://www.motosan.es/motogp"}
+              />
             </div>
             <div>
               <label className={labelCls}>Render Mode</label>
               <select className={inputCls} value={form.render_mode} onChange={(e) => set("render_mode", e.target.value)}>
                 <option value="static">Static (fast, BeautifulSoup)</option>
                 <option value="js">JS-heavy (Playwright)</option>
+                <option value="rss">RSS Feed (no per-article fetch)</option>
               </select>
             </div>
             <div>
@@ -325,6 +370,44 @@ export default function NewsSourcesPage() {
             </div>
           </div>
 
+          {form.render_mode === "rss" ? (
+          <div className="border-t border-hairline pt-4">
+            <h3 className="text-sm font-bold text-ink mb-3">RSS Feed</h3>
+            <p className="text-xs text-ink-48 mb-3">
+              No selectors needed — title, content, image and date all come straight from the feed
+              (Feed URL above). Use this for sites whose article pages are bot-blocked but whose feed
+              isn&apos;t (feeds are meant for automated consumption).
+            </p>
+            <button
+              onClick={handleTestRss}
+              disabled={rssTesting || !form.category_url}
+              className="btn btn-secondary flex items-center gap-2"
+            >
+              {rssTesting ? <Icon icon="svg-spinners:ring-resize" width={14} /> : <Icon icon="solar:test-tube-bold-duotone" width={14} />}
+              Test RSS Feed
+            </button>
+            {rssError && (
+              <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{rssError}</p>
+            )}
+            {rssResult && (
+              <div className="mt-3 rounded-lg bg-parchment border border-hairline p-3 text-xs text-ink-80 space-y-3 max-h-96 overflow-y-auto">
+                <p className="font-semibold">{rssResult.item_count} item(s) found — first {Math.min(20, rssResult.items.length)}:</p>
+                {rssResult.items.map((it) => (
+                  <div key={it.url} className="border-t border-hairline pt-2 first:border-0 first:pt-0">
+                    <a href={it.url} target="_blank" rel="noreferrer" className="font-semibold text-primary-main hover:underline block truncate">
+                      {it.title || <em className="text-red-600">— no title —</em>}
+                    </a>
+                    <p className="text-ink-48 mt-0.5">{it.content_length} chars{it.published_at ? ` · ${new Date(it.published_at).toLocaleString()}` : ""}</p>
+                    {it.errors.length > 0 && (
+                      <p className="text-amber-700">{it.errors.join("; ")}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          ) : (
+          <>
           <div className="border-t border-hairline pt-4">
             <h3 className="text-sm font-bold text-ink mb-3">Category Page — Article List</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
@@ -434,6 +517,8 @@ export default function NewsSourcesPage() {
               )}
             </div>
           </div>
+          </>
+          )}
 
           <div className="border-t border-hairline pt-4">
             <h3 className="text-sm font-semibold text-ink mb-2">Caption Criteria (this source)</h3>

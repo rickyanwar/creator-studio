@@ -8,6 +8,11 @@ from app.database import Base
 class RenderMode(str, enum.Enum):
     static = "static"  # plain HTTP fetch + BeautifulSoup
     js = "js"          # Playwright headless render for JS-heavy sites
+    rss = "rss"        # category_url is an RSS/Atom feed — no per-article fetch,
+                        # no CSS selectors; title/content/image/date all come
+                        # straight from the feed items (see news_scraper.extract_rss_items).
+                        # For sites whose article pages are bot-blocked but whose
+                        # feed isn't (feeds are meant for automated consumption).
 
 
 class NewsSource(Base):
@@ -29,11 +34,11 @@ class NewsSource(Base):
         server_default="static",
     )
 
-    # ── Per-site CSS selector config ──
-    article_list_selector = Column(String(256), nullable=False)
+    # ── Per-site CSS selector config — unused/NULL for render_mode="rss" ──
+    article_list_selector = Column(String(256), nullable=True)
     article_link_attribute = Column(String(64), nullable=False, server_default="href")
-    title_selector = Column(String(256), nullable=False)
-    content_selector = Column(String(256), nullable=False)
+    title_selector = Column(String(256), nullable=True)
+    content_selector = Column(String(256), nullable=True)
     image_selector = Column(String(256), nullable=True)
     date_selector = Column(String(256), nullable=True)
 
