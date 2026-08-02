@@ -14,15 +14,18 @@ WIB = pytz.timezone("Asia/Jakarta")
 
 _RETRY_BACKOFF = [300, 900, 2700]  # 5/15/45 minutes
 
-# Minimum gap between consecutive posts on the SAME fanpage (seconds) — 10 to
-# 20 minutes, randomized per post. Separate from fan_out.py/news_copywriter.py's
-# stagger, which only spaces the SAME content across DIFFERENT fanpages; this
-# is what stops one fanpage's own feed from getting several unrelated posts
-# in a burst (e.g. a source scrape returning 5 new articles at once).
-_MIN_POST_GAP_SECONDS = 600
-_MAX_POST_GAP_SECONDS = 1200
+# Gap between consecutive posts on the SAME fanpage (seconds) — randomized
+# per post over a wide 5-35 min band (not a tight 10-20 min one) so the
+# interval sequence itself doesn't read as a bot's suspiciously-consistent
+# spacing. Separate from fan_out.py/news_copywriter.py's stagger, which only
+# spaces the SAME content across DIFFERENT fanpages; this is what stops one
+# fanpage's own feed from getting several unrelated posts in a burst (e.g. a
+# source scrape returning 5 new articles at once). Average (~20 min) still
+# comfortably clears _DEFAULT_DAILY_LIMIT posts within a day's non-sleep hours.
+_MIN_POST_GAP_SECONDS = 300
+_MAX_POST_GAP_SECONDS = 2100
 
-_DEFAULT_DAILY_LIMIT = 35
+_DEFAULT_DAILY_LIMIT = 45
 
 
 def _in_sleep_window(hour: int, start: int, end: int) -> bool:

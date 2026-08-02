@@ -42,7 +42,7 @@ class TargetFanpage(Base):
     # Max auto-publishes per WIB calendar day — beyond this, the next slot
     # rolls to the following day instead of continuing nonstop. A page that
     # never stops posting is itself a bot signal, independent of spacing.
-    publish_daily_limit = Column(Integer, default=35, nullable=False, server_default="35")
+    publish_daily_limit = Column(Integer, default=45, nullable=False, server_default="45")
 
     # ── Content modes (Feature 2) ─────────────────
     mode1_ig_repost_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
