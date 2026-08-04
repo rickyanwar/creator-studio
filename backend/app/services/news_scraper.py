@@ -294,11 +294,27 @@ def _soup_with_fallback(html: str, found: Callable[[BeautifulSoup], bool]) -> Be
     return BeautifulSoup(html, "html.parser")
 
 
+def _same_site(host_a: str, host_b: str) -> bool:
+    """Loose host comparison — ignores a leading 'www.' so
+    "speedweek.com" and "www.speedweek.com" count as the same site."""
+    strip = lambda h: h.lower().removeprefix("www.")
+    return strip(host_a) == strip(host_b)
+
+
 def extract_article_links(html: str, base_url: str, list_selector: str, link_attribute: str = "href") -> list[str]:
-    """Extract absolute, deduplicated article URLs from a category page."""
+    """Extract absolute, deduplicated article URLs from a category page.
+
+    Cross-domain links are dropped even if they match list_selector — a
+    category page's "article title" markup is sometimes reused for embedded
+    third-party content (confirmed live: speedweek.com's MotoGP page renders
+    a ServusTV video-livestream rail with the exact same `p[data-cp="title"]
+    a` structure as its own articles, so 14 of 50 matches were
+    servustv.com video links with no article to scrape at all).
+    """
     soup = _soup_with_fallback(html, lambda s: bool(s.select(list_selector)))
     links: list[str] = []
     seen: set[str] = set()
+    base_host = urlparse(base_url).netloc
 
     for el in soup.select(list_selector):
         # selector may target the <a> itself or a wrapper containing one
@@ -309,9 +325,13 @@ def extract_article_links(html: str, base_url: str, list_selector: str, link_att
         if not href:
             continue
         absolute = urljoin(base_url, href).split("#")[0]
-        if absolute not in seen and urlparse(absolute).scheme in ("http", "https"):
-            seen.add(absolute)
-            links.append(absolute)
+        parsed = urlparse(absolute)
+        if absolute in seen or parsed.scheme not in ("http", "https"):
+            continue
+        if not _same_site(parsed.netloc, base_host):
+            continue
+        seen.add(absolute)
+        links.append(absolute)
 
     return links
 
