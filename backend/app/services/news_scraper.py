@@ -111,6 +111,12 @@ class ExtractedArticle:
     # quietly instead of logging title_selector/content_selector "matched
     # nothing" as a scrape error, since there was never an article to match.
     skip_reason: str | None = None
+    # True when a title/content extraction failure is judged NOT transient
+    # (see _looks_like_bot_challenge) — callers may permanently stop
+    # retrying this URL. False (the default) means "retry it again next
+    # cycle" — the safe default for anything that might just be a one-off
+    # blip (WAF challenge, network hiccup, temporary site issue).
+    permanent_failure: bool = False
 
 
 # Cross-site signal that a page is video content rather than a text
@@ -125,6 +131,27 @@ _VIDEO_MARKERS = (".m3u8", "application/vnd.apple.mpegurl", "application/x-mpegu
 def _looks_like_video_page(html: str) -> bool:
     lowered = html.lower()
     return any(marker in lowered for marker in _VIDEO_MARKERS)
+
+
+# Common bot-challenge/anti-scraping page signals (AWS WAF, Cloudflare,
+# DataDome, generic "verify you're human" interstitials) — a title/content
+# extraction failure on one of these is a TRANSIENT symptom of that specific
+# fetch getting challenged, not a real template mismatch, and must not be
+# treated as a permanent give-up-on-this-URL signal (confirmed live:
+# Sportskeeda articles are sometimes served this way and succeed cleanly on
+# a later retry — see the AWS WAF CAPTCHA / relay-IP-reputation write-up).
+_BOT_CHALLENGE_MARKERS = (
+    "captcha-delivery.com", "geo.captcha-delivery.com",  # DataDome
+    "human verification", "verify you're not a robot", "verify you are human",
+    "checking your browser", "just a moment...",  # Cloudflare
+    "awswafcookiedomainlist", "awswafintegration",  # AWS WAF
+    "access denied",
+)
+
+
+def _looks_like_bot_challenge(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker in lowered for marker in _BOT_CHALLENGE_MARKERS)
 
 
 # dateutil's month names are English-only — sites with no machine-readable
@@ -393,6 +420,19 @@ def extract_article(
     # marker alone.
     if not result.title and not result.content and _looks_like_video_page(html):
         return ExtractedArticle(url=url, skip_reason="video content, not a text article")
+
+    # A genuine title/content miss (confirmed live on a RacingNews365 URL: a
+    # thin duplicate/"Most read" fallback page with no article body at all —
+    # not a template change, just a broken page on their end) should stop
+    # being retried forever instead of re-failing — and re-logging the same
+    # error — on every future cycle. But NOT when the page itself looks like
+    # a bot challenge (AWS WAF/Cloudflare/DataDome interstitial): that's this
+    # ONE fetch attempt getting blocked, not the URL being unscrapable, and
+    # the next attempt (different relay/proxy pick, or the challenge cooling
+    # down) can very plausibly succeed — permanently giving up after a single
+    # challenged fetch would silently lose real content.
+    if result.errors and not _looks_like_bot_challenge(html):
+        result.permanent_failure = True
 
     if image_selector:
         img_el = soup.select_one(image_selector)

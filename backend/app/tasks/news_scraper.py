@@ -186,6 +186,34 @@ def _collect_rss_items(engine, source):
     return new_items, len(items), None
 
 
+def _save_failed_article(db, source, extracted, reason: str) -> None:
+    """Persist a stub row (status=skipped) for a URL that was genuinely
+    fetched and attempted but couldn't be extracted (e.g. a duplicate/thin
+    page with no real article body — confirmed live on a RacingNews365 URL
+    that renders as a bare "Most read" grid, no content-fields container at
+    all). Without this, a permanently-broken URL is never saved, so it keeps
+    matching the category page's link list and gets retried — and re-logged
+    as a scrape error — on every single future cycle forever. Saving it
+    (even with empty title/content, which the NOT NULL columns tolerate)
+    makes it match the same existing-URL dedup check a successful scrape
+    uses, so it naturally stops being retried after this one attempt."""
+    from sqlalchemy.exc import IntegrityError
+    from app.models.scraped_articles import ScrapedArticle, ArticleStatus
+
+    stub = ScrapedArticle(
+        news_source_id=source.id,
+        article_url=extracted.url,
+        scraped_title=extracted.title or "(extraction failed)",
+        scraped_content=extracted.content or "",
+        status=ArticleStatus.skipped,
+    )
+    db.add(stub)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()  # already saved by a concurrent run — fine, same outcome
+
+
 def _save_extracted_articles(db, source, extracted_list):
     """Shared save path for both scrape modes: dedup already done by the
     collectors above (against ALL matched links); max_age filtering and the
@@ -210,9 +238,13 @@ def _save_extracted_articles(db, source, extracted_list):
             continue
         if extracted.errors and (not extracted.title or not extracted.content):
             errors.append(f"{extracted.url}: {'; '.join(extracted.errors)}")
+            if extracted.permanent_failure:
+                _save_failed_article(db, source, extracted, "; ".join(extracted.errors))
             continue
         if not extracted.title or not extracted.content:
             errors.append(f"{extracted.url}: missing {'title' if not extracted.title else 'content'}")
+            if extracted.permanent_failure:
+                _save_failed_article(db, source, extracted, "missing title/content")
             continue
 
         # Unknown publish date (selector/meta missing or unparseable) fails
