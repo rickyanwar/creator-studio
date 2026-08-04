@@ -106,6 +106,25 @@ class ExtractedArticle:
     date_text: str | None = None
     published_at: datetime | None = None  # best-effort parse of date_text
     errors: list[str] = field(default_factory=list)
+    # Set when this URL was recognized as video content, not a text article
+    # (see extract_article's HLS-marker check) — callers should drop it
+    # quietly instead of logging title_selector/content_selector "matched
+    # nothing" as a scrape error, since there was never an article to match.
+    skip_reason: str | None = None
+
+
+# Cross-site signal that a page is video content rather than a text
+# article — HLS.js/video-player streaming markers, not tied to any one
+# site's own class naming (confirmed on Sportskeeda: a "match prediction"
+# listing that's actually a video embed has no <video> tag in the static
+# HTML — the player is built client-side — but always references an .m3u8
+# manifest and declares the standard HLS mime type).
+_VIDEO_MARKERS = (".m3u8", "application/vnd.apple.mpegurl", "application/x-mpegurl")
+
+
+def _looks_like_video_page(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker in lowered for marker in _VIDEO_MARKERS)
 
 
 # dateutil's month names are English-only — sites with no machine-readable
@@ -366,6 +385,14 @@ def extract_article(
         result.content = "\n\n".join(paragraphs) if paragraphs else content_el.get_text(" ", strip=True)
     else:
         result.errors.append(f"content_selector matched nothing: {content_selector!r}")
+
+    # Reclassify as "video, not an article" only once BOTH title and content
+    # genuinely found nothing — an article that legitimately has real text
+    # plus an embedded video clip (common on motorsport sites) must still be
+    # scraped normally, so this can't be a blanket upfront check on the
+    # marker alone.
+    if not result.title and not result.content and _looks_like_video_page(html):
+        return ExtractedArticle(url=url, skip_reason="video content, not a text article")
 
     if image_selector:
         img_el = soup.select_one(image_selector)

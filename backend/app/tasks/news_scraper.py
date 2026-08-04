@@ -199,6 +199,15 @@ def _save_extracted_articles(db, source, extracted_list):
     max_age = timedelta(days=source.max_age_days)
 
     for extracted in extracted_list:
+        if extracted.skip_reason:
+            # Video content etc. — never had an article to extract, so this
+            # isn't a scrape failure and shouldn't show up as one. Not saved
+            # as a ScrapedArticle either (title/content are NOT NULL and
+            # there's genuinely nothing to put there), so a video URL still
+            # already-scraped this cycle will naturally stop being re-matched
+            # once it rotates off the category page's own recent-items list.
+            logger.info("News scraper: skipping %s — %s", extracted.url, extracted.skip_reason)
+            continue
         if extracted.errors and (not extracted.title or not extracted.content):
             errors.append(f"{extracted.url}: {'; '.join(extracted.errors)}")
             continue
