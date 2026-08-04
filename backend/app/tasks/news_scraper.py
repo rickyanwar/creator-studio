@@ -77,9 +77,18 @@ def scrape_source(self, source_id: int):
             return
 
         if not extracted_list:
-            source.last_scrape_error = "no articles found"
+            # Not an error: the collectors only reach here after successfully
+            # fetching the category page/feed and matching links/items — this
+            # branch means every one of them is already in scraped_articles,
+            # i.e. nothing NEW got published since the last check. For an
+            # hourly-interval source that's routine, not a failure, and
+            # shouldn't be surfaced as one — a source can otherwise flip
+            # between "fine" and "error" every cycle purely based on whether
+            # anything happened to publish that hour, which reads as a
+            # persistent scraper problem when the scraper is actually healthy.
+            source.last_scrape_error = None
             db.commit()
-            logger.warning("News scraper: source %d found no articles", source_id)
+            logger.info("News scraper: source %d — no new articles since last check (%d links/items seen)", source_id, link_count)
             return
 
         saved, skipped_old, errors = _save_extracted_articles(db, source, extracted_list)
