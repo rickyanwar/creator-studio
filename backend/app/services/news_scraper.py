@@ -16,7 +16,9 @@ before it fails or comes back blocked:
 """
 
 import logging
+import re
 import urllib.robotparser
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
@@ -347,6 +349,44 @@ def _same_site(host_a: str, host_b: str) -> bool:
     return strip(host_a) == strip(host_b)
 
 
+def _infer_article_path_prefix(links: list[str], min_links: int = 5, min_ratio: float = 0.6) -> str | None:
+    """Common leading two path segments shared by most selector-matched
+    links, e.g. '/a/motogp/' for speedweek.com/a/motogp/<slug> URLs. Used
+    to recognise other same-shaped article URLs that exist only inside
+    embedded client-hydration JSON, never as real <a> tags in the static
+    HTML (see extract_article_links's Astro-island note). Returns None
+    when there isn't enough signal (too few links, or no consistent shape)
+    to trust the heuristic."""
+    if len(links) < min_links:
+        return None
+    prefixes = []
+    for u in links:
+        parts = urlparse(u).path.split("/")
+        if len(parts) > 3 and parts[1] and parts[2]:
+            prefixes.append(f"/{parts[1]}/{parts[2]}/")
+    if not prefixes:
+        return None
+    prefix, count = Counter(prefixes).most_common(1)[0]
+    if count / len(links) < min_ratio:
+        return None
+    return prefix
+
+
+def _extract_embedded_link_candidates(html: str, prefix: str) -> set[str]:
+    """Scan the raw page — including any embedded JSON/hydration payloads,
+    not just parsed DOM elements — for other path strings sharing prefix.
+    Catches article links that only exist inside a client-hydrated widget
+    (e.g. an Astro/React island's serialized props) and never appear as
+    real <a> tags in the static response at all (confirmed live:
+    speedweek.com's MotoGP "Top News" hero widget ships its 3-4 links only
+    as JSON inside an <astro-island> props blob — a plain CSS selector on
+    the static HTML can't see them, and render_mode="js" doesn't help
+    either since the plain fetch already succeeds with a 200, so the
+    Playwright fallback never triggers)."""
+    pattern = re.compile(r'["\'](' + re.escape(prefix) + r'[a-zA-Z0-9\-_/]+)["\']')
+    return set(pattern.findall(html))
+
+
 def extract_article_links(html: str, base_url: str, list_selector: str, link_attribute: str = "href") -> list[str]:
     """Extract absolute, deduplicated article URLs from a category page.
 
@@ -378,6 +418,17 @@ def extract_article_links(html: str, base_url: str, list_selector: str, link_att
             continue
         seen.add(absolute)
         links.append(absolute)
+
+    # Supplement with same-shaped article paths hidden in embedded JSON —
+    # see _extract_embedded_link_candidates.
+    prefix = _infer_article_path_prefix(links)
+    if prefix:
+        for path in _extract_embedded_link_candidates(html, prefix):
+            absolute = urljoin(base_url, path).split("#")[0]
+            if absolute in seen:
+                continue
+            seen.add(absolute)
+            links.append(absolute)
 
     return links
 
