@@ -32,11 +32,13 @@ def sync_fanpages_from_repliz():
         now = datetime.now(timezone.utc)
         updated = 0
         created = 0
+        seen_repliz_ids = set()
 
         for account in accounts:
             repliz_id = account.get("_id") or account.get("id")
             if not repliz_id:
                 continue
+            seen_repliz_ids.add(repliz_id)
 
             existing = db.query(TargetFanpage).filter_by(repliz_account_id=repliz_id).first()
 
@@ -69,8 +71,28 @@ def sync_fanpages_from_repliz():
                 db.add(new_page)
                 created += 1
 
+        # A fanpage whose repliz_account_id isn't in this response at all (not
+        # just marked isConnected:false, but absent — the account was removed
+        # from Repliz entirely) previously stayed stuck at whatever
+        # is_connected value it last had, sometimes for months, with no
+        # "Disconnected" badge in the UI. Mark those disconnected too.
+        missing = (
+            db.query(TargetFanpage)
+            .filter(
+                TargetFanpage.repliz_account_id.isnot(None),
+                TargetFanpage.repliz_account_id.notin_(seen_repliz_ids),
+                TargetFanpage.is_connected == True,
+            )
+            .all()
+        ) if seen_repliz_ids else []
+        for fp in missing:
+            fp.is_connected = False
+            fp.last_synced_at = now
+            logger.warning("Fanpage '%s' is missing from Repliz entirely — marking DISCONNECTED", fp.name)
+        updated += len(missing)
+
         db.commit()
-        logger.info("Fanpage sync: %d created, %d updated", created, updated)
+        logger.info("Fanpage sync: %d created, %d updated (%d newly marked disconnected — missing from Repliz)", created, updated, len(missing))
 
     except Exception as exc:
         db.rollback()
