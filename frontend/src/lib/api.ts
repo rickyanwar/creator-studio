@@ -85,10 +85,12 @@ export const listJobs = (params?: {
   offset?: number;
 }) => api.get("/publish-jobs", { params });
 export const getJobStats = (params?: { fanpage_id?: number }) =>
-  api.get<{ published_today: number; published_this_month: number; failed_total: number }>(
-    "/publish-jobs/stats",
-    { params }
-  );
+  api.get<{
+    published_today: number;
+    published_this_month: number;
+    published_total: number;
+    failed_total: number;
+  }>("/publish-jobs/stats", { params });
 export const updateJobCaption = (id: number, caption: string) =>
   api.put(`/publish-jobs/${id}/caption`, { caption });
 export const regenerateCaption = (id: number, provider?: string) =>

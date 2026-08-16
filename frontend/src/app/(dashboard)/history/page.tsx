@@ -299,6 +299,12 @@ export default function HistoryPage() {
                 {fanpageStats.published_this_month} this month
               </span>
             </div>
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(145,158,171,0.12)]">
+              <Icon icon="solar:layers-bold-duotone" width={15} className="text-text-secondary" />
+              <span className="text-sm font-semibold text-text-primary">
+                {fanpageStats.published_total} published total
+              </span>
+            </div>
             <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(255,86,48,0.08)]">
               <Icon icon="solar:close-circle-bold-duotone" width={15} className="text-[#FF5630]" />
               <span className="text-sm font-semibold text-[#FF5630]">

@@ -64,8 +64,8 @@ def job_stats(
     fanpage_id: Optional[int] = Query(None),
 ):
     """Summary counts for the History page's fanpage filter: today's/this
-    month's published count and the all-time failure count, scoped to one
-    fanpage (or across all fanpages when fanpage_id is omitted)."""
+    month's/all-time published count and the all-time failure count, scoped
+    to one fanpage (or across all fanpages when fanpage_id is omitted)."""
     from datetime import datetime, timezone
     from app.models.publish_jobs import PublishJob, PublishJobStatus
 
@@ -88,6 +88,7 @@ def job_stats(
             PublishJob.status == PublishJobStatus.published,
             PublishJob.published_at >= month_start,
         ),
+        "published_total": _count(PublishJob.status == PublishJobStatus.published),
         "failed_total": _count(PublishJob.status == PublishJobStatus.failed),
     }
 
