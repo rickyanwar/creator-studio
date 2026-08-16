@@ -13,6 +13,7 @@ from app.schemas.fanpage import (
     FanpageNewsSourceAdd, NewsSourceRef,
     PreviewNewsCopyRequest, PreviewNewsCopyResponse,
     FanpageSourceRecreateUpdate,
+    DiscussionTopicAdd, DiscussionTopicUpdate,
 )
 
 router = APIRouter(prefix="/fanpages", tags=["fanpages"])
@@ -66,6 +67,16 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
     out.news_sources = [
         NewsSourceRef(id=n.id, name=n.name, category_url=n.category_url) for n in news
     ]
+
+    from app.models.discussion_topics import DiscussionTopic
+    from app.schemas.fanpage import DiscussionTopicRef
+    topics = (
+        db.query(DiscussionTopic)
+        .filter_by(fanpage_id=fanpage_id)
+        .order_by(DiscussionTopic.id.asc())
+        .all()
+    )
+    out.discussion_topics = [DiscussionTopicRef.model_validate(t) for t in topics]
     return out
 
 
@@ -207,6 +218,65 @@ def remove_news_source_link(fanpage_id: int, news_source_id: int, db: DB, _: Cur
         raise HTTPException(status_code=404, detail="News source link not found")
 
     link.is_active = False
+    db.commit()
+    return {"ok": True}
+
+
+# ── Mode 4: evergreen discussion topics (per fanpage) ──
+
+@router.post("/{fanpage_id}/discussion-topics", status_code=status.HTTP_201_CREATED)
+def add_discussion_topic(fanpage_id: int, body: DiscussionTopicAdd, db: DB, _: CurrentUser):
+    from app.models.target_fanpages import TargetFanpage
+    from app.models.discussion_topics import DiscussionTopic
+
+    fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+    seed = (body.seed_text or "").strip()
+    if not seed:
+        raise HTTPException(status_code=400, detail="seed_text is required")
+
+    topic = DiscussionTopic(
+        fanpage_id=fanpage_id,
+        seed_text=seed,
+        subject_hint=(body.subject_hint or "").strip() or None,
+    )
+    db.add(topic)
+    db.commit()
+    db.refresh(topic)
+    from app.schemas.fanpage import DiscussionTopicRef
+    return DiscussionTopicRef.model_validate(topic)
+
+
+@router.put("/{fanpage_id}/discussion-topics/{topic_id}")
+def update_discussion_topic(fanpage_id: int, topic_id: int, body: DiscussionTopicUpdate, db: DB, _: CurrentUser):
+    from app.models.discussion_topics import DiscussionTopic
+
+    topic = db.query(DiscussionTopic).filter_by(id=topic_id, fanpage_id=fanpage_id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "seed_text" in data and data["seed_text"] is not None:
+        data["seed_text"] = data["seed_text"].strip()
+    if "subject_hint" in data:
+        data["subject_hint"] = (data["subject_hint"] or "").strip() or None
+    for field, value in data.items():
+        setattr(topic, field, value)
+    db.commit()
+    db.refresh(topic)
+    from app.schemas.fanpage import DiscussionTopicRef
+    return DiscussionTopicRef.model_validate(topic)
+
+
+@router.delete("/{fanpage_id}/discussion-topics/{topic_id}")
+def delete_discussion_topic(fanpage_id: int, topic_id: int, db: DB, _: CurrentUser):
+    from app.models.discussion_topics import DiscussionTopic
+
+    topic = db.query(DiscussionTopic).filter_by(id=topic_id, fanpage_id=fanpage_id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    db.delete(topic)
     db.commit()
     return {"ok": True}
 

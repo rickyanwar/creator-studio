@@ -149,8 +149,9 @@ def publish_job(self, job_id: int):
         job = db.query(PublishJob).filter_by(id=job_id).first()
 
         from app.models.publish_jobs import ContentType
-        # news_content and ig_recreate both publish a single rendered design PNG
-        if job.content_type in (ContentType.news_content, ContentType.ig_recreate):
+        # news_content, ig_recreate and discussion all publish a single rendered
+        # design PNG via the same path (design_image_url + ai_generated_caption).
+        if job.content_type in (ContentType.news_content, ContentType.ig_recreate, ContentType.discussion):
             _publish_news_job(db, job)
             return
 

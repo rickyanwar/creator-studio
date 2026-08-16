@@ -29,6 +29,7 @@ celery_app = Celery(
         "app.tasks.gallery_downloader",
         "app.tasks.news_copywriter",
         "app.tasks.design_renderer",
+        "app.tasks.discussion",
     ],
 )
 
@@ -78,6 +79,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.design_renderer.render_pending_designs",
         "schedule": 120,
         "options": {"expires": 110},
+    },
+    # Mode 4 discussion content: ticks every 30 min — self-throttles per fanpage
+    # to discussion_daily_count, paced across the 08:00–22:00 WIB window.
+    "generate-discussion-content": {
+        "task": "app.tasks.discussion.generate_discussion_content",
+        "schedule": 1800,
+        "options": {"expires": 1700},
     },
     # Status sync: every 5 minutes
     "sync-repliz-status": {

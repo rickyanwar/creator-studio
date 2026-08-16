@@ -19,8 +19,11 @@ import {
   previewNewsCopy,
   uploadWatermarkImage,
   deleteWatermarkImage,
+  addDiscussionTopic,
+  updateDiscussionTopic,
+  deleteDiscussionTopic,
 } from "@/lib/api";
-import type { FanpageDetail, IGSourceRef } from "@/lib/types";
+import type { FanpageDetail, IGSourceRef, DiscussionTopicRef } from "@/lib/types";
 import { Icon } from "@iconify/react";
 import { CaptionCriteriaEditor, captionFromSource, captionToPayload, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
 
@@ -300,7 +303,7 @@ export default function FanpageEditPage() {
     "gallery-niches-picker",
     () => listGalleryNiches().then((r) => r.data as string[])
   );
-  type TemplateRef = { id: number; name: string; is_default: boolean; category: "quote" | "news" | null; canvas_width: number; canvas_height: number };
+  type TemplateRef = { id: number; name: string; is_default: boolean; category: "quote" | "news" | "discussion" | null; canvas_width: number; canvas_height: number };
   const { data: allTemplates = [] } = useSWR<TemplateRef[]>(
     `templates-picker-${fanpageId}`,
     () => listTemplates(fanpageId).then((r) => r.data as TemplateRef[])
@@ -335,6 +338,40 @@ export default function FanpageEditPage() {
     } finally {
       setNewsPreviewLoading(false);
     }
+  }
+
+  // ── Mode 4 (discussion) evergreen-topic state ──
+  const [newTopicSeed, setNewTopicSeed] = useState("");
+  const [newTopicSubject, setNewTopicSubject] = useState("");
+  const [topicSaving, setTopicSaving] = useState(false);
+
+  async function handleAddTopic() {
+    if (!newTopicSeed.trim()) return;
+    setTopicSaving(true);
+    try {
+      await addDiscussionTopic(fanpageId, {
+        seed_text: newTopicSeed.trim(),
+        subject_hint: newTopicSubject.trim() || undefined,
+      });
+      setNewTopicSeed("");
+      setNewTopicSubject("");
+      const fresh = await mutate();
+      if (fresh) setForm((prev) => ({ ...prev, discussion_topics: fresh.discussion_topics }));
+    } finally {
+      setTopicSaving(false);
+    }
+  }
+
+  async function handleToggleTopic(t: DiscussionTopicRef) {
+    await updateDiscussionTopic(fanpageId, t.id, { is_active: !t.is_active });
+    const fresh = await mutate();
+    if (fresh) setForm((prev) => ({ ...prev, discussion_topics: fresh.discussion_topics }));
+  }
+
+  async function handleDeleteTopic(topicId: number) {
+    await deleteDiscussionTopic(fanpageId, topicId);
+    const fresh = await mutate();
+    if (fresh) setForm((prev) => ({ ...prev, discussion_topics: fresh.discussion_topics }));
   }
 
   useEffect(() => {
@@ -460,7 +497,8 @@ export default function FanpageEditPage() {
           <p className="text-xs text-text-secondary mt-0.5">
             One setting per category, used everywhere that category of content is rendered — news designs from
             Mode 2 (news-scrape) and Mode 3 (IG recreate, classified &quot;news&quot;) share the News Template;
-            Mode 3 posts classified &quot;quote&quot; use the Quote Template.
+            Mode 3 posts classified &quot;quote&quot; use the Quote Template; Mode 4 debate cards use the
+            Discussion Template. If no Discussion Template is set, it falls back to the News Template.
           </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -472,7 +510,7 @@ export default function FanpageEditPage() {
               onChange={(e) => set("default_quote_template_id", e.target.value ? parseInt(e.target.value) : null)}
             >
               <option value="">— shared default (quote-tagged) —</option>
-              {allTemplates.filter((t) => t.category !== "news").map((t) => (
+              {allTemplates.filter((t) => t.category !== "news" && t.category !== "discussion").map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
                 </option>
@@ -487,7 +525,22 @@ export default function FanpageEditPage() {
               onChange={(e) => set("default_news_template_id", e.target.value ? parseInt(e.target.value) : null)}
             >
               <option value="">— shared default (news-tagged) —</option>
-              {allTemplates.filter((t) => t.category !== "quote").map((t) => (
+              {allTemplates.filter((t) => t.category !== "quote" && t.category !== "discussion").map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Discussion Template (Mode 4)</label>
+            <select
+              className="input w-full"
+              value={(form.default_discussion_template_id as number | null) ?? ""}
+              onChange={(e) => set("default_discussion_template_id", e.target.value ? parseInt(e.target.value) : null)}
+            >
+              <option value="">— shared default (discussion-tagged) —</option>
+              {allTemplates.filter((t) => t.category === "discussion" || t.category == null).map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
                 </option>
@@ -1134,6 +1187,165 @@ export default function FanpageEditPage() {
                 </div>
               )}
             </div>
+          </>
+        )}
+      </section>
+
+      {/* ── Section: Mode 4 — Discussion Content ───────── */}
+      <section className="card space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-text-primary">Mode 4: Discussion Content</h2>
+            <p className="text-xs text-text-secondary mt-0.5">
+              AI debate / hot-take cards (badge + big question + athlete photo, no yes/no buttons).
+              Quota-driven — a set number per day, spread across 08:00–22:00 WIB.
+            </p>
+          </div>
+          <button
+            onClick={() => set("discussion_enabled", !form.discussion_enabled)}
+            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+              form.discussion_enabled ? "bg-primary-main" : "bg-hairline"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                form.discussion_enabled ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
+
+        {form.discussion_enabled && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="label">Cards per day</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  className="input w-full"
+                  value={(form.discussion_daily_count as number | undefined) ?? 2}
+                  onChange={(e) => set("discussion_daily_count", parseInt(e.target.value || "0"))}
+                />
+                <p className="text-[11px] text-text-secondary mt-1">How many discussion cards to generate each day.</p>
+              </div>
+              <div>
+                <label className="label">Topic source</label>
+                <select
+                  className="input w-full"
+                  value={(form.discussion_topic_mode as string | undefined) ?? "both"}
+                  onChange={(e) => set("discussion_topic_mode", e.target.value)}
+                >
+                  <option value="both">Both (news first, evergreen fallback)</option>
+                  <option value="news">News only (from subscribed sources)</option>
+                  <option value="evergreen">Evergreen only (your topics below)</option>
+                </select>
+                <p className="text-[11px] text-text-secondary mt-1">
+                  News = fact-grounded from Mode 2 sources. Evergreen = timeless opinion debates you seed below.
+                </p>
+              </div>
+            </div>
+
+            {/* Publish mode */}
+            <div>
+              <label className="label">Discussion Publish Mode</label>
+              <div className="flex gap-4">
+                {(["manual_review", "auto"] as const).map((mode) => (
+                  <label key={mode} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="discussion-publish-mode"
+                      value={mode}
+                      checked={form.discussion_publish_mode === mode}
+                      onChange={() => set("discussion_publish_mode", mode)}
+                      className="accent-primary-main"
+                    />
+                    <span className="text-sm text-text-primary">
+                      {mode === "auto" ? "Auto-publish" : "Manual Review (open in designer)"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Evergreen topics */}
+            <div className="border-t border-hairline pt-4 space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Evergreen Debate Topics</p>
+                <p className="text-[11px] text-text-secondary mt-0.5">
+                  Timeless, opinion-only debate seeds (e.g. &quot;Is Senna the GOAT?&quot;). Used when the topic
+                  source is Evergreen or Both. Rotated least-recently-used. Keep them subjective — no hard
+                  facts/stats (the AI can get those wrong without a fresh article).
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                {((form.discussion_topics as DiscussionTopicRef[] | undefined) ?? []).length === 0 ? (
+                  <p className="text-[11px] text-text-secondary italic">No evergreen topics yet.</p>
+                ) : (
+                  ((form.discussion_topics as DiscussionTopicRef[] | undefined) ?? []).map((t) => (
+                    <div
+                      key={t.id}
+                      className="flex items-center gap-3 p-2.5 rounded-lg border border-hairline"
+                    >
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded accent-primary-main shrink-0"
+                        checked={t.is_active}
+                        onChange={() => handleToggleTopic(t)}
+                        title={t.is_active ? "Active — click to pause" : "Paused — click to activate"}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-sm leading-tight ${t.is_active ? "text-text-primary" : "text-text-secondary line-through"}`}>
+                          {t.seed_text}
+                        </p>
+                        <p className="text-[11px] text-text-secondary truncate">
+                          {t.subject_hint ? `photo: ${t.subject_hint} · ` : ""}used {t.times_used}×
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteTopic(t.id)}
+                        className="text-text-secondary hover:text-error-main transition-colors shrink-0"
+                        title="Delete topic"
+                      >
+                        <Icon icon="solar:trash-bin-trash-bold-duotone" width={18} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder="Debate seed, e.g. Is Ayrton Senna the GOAT?"
+                  value={newTopicSeed}
+                  onChange={(e) => setNewTopicSeed(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddTopic()}
+                />
+                <input
+                  type="text"
+                  className="input sm:w-48"
+                  placeholder="Photo subject (optional)"
+                  value={newTopicSubject}
+                  onChange={(e) => setNewTopicSubject(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddTopic()}
+                />
+                <button
+                  onClick={handleAddTopic}
+                  disabled={topicSaving || !newTopicSeed.trim()}
+                  className="btn-primary shrink-0 disabled:opacity-50"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-text-secondary">
+              Uses the Discussion Template (set above) and the Mode 2 caption criteria for the Facebook post text.
+            </p>
           </>
         )}
       </section>

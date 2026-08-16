@@ -55,6 +55,13 @@ class FanpageBase(BaseModel):
     ig_recreate_split_template_id: Optional[int] = None
     design_expand: bool = False
 
+    # ── Mode 4: Discussion / hot-take content ──
+    discussion_enabled: bool = False
+    discussion_publish_mode: PublishMode = PublishMode.manual_review
+    discussion_daily_count: int = 2
+    discussion_topic_mode: str = "both"  # "news" | "evergreen" | "both"
+    default_discussion_template_id: Optional[int] = None
+
 
 class FanpageUpdate(FanpageBase):
     pass
@@ -108,10 +115,33 @@ class NewsSourceRef(BaseModel):
     category_url: str
 
 
+class DiscussionTopicRef(BaseModel):
+    id: int
+    seed_text: str
+    subject_hint: Optional[str] = None
+    is_active: bool = True
+    times_used: int = 0
+    last_used_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class DiscussionTopicAdd(BaseModel):
+    seed_text: str
+    subject_hint: Optional[str] = None
+
+
+class DiscussionTopicUpdate(BaseModel):
+    seed_text: Optional[str] = None
+    subject_hint: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class FanpageDetailOut(FanpageOut):
     ig_sources: list[IGSourceRef] = []
     ig_source_usernames: list[str] = []  # kept for backward compat
     news_sources: list[NewsSourceRef] = []
+    discussion_topics: list[DiscussionTopicRef] = []
 
 
 class FanpageNewsSourceAdd(BaseModel):

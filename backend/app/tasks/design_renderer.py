@@ -305,6 +305,159 @@ def render_design(self, job_id: int):
         db.close()
 
 
+@celery_app.task(name="app.tasks.design_renderer.render_discussion", bind=True, max_retries=2)
+def render_discussion(self, job_id: int):
+    """Render a Mode 4 discussion card: a full-canvas subject photo + the
+    "DISCUSSION:/HOT TAKE:" label badge + the big debate line (job.design_title).
+
+    Fields carried on the job by the discussion scheduler (see
+    app/tasks/discussion.py): design_title=question, design_subtitle=label,
+    design_caption=subject name (used here only to source the photo — the
+    discussion template has no subtitle/caption slot, so neither renders as
+    body text). Image sourcing is gallery-first (by subject) then a fresh Getty
+    search — the same cascade Mode 2/3 use, minus the article/topic tiers a
+    discussion card doesn't have.
+    """
+    db = SessionLocal()
+    try:
+        from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
+        from app.models.target_fanpages import TargetFanpage, PublishMode
+
+        claimed = (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.id == job_id,
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.discussion,
+            )
+            .update({"status": PublishJobStatus.rendering}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
+            return
+
+        job = db.query(PublishJob).filter_by(id=job_id).first()
+        fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+        if not fanpage:
+            job.status = PublishJobStatus.pending_design
+            job.last_error = "fanpage missing"
+            db.commit()
+            return
+
+        from app.services.design_images import (
+            resolve_template, find_gallery_datauri, fetch_subject_datauri,
+            prepare_design_images, focus_points_for, watermark_datauri,
+        )
+
+        template = resolve_template(db, "discussion", fanpage=fanpage, job_template_id=job.design_template_id)
+        if not template or not template.template_json:
+            # Graceful fallback: no discussion template set/seeded → use the
+            # fanpage's News template (already-existing or its configured
+            # default). The label badge won't render on a news layout, but the
+            # card still goes out (photo + big question) instead of stalling.
+            template = resolve_template(db, "news", fanpage=fanpage)
+            if template and template.template_json:
+                logger.info("Discussion: job %d — no discussion template, falling back to News template %d", job_id, template.id)
+        if not template or not template.template_json:
+            job.status = PublishJobStatus.pending_design
+            job.last_error = "no discussion or news template configured — create one in Template Designer"
+            db.commit()
+            logger.warning("Discussion: job %d has no usable template", job_id)
+            return
+
+        # ── Image: gallery-first by subject, fresh Getty fallback ──
+        subject = (job.design_caption or "").strip()
+        niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+        image_src, gallery_image, image_marker = None, None, None
+        if subject:
+            try:
+                uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face")
+                if uri:
+                    image_src, gallery_image, image_marker = uri, gi, (f"gallery:{gi.id}" if gi else "gallery")
+            except Exception as exc:
+                logger.warning("Discussion: gallery lookup failed for %r (job %d): %s", subject, job_id, exc)
+            if not image_src:
+                try:
+                    uri = fetch_subject_datauri(subject, "face", niche)
+                    if uri:
+                        image_src, image_marker = uri, "search"
+                except Exception as exc:
+                    logger.warning("Discussion: Getty fetch failed for %r (job %d): %s", subject, job_id, exc)
+
+        if not image_src:
+            job.status = PublishJobStatus.pending_design
+            job.last_error = f"needs manual image — no photo found for subject {subject!r}"
+            db.commit()
+            logger.warning("Discussion: job %d needs a manual image (subject=%r)", job_id, subject)
+            return
+
+        # Single-slot template → smart secondary sourcing off; still honour expand.
+        template_json, image_srcs = prepare_design_images(
+            db, template.template_json, template.canvas_width,
+            job.design_title or "", niche, image_src,
+            main_path=gallery_image.local_path if gallery_image else None,
+            smart=False, expand=bool(fanpage.design_expand),
+        )
+
+        resp = httpx.post(
+            f"{settings.renderer_url.rstrip('/')}/render",
+            json={
+                "template_json": template_json,
+                "width": template.canvas_width,
+                "height": template.canvas_height,
+                "title": job.design_title or "",
+                "label": job.design_subtitle or "DISCUSSION",
+                "watermark": fanpage.watermark_text or "",
+                "watermark_image": watermark_datauri(fanpage),
+                "image_srcs": image_srcs,
+                "focus_points": focus_points_for(image_srcs),
+                "scale": settings.design_render_scale,
+            },
+            timeout=_RENDER_TIMEOUT,
+        )
+        resp.raise_for_status()
+        png_bytes = resp.content
+
+        designs_dir = Path(settings.storage_base_path) / "designs"
+        designs_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"job_{job.id}_{uuid.uuid4().hex[:8]}.png"
+        (designs_dir / filename).write_bytes(png_bytes)
+
+        job.design_image_path = str(designs_dir / filename)
+        job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
+        job.design_template_id = template.id
+        job.last_image_marker = image_marker
+        job.status = PublishJobStatus.pending_publish
+        job.last_error = None
+        if gallery_image:
+            gallery_image.is_used = True
+        db.commit()
+
+        logger.info("Discussion: job %d rendered → %s (%d bytes)", job_id, filename, len(png_bytes))
+
+        if fanpage.discussion_publish_mode == PublishMode.auto:
+            from app.tasks.publisher import publish_job
+            publish_job.delay(job.id)
+
+    except Exception as exc:
+        from celery.exceptions import Retry, MaxRetriesExceededError
+        if isinstance(exc, (Retry, MaxRetriesExceededError)):
+            raise
+        db.rollback()
+        logger.error("Discussion: job %d render failed: %s", job_id, exc, exc_info=True)
+        try:
+            from app.models.publish_jobs import PublishJob, PublishJobStatus
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            if job and job.status == PublishJobStatus.rendering:
+                job.status = PublishJobStatus.pending_design
+                db.commit()
+        except Exception:
+            db.rollback()
+        raise self.retry(exc=exc, countdown=180)
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.tasks.design_renderer.render_pending_designs")
 def render_pending_designs():
     """Sweep: auto-render pending_design jobs for fanpages in auto mode."""
@@ -326,7 +479,26 @@ def render_pending_designs():
         )
         for (job_id,) in jobs:
             render_design.delay(job_id)
-        if jobs:
-            logger.info("Design sweep: dispatched %d pending renders", len(jobs))
+
+        # Mode 4 discussion cards for auto-mode fanpages (own publish-mode field).
+        djobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.discussion,
+                TargetFanpage.discussion_publish_mode == PublishMode.auto,
+            )
+            .limit(10)
+            .all()
+        )
+        for (job_id,) in djobs:
+            render_discussion.delay(job_id)
+
+        if jobs or djobs:
+            logger.info(
+                "Design sweep: dispatched %d news + %d discussion renders",
+                len(jobs), len(djobs),
+            )
     finally:
         db.close()

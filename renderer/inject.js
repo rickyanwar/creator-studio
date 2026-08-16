@@ -10,7 +10,7 @@
  * the same placeholder contract for its live preload — keep the two in sync.
  */
 window.renderTemplate = function renderTemplate(args) {
-  const { templateJson, width, height, title, subtitle, caption, watermark, watermarkImage, imageSrc, imageSrcs, focusPoints } = args;
+  const { templateJson, width, height, title, subtitle, caption, label, watermark, watermarkImage, imageSrc, imageSrcs, focusPoints } = args;
 
   // Watermark drawn on EVERY design (branding), top-left, on top of everything.
   // An IMAGE (logo) takes priority when provided; otherwise a semi-transparent
@@ -137,6 +137,64 @@ window.renderTemplate = function renderTemplate(args) {
             titleObj.set("width", fixedW);   // undo fabric's word-overflow auto-expand
             titleObj.initDimensions();
           }
+          // Opt-in line-count preference (e.g. Mode 4 discussion cards, user
+          // request 2026-08-16): the height-fit loop above only shrinks until
+          // the block fits its box, which for a tall box can happily settle
+          // on 4+ comfortably-sized lines. When titlePreferMaxLines is set:
+          //   1) try to reach `target` (2) lines, but not below
+          //      titlePreferredMinFontSize — a readability floor, so a
+          //      2-line result isn't forced smaller than necessary just to
+          //      hit the number.
+          //   2) if `target` isn't reachable within that floor, fall back to
+          //      the largest font that gave <= titleFallbackMaxLines (3)
+          //      lines during the descent above.
+          //   3) if the text STILL doesn't fit `fallback` lines (or overflows
+          //      the box) even at the readable floor, keep shrinking past
+          //      it — all the way to the absolute floor (12) if truly
+          //      needed. The text is NEVER truncated (explicit, repeated
+          //      user requirement, 2026-08-16 round 3: full text always,
+          //      shrink the font instead, never let it touch the badge above
+          //      or spill outside the canvas) — a smaller-than-ideal font on
+          //      an unrealistically long headline is preferable to losing
+          //      words. This mirrors the ORIGINAL height/width-fit loop
+          //      above (same floor, same maxHeight/fixedW bounds), so the
+          //      result is guaranteed to stay inside the box — which is what
+          //      keeps it off the badge (positioned relative to this box's
+          //      final top, computed further down) and off the canvas edge.
+          //      A real AI question (capped at ~90 chars by the copywriter)
+          //      fits within `fallback` lines well above the readable floor
+          //      and never reaches this last tier.
+          if (titleObj.titlePreferMaxLines) {
+            const target = titleObj.titlePreferMaxLines;
+            const fallback = titleObj.titleFallbackMaxLines || target + 1;
+            const preferredMinFontSize = titleObj.titlePreferredMinFontSize || 55;
+            let fallbackFontSize = null;
+            while (titleObj.textLines.length > target && titleObj.fontSize > preferredMinFontSize) {
+              if (titleObj.textLines.length <= fallback && fallbackFontSize === null) {
+                fallbackFontSize = titleObj.fontSize;
+              }
+              titleObj.set("fontSize", titleObj.fontSize - 2);
+              titleObj.set("width", fixedW);
+              titleObj.initDimensions();
+            }
+            if (titleObj.textLines.length > target) {
+              titleObj.set("fontSize", fallbackFontSize !== null ? fallbackFontSize : preferredMinFontSize);
+              titleObj.set("width", fixedW);
+              titleObj.initDimensions();
+            }
+            // Last-resort tier: never truncate. Keep the FULL text and keep
+            // shrinking past the readable floor until it both (a) fits
+            // <= fallback lines and (b) stays within the box's designed
+            // area — same guarantee the original fit loop above provides.
+            while (
+              (titleObj.textLines.length > fallback || titleObj.height > maxHeight || titleObj.width > fixedW + 1) &&
+              titleObj.fontSize > 12
+            ) {
+              titleObj.set("fontSize", titleObj.fontSize - 2);
+              titleObj.set("width", fixedW);
+              titleObj.initDimensions();
+            }
+          }
           titleObj.set("width", fixedW);
           const accent = titleObj.titleAccentColor;
           if (accent && parsed.ranges.length) {
@@ -167,6 +225,92 @@ window.renderTemplate = function renderTemplate(args) {
           if (typeof titleObj.titleAnchorBottom === "number") {
             titleObj.set("top", titleObj.titleAnchorBottom - titleObj.height);
           }
+        }
+
+        // ── Label badge (Mode 4 discussion cards): "DISCUSSION" / "HOT TAKE" ──
+        // A coloured pill above the big question, no trailing colon. Default
+        // colours (overridable per template via labelBadge.discussionFill/
+        // hotFill and label.discussionColor/hotColor) match both labels to
+        // the SAME highlight colour as the rest of the template — Mode 4's
+        // badge is meant to read as "this template's accent", not a
+        // DISCUSSION-vs-HOT-TAKE colour code. The pill hugs the text width
+        // and is anchored a fixed gap above the (already positioned) headline.
+        const labelObj = objects.find((o) => o.placeholderRole === "label");
+        const labelBadge = objects.find((o) => o.placeholderRole === "labelBadge");
+        if (labelObj && label) {
+          const isHot = /HOT/i.test(String(label));
+          const mode = labelObj.titleTextTransform || "uppercase";
+          // No trailing colon (user preference, 2026-08-16) — just "DISCUSSION" / "HOT TAKE".
+          const raw = String(label).trim().replace(/:$/, "");
+          labelObj.set({ text: applyCase(raw, mode), styles: {} });
+          labelObj.initDimensions();
+          labelObj.set("fill", isHot
+            ? (labelObj.hotColor || "#ffffff")
+            : (labelObj.discussionColor || "#111111"));
+
+          const padX = typeof labelObj.labelPadX === "number" ? labelObj.labelPadX : 24;
+          const padY = typeof labelObj.labelPadY === "number" ? labelObj.labelPadY : 12;
+          const gap = typeof labelObj.labelGap === "number" ? labelObj.labelGap : 26;
+
+          // Anchor above the headline when there is one; otherwise leave the
+          // label where the template placed it.
+          if (titleObj && title) {
+            const bottom = titleObj.top - gap;
+            labelObj.set("top", bottom - labelObj.height);
+          }
+          // Centered layouts (textAlign "center") centre the pill + text on the
+          // canvas; otherwise the pill hugs the label's fixed left edge.
+          // NOTE: labelObj.calcTextWidth() (Fabric.js Textbox) was observed to
+          // under-measure "HOT TAKE:" by roughly half (returned ~235px for
+          // text that renders ~450px wide at this font/size) — resizing the
+          // box to that bogus narrower width then re-triggered Fabric's own
+          // word-wrap, splitting "HOT TAKE:" onto two lines that overlapped
+          // the headline below (found 2026-08-16 testing the Yellow/Green
+          // discussion variants; "DISCUSSION:" never showed it because a
+          // single unbreakable word can't wrap regardless of box width).
+          // Measure with a plain Canvas 2D context instead — exact, and
+          // independent of whatever Fabric.js quirk causes the mismeasure.
+          const measureCtx = document.createElement("canvas").getContext("2d");
+          measureCtx.font = `${labelObj.fontWeight || 400} ${labelObj.fontSize}px ${labelObj.fontFamily || "sans-serif"}`;
+          const textW = Math.ceil(measureCtx.measureText(labelObj.text).width) + 2; // +2px rounding safety
+          const centered = labelObj.textAlign === "center";
+          if (centered) labelObj.set({ width: textW, left: Math.round(width / 2 - textW / 2) });
+          if (labelObj.textLines.length > 1) {
+            // Still wrapped despite the accurate measurement (e.g. an
+            // unusually long custom label) — widen to the box's original
+            // capacity and re-measure/re-center rather than let it wrap.
+            labelObj.set({ width: 700 });
+            labelObj.initDimensions();
+          }
+          if (labelBadge) {
+            const badgeW = textW + padX * 2;
+            const badgeH = labelObj.height + padY * 2;
+            // Rounded corners. labelRadius on the badge (px) overrides; -1 or
+            // "pill" → fully rounded (radius = half the height); default is a
+            // tasteful rounded corner scaled to the badge height.
+            let radius;
+            if (labelBadge.labelRadius === "pill" || labelBadge.labelRadius === -1) {
+              radius = badgeH / 2;
+            } else if (typeof labelBadge.labelRadius === "number") {
+              radius = labelBadge.labelRadius;
+            } else {
+              radius = Math.round(badgeH * 0.28);
+            }
+            labelBadge.set({
+              fill: isHot
+                ? (labelBadge.hotFill || "#8e1b1b")
+                : (labelBadge.discussionFill || "#f2c300"),
+              width: badgeW,
+              height: badgeH,
+              rx: radius,
+              ry: radius,
+              left: centered ? Math.round(width / 2 - badgeW / 2) : labelObj.left - padX,
+              top: labelObj.top - padY,
+            });
+          }
+        } else if (labelObj) {
+          labelObj.set({ visible: false });
+          if (labelBadge) labelBadge.set({ visible: false });
         }
 
         // ── Subtitle placeholder (smaller caption; same **red** word markers) ──

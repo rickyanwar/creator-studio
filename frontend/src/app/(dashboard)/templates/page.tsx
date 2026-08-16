@@ -14,7 +14,7 @@ type Template = {
   canvas_width: number;
   canvas_height: number;
   is_default: boolean;
-  category: "quote" | "news" | null;
+  category: "quote" | "news" | "discussion" | null;
   has_content: boolean;
   template_json: unknown | null;
   updated_at: string | null;
@@ -132,6 +132,7 @@ export default function TemplatesPage() {
                 <option value="">Uncategorized</option>
                 <option value="quote">Quote</option>
                 <option value="news">News</option>
+                <option value="discussion">Discussion</option>
               </select>
               <p className="text-[10px] text-ink-48 mt-1">Which fanpage &quot;Default Design Template&quot; picker this shows up in.</p>
             </div>
@@ -253,12 +254,15 @@ export default function TemplatesPage() {
                       ? "bg-purple-50 text-purple-700 border-purple-200"
                       : t.category === "news"
                       ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : t.category === "discussion"
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
                       : "bg-parchment text-ink-48 border-hairline"
                   }`}
                 >
                   <option value="">Uncategorized</option>
                   <option value="quote">Quote</option>
                   <option value="news">News</option>
+                  <option value="discussion">Discussion</option>
                 </select>
               </div>
             </div>

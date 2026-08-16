@@ -65,6 +65,7 @@ class TargetFanpage(Base):
     #    different UI sections, for what's conceptually the same 2 choices).
     default_quote_template_id = Column(Integer, nullable=True)  # FK to design_templates
     default_news_template_id = Column(Integer, nullable=True)   # FK to design_templates
+    default_discussion_template_id = Column(Integer, nullable=True)  # FK to design_templates (Mode 4)
 
     # ── Mode 2 caption criteria (separate set from Mode 1) ──
     mode2_caption_tone = Column(String(64), default="informative", nullable=False, server_default="informative")
@@ -97,6 +98,20 @@ class TargetFanpage(Base):
     # Photos that already fit are left untouched. News + IG-recreate designs.
     design_expand = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # ── Mode 4: Discussion / hot-take content ─────
+    # AI-generated debate cards (badge + big question + athlete photo, no
+    # yes/no buttons). Topics come from freshly scraped news (fact-grounded),
+    # curated evergreen seeds (DiscussionTopic, opinion-only), or both. Unlike
+    # Mode 2 (one card per incoming article), Mode 4 is quota-driven: the
+    # scheduler creates up to discussion_daily_count cards per WIB day, spread
+    # across the day (see app/tasks/discussion.py). Captions reuse the Mode 2
+    # caption criteria (mode2_caption_*) to avoid a duplicate field set.
+    discussion_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    discussion_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
+    discussion_daily_count = Column(Integer, default=2, nullable=False, server_default="2")
+    # "news" | "evergreen" | "both" — where the scheduler draws topics from.
+    discussion_topic_mode = Column(String(16), default="both", nullable=False, server_default="both")
+
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
     caption_language = Column(String(8), default="en", nullable=False)
@@ -121,4 +136,5 @@ class TargetFanpage(Base):
     # ── Relationships ─────────────────────────────
     source_links = relationship("FanpageSource", back_populates="fanpage", cascade="all, delete-orphan")
     news_source_links = relationship("FanpageNewsSource", back_populates="fanpage", cascade="all, delete-orphan")
+    discussion_topics = relationship("DiscussionTopic", back_populates="fanpage", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="fanpage")

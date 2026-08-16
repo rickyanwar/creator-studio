@@ -22,6 +22,7 @@ class ContentType(str, enum.Enum):
     ig_repost = "ig_repost"
     news_content = "news_content"
     ig_recreate = "ig_recreate"  # IG post classified + rebuilt on a quote/news template
+    discussion = "discussion"    # Mode 4: AI-generated debate/hot-take card (news- or evergreen-seeded)
 
 
 class AIProvider(str, enum.Enum):

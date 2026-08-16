@@ -349,7 +349,7 @@
           "top": 760,
           "fill": "#fefefc",
           "left": 90,
-          "text": "\u201c\u201d",
+          "text": "“”",
           "type": "textbox",
           "width": 900,
           "height": 90,
@@ -411,7 +411,7 @@
     "category": "quote"
   },
   {
-    "name": "News Highlight \u2014 Green \u00b7 Center (Quote overlay)",
+    "name": "News Highlight — Green · Center (Quote overlay)",
     "canvas_width": 1080,
     "canvas_height": 1350,
     "is_default": true,
@@ -595,7 +595,7 @@
           "top": 1035,
           "fill": "#e8402c",
           "left": 90,
-          "text": "\u201c\u201d",
+          "text": "“”",
           "type": "textbox",
           "width": 900,
           "height": 45,
@@ -761,7 +761,7 @@
           "top": 760,
           "fill": "#fefefc",
           "left": 90,
-          "text": "\u201c\u201d",
+          "text": "“”",
           "type": "textbox",
           "width": 900,
           "height": 90,
@@ -836,7 +836,7 @@
     "category": "quote"
   },
   {
-    "name": "News Highlight \u2014 Red \u00b7 Left",
+    "name": "News Highlight — Red · Left",
     "canvas_width": 1080,
     "canvas_height": 1350,
     "is_default": true,
@@ -942,7 +942,7 @@
     "category": "news"
   },
   {
-    "name": "News Highlight \u2014 Red \u00b7 Center",
+    "name": "News Highlight — Red · Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
     "is_default": true,
@@ -1048,7 +1048,7 @@
     "category": "news"
   },
   {
-    "name": "News Highlight \u2014 Yellow \u00b7 Left",
+    "name": "News Highlight — Yellow · Left",
     "canvas_width": 1080,
     "canvas_height": 1350,
     "is_default": true,
@@ -1154,7 +1154,7 @@
     "category": "news"
   },
   {
-    "name": "News Highlight \u2014 Green \u00b7 Left",
+    "name": "News Highlight — Green · Left",
     "canvas_width": 1080,
     "canvas_height": 1350,
     "is_default": true,
@@ -1260,7 +1260,7 @@
     "category": "news"
   },
   {
-    "name": "News Highlight \u2014 Yellow \u00b7 Center",
+    "name": "News Highlight — Yellow · Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
     "is_default": true,
@@ -1366,7 +1366,7 @@
     "category": "news"
   },
   {
-    "name": "News Highlight \u2014 Green \u00b7 Center",
+    "name": "News Highlight — Green · Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
     "is_default": true,
@@ -1470,5 +1470,727 @@
       "title_layer_index": 2
     },
     "category": "news"
+  },
+  {
+    "name": "Discussion Card — Red · Center",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": true,
+    "template_json": {
+      "objects": [
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image"
+        },
+        {
+          "top": 800,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "x2": 0,
+              "y1": 0,
+              "y2": 550
+            },
+            "colorStops": [
+              {
+                "color": "rgba(0,0,0,0)",
+                "offset": 0
+              },
+              {
+                "color": "rgba(0,0,0,0.65)",
+                "offset": 0.13
+              },
+              {
+                "color": "rgba(0,0,0,0.9)",
+                "offset": 0.32
+              },
+              {
+                "color": "rgba(0,0,0,0.99)",
+                "offset": 0.55
+              },
+              {
+                "color": "rgba(0,0,0,1)",
+                "offset": 1
+              }
+            ],
+            "gradientUnits": "pixels"
+          },
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 550,
+          "scrimPad": 230,
+          "selectable": false,
+          "placeholderRole": "scrim"
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "labelBadge",
+          "left": 360,
+          "top": 520,
+          "width": 360,
+          "height": 78,
+          "fill": "#ec3324",
+          "rx": 20,
+          "ry": 20,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "discussionFill": "#ec3324",
+          "hotFill": "#ec3324"
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "label",
+          "left": 380,
+          "top": 532,
+          "width": 700,
+          "height": 56,
+          "text": "DISCUSSION",
+          "fontSize": 44,
+          "fontFamily": "Poppins",
+          "fontWeight": 800,
+          "textAlign": "center",
+          "fill": "#ffffff",
+          "lineHeight": 1.0,
+          "charSpacing": 0,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "styles": {},
+          "titleTextTransform": "uppercase",
+          "discussionColor": "#ffffff",
+          "hotColor": "#ffffff",
+          "labelGap": 55
+        },
+        {
+          "top": 600,
+          "fill": "#ffffff",
+          "left": 56,
+          "text": "Headline",
+          "type": "textbox",
+          "width": 980,
+          "height": 580,
+          "fontSize": 190,
+          "textAlign": "center",
+          "fontFamily": "Poppins",
+          "fontWeight": 900,
+          "lineHeight": 0.9,
+          "charSpacing": -26,
+          "placeholderRole": "title",
+          "titleAccentColor": "#ec3324",
+          "titleAnchorBottom": 1270,
+          "titleTextTransform": "uppercase",
+          "titlePreferMaxLines": 2,
+          "titleFallbackMaxLines": 3,
+          "titlePreferredMinFontSize": 55
+        }
+      ],
+      "version": "5.3.0"
+    },
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 4,
+      "has_label": true,
+      "label_layer_index": 3
+    },
+    "category": "discussion"
+  },
+  {
+    "name": "Discussion Card — Yellow · Center",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": true,
+    "template_json": {
+      "objects": [
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image"
+        },
+        {
+          "top": 800,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "x2": 0,
+              "y1": 0,
+              "y2": 550
+            },
+            "colorStops": [
+              {
+                "color": "rgba(0,0,0,0)",
+                "offset": 0
+              },
+              {
+                "color": "rgba(0,0,0,0.65)",
+                "offset": 0.13
+              },
+              {
+                "color": "rgba(0,0,0,0.9)",
+                "offset": 0.32
+              },
+              {
+                "color": "rgba(0,0,0,0.99)",
+                "offset": 0.55
+              },
+              {
+                "color": "rgba(0,0,0,1)",
+                "offset": 1
+              }
+            ],
+            "gradientUnits": "pixels"
+          },
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 550,
+          "scrimPad": 230,
+          "selectable": false,
+          "placeholderRole": "scrim"
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "labelBadge",
+          "left": 360,
+          "top": 520,
+          "width": 360,
+          "height": 78,
+          "fill": "#ffcb2b",
+          "rx": 20,
+          "ry": 20,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "discussionFill": "#ffcb2b",
+          "hotFill": "#ffcb2b"
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "label",
+          "left": 380,
+          "top": 532,
+          "width": 700,
+          "height": 56,
+          "text": "DISCUSSION",
+          "fontSize": 44,
+          "fontFamily": "Poppins",
+          "fontWeight": 800,
+          "textAlign": "center",
+          "fill": "#111111",
+          "lineHeight": 1.0,
+          "charSpacing": 0,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "styles": {},
+          "titleTextTransform": "uppercase",
+          "discussionColor": "#111111",
+          "hotColor": "#111111",
+          "labelGap": 55
+        },
+        {
+          "top": 600,
+          "fill": "#ffffff",
+          "left": 56,
+          "text": "Headline",
+          "type": "textbox",
+          "width": 980,
+          "height": 580,
+          "fontSize": 190,
+          "textAlign": "center",
+          "fontFamily": "Poppins",
+          "fontWeight": 900,
+          "lineHeight": 0.9,
+          "charSpacing": -26,
+          "placeholderRole": "title",
+          "titleAccentColor": "#ffcb2b",
+          "titleAnchorBottom": 1270,
+          "titleTextTransform": "uppercase",
+          "titlePreferMaxLines": 2,
+          "titleFallbackMaxLines": 3,
+          "titlePreferredMinFontSize": 55
+        }
+      ],
+      "version": "5.3.0"
+    },
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 4,
+      "has_label": true,
+      "label_layer_index": 3
+    },
+    "category": "discussion"
+  },
+  {
+    "name": "Discussion Card — Green · Center",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": true,
+    "template_json": {
+      "objects": [
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image"
+        },
+        {
+          "top": 800,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "x2": 0,
+              "y1": 0,
+              "y2": 550
+            },
+            "colorStops": [
+              {
+                "color": "rgba(0,0,0,0)",
+                "offset": 0
+              },
+              {
+                "color": "rgba(0,0,0,0.65)",
+                "offset": 0.13
+              },
+              {
+                "color": "rgba(0,0,0,0.9)",
+                "offset": 0.32
+              },
+              {
+                "color": "rgba(0,0,0,0.99)",
+                "offset": 0.55
+              },
+              {
+                "color": "rgba(0,0,0,1)",
+                "offset": 1
+              }
+            ],
+            "gradientUnits": "pixels"
+          },
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 550,
+          "scrimPad": 230,
+          "selectable": false,
+          "placeholderRole": "scrim"
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "labelBadge",
+          "left": 360,
+          "top": 520,
+          "width": 360,
+          "height": 78,
+          "fill": "#5af905",
+          "rx": 20,
+          "ry": 20,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "discussionFill": "#5af905",
+          "hotFill": "#5af905"
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "label",
+          "left": 380,
+          "top": 532,
+          "width": 700,
+          "height": 56,
+          "text": "DISCUSSION",
+          "fontSize": 44,
+          "fontFamily": "Poppins",
+          "fontWeight": 800,
+          "textAlign": "center",
+          "fill": "#111111",
+          "lineHeight": 1.0,
+          "charSpacing": 0,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "styles": {},
+          "titleTextTransform": "uppercase",
+          "discussionColor": "#111111",
+          "hotColor": "#111111",
+          "labelGap": 55
+        },
+        {
+          "top": 600,
+          "fill": "#ffffff",
+          "left": 56,
+          "text": "Headline",
+          "type": "textbox",
+          "width": 980,
+          "height": 580,
+          "fontSize": 190,
+          "textAlign": "center",
+          "fontFamily": "Poppins",
+          "fontWeight": 900,
+          "lineHeight": 0.9,
+          "charSpacing": -26,
+          "placeholderRole": "title",
+          "titleAccentColor": "#5af905",
+          "titleAnchorBottom": 1270,
+          "titleTextTransform": "uppercase",
+          "titlePreferMaxLines": 2,
+          "titleFallbackMaxLines": 3,
+          "titlePreferredMinFontSize": 55
+        }
+      ],
+      "version": "5.3.0"
+    },
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 4,
+      "has_label": true,
+      "label_layer_index": 3
+    },
+    "category": "discussion"
+  },
+  {
+    "name": "Discussion Card — Green · Center (Quote overlay)",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": true,
+    "template_json": {
+      "objects": [
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image"
+        },
+        {
+          "top": 450,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "x2": 0,
+              "y1": 0,
+              "y2": 900
+            },
+            "colorStops": [
+              {
+                "color": "rgba(49,52,67,0)",
+                "offset": 0
+              },
+              {
+                "color": "rgba(49,52,67,0.08)",
+                "offset": 0.28
+              },
+              {
+                "color": "rgba(49,52,67,0.22)",
+                "offset": 0.42
+              },
+              {
+                "color": "rgba(49,52,67,0.5)",
+                "offset": 0.55
+              },
+              {
+                "color": "rgba(49,52,67,0.85)",
+                "offset": 0.66
+              },
+              {
+                "color": "rgba(49,52,67,0.98)",
+                "offset": 0.75
+              },
+              {
+                "color": "rgba(49,52,67,1)",
+                "offset": 0.85
+              },
+              {
+                "color": "rgba(49,52,67,1)",
+                "offset": 1
+              }
+            ],
+            "gradientUnits": "pixels"
+          },
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 900,
+          "scrimPad": 700,
+          "selectable": false,
+          "placeholderRole": "scrim"
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "labelBadge",
+          "left": 360,
+          "top": 520,
+          "width": 360,
+          "height": 78,
+          "fill": "#c7f754",
+          "rx": 20,
+          "ry": 20,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "discussionFill": "#c7f754",
+          "hotFill": "#c7f754"
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "label",
+          "left": 380,
+          "top": 532,
+          "width": 700,
+          "height": 56,
+          "text": "DISCUSSION",
+          "fontSize": 44,
+          "fontFamily": "Poppins",
+          "fontWeight": 800,
+          "textAlign": "center",
+          "fill": "#111111",
+          "lineHeight": 1.0,
+          "charSpacing": 0,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "styles": {},
+          "titleTextTransform": "uppercase",
+          "discussionColor": "#111111",
+          "hotColor": "#111111",
+          "labelGap": 55
+        },
+        {
+          "top": 600,
+          "fill": "#fefefc",
+          "left": 56,
+          "text": "Headline",
+          "type": "textbox",
+          "width": 980,
+          "height": 580,
+          "fontSize": 190,
+          "textAlign": "center",
+          "fontFamily": "Tusker Grotesk",
+          "fontWeight": 600,
+          "lineHeight": 0.95,
+          "charSpacing": -15,
+          "placeholderRole": "title",
+          "titleAccentColor": "#c7f754",
+          "titleAnchorBottom": 1270,
+          "titleTextTransform": "uppercase",
+          "titlePreferMaxLines": 2,
+          "titleFallbackMaxLines": 3,
+          "titlePreferredMinFontSize": 55
+        }
+      ],
+      "version": "5.3.0"
+    },
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 4,
+      "has_label": true,
+      "label_layer_index": 3
+    },
+    "category": "discussion"
+  },
+  {
+    "name": "Quote Card — Green · Center",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": true,
+    "template_json": {
+      "objects": [
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image"
+        },
+        {
+          "top": 800,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "x2": 0,
+              "y1": 0,
+              "y2": 550
+            },
+            "colorStops": [
+              {
+                "color": "rgba(0,0,0,0)",
+                "offset": 0
+              },
+              {
+                "color": "rgba(0,0,0,0.65)",
+                "offset": 0.13
+              },
+              {
+                "color": "rgba(0,0,0,0.9)",
+                "offset": 0.32
+              },
+              {
+                "color": "rgba(0,0,0,0.99)",
+                "offset": 0.55
+              },
+              {
+                "color": "rgba(0,0,0,1)",
+                "offset": 1
+              }
+            ],
+            "gradientUnits": "pixels"
+          },
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 550,
+          "scrimPad": 230,
+          "selectable": false,
+          "placeholderRole": "scrim"
+        },
+        {
+          "top": 480,
+          "fill": "#5af905",
+          "left": 56,
+          "text": "“”",
+          "type": "textbox",
+          "width": 980,
+          "height": 45,
+          "fontSize": 280,
+          "textAlign": "center",
+          "fontFamily": "Anton",
+          "fontWeight": 600,
+          "lineHeight": 1,
+          "charSpacing": -30,
+          "placeholderRole": "quoteIcon",
+          "iconGap": -220,
+          "selectable": false
+        },
+        {
+          "top": 600,
+          "fill": "#ffffff",
+          "left": 56,
+          "text": "Headline",
+          "type": "textbox",
+          "width": 980,
+          "height": 580,
+          "fontSize": 190,
+          "textAlign": "center",
+          "fontFamily": "Poppins",
+          "fontWeight": 900,
+          "lineHeight": 0.9,
+          "charSpacing": -26,
+          "placeholderRole": "title",
+          "titleAccentColor": "#5af905",
+          "titleAnchorBottom": 1270,
+          "titleTextTransform": "uppercase",
+          "titlePreferMaxLines": 2,
+          "titleFallbackMaxLines": 3,
+          "titlePreferredMinFontSize": 55
+        }
+      ],
+      "version": "5.3.0"
+    },
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 3
+    },
+    "category": "quote"
   }
 ]
