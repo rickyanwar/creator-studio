@@ -59,16 +59,26 @@ def _vision_datauri(image_bytes: bytes, max_dim: int = 768, quality: int = 78) -
         return "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode()
 
 
-# Vision-capable 9Router models, in fallback order — verified against real
-# photos (some models on this router silently ignore images, or hallucinate a
-# description instead of reading the actual photo; see config.py for details).
-# The configured nine_router_vision_model is tried first; these are the
-# backups if it errors or comes back empty.
+# Vision-capable 9Router models, in fallback order. The configured
+# nine_router_vision_model is tried first; these are the backups if it errors
+# or comes back empty. Deliberately long (user preference, 2026-08-16: use as
+# many 9Router fallbacks as possible — these are background Celery tasks, so
+# trading worst-case latency for reliability is the right call) — but NOT a
+# free-for-all: see config.py's nine_router_vision_model comment for models
+# confirmed broken for vision on this router and deliberately excluded here —
+# "ag/claude-*" silently ignores the image ("no photo attached"), plain
+# "ag/gemini-3-flash" (not the "-agent" variant) replies empty,
+# "ag/gemini-3.1-flash-image" hallucinates a description instead of reading
+# the photo. Everything below is either verified (the first four) or the same
+# Gemini-flash family/architecture as the verified ones.
 _VISION_MODEL_FALLBACKS = [
     "ag/gemini-3.5-flash-low",
     "ag/gemini-pro-agent",
     "ag/gemini-3.1-pro-low",
     "ag/gemini-3-flash-agent",
+    "ag/gemini-3.6-flash-medium",
+    "ag/gemini-3.6-flash-low",
+    "ag/gemini-3.5-flash-extra-low",
 ]
 
 
@@ -81,12 +91,22 @@ def _vision_models() -> list[str]:
     return [m for m in ordered if m and not (m in seen or seen.add(m))]
 
 
-def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0) -> str:
+def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, context: str = "vision") -> str:
     """Chat-completion call against 9Router, trying each vision model in
     `_vision_models()` in turn until one returns a non-empty response — a
     single flaky/overloaded/image-blind model shouldn't take down image
-    selection. Raises the last error if every model fails."""
+    selection. Raises the last error if every model fails.
+
+    Some fallback models (e.g. ag/gemini-3.5-flash-low) always run hidden
+    reasoning that counts against max_tokens — the same failure mode that
+    silently truncated Mode 2's news copy (see ai_caption.py's
+    ROUTER_MODEL_FALLBACKS). Callers should budget generously for it.
+    Every outcome is logged to ai_copy_events so vision's health shows up on
+    the dashboard alongside the text-copy success rate.
+    """
+    import time
     from openai import OpenAI  # type: ignore
+    from app.services.ai_caption import log_ai_copy_event
     from app.services.nine_router import get_nine_router_config
 
     cfg = get_nine_router_config()
@@ -96,8 +116,11 @@ def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0) 
     # SDK's default for way too long, and that cost repeats per fallback model.
     client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router", timeout=30.0)
 
+    t0 = time.monotonic()
+    models_tried: list[str] = []
     last_exc: Exception | None = None
     for model in _vision_models():
+        models_tried.append(model)
         try:
             c = client.chat.completions.create(
                 model=model,
@@ -108,11 +131,25 @@ def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0) 
             )
             text = (c.choices[0].message.content or "").strip()
             if text:
+                log_ai_copy_event(
+                    context=context, fanpage_id=None, article_id=None,
+                    outcome="success" if len(models_tried) == 1 else "recovered",
+                    models_tried=models_tried, final_provider=model,
+                    error_message=str(last_exc) if last_exc else None,
+                    latency_ms=int((time.monotonic() - t0) * 1000),
+                )
                 return text
             last_exc = RuntimeError(f"{model}: empty response")
         except Exception as exc:
             last_exc = exc
             logger.debug("vision model %s failed: %s", model, exc)
+
+    log_ai_copy_event(
+        context=context, fanpage_id=None, article_id=None, outcome="failed",
+        models_tried=models_tried, final_provider=None,
+        error_message=str(last_exc) if last_exc else "no vision models configured",
+        latency_ms=int((time.monotonic() - t0) * 1000),
+    )
     raise last_exc or RuntimeError("no vision models configured")
 
 
@@ -140,10 +177,11 @@ def resolve_template(db, category: str, fanpage=None, job_template_id: int | Non
     (is_default) template tagged with this category, fanpage-specific
     override preferred over global.
 
-    category: "quote" | "news". A "news"-category template serves both
-    Mode 2 news_content jobs and Mode 3 ig_recreate posts classified "news";
-    "quote" serves ig_recreate posts classified "quote" — one global pool
-    per category instead of 3 separate per-mode template fields."""
+    category: "quote" | "news" | "discussion". A "news"-category template serves
+    both Mode 2 news_content jobs and Mode 3 ig_recreate posts classified "news";
+    "quote" serves ig_recreate posts classified "quote"; "discussion" serves
+    Mode 4 debate cards — one global pool per category instead of separate
+    per-mode template fields."""
     from app.models.design_templates import DesignTemplate
 
     if job_template_id:
@@ -152,7 +190,10 @@ def resolve_template(db, category: str, fanpage=None, job_template_id: int | Non
             return t
 
     if fanpage is not None:
-        fp_field = "default_quote_template_id" if category == "quote" else "default_news_template_id"
+        fp_field = {
+            "quote": "default_quote_template_id",
+            "discussion": "default_discussion_template_id",
+        }.get(category, "default_news_template_id")
         fp_template_id = getattr(fanpage, fp_field, None)
         if fp_template_id:
             t = db.query(DesignTemplate).filter_by(id=fp_template_id).first()
@@ -507,7 +548,7 @@ def vision_focus_point(image_bytes: bytes) -> list | None:
             )},
             {"type": "image_url", "image_url": {"url": datauri}},
         ]
-        raw = _vision_chat(content, max_tokens=500).strip()
+        raw = _vision_chat(content, max_tokens=1500, context="vision_focus_point").strip()
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
             return None
@@ -555,13 +596,58 @@ def classify_image_type(image_bytes: bytes) -> str:
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
         ]
-        raw = _vision_chat(content, max_tokens=1500).upper()
+        raw = _vision_chat(content, max_tokens=1500, context="vision_classify_type").upper()
         for w in ("FACE", "ACTION", "OTHER"):
             if w in raw:
                 return w.lower()
     except Exception as exc:
         logger.warning("classify_image_type failed: %s", exc)
     return "other"
+
+
+def classify_and_gate_image(image_bytes: bytes, subject: str | None = None) -> tuple[str, bool]:
+    """Download-time vision call: label the photo (face/action/other) AND
+    judge whether it's actually usable as a design background — one vision
+    call doing both jobs (replaces classify_image_type on the download path)
+    so the quality gate doesn't cost a second call per image.
+
+    "Usable" rejects the obvious junk that slips through a keyword search —
+    generic crowd/stage/logo shots, screenshots, graphics/text overlays, or
+    photos where the subject is tiny/blurry/mostly obstructed — not a strict
+    editorial judgment call. Fails OPEN (label="other", usable=True) on any
+    error: a flaky vision call should reduce to today's behavior (unlabeled,
+    unfiltered), never block a download outright."""
+    try:
+        subject_line = f" The subject should be {subject}." if subject else ""
+        content = [
+            {"type": "text", "text": (
+                "This photo is a candidate for a sports/news graphic background."
+                f"{subject_line}\n"
+                '1) "label": ONE word — FACE (clear head/upper-body portrait), '
+                "ACTION (riding/driving/on track), or OTHER (anything else).\n"
+                '2) "usable": true/false — is this a real, reasonably sharp, '
+                "usable photo where the subject is clearly visible and not "
+                "mostly obstructed, cropped out? Reply false for a generic "
+                "crowd/stage/logo-only shot, a screenshot, a graphic with "
+                "text overlays, or a photo where the subject is tiny/blurry.\n"
+                'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", "usable": true|false}.'
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=1500, context="vision_download_gate")
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return "other", True
+        import json as _json
+        d = _json.loads(m.group(0))
+        label = str(d.get("label") or "OTHER").strip().upper()
+        if label not in ("FACE", "ACTION", "OTHER"):
+            label = "OTHER"
+        usable = bool(d.get("usable", True))
+        return label.lower(), usable
+    except Exception as exc:
+        logger.warning("classify_and_gate_image failed: %s", exc)
+        return "other", True
 
 
 def classify_closeup_match(image_bytes: bytes, criteria: str) -> dict:
@@ -585,7 +671,7 @@ def classify_closeup_match(image_bytes: bytes, criteria: str) -> dict:
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
         ]
-        raw = _vision_chat(content, max_tokens=500)
+        raw = _vision_chat(content, max_tokens=1500, context="vision_classify_closeup")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
             return {"match": True, "confidence": 0.0}
@@ -631,7 +717,7 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
             except Exception:
                 small_uri = uri
             content.append({"type": "image_url", "image_url": {"url": small_uri}})
-        raw = _vision_chat(content, max_tokens=1500)
+        raw = _vision_chat(content, max_tokens=1500, context="vision_pick_best")
         m = re.search(r"\d+", raw)
         idx = (int(m.group(0)) - 1) if m else 0
         return idx if 0 <= idx < len(candidates) else 0
@@ -663,7 +749,7 @@ def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> di
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
         ]
-        raw = _vision_chat(content, max_tokens=500)
+        raw = _vision_chat(content, max_tokens=1500, context="vision_verify_match")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
             return {"match": True, "confidence": 0.0}
@@ -675,22 +761,29 @@ def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> di
         return {"match": True, "confidence": 0.0}
 
 
-GALLERY_REUSE_COOLDOWN_DAYS = 2
+# A photo shouldn't reappear across a fanpage's feed too often (user
+# feedback, 2026-08-16: same image was showing up far too frequently at the
+# old 2-day cooldown). Randomized per pick within [MIN, MAX] rather than a
+# fixed constant, so reuse timing doesn't fall into a predictable cadence.
+GALLERY_REUSE_COOLDOWN_MIN_DAYS = 14
+GALLERY_REUSE_COOLDOWN_MAX_DAYS = 28
 
 
 def _eligible_rows(base_query, limit: int = 8):
     """Randomized candidate pool respecting the reuse cooldown: images never
-    used, or not used within GALLERY_REUSE_COOLDOWN_DAYS, come first (in
+    used, or not used within a randomized 14-28 day window, come first (in
     random order, not always the newest download) — the same photo shouldn't
     reappear every run. Falls back to the least-recently-used images if the
     cooldown-eligible pool is empty (small keyword pools shouldn't just stop
     producing images)."""
+    import random
     from datetime import datetime, timedelta
 
     from sqlalchemy import func
     from app.models.gallery import GalleryImage
 
-    cutoff = datetime.utcnow() - timedelta(days=GALLERY_REUSE_COOLDOWN_DAYS)
+    cooldown_days = random.randint(GALLERY_REUSE_COOLDOWN_MIN_DAYS, GALLERY_REUSE_COOLDOWN_MAX_DAYS)
+    cutoff = datetime.utcnow() - timedelta(days=cooldown_days)
     rows = (
         base_query.filter(
             (GalleryImage.last_used_at.is_(None)) | (GalleryImage.last_used_at < cutoff)

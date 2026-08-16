@@ -17,20 +17,58 @@ from app.config import get_settings
 
 _KEYWORD_INTERVAL_HOURS = 24
 
+# web/fetch is a paid call (jina-reader) — don't spend it on a keyword that's
+# already at capacity, and only spend it on a subject that's currently
+# newsworthy (mentioned in a recently scraped article) unless it's critically
+# under-stocked, so a quiet keyword doesn't get stuck at 0 forever. See
+# [[feedback-maximize-9router-fallbacks]]'s sibling lesson from 2026-08-16:
+# cost-consciousness here, reliability there — different tradeoffs for a paid
+# per-call API vs a retry chain.
+_MENTION_LOOKBACK_DAYS = 7
+_MENTION_BOOTSTRAP_FLOOR = 5
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _recently_mentioned(db, keyword: str, cutoff: datetime) -> bool:
+    """Whether `keyword` appears in any article scraped since `cutoff` —
+    a proxy for "is this subject currently newsworthy", so gallery spend
+    tracks what's actually being written about instead of blindly refreshing
+    every keyword on a timer."""
+    from sqlalchemy import or_
+    from app.models.scraped_articles import ScrapedArticle
+
+    needle = f"%{keyword.lower()}%"
+    return (
+        db.query(ScrapedArticle.id)
+        .filter(
+            ScrapedArticle.scraped_at >= cutoff,
+            or_(
+                ScrapedArticle.scraped_title.ilike(needle),
+                ScrapedArticle.scraped_content.ilike(needle),
+            ),
+        )
+        .first()
+        is not None
+    )
+
+
 @celery_app.task(name="app.tasks.gallery_downloader.download_all_keywords")
 def download_all_keywords():
-    """Dispatch a download for every active keyword whose daily interval elapsed.
+    """Dispatch a download for every active keyword whose daily interval
+    elapsed, an already-full keyword, and (unless critically low on stock) a
+    keyword that hasn't been mentioned in a recently scraped article — both
+    checks exist purely to avoid spending paid web/fetch calls where they
+    won't help (full) or aren't currently relevant (not in the news).
 
     Skips entirely while Settings.gallery_scraping_paused is set — a global
     kill switch for the scheduled sweep. Doesn't affect an explicit
-    "Download Now" (download_keyword.delay called directly from the API)."""
+    "Download Now" (download_keyword.delay called directly from the API) —
+    that always runs regardless of these budget checks."""
     db = SessionLocal()
     try:
-        from app.models.gallery import GalleryKeyword
+        from app.models.gallery import GalleryKeyword, GalleryImage
         from app.models.settings import Settings
 
         row = db.query(Settings).filter_by(id=1).first()
@@ -39,13 +77,31 @@ def download_all_keywords():
             return
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        mention_cutoff = now - timedelta(days=_MENTION_LOOKBACK_DAYS)
         keywords = db.query(GalleryKeyword).filter(GalleryKeyword.is_active == True).all()
 
         for kw in keywords:
             if kw.last_downloaded_at and now - kw.last_downloaded_at < timedelta(hours=_KEYWORD_INTERVAL_HOURS):
                 continue
+
+            active_count = (
+                db.query(GalleryImage)
+                .filter(GalleryImage.keyword == kw.keyword, GalleryImage.is_deleted == False)
+                .count()
+            )
+            if active_count >= kw.max_images:
+                logger.debug("Gallery: keyword %r already at capacity (%d/%d) — skipping", kw.keyword, active_count, kw.max_images)
+                continue
+
+            if active_count >= _MENTION_BOOTSTRAP_FLOOR and not _recently_mentioned(db, kw.keyword, mention_cutoff):
+                logger.debug(
+                    "Gallery: keyword %r not mentioned in any article in the last %d days — skipping this cycle",
+                    kw.keyword, _MENTION_LOOKBACK_DAYS,
+                )
+                continue
+
             download_keyword.delay(kw.id)
-            logger.info("Gallery: dispatched keyword %d (%s)", kw.id, kw.keyword)
+            logger.info("Gallery: dispatched keyword %d (%s) — active=%d/%d", kw.id, kw.keyword, active_count, kw.max_images)
     finally:
         db.close()
 

@@ -5,8 +5,10 @@ build a search-results URL (default: Getty editorial search), have jina-reader
 fetch it as markdown — which gets past bot-walls that block plain HTTP — and
 extract the image URLs from that markdown.
 
-The collected URLs are then downloaded, deduped-by-source-URL, and Pillow
-min-size validated in one shared code path (`_fetch_and_store`).
+The collected URLs are then downloaded, deduped-by-source-URL, Pillow
+min-size validated, and vision-gated for design usability (rejects
+crowd/stage/logo-only shots, screenshots, unusably blurry/tiny/obstructed
+subjects) in one shared code path (`_fetch_and_store`).
 
 Note: search-result previews are often watermarked/licensed thumbnails capped at
 ~612px on the long side. Ensure the caller's min-size and licensing fit the use.
@@ -63,7 +65,7 @@ def download_images(
         logger.info("Gallery: no new image URLs for keyword %r (all already downloaded)", keyword)
         return []
 
-    return _fetch_and_store(urls, dest_dir, max_num, min_size, skip_urls, "9router")
+    return _fetch_and_store(urls, dest_dir, max_num, min_size, skip_urls, "9router", subject=keyword)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,36 +122,45 @@ def _9router_fetch_markdown(search_url: str) -> str:
     return (data.get("content") or {}).get("text", "") if isinstance(data, dict) else ""
 
 
-def _collect_urls_9router(
-    keyword: str,
+# Extra search phrase tried only as a top-up when the base keyword search
+# doesn't yield enough new images on its own (e.g. "marc marquez" running dry
+# on fresh race-action shots) — surfaces different Getty editorial coverage
+# (press conferences, paddock, interviews) than the bare name search. Only
+# spent when needed, not on every run, since each page is a paid web/fetch call.
+_TOPUP_QUERY_SUFFIX = "press"
+
+
+def _collect_urls_for_phrase(
+    phrase: str,
     max_num: int,
-    skip_urls: set[str] | frozenset[str] = frozenset(),
-    max_pages: int | None = None,
+    skip_urls: set[str] | frozenset[str],
+    seen_keys: set[str],
+    pages: int,
 ) -> list[str]:
-    """Collect NEW candidate image URLs for a keyword by fetching search-result
-    pages (newest-first) through 9Router (jina-reader) and extracting image URLs
-    from the returned markdown.
+    """Collect NEW candidate image URLs for one search phrase by fetching
+    search-result pages (newest-first) through 9Router (jina-reader) and
+    extracting image URLs from the returned markdown.
 
     Skips images already downloaded before (`skip_urls`, matched on the stable
-    dedup key). Walks pages until enough new URLs are found, a page yields no
-    new images (caught up — since results are sorted newest-first), or the page
-    cap is reached. Returns full signed URLs (needed to actually download)."""
+    dedup key) and images already collected this run for ANY phrase
+    (`seen_keys`, shared/mutated across phrases by the caller). Walks pages
+    until enough new URLs are found, a page yields no new images (caught up —
+    since results are sorted newest-first), or the page cap is reached.
+    Returns full signed URLs (needed to actually download)."""
     settings = get_settings()
     template = settings.gallery_search_url_template
-    encoded = quote(keyword)
-    pages = max_pages if max_pages and max_pages > 0 else settings.gallery_max_pages
+    encoded = quote(phrase)
     stop_after = settings.gallery_stop_after_consecutive_dupes
 
     collected: list[str] = []
-    seen_keys: set[str] = set()  # processed this run (guards against a page repeating)
-    consecutive_dupes = 0        # run of already-downloaded images (newest-first → older ahead)
+    consecutive_dupes = 0  # run of already-downloaded images (newest-first → older ahead)
 
     for page in range(1, pages + 1):
         search_url = template.format(query=encoded, page=page)
         try:
             markdown = _9router_fetch_markdown(search_url)
         except Exception as exc:
-            logger.warning("Gallery: 9Router fetch failed for %r page %d (%s)", keyword, page, exc)
+            logger.warning("Gallery: 9Router fetch failed for %r page %d (%s)", phrase, page, exc)
             break
 
         page_urls = [m.group(0) for m in _IMG_URL_RE.finditer(markdown)]
@@ -161,7 +172,7 @@ def _collect_urls_9router(
         for u in page_urls:
             key = _dedup_key(u)
             if key in seen_keys:
-                continue  # same image seen earlier this run (pagination overlap)
+                continue  # same image seen earlier this run (pagination overlap or other phrase)
             seen_keys.add(key)
 
             if key in skip_urls:
@@ -177,21 +188,47 @@ def _collect_urls_9router(
             page_new += 1
 
         logger.info(
-            "Gallery: keyword %r page %d — %d urls, %d new (consecutive already-have=%d)",
-            keyword, page, len(page_urls), page_new, consecutive_dupes,
+            "Gallery: phrase %r page %d — %d urls, %d new (consecutive already-have=%d)",
+            phrase, page, len(page_urls), page_new, consecutive_dupes,
         )
 
         if early_stop:
             logger.info(
-                "Gallery: keyword %r — stopped after %d consecutive already-downloaded images "
+                "Gallery: phrase %r — stopped after %d consecutive already-downloaded images "
                 "(newest-first, so older pages are already downloaded)",
-                keyword, consecutive_dupes,
+                phrase, consecutive_dupes,
             )
             break
         if len(collected) >= max_num:
             break
         if page_new == 0:
             break  # whole page already downloaded → older pages too
+
+    return collected
+
+
+def _collect_urls_9router(
+    keyword: str,
+    max_num: int,
+    skip_urls: set[str] | frozenset[str] = frozenset(),
+    max_pages: int | None = None,
+) -> list[str]:
+    """Collect NEW candidate image URLs for a keyword, trying the bare keyword
+    first and only spending extra web/fetch calls on the "{keyword} press"
+    variant if the bare search didn't find enough — see _TOPUP_QUERY_SUFFIX."""
+    settings = get_settings()
+    pages = max_pages if max_pages and max_pages > 0 else settings.gallery_max_pages
+    seen_keys: set[str] = set()  # shared across phrases this run
+
+    collected = _collect_urls_for_phrase(keyword, max_num, skip_urls, seen_keys, pages)
+
+    if len(collected) < max_num and _TOPUP_QUERY_SUFFIX:
+        topup_phrase = f"{keyword} {_TOPUP_QUERY_SUFFIX}"
+        remaining = max_num - len(collected)
+        topup = _collect_urls_for_phrase(topup_phrase, remaining, skip_urls, seen_keys, pages)
+        if topup:
+            logger.info("Gallery: keyword %r topped up with %d image(s) via %r", keyword, len(topup), topup_phrase)
+        collected.extend(topup)
 
     return collected
 
@@ -207,6 +244,7 @@ def _fetch_and_store(
     min_size: tuple[int, int],
     skip_urls: set[str] | frozenset[str],
     engine: str,
+    subject: str | None = None,
 ) -> list[DownloadedImage]:
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
@@ -260,12 +298,23 @@ def _fetch_and_store(
             logger.warning("Gallery: failed to save %s: %s", url, exc)
             continue
 
-        # Label the photo (face/action/other) so the designer can pick by context
+        # Label the photo (face/action/other) AND gate it for actual design
+        # usability — one vision call doing both jobs (see
+        # design_images.classify_and_gate_image). Rejects the obvious junk a
+        # keyword search drags in: crowd/stage/logo-only shots, screenshots,
+        # graphics with text overlays, tiny/blurry/mostly-obstructed subjects.
+        # Fails open (usable=True) on any vision error — never let a flaky
+        # call block a download outright.
         try:
-            from app.services.design_images import classify_image_type
-            label = classify_image_type(final_bytes)
+            from app.services.design_images import classify_and_gate_image
+            label, usable = classify_and_gate_image(final_bytes, subject=subject)
         except Exception:
-            label = None
+            label, usable = None, True
+
+        if not usable:
+            logger.info("Gallery: rejecting %s — vision quality gate says not usable for design", url)
+            path.unlink(missing_ok=True)
+            continue
 
         saved.append(DownloadedImage(
             source_url=key,  # stable key stored for dedup across future runs
