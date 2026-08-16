@@ -7,13 +7,14 @@ import { Icon } from "@iconify/react";
 import { clsx } from "clsx";
 import { useRouter } from "next/navigation";
 
-type Category = "all" | "burner" | "publish";
+type Category = "all" | "burner" | "publish" | "ai";
 type Severity  = "all" | "error" | "warning";
 
 const CATEGORY_TABS: { value: Category; label: string; icon: string }[] = [
   { value: "all",     label: "All",     icon: "solar:list-bold-duotone" },
   { value: "burner",  label: "Burner",  icon: "solar:users-group-rounded-bold-duotone" },
   { value: "publish", label: "Publish", icon: "solar:rocket-bold-duotone" },
+  { value: "ai",      label: "AI",      icon: "solar:cpu-bolt-bold-duotone" },
 ];
 
 const TYPE_META: Record<string, { icon: string; color: string; label: string }> = {
@@ -23,6 +24,8 @@ const TYPE_META: Record<string, { icon: string; color: string; label: string }> 
   session_error: { icon: "solar:key-bold-duotone",            color: "#FF5630", label: "Session Error" },
   no_session:    { icon: "solar:lock-bold-duotone",           color: "#FFAB00", label: "No Session" },
   publish_failed:{ icon: "solar:close-circle-bold-duotone",   color: "#FF5630", label: "Publish Failed" },
+  ai_failed:     { icon: "solar:cpu-bolt-bold-duotone",       color: "#FF5630", label: "AI Post Lost" },
+  ai_recovered:  { icon: "solar:refresh-circle-bold-duotone", color: "#FFAB00", label: "9Router Degraded" },
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -32,6 +35,8 @@ const ACTION_LABEL: Record<string, string> = {
   session_error:  "Import Session",
   no_session:     "Import Session",
   publish_failed: "View History",
+  ai_failed:      "Check 9Router",
+  ai_recovered:   "Check 9Router",
 };
 
 function timeAgo(iso: string) {
@@ -60,6 +65,7 @@ export default function LogsPage() {
 
   const errorCount   = data?.error_count   ?? 0;
   const warningCount = data?.warning_count ?? 0;
+  const aiStats = data?.ai_stats;
 
   return (
     <div className="space-y-6">
@@ -68,7 +74,7 @@ export default function LogsPage() {
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Activity Logs</h1>
           <p className="text-sm text-text-secondary mt-0.5">
-            Failed logins, banned accounts, publish errors
+            Failed logins, banned accounts, publish errors, AI failures
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -105,6 +111,30 @@ export default function LogsPage() {
             <span className="text-sm font-semibold text-primary-main">All systems healthy</span>
           </div>
         )}
+
+        {/* AI success-rate stat — quick health signal for 9Router without
+            digging through individual log rows */}
+        {aiStats && aiStats.total > 0 && (() => {
+          const rate = aiStats.success_rate ?? 0;
+          const tone = rate >= 95 ? "good" : rate >= 80 ? "warn" : "bad";
+          const colors = {
+            good: { bg: "rgba(0,167,111,0.08)", fg: "var(--primary-main, #00A76F)" },
+            warn: { bg: "rgba(255,171,0,0.08)", fg: "#B76E00" },
+            bad:  { bg: "rgba(255,86,48,0.08)", fg: "#FF5630" },
+          }[tone];
+          return (
+            <div
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg ml-auto"
+              style={{ background: colors.bg }}
+              title={`${aiStats.success} clean, ${aiStats.recovered} recovered via fallback, ${aiStats.failed} lost — out of ${aiStats.total} AI copy calls`}
+            >
+              <Icon icon="solar:cpu-bolt-bold-duotone" width={16} style={{ color: colors.fg }} />
+              <span className="text-sm font-semibold" style={{ color: colors.fg }}>
+                AI success rate: {rate}% ({aiStats.total} calls)
+              </span>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Filters row */}

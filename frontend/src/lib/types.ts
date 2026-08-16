@@ -70,6 +70,21 @@ export interface Fanpage {
   mode2_title_max_chars: number;
   mode2_source_attribution: boolean;
   mode2_editorial_gate_enabled: boolean;
+  // ── Mode 4: Discussion / hot-take content ──
+  discussion_enabled: boolean;
+  discussion_publish_mode: PublishMode;
+  discussion_daily_count: number;
+  discussion_topic_mode: string; // "news" | "evergreen" | "both"
+  default_discussion_template_id: number | null;
+}
+
+export interface DiscussionTopicRef {
+  id: number;
+  seed_text: string;
+  subject_hint: string | null;
+  is_active: boolean;
+  times_used: number;
+  last_used_at: string | null;
 }
 
 export interface NewsSourceRef {
@@ -95,6 +110,7 @@ export interface FanpageDetail extends Fanpage {
   ig_sources: IGSourceRef[];
   ig_source_usernames: string[];
   news_sources: NewsSourceRef[];
+  discussion_topics: DiscussionTopicRef[];
 }
 
 export interface Burner {
@@ -117,7 +133,7 @@ export interface PublishJob {
   id: number;
   post_id: number | null;
   fanpage_id: number;
-  content_type: "ig_repost" | "news_content" | "ig_recreate";
+  content_type: "ig_repost" | "news_content" | "ig_recreate" | "discussion";
   source_article_id: number | null;
   design_title: string | null;
   design_image_url: string | null;
@@ -160,6 +176,13 @@ export interface DashboardStats {
   }>;
   disk_used_mb: number;
   disk_total_mb: number;
+  ai_stats: {
+    total: number;
+    success: number;
+    recovered: number;
+    failed: number;
+    success_rate: number | null;
+  };
 }
 
 export interface CrawlerHealth {

@@ -17,6 +17,39 @@ settings = get_settings()
 
 AIProviderName = Literal["router", "gemini", "groq"]
 
+
+def log_ai_copy_event(
+    *, context: str, fanpage_id: int | None, article_id: int | None, outcome: str,
+    models_tried: list[str], final_provider: str | None, error_message: str | None, latency_ms: int,
+) -> None:
+    """Best-effort event log for the Logs/Dashboard "AI Success Rate" stat —
+    never let a logging failure break the actual AI call. Shared by every AI
+    call site (text copy in news_copywriter.py, vision in design_images.py)
+    so the dashboard reflects the whole AI surface, not just one path. See
+    ai_copy_events.py for why this table exists."""
+    try:
+        from app.database import SessionLocal
+        from app.models.ai_copy_events import AICopyEvent
+
+        db = SessionLocal()
+        try:
+            db.add(AICopyEvent(
+                context=context,
+                fanpage_id=fanpage_id,
+                article_id=article_id,
+                outcome=outcome,
+                models_tried=",".join(models_tried)[:256],
+                final_provider=final_provider,
+                error_message=(error_message[:2000] if error_message else None),
+                latency_ms=latency_ms,
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.warning("Failed to record AI copy event", exc_info=True)
+
+
 _REDIS_FAILURE_KEY = "ai:gemini_consecutive_failures"
 _REDIS_SWITCHED_KEY = "ai:switched_to_groq_until"
 
@@ -138,7 +171,32 @@ def _router_enabled() -> bool:
     return get_nine_router_config().enabled
 
 
-def _call_router(prompt: str) -> str:
+# Tried, in order, when the configured router model (typically My-Combo) either
+# errors or — more commonly — comes back HTTP 200 with truncated/unparseable
+# content because it silently routed to a reasoning model that burned its token
+# budget on hidden thinking. Deliberately long and spans multiple underlying
+# families (Gemini, Claude, GPT-OSS), not just Gemini variants — a
+# family-wide 9Router outage shouldn't be able to exhaust the whole chain.
+# ag/gemini-pro-agent has reasoning disabled entirely, so it goes first as the
+# most reliable; the rest are ordered roughly by how much they cost/how slow
+# they tend to be. This list being long is deliberate (user preference,
+# 2026-08-16): these are background Celery tasks, not user-facing requests,
+# so trading worst-case latency for a much higher chance of landing a post is
+# the right tradeoff — see the 98.9%-failure incident this whole retry chain
+# exists to prevent. Gemini/Groq (outside 9Router entirely) is still the
+# final fallback after every model here is exhausted.
+ROUTER_MODEL_FALLBACKS = [
+    "ag/gemini-pro-agent",
+    "ag/gemini-3.1-pro-low",
+    "ag/claude-sonnet-4-6",
+    "ag/gemini-3.6-flash-medium",
+    "ag/gpt-oss-120b-medium",
+    "ag/gemini-3-flash-agent",
+    "ag/gemini-3.5-flash-high",
+]
+
+
+def _call_router(prompt: str, model: str | None = None) -> str:
     from openai import OpenAI  # type: ignore
 
     from app.services.nine_router import get_nine_router_config
@@ -150,17 +208,32 @@ def _call_router(prompt: str) -> str:
         api_key=cfg.api_key or "sk-9router",
         # Explicit timeout — a hung (not erroring) call would otherwise block
         # on the SDK's default for far too long before the Gemini/Groq fallback
-        # in generate_caption() ever gets a chance to run.
-        timeout=45.0,
+        # in generate_caption() ever gets a chance to run. Reasoning-model
+        # routes (e.g. My-Combo -> gemini-pro-default) can take a while to
+        # finish their hidden reasoning, so this is generous on purpose.
+        timeout=75.0,
     )
     completion = client.chat.completions.create(
-        model=cfg.model,
+        model=model or cfg.model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=1024,
+        # Some 9Router models (e.g. My-Combo's gemini-pro-default route) spend
+        # hundreds to ~1000 tokens on hidden reasoning before the visible
+        # answer — that reasoning counts against max_tokens, so a low cap
+        # truncates the actual JSON before it's written. Budget generously
+        # for both (see _generate_with_fallback in news_copywriter.py for the
+        # second line of defense when this still isn't enough).
+        max_tokens=8192,
         temperature=0.7,
-        timeout=45.0,
+        timeout=75.0,
     )
     return completion.choices[0].message.content.strip()
+
+
+def call_router_model(prompt: str, model: str) -> str:
+    """Call 9Router with an explicit model, bypassing the configured default.
+    Used by news_copywriter._generate_with_fallback to try ROUTER_MODEL_FALLBACKS
+    directly when the primary router model's output fails to parse."""
+    return _call_router(prompt, model=model)
 
 
 def _call_gemini(prompt: str) -> str:
@@ -214,14 +287,20 @@ def generate_caption(prompt: str, force_provider: AIProviderName | None = None) 
         text = _call_gemini(prompt)
         return text, "gemini"
 
-    # 9Router is the primary provider when configured; on any failure fall
-    # through to the existing Gemini→Groq failover below.
+    # 9Router is the primary provider when configured. Try the configured
+    # model first, then ROUTER_MODEL_FALLBACKS, before falling through to the
+    # Gemini→Groq failover below — a hard API error (timeout/402/etc.) on one
+    # router model doesn't mean the whole provider is down.
     if _router_enabled():
-        try:
-            text = _call_router(prompt)
-            return text, "router"
-        except Exception as router_exc:
-            logger.warning("9Router failed: %s — falling back to Gemini/Groq", router_exc)
+        last_router_exc: Exception | None = None
+        for model in [None, *ROUTER_MODEL_FALLBACKS]:
+            try:
+                text = _call_router(prompt, model=model)
+                return text, "router"
+            except Exception as router_exc:
+                last_router_exc = router_exc
+                logger.warning("9Router model %s failed: %s", model or "(default)", router_exc)
+        logger.warning("All 9Router models failed: %s — falling back to Gemini/Groq", last_router_exc)
 
     # Auto failover logic
     if _is_switched_to_groq() or _gemini_failures() >= threshold:

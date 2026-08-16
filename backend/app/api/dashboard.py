@@ -1,7 +1,7 @@
 """Dashboard overview stats endpoint."""
 
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytz
 from sqlalchemy import func
@@ -21,6 +21,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
     from app.models.burner_accounts import BurnerAccount, BurnerStatus
     from app.models.target_fanpages import TargetFanpage
     from app.models.posts import Post
+    from app.models.ai_copy_events import AICopyEvent
 
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -72,6 +73,22 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
     except Exception:
         pass
 
+    # AI copy-generation health (rolling 24h) — see logs.py's "ai" category
+    # for the incident-level detail behind this number.
+    ai_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+    ai_window = db.query(AICopyEvent).filter(AICopyEvent.created_at >= ai_cutoff).all()
+    ai_total = len(ai_window)
+    ai_success = sum(1 for e in ai_window if e.outcome == "success")
+    ai_recovered = sum(1 for e in ai_window if e.outcome == "recovered")
+    ai_failed = sum(1 for e in ai_window if e.outcome == "failed")
+    ai_stats = {
+        "total": ai_total,
+        "success": ai_success,
+        "recovered": ai_recovered,
+        "failed": ai_failed,
+        "success_rate": round(100 * (ai_success + ai_recovered) / ai_total, 1) if ai_total else None,
+    }
+
     return {
         "published_today": published_today,
         "failed_today": failed_today,
@@ -81,6 +98,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         "burners": burner_stats,
         "disk_used_mb": disk_used_mb,
         "disk_total_mb": disk_total_mb,
+        "ai_stats": ai_stats,
     }
 
 

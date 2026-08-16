@@ -107,7 +107,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── KPI cards ──────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5">
         <KpiCard
           icon="solar:graph-up-bold-duotone"
           label="Published Today"
@@ -146,6 +146,21 @@ export default function DashboardPage() {
           trendUp={(data?.failed_today ?? 0) === 0}
           variant="red"
           sparkline={SPARKLINES.red}
+        />
+        <KpiCard
+          icon="solar:cpu-bolt-bold-duotone"
+          label="AI Success Rate"
+          value={isLoading || !data?.ai_stats.total ? "—" : `${data.ai_stats.success_rate}%`}
+          trend={isLoading || !data?.ai_stats.total ? "24h" : `${data.ai_stats.total} calls`}
+          trendUp={(data?.ai_stats.success_rate ?? 100) >= 95}
+          variant={
+            !data?.ai_stats.total ? "purple"
+            : data.ai_stats.success_rate! >= 95 ? "green"
+            : data.ai_stats.success_rate! >= 80 ? "amber"
+            : "red"
+          }
+          sparkline={SPARKLINES.purple}
+          href="/logs"
         />
       </div>
 

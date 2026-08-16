@@ -12,6 +12,8 @@ from app.models.news_sources import NewsSource, RenderMode
 from app.models.scraped_articles import ScrapedArticle, ArticleStatus
 from app.models.gallery import GalleryKeyword, GalleryImage
 from app.models.design_templates import DesignTemplate
+from app.models.discussion_topics import DiscussionTopic
+from app.models.ai_copy_events import AICopyEvent
 
 __all__ = [
     "User",
@@ -39,4 +41,6 @@ __all__ = [
     "GalleryKeyword",
     "GalleryImage",
     "DesignTemplate",
+    "DiscussionTopic",
+    "AICopyEvent",
 ]

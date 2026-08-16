@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass
 
 from app.services.ai_caption import AIProviderName, generate_caption
+from app.services.ai_caption import log_ai_copy_event as _log_ai_copy_event
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +196,245 @@ def _parse_news_copy(raw: str) -> tuple[str, str, str, str]:
     return category, title, subtitle, caption
 
 
+# ── Mode 4: Discussion / hot-take cards ──────────────────────────────────────
+
+# The big debate line is auto-shrunk to fit by the renderer, but keep it punchy —
+# these cards live or die on a single readable line, not a paragraph.
+_DISCUSSION_MAX_QUESTION_CHARS = 90
+_DISCUSSION_LABELS = ("DISCUSSION", "HOT TAKE")
+
+
+@dataclass
+class DiscussionCopy:
+    label: str        # "DISCUSSION" | "HOT TAKE" — badge text (renderer colours it)
+    question: str     # the big debate line printed on the image
+    subject_name: str # person/subject to source the photo for (gallery→Getty)
+    caption: str      # FB post text
+    provider: AIProviderName
+
+
+def _discussion_caption_block(fanpage, source_name: str | None) -> str:
+    """Caption-writing instructions for a discussion card, reusing the fanpage's
+    Mode-2 caption criteria (language/tone/length/hashtags/CTA/custom)."""
+    attribution_line = ""
+    if source_name and fanpage.mode2_source_attribution:
+        attribution_line = f'\n   - End the caption with a source attribution line: "Source: {source_name}"'
+    cta_text = fanpage.mode2_caption_cta_text
+    custom_prompt = fanpage.mode2_caption_custom_prompt
+    return f"""3. "caption" — the Facebook post text that accompanies the image (no ** markers here).
+   - Language: {fanpage.mode2_caption_language}
+   - Tone: {fanpage.mode2_caption_tone}
+   - Maximum length: {fanpage.mode2_caption_max_length} characters
+   - Formatting: short paragraphs (1-3 sentences), separated by a blank line — never one dense block.
+   - It MUST invite the reader to take a side and comment their opinion — this is a debate post. End by explicitly asking readers to drop their verdict in the comments (this REPLACES the old yes/no buttons).
+   - Hashtags: a blank line, then EXACTLY {fanpage.mode2_caption_hashtag_count} specific, relevant hashtags on one line — never generic filler (#love #viral #instagood).
+   - Call-to-action: {cta_text if cta_text else "ask readers to comment their take"}{attribution_line}
+   - Additional notes: {custom_prompt if custom_prompt else "none"}"""
+
+
+def build_discussion_news_prompt(fanpage, article) -> str:
+    """Prompt: turn a scraped article into a debate card grounded in its facts."""
+    news_source = article.news_source if article else None
+    source_name = news_source.name if news_source else "the original source"
+    content = (article.scraped_content or "")[:_MAX_CONTENT_CHARS]
+    language = fanpage.mode2_caption_language
+
+    return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" — the caliber of Bleacher Report or a big motorsport fan page. Your job: turn one news story into a DEBATE post that makes fans argue in the comments.
+
+SOURCE NEWS ARTICLE (from {source_name}):
+TITLE: {article.scraped_title}
+CONTENT:
+{content}
+
+Produce ONE discussion card grounded in the facts of this article.
+
+1. "label" — either "DISCUSSION" (an open question, e.g. "Is George the most hated driver on the grid?") or "HOT TAKE" (a bold, arguable claim stated as fact, e.g. "Lewis was fully robbed of the 2016 championship"). Pick whichever is more provocative for this story.
+2. "question" — the single big line printed on the image.
+   - If label is "DISCUSSION": phrase it as a yes/no-style question ending in "?".
+   - If label is "HOT TAKE": phrase it as a punchy declarative statement (no question mark), and you MAY wrap it in quotes only if it reads like a spoken take.
+   - Language: {language}. Max {_DISCUSSION_MAX_QUESTION_CHARS} characters. No hashtags, no emoji.
+   - It must be DEBATABLE (roughly 50/50) — not something everyone already agrees on. Stay honest to the article's facts; do NOT invent results, numbers, or quotes.
+3. "subject" — the ONE person the card photo should show (the central figure of the debate), full name exactly as in the article, nothing else. Max 40 chars.
+{_discussion_caption_block(fanpage, source_name)}
+
+OUTPUT: only a raw JSON object {{"label": "DISCUSSION|HOT TAKE", "question": "...", "subject": "...", "caption": "..."}} — no markdown fences, no explanation."""
+
+
+def build_discussion_evergreen_prompt(fanpage, seed_text: str, subject_hint: str | None) -> str:
+    """Prompt: turn an evergreen debate seed into a polished discussion card.
+
+    Opinion-only by design — evergreen topics carry no fresh article to fact-check
+    against, so the model is told to avoid hard facts (specific stats, dates,
+    results) that it might get wrong, and stick to subjective debate.
+    """
+    language = fanpage.mode2_caption_language
+    hint_line = f'\nSUBJECT HINT: {subject_hint}' if subject_hint else ""
+
+    return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}". Turn the debate seed below into a polished DISCUSSION post that makes fans argue in the comments.
+
+DEBATE SEED (the user's idea, may be rough): {seed_text}{hint_line}
+
+1. "label" — "DISCUSSION" (an open opinion question) or "HOT TAKE" (a bold, arguable opinion stated as a claim). Prefer "DISCUSSION" for evergreen debates.
+2. "question" — the single big line printed on the image.
+   - If label is "DISCUSSION": a yes/no-style opinion question ending in "?".
+   - If label is "HOT TAKE": a punchy declarative opinion (no question mark).
+   - Language: {language}. Max {_DISCUSSION_MAX_QUESTION_CHARS} characters. No hashtags, no emoji.
+   - CRITICAL: this is EVERGREEN with no article to fact-check against. Keep it a pure OPINION/subjective debate (greatness, rankings, likability, "overrated?", "GOAT?"). Do NOT state or imply specific facts, statistics, dates, results, or quotes — you may get them wrong. No hard numbers.
+3. "subject" — the ONE person the card photo should show, full name. Use the subject hint if given. Max 40 chars.
+{_discussion_caption_block(fanpage, None)}
+
+OUTPUT: only a raw JSON object {{"label": "DISCUSSION|HOT TAKE", "question": "...", "subject": "...", "caption": "..."}} — no markdown fences, no explanation."""
+
+
+def _parse_discussion_copy(raw: str) -> tuple[str, str, str, str]:
+    """Parse the model's JSON, tolerating fences/prose. Returns
+    (label, question, subject, caption)."""
+    cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"no JSON object in AI output: {raw[:200]!r}")
+    data = json.loads(match.group(0))
+    label = str(data.get("label") or "DISCUSSION").strip().upper()
+    if label not in _DISCUSSION_LABELS:
+        # tolerate "HOTTAKE"/"HOT-TAKE"/etc.
+        label = "HOT TAKE" if "HOT" in label else "DISCUSSION"
+    question = str(data.get("question") or "").strip()
+    subject = str(data.get("subject") or "").strip()
+    caption = str(data.get("caption") or "").strip()
+    if not question or not caption:
+        raise ValueError(f"AI output missing question/caption: {raw[:200]!r}")
+    return label, question, subject, caption
+
+
+def _generate_with_fallback(
+    prompt: str,
+    parse_fn,
+    force_provider: AIProviderName | None = None,
+    *,
+    context: str,
+    fanpage_id: int | None = None,
+    article_id: int | None = None,
+):
+    """Call generate_caption and parse the result. A 9Router response can come
+    back HTTP 200 but truncated (reasoning-heavy routes like My-Combo can burn
+    most of the token budget on hidden reasoning before the visible JSON) —
+    that's a parse failure, not an API failure, so generate_caption()'s own
+    provider fallback never sees it and the caller would otherwise lose the
+    whole (article, fanpage) pair.
+
+    On a router parse failure: try each of ROUTER_MODEL_FALLBACKS directly
+    (a same-model retry wouldn't help — the truncation is deterministic per
+    prompt, not transient) before giving up on 9Router and retrying once via
+    Gemini as the last resort. Every outcome (success/recovered/failed) is
+    logged to ai_copy_events so degradation is visible on the dashboard
+    without grepping worker logs on the VPS.
+    """
+    import time
+
+    t0 = time.monotonic()
+    models_tried: list[str] = []
+
+    def _elapsed_ms() -> int:
+        return int((time.monotonic() - t0) * 1000)
+
+    raw, provider = generate_caption(prompt, force_provider=force_provider)
+    models_tried.append(provider)
+    try:
+        result = parse_fn(raw)
+        _log_ai_copy_event(
+            context=context, fanpage_id=fanpage_id, article_id=article_id,
+            outcome="success", models_tried=models_tried, final_provider=provider,
+            error_message=None, latency_ms=_elapsed_ms(),
+        )
+        return result, provider
+    except ValueError as parse_exc:
+        if provider != "router" or force_provider is not None:
+            _log_ai_copy_event(
+                context=context, fanpage_id=fanpage_id, article_id=article_id,
+                outcome="failed", models_tried=models_tried, final_provider=None,
+                error_message=str(parse_exc), latency_ms=_elapsed_ms(),
+            )
+            raise
+
+        from app.services.ai_caption import ROUTER_MODEL_FALLBACKS, call_router_model
+
+        last_error: Exception = parse_exc
+        for model in ROUTER_MODEL_FALLBACKS:
+            models_tried.append(model)
+            try:
+                raw = call_router_model(prompt, model)
+                result = parse_fn(raw)
+                _log_ai_copy_event(
+                    context=context, fanpage_id=fanpage_id, article_id=article_id,
+                    outcome="recovered", models_tried=models_tried, final_provider="router",
+                    error_message=f"primary router model failed: {parse_exc}",
+                    latency_ms=_elapsed_ms(),
+                )
+                return result, "router"
+            except Exception as exc:
+                last_error = exc
+                logger.warning("9Router fallback model %s also failed: %s", model, exc)
+
+        logger.warning("All 9Router models failed to produce parseable output — retrying via Gemini")
+        models_tried.append("gemini")
+        try:
+            raw, provider = generate_caption(prompt, force_provider="gemini")
+            result = parse_fn(raw)
+            _log_ai_copy_event(
+                context=context, fanpage_id=fanpage_id, article_id=article_id,
+                outcome="recovered", models_tried=models_tried, final_provider=provider,
+                error_message=f"9Router exhausted, last error: {last_error}",
+                latency_ms=_elapsed_ms(),
+            )
+            return result, provider
+        except Exception as final_exc:
+            _log_ai_copy_event(
+                context=context, fanpage_id=fanpage_id, article_id=article_id,
+                outcome="failed", models_tried=models_tried, final_provider=None,
+                error_message=str(final_exc), latency_ms=_elapsed_ms(),
+            )
+            raise
+
+
+def generate_discussion_copy(
+    fanpage,
+    *,
+    article=None,
+    seed_text: str | None = None,
+    subject_hint: str | None = None,
+    force_provider: AIProviderName | None = None,
+) -> DiscussionCopy:
+    """Generate one Mode 4 discussion card. Pass EITHER `article` (news-seeded,
+    fact-grounded) OR `seed_text` (evergreen, opinion-only).
+
+    Raises on AI failure (both providers down) or unparseable output — the
+    calling task owns retry/backoff.
+    """
+    if article is not None:
+        prompt = build_discussion_news_prompt(fanpage, article)
+    elif seed_text:
+        prompt = build_discussion_evergreen_prompt(fanpage, seed_text, subject_hint)
+    else:
+        raise ValueError("generate_discussion_copy needs either article or seed_text")
+
+    (label, question, subject, caption), provider = _generate_with_fallback(
+        prompt, _parse_discussion_copy, force_provider,
+        context="discussion_copy", fanpage_id=fanpage.id,
+        article_id=article.id if article is not None else None,
+    )
+
+    # Prefer an explicit evergreen subject hint when the model returned nothing.
+    if not subject and subject_hint:
+        subject = subject_hint.strip()
+
+    if len(question) > _DISCUSSION_MAX_QUESTION_CHARS:
+        question = question[: _DISCUSSION_MAX_QUESTION_CHARS - 1].rstrip() + "…"
+
+    return DiscussionCopy(
+        label=label, question=question, subject_name=subject, caption=caption, provider=provider
+    )
+
+
 def generate_news_copy(fanpage, article, force_provider: AIProviderName | None = None) -> NewsCopy:
     """Generate headline + caption for one (fanpage, article) pair, classifying
     it as a "news" or "quote" design in the same call (see build_news_copy_prompt).
@@ -203,8 +443,10 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     the calling task owns retry/backoff.
     """
     prompt = build_news_copy_prompt(fanpage, article)
-    raw, provider = generate_caption(prompt, force_provider=force_provider)
-    category, title, subtitle, caption = _parse_news_copy(raw)
+    (category, title, subtitle, caption), provider = _generate_with_fallback(
+        prompt, _parse_news_copy, force_provider,
+        context="news_copy", fanpage_id=fanpage.id, article_id=article.id,
+    )
 
     if category == "quote" and subtitle:
         subtitle = _clean_quote_subtitle(subtitle)

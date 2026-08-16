@@ -207,6 +207,19 @@ export const previewNewsCopy = (
   data: { title: string; content: string; source_name?: string; provider?: string }
 ) => api.post(`/fanpages/${fanpageId}/preview-news-copy`, data);
 
+// ── Fanpage Mode 4 (discussion topics) ───────────────────────────────────────
+export const addDiscussionTopic = (
+  fanpageId: number,
+  data: { seed_text: string; subject_hint?: string }
+) => api.post(`/fanpages/${fanpageId}/discussion-topics`, data);
+export const updateDiscussionTopic = (
+  fanpageId: number,
+  topicId: number,
+  data: { seed_text?: string; subject_hint?: string | null; is_active?: boolean }
+) => api.put(`/fanpages/${fanpageId}/discussion-topics/${topicId}`, data);
+export const deleteDiscussionTopic = (fanpageId: number, topicId: number) =>
+  api.delete(`/fanpages/${fanpageId}/discussion-topics/${topicId}`);
+
 // ── Design Templates ─────────────────────────────────────────────────────────
 export const listTemplates = (fanpageId?: number) =>
   api.get("/templates", { params: fanpageId ? { fanpage_id: fanpageId } : {} });
@@ -251,11 +264,17 @@ export const restartBeat = () => api.post("/jobs/restart-beat");
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
 export const getLogs = (params?: { category?: string; days?: number }) =>
-  api.get<{ logs: ActivityLog[]; total: number; error_count: number; warning_count: number }>("/logs", { params });
+  api.get<{
+    logs: ActivityLog[];
+    total: number;
+    error_count: number;
+    warning_count: number;
+    ai_stats: AIStats;
+  }>("/logs", { params });
 
 export interface ActivityLog {
   id: string;
-  category: "burner" | "publish";
+  category: "burner" | "publish" | "ai";
   type: string;
   severity: "error" | "warning";
   title: string;
@@ -263,6 +282,14 @@ export interface ActivityLog {
   account: string;
   occurred_at: string;
   link: string;
+}
+
+export interface AIStats {
+  total: number;
+  success: number;
+  recovered: number;
+  failed: number;
+  success_rate: number | null;
 }
 
 // ── Notifications ─────────────────────────────────────────────────────────────
