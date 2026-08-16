@@ -57,6 +57,41 @@ def list_jobs(
     return [_enrich_job(j, db) for j in jobs]
 
 
+@router.get("/stats")
+def job_stats(
+    db: DB,
+    _: CurrentUser,
+    fanpage_id: Optional[int] = Query(None),
+):
+    """Summary counts for the History page's fanpage filter: today's/this
+    month's published count and the all-time failure count, scoped to one
+    fanpage (or across all fanpages when fanpage_id is omitted)."""
+    from datetime import datetime, timezone
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = today_start.replace(day=1)
+
+    def _count(*filters):
+        q = db.query(PublishJob).filter(PublishJob.is_deleted == False, *filters)
+        if fanpage_id:
+            q = q.filter(PublishJob.fanpage_id == fanpage_id)
+        return q.count()
+
+    return {
+        "published_today": _count(
+            PublishJob.status == PublishJobStatus.published,
+            PublishJob.published_at >= today_start,
+        ),
+        "published_this_month": _count(
+            PublishJob.status == PublishJobStatus.published,
+            PublishJob.published_at >= month_start,
+        ),
+        "failed_total": _count(PublishJob.status == PublishJobStatus.failed),
+    }
+
+
 @router.get("/{job_id}", response_model=PublishJobOut)
 def get_job(job_id: int, db: DB, _: CurrentUser):
     from app.models.publish_jobs import PublishJob

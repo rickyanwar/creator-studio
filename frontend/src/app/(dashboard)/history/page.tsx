@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
-import { listJobs, listFanpages, deletePublishJob, reeditJob } from "@/lib/api";
+import { listJobs, listFanpages, deletePublishJob, reeditJob, getJobStats } from "@/lib/api";
 import type { PublishJob, PublishJobStatus } from "@/lib/types";
 import { format } from "date-fns";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -94,6 +94,14 @@ export default function HistoryPage() {
   const { data: fanpages = [] } = useSWR<FanpageLite[]>(
     "history-fanpages",
     () => listFanpages().then((r) => r.data as FanpageLite[])
+  );
+
+  // Only fetched/shown once a specific fanpage is picked — "all fanpages"
+  // doesn't need a summary bar the way one fanpage's history does.
+  const { data: fanpageStats } = useSWR(
+    fanpageFilter ? ["history-fanpage-stats", fanpageFilter] : null,
+    () => getJobStats({ fanpage_id: Number(fanpageFilter) }).then((r) => r.data),
+    { refreshInterval: 60000 }
   );
 
   // ── Infinite scroll (offset pagination) — mirrors the Gallery page so History
@@ -275,6 +283,30 @@ export default function HistoryPage() {
             ))}
           </select>
         </div>
+
+        {/* Per-fanpage summary — only shown once a specific fanpage is picked */}
+        {fanpageFilter && fanpageStats && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(0,167,111,0.08)]">
+              <Icon icon="solar:calendar-bold-duotone" width={15} className="text-primary-main" />
+              <span className="text-sm font-semibold text-primary-main">
+                {fanpageStats.published_today} published today
+              </span>
+            </div>
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(24,119,242,0.08)]">
+              <Icon icon="solar:calendar-mark-bold-duotone" width={15} className="text-[#1877F2]" />
+              <span className="text-sm font-semibold text-[#1877F2]">
+                {fanpageStats.published_this_month} this month
+              </span>
+            </div>
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(255,86,48,0.08)]">
+              <Icon icon="solar:close-circle-bold-duotone" width={15} className="text-[#FF5630]" />
+              <span className="text-sm font-semibold text-[#FF5630]">
+                {fanpageStats.failed_total} failed total
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Skeleton */}
         {isLoading && (

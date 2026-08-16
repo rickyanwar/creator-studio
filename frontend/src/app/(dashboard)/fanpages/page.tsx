@@ -89,6 +89,10 @@ export default function FanpagesPage() {
   const [loadingSync, setLoadingSync] = useState(false);
   const [togglingId, setTogglingId] = useState<number | null>(null);
 
+  // Active fanpages first, inactive ones sink to the bottom — order within
+  // each group otherwise unchanged (stable sort).
+  const sortedFanpages = [...fanpages].sort((a, b) => Number(b.is_active) - Number(a.is_active));
+
   async function toggleActive(fp: Fanpage) {
     setTogglingId(fp.id);
     try { await updateFanpage(fp.id, { is_active: !fp.is_active }); mutate(); }
@@ -131,7 +135,7 @@ export default function FanpagesPage() {
         <div className="text-sm text-text-secondary">Loading fanpages…</div>
       ) : (
         <div className="space-y-3">
-          {fanpages.map((fp) => (
+          {sortedFanpages.map((fp) => (
             <div
               key={fp.id}
               className="card flex items-center justify-between gap-4"
