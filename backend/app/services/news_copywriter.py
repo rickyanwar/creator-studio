@@ -286,6 +286,107 @@ DEBATE SEED (the user's idea, may be rough): {seed_text}{hint_line}
 OUTPUT: only a raw JSON object {{"label": "DISCUSSION|HOT TAKE", "question": "...", "subject": "...", "caption": "..."}} — no markdown fences, no explanation."""
 
 
+def build_discussion_general_prompt(fanpage, avoid_subjects: list[str], recent_headlines: list[str]) -> str:
+    """Prompt: invent a debate card from the model's own general/current
+    knowledge of the fanpage's niche — used when there's no fresh unclaimed
+    article and no evergreen seed left. Unlike the evergreen prompt, this one
+    is allowed real stats/records/results (it's the only source of the topic
+    itself, so banning facts would leave nothing to debate) — the model is
+    just told to stay qualitative on any number it isn't confident about
+    rather than invent a precise one.
+
+    `recent_headlines` (this fanpage's own news feed, last ~2 months) is
+    passed as best-effort grounding so a stale training cutoff doesn't
+    produce a claim already contradicted by a known result — e.g. framing a
+    now-decided title race as still open. It's a second line of defense on
+    top of steering the model away from settled-outcome predictions; the
+    caller (discussion.py) still runs a separate fact-check pass on the
+    output before accepting it."""
+    language = fanpage.mode2_caption_language
+    niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+    avoid_line = ""
+    if avoid_subjects:
+        avoid_line = f"\nAVOID these subjects — already covered recently, pick someone/something else: {', '.join(avoid_subjects)}"
+    headlines_block = ""
+    if recent_headlines:
+        headlines_list = "\n".join(f"- {h}" for h in recent_headlines)
+        headlines_block = f"\n\nRECENT HEADLINES from this page's own news feed (last ~2 months, for context only — treat any result/outcome they report as already decided, do not contradict them):\n{headlines_list}"
+
+    return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" (niche: {niche}). There is no fresh news article to work from right now — invent an ORIGINAL debate post from your own knowledge of {niche} that will make fans argue in the comments.{avoid_line}{headlines_block}
+
+Produce ONE discussion card about a genuinely contested, current-or-recent topic in {niche} — a rivalry, a controversial call, a "who's better" comparison, a "does X deserve Y" question, an underrated/overrated take, etc.
+
+1. "label" — either "DISCUSSION" (an open question) or "HOT TAKE" (a bold, arguable claim stated as fact). Pick whichever is more provocative.
+2. "question" — the single big line printed on the image.
+   - If label is "DISCUSSION": phrase as a yes/no-style question ending in "?".
+   - If label is "HOT TAKE": phrase as a punchy declarative statement (no question mark).
+   - Language: {language}. Max {_DISCUSSION_MAX_QUESTION_CHARS} characters. No hashtags, no emoji.
+   - It must be DEBATABLE (roughly 50/50) — not something everyone already agrees on.
+   - CRITICAL — do not bet on an undecided outcome: avoid framing like "X will win/beat/achieve Y" about a title, race, or result that may already be decided by the time this posts. Prefer debating something that stays true regardless of results already in: ability, decisions, legacy, comparisons, "was X right to do Y", "is X overrated/underrated". If you genuinely aren't sure whether an outcome is already decided, don't bet on it — debate the reasoning/opinion around it instead.
+   - You may cite facts/stats/records you're genuinely confident about, but if you're not sure of an exact number, describe it qualitatively (e.g. "dominated" instead of guessing a score) rather than risk stating something wrong.
+3. "subject" — the ONE person the card photo should show (the central figure of the debate), full name. Max 40 chars.
+{_discussion_caption_block(fanpage, None)}
+
+OUTPUT: only a raw JSON object {{"label": "DISCUSSION|HOT TAKE", "question": "...", "subject": "...", "caption": "..."}} — no markdown fences, no explanation."""
+
+
+def build_discussion_factcheck_prompt(
+    question: str, subject: str, niche: str, grounding_headlines: list[str]
+) -> str:
+    """Prompt: a second, independent 9Router call that checks a drafted
+    general-knowledge hot-take/discussion line before it's accepted. Checking
+    with the model's bare memory alone doesn't catch a claim that's wrong
+    because of a stale training cutoff — the same blind spot that produced
+    the claim would also wave it through at review time. `grounding_headlines`
+    (this page's own recent article titles that mention the names in the
+    claim — see discussion.py's _grounding_headlines_for_claim) gives the
+    checker concrete, page-specific evidence to weigh against its own memory,
+    which is what actually catches that class of mistake."""
+    headlines_block = ""
+    if grounding_headlines:
+        headlines_list = "\n".join(f"- {h}" for h in grounding_headlines)
+        headlines_block = f"\n\nRECENT HEADLINES from this page's own news feed mentioning the people in this claim — treat these as ground truth over your own memory if they conflict:\n{headlines_list}"
+
+    return f"""You are a strict fact-checker for a {niche} social media page. A colleague drafted this line to post as a debate/hot-take card:
+
+LINE: "{question}"
+SUBJECT: {subject}{headlines_block}
+
+Based on the headlines above (if given) and your own knowledge of {niche}, does this line contradict something that has ALREADY been decided or is already publicly known (e.g. it bets on an outcome that has already happened the other way, states a result that's factually wrong, or references a status that's no longer current)? A genuinely open/debatable opinion is fine and should pass — you are only rejecting lines that assert something you're confident is factually wrong or already settled differently. If the headlines above conflict with what you recall, trust the headlines — they're this page's own recent coverage.
+
+OUTPUT: only a raw JSON object {{"valid": true|false, "reason": "one short sentence"}} — no markdown fences, no explanation outside the JSON."""
+
+
+def _parse_discussion_factcheck(raw: str) -> tuple[bool, str]:
+    cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"no JSON object in AI output: {raw[:200]!r}")
+    data = json.loads(match.group(0))
+    valid = bool(data.get("valid", True))
+    reason = str(data.get("reason") or "").strip()
+    return valid, reason
+
+
+def factcheck_discussion_claim(
+    question: str,
+    subject: str,
+    niche: str,
+    grounding_headlines: list[str] | None = None,
+    force_provider: AIProviderName | None = None,
+) -> tuple[bool, str]:
+    """Ask 9Router to sanity-check a general-knowledge discussion draft,
+    grounded in this page's own recent coverage when available. Raises on AI
+    failure — the caller decides whether to retry or skip; a failed
+    fact-check call should never silently wave a claim through."""
+    prompt = build_discussion_factcheck_prompt(question, subject, niche, grounding_headlines or [])
+    (valid, reason), _provider = _generate_with_fallback(
+        prompt, _parse_discussion_factcheck, force_provider,
+        context="discussion_factcheck",
+    )
+    return valid, reason
+
+
 def _parse_discussion_copy(raw: str) -> tuple[str, str, str, str]:
     """Parse the model's JSON, tolerating fences/prose. Returns
     (label, question, subject, caption)."""
@@ -402,10 +503,16 @@ def generate_discussion_copy(
     article=None,
     seed_text: str | None = None,
     subject_hint: str | None = None,
+    avoid_subjects: list[str] | None = None,
+    recent_headlines: list[str] | None = None,
     force_provider: AIProviderName | None = None,
 ) -> DiscussionCopy:
-    """Generate one Mode 4 discussion card. Pass EITHER `article` (news-seeded,
-    fact-grounded) OR `seed_text` (evergreen, opinion-only).
+    """Generate one Mode 4 discussion card. Pass `article` (news-seeded,
+    fact-grounded), `seed_text` (evergreen, opinion-only), or neither — the
+    model then invents the whole topic from its own knowledge of the
+    fanpage's niche (general-knowledge fallback, used when both other
+    sources are exhausted). `recent_headlines` only applies to that last
+    case — see build_discussion_general_prompt.
 
     Raises on AI failure (both providers down) or unparseable output — the
     calling task owns retry/backoff.
@@ -415,7 +522,7 @@ def generate_discussion_copy(
     elif seed_text:
         prompt = build_discussion_evergreen_prompt(fanpage, seed_text, subject_hint)
     else:
-        raise ValueError("generate_discussion_copy needs either article or seed_text")
+        prompt = build_discussion_general_prompt(fanpage, avoid_subjects or [], recent_headlines or [])
 
     (label, question, subject, caption), provider = _generate_with_fallback(
         prompt, _parse_discussion_copy, force_provider,

@@ -480,14 +480,19 @@ def render_pending_designs():
         for (job_id,) in jobs:
             render_design.delay(job_id)
 
-        # Mode 4 discussion cards for auto-mode fanpages (own publish-mode field).
+        # Mode 4 discussion cards: always auto-render regardless of publish
+        # mode — unlike news_content, discussion has no manual Designer-canvas
+        # path (design-payload/design-image don't support it), so this sweep
+        # is the only way a card ever gets its image. render_discussion itself
+        # gates auto-*publish* on discussion_publish_mode; manual_review
+        # fanpages get the rendered card parked in pending_publish for a human
+        # to approve in the Queue instead of never rendering at all.
         djobs = (
             db.query(PublishJob.id)
             .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
             .filter(
                 PublishJob.status == PublishJobStatus.pending_design,
                 PublishJob.content_type == ContentType.discussion,
-                TargetFanpage.discussion_publish_mode == PublishMode.auto,
             )
             .limit(10)
             .all()

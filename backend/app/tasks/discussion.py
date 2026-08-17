@@ -109,10 +109,182 @@ def _pick_evergreen_topic(db, fanpage):
     )
 
 
+_RECENT_SUBJECTS_DAYS = 14
+_RECENT_SUBJECTS_LIMIT = 15
+
+
+def _recent_discussion_subjects(db, fanpage) -> list[str]:
+    """Subjects used in this fanpage's last _RECENT_SUBJECTS_DAYS discussion
+    cards, so the general-knowledge prompt doesn't repeat the same person."""
+    from app.models.publish_jobs import PublishJob, ContentType
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_RECENT_SUBJECTS_DAYS)
+    rows = (
+        db.query(PublishJob.design_caption)
+        .filter(
+            PublishJob.fanpage_id == fanpage.id,
+            PublishJob.content_type == ContentType.discussion,
+            PublishJob.created_at >= cutoff,
+            PublishJob.design_caption.isnot(None),
+        )
+        .order_by(PublishJob.created_at.desc())
+        .limit(_RECENT_SUBJECTS_LIMIT)
+        .all()
+    )
+    seen, out = set(), []
+    for (subject,) in rows:
+        if subject and subject not in seen:
+            seen.add(subject)
+            out.append(subject)
+    return out
+
+
+_HEADLINES_CONTEXT_DAYS = 60
+_HEADLINES_CONTEXT_LIMIT = 20
+_GENERAL_FACTCHECK_ATTEMPTS = 2
+
+
+def _recent_headlines(db, fanpage) -> list[str]:
+    """Recent article titles from this fanpage's own subscribed news sources
+    (any status, not just unclaimed) — passed to the general-knowledge prompt
+    as best-effort grounding so a stale training cutoff is less likely to
+    contradict something this page's own feed already reported."""
+    from app.models.scraped_articles import ScrapedArticle
+    from app.models.fanpage_news_sources import FanpageNewsSource
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_HEADLINES_CONTEXT_DAYS)
+    rows = (
+        db.query(ScrapedArticle.scraped_title)
+        .join(FanpageNewsSource, FanpageNewsSource.news_source_id == ScrapedArticle.news_source_id)
+        .filter(
+            FanpageNewsSource.fanpage_id == fanpage.id,
+            FanpageNewsSource.is_active == True,
+            ScrapedArticle.scraped_at >= cutoff,
+        )
+        .order_by(ScrapedArticle.scraped_at.desc())
+        .limit(_HEADLINES_CONTEXT_LIMIT)
+        .all()
+    )
+    return [t for (t,) in rows if t]
+
+
+def _grounding_headlines_for_claim(db, subject: str, question: str) -> list[str]:
+    """Targeted retrieval for the fact-check pass: pull article titles (any
+    age, not just a recent window; ANY subscribed news source in the whole
+    system, not just this fanpage's own) that mention a full name appearing
+    in the drafted claim.
+
+    Two reasons this is broader than the fanpage's own feed:
+    - A generic "last N headlines" sample is dominated by whatever was
+      scraped in the last few hours on a busy feed and easily misses a fact
+      from a week+ ago; searching by the specific names in the claim finds it
+      regardless of age.
+    - The fact itself (e.g. "who's the reigning champion") is objective and
+      independent of which sources a given fanpage happens to subscribe to —
+      restricting to the fanpage's own sources can miss it entirely if the
+      story only ran on a source that fanpage doesn't follow, even though
+      another fanpage's feed (or the wider system) already has it."""
+    import re
+    from sqlalchemy import or_
+    from app.models.scraped_articles import ScrapedArticle
+
+    # The 2+-capitalized-words pattern also snags generic phrases ("World
+    # Championship", "Grand Prix") that aren't names — drop known offenders
+    # so they don't crowd a busy name (e.g. "Norris") out of the top results
+    # with unrelated articles from other niches that share the same phrase.
+    _GENERIC_PHRASES = {"world championship", "grand prix", "hot take", "formula 1"}
+    raw_names = re.findall(r"\b[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+)+\b", question)
+    names = {n for n in raw_names if n.lower() not in _GENERIC_PHRASES}
+    if subject:
+        names.add(subject)
+    if not names:
+        return []
+
+    name_cond = or_(*[ScrapedArticle.scraped_title.ilike(f"%{n}%") for n in names])
+
+    # Tier 1: name + an outcome/result keyword — the exact class of fact this
+    # check exists to catch (a title/race/result already decided), prioritized
+    # regardless of age so it isn't crowded out by unrelated recent mentions.
+    outcome_cond = or_(*[
+        ScrapedArticle.scraped_title.ilike(f"%{kw}%")
+        for kw in ("champion", "crowned", "clinch", "wins the", "title winner")
+    ])
+    tier1 = (
+        db.query(ScrapedArticle.scraped_title)
+        .filter(name_cond, outcome_cond)
+        .order_by(ScrapedArticle.scraped_at.desc())
+        .limit(6)
+        .all()
+    )
+
+    # Tier 2: fill the rest with plain recent name mentions.
+    tier2 = (
+        db.query(ScrapedArticle.scraped_title)
+        .filter(name_cond)
+        .order_by(ScrapedArticle.scraped_at.desc())
+        .limit(12)
+        .all()
+    )
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for (title,) in list(tier1) + list(tier2):
+        if title and title not in seen:
+            seen.add(title)
+            out.append(title)
+        if len(out) >= 12:
+            break
+    return out
+
+
+def _generate_general_topic(db, fanpage):
+    """General-knowledge hot takes have no article/seed to fact-check
+    against, so before accepting one, run a second, independent 9Router call
+    that fact-checks the draft — catches stale-knowledge mistakes (e.g.
+    betting on an outcome that's already been decided the other way) that
+    the generation call alone let through. Checking with the model's bare
+    memory doesn't reliably catch this (the same blind spot answers both
+    calls), so the fact-check is grounded with this page's own archived
+    coverage of the names in the claim (_grounding_headlines_for_claim) —
+    concrete page-specific evidence beats a second guess from the same
+    memory. Returns None if nothing passes within the attempt budget — the
+    caller skips this cycle rather than risk posting a wrong claim."""
+    from app.services.news_copywriter import generate_discussion_copy, factcheck_discussion_claim
+
+    avoid_subjects = _recent_discussion_subjects(db, fanpage)
+    headlines = _recent_headlines(db, fanpage)
+    niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+
+    for _attempt in range(_GENERAL_FACTCHECK_ATTEMPTS):
+        candidate = generate_discussion_copy(
+            fanpage, avoid_subjects=avoid_subjects, recent_headlines=headlines
+        )
+        grounding = _grounding_headlines_for_claim(db, candidate.subject_name, candidate.question)
+        valid, reason = factcheck_discussion_claim(
+            candidate.question, candidate.subject_name, niche, grounding_headlines=grounding
+        )
+        if valid:
+            return candidate
+        logger.warning(
+            "Discussion: fanpage %d general-knowledge claim rejected by fact-check: %r (%s)",
+            fanpage.id, candidate.question, reason,
+        )
+        avoid_subjects = [candidate.subject_name] + avoid_subjects
+
+    logger.info(
+        "Discussion: fanpage %d general-knowledge topic failed fact-check %d time(s), skipping this cycle",
+        fanpage.id, _GENERAL_FACTCHECK_ATTEMPTS,
+    )
+    return None
+
+
 def _create_one(db, fanpage) -> bool:
     """Generate a single discussion card for the fanpage. Returns True if a job
     was created. Picks the topic source per discussion_topic_mode; on 'both',
-    news is preferred with an evergreen fallback."""
+    news is preferred, then an evergreen seed, then the AI's own general
+    knowledge of the fanpage's niche — hot takes don't have to ride an
+    article, so this last tier keeps cards flowing even when nothing fresh
+    is available (news mode alone stays news-only by design)."""
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
     from app.models.target_fanpages import PublishMode
     from app.services.news_copywriter import generate_discussion_copy
@@ -127,17 +299,21 @@ def _create_one(db, fanpage) -> bool:
     if article is None and mode in ("evergreen", "both"):
         topic = _pick_evergreen_topic(db, fanpage)
 
-    if article is None and topic is None:
+    if article is None and topic is None and mode == "news":
         logger.info("Discussion: fanpage %d has no available topic (mode=%s)", fanpage.id, mode)
         return False
 
     try:
         if article is not None:
             copy = generate_discussion_copy(fanpage, article=article)
-        else:
+        elif topic is not None:
             copy = generate_discussion_copy(
                 fanpage, seed_text=topic.seed_text, subject_hint=topic.subject_hint
             )
+        else:
+            copy = _generate_general_topic(db, fanpage)
+            if copy is None:
+                return False
     except Exception as exc:
         logger.error("Discussion: copy generation failed for fanpage %d: %s", fanpage.id, exc)
         return False
@@ -168,10 +344,15 @@ def _create_one(db, fanpage) -> bool:
 
     db.commit()
 
+    if article is not None:
+        source_desc = f"article:{article.id}"
+    elif topic is not None:
+        source_desc = f"topic:{topic.id}"
+    else:
+        source_desc = "general"
     logger.info(
         "Discussion: fanpage %d created job %d (%s) label=%s subject=%r source=%s",
-        fanpage.id, job.id, mode, copy.label, copy.subject_name,
-        f"article:{article.id}" if article is not None else f"topic:{topic.id}",
+        fanpage.id, job.id, mode, copy.label, copy.subject_name, source_desc,
     )
 
     # Auto mode → render now (staggered slightly); review mode waits for designer.
