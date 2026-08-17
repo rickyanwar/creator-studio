@@ -912,21 +912,36 @@ def extract_two_subjects(title: str, niche: str):
         return None, None
 
 
-def fetch_subject_datauri(subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5):
+def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5):
     """Fetch fresh, context-appropriate candidate photos of `subject` straight
-    from the Getty search (via 9Router/jina), upscale them, and let vision pick
-    the best. `image_type` shapes the query ("face" → portrait, "action" →
-    riding). Returns a data-URI or None. Better than the pre-downloaded gallery
-    because the query is tailored to the subject + context."""
+    from the Getty search (via 9Router/jina), store the ones that pass the
+    same quality gate the scheduled downloader uses (dest keyword = the
+    subject, lowercased), and let vision pick the best of what's usable.
+    `image_type` shapes the query ("face" → portrait, "action" → riding).
+    Returns a data-URI or None.
+
+    Storing every candidate (not just the winner) — rather than the old
+    behavior of returning a bare in-memory data-URI — fixes a real bug found
+    2026-08-17: two different fanpages independently searching the identical
+    subject name minutes apart (same source article, different fanpage
+    caption) both landed on Getty's identical newest-first top result, so the
+    same photo went out on both pages. Persisting to gallery_images means the
+    second search's skip_urls (same as the scheduled downloader's dedup)
+    naturally excludes whatever the first one already claimed. The unused
+    candidates become free bonus stock for later picks instead of being
+    discarded, too."""
     from urllib.parse import quote
+    from pathlib import Path
 
-    import httpx
-
+    from sqlalchemy.exc import IntegrityError
     from app.config import get_settings
-    from app.services.image_downloader import _9router_fetch_markdown, _IMG_URL_RE, _dedup_key, _UA
-    from app.services.upscaler import upscale_image_bytes
+    from app.models.gallery import GalleryImage
+    from app.services.image_downloader import (
+        _9router_fetch_markdown, _IMG_URL_RE, _fetch_and_store, keyword_slug,
+    )
 
     s = get_settings()
+    keyword = subject.strip().lower()
     # Always keep the niche in the query, even for portraits — a bare surname
     # (e.g. "Guevara") can collide with a far more famous unrelated person
     # (Che Guevara) in stock-photo search results without it. "press" on a
@@ -940,30 +955,61 @@ def fetch_subject_datauri(subject: str, image_type: str = "face", niche: str = "
         logger.warning("fetch_subject_datauri: search failed for %r: %s", subject, exc)
         return None
 
+    candidate_urls: list[str] = []
     seen: set = set()
-    uris: list[str] = []
     for m in _IMG_URL_RE.finditer(md):
         u = m.group(0)
-        k = _dedup_key(u)
-        if k in seen:
+        if u in seen:
             continue
-        seen.add(k)
-        try:
-            r = httpx.get(u, headers={"User-Agent": _UA}, timeout=20, follow_redirects=True)
-            if r.status_code != 200 or not r.headers.get("content-type", "").startswith("image"):
-                continue
-            data = upscale_image_bytes(r.content)
-            uris.append("data:image/jpeg;base64," + base64.b64encode(data).decode())
-        except Exception:
-            continue
-        if len(uris) >= max_candidates:
-            break
-
-    if not uris:
+        seen.add(u)
+        candidate_urls.append(u)
+    if not candidate_urls:
         return None
+
+    skip_urls = {
+        u for (u,) in
+        db.query(GalleryImage.source_image_url).filter(GalleryImage.keyword == keyword).all()
+    }
+    dest_dir = Path(s.storage_base_path) / "gallery" / keyword_slug(keyword)
+    saved = _fetch_and_store(candidate_urls, dest_dir, max_candidates, (300, 300), skip_urls, "9router-live", subject=subject)
+    if not saved:
+        return None
+
+    survivors: list[tuple] = []  # (GalleryImage, datauri)
+    for item in saved:
+        gi = GalleryImage(
+            keyword=keyword,
+            source_image_url=item.source_url,
+            local_path=item.local_path,
+            public_url=f"{s.storage_base_url.rstrip('/')}/gallery/{keyword_slug(keyword)}/{item.filename}",
+            width=item.width,
+            height=item.height,
+            source_engine=item.engine,
+            label=item.label,
+        )
+        db.add(gi)
+        try:
+            db.commit()
+        except IntegrityError:
+            # a concurrent job (this subject, another fanpage) claimed this
+            # exact photo between our skip_urls read and this insert.
+            db.rollback()
+            Path(item.local_path).unlink(missing_ok=True)
+            continue
+        survivors.append((gi, file_to_datauri(item.local_path)))
+
+    if not survivors:
+        return None
+
+    uris = [uri for _, uri in survivors]
     best = vision_pick_best(uris, subject, image_type=image_type)
-    logger.info("fetch_subject_datauri: %r (%s) → %d candidates, picked %d", subject, image_type, len(uris), best)
-    return uris[best]
+    picked_gi, picked_uri = survivors[best]
+    _mark_gallery_image_used(db, picked_gi)
+    logger.info(
+        "fetch_subject_datauri: %r (%s) → %d candidate(s) stored, picked %d",
+        subject, image_type, len(survivors), best,
+    )
+    return picked_uri
 
 
 def fetch_topic_datauri(title: str, niche: str, excerpt: str = "", max_candidates: int = 6):
@@ -1061,7 +1107,7 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
     if uri:
         logger.info("Recreate main: fresh gallery photo for %r (%s)", primary, image_type)
         return uri, (gi.local_path if gi else None)
-    uri = fetch_subject_datauri(primary, image_type, niche)
+    uri = fetch_subject_datauri(db, primary, image_type, niche)
     if uri:
         logger.info("Recreate main: fresh Getty photo for %r (%s)", primary, image_type)
         return uri, None
@@ -1078,12 +1124,12 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
 def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face", niche: str = "MotoGP"):
     """Two context-appropriate, vision-picked photos (same style) for a left/right
     split. Fetches fresh from Getty first, falls back to the gallery."""
-    left = fetch_subject_datauri(primary, image_type, niche)
+    left = fetch_subject_datauri(db, primary, image_type, niche)
     if not left:
         left, lg = find_gallery_datauri(db, primary, use_vision=True, image_type=image_type)
     if not left:
         return None
-    right = fetch_subject_datauri(secondary, image_type, niche)
+    right = fetch_subject_datauri(db, secondary, image_type, niche)
     if not right:
         right, rg = find_gallery_datauri(db, secondary, use_vision=True, image_type=image_type)
     if not right:
@@ -1239,7 +1285,7 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         if not subject:
             logger.info("Design: no secondary subject for %r — image_2 left empty", title[:50])
             return template_json, _with_inset(template_json, [main_datauri])
-        uri = fetch_subject_datauri(subject, "face", niche)
+        uri = fetch_subject_datauri(db, subject, "face", niche)
         if not uri:
             uri, _ = find_gallery_datauri(db, subject, exclude_path=main_path, image_type="face")
         if not uri:

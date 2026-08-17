@@ -379,7 +379,7 @@ def render_discussion(self, job_id: int):
                 logger.warning("Discussion: gallery lookup failed for %r (job %d): %s", subject, job_id, exc)
             if not image_src:
                 try:
-                    uri = fetch_subject_datauri(subject, "face", niche)
+                    uri = fetch_subject_datauri(db, subject, "face", niche)
                     if uri:
                         image_src, image_marker = uri, "search"
                 except Exception as exc:
