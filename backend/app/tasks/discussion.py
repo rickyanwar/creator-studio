@@ -239,16 +239,23 @@ def _grounding_headlines_for_claim(db, subject: str, question: str) -> list[str]
 
 def _generate_general_topic(db, fanpage):
     """General-knowledge hot takes have no article/seed to fact-check
-    against, so before accepting one, run a second, independent 9Router call
-    that fact-checks the draft — catches stale-knowledge mistakes (e.g.
-    betting on an outcome that's already been decided the other way) that
-    the generation call alone let through. Checking with the model's bare
-    memory doesn't reliably catch this (the same blind spot answers both
-    calls), so the fact-check is grounded with this page's own archived
-    coverage of the names in the claim (_grounding_headlines_for_claim) —
-    concrete page-specific evidence beats a second guess from the same
-    memory. Returns None if nothing passes within the attempt budget — the
-    caller skips this cycle rather than risk posting a wrong claim."""
+    against, so before accepting one they go through three layers of defense:
+
+    1. Prompt-time grounding — the generation call itself is given this
+       fanpage's recent headlines and told not to bet on undecided outcomes
+       (see build_discussion_general_prompt).
+    2. A fact-check call grounded in this page's own archived coverage of the
+       names in the claim (_grounding_headlines_for_claim) — concrete,
+       page-specific evidence beats a second guess from bare model memory.
+    3. An independent cross-check of that same fact-check on a DIFFERENT
+       model provider (Groq, not 9Router/Gemini) — layer 2 alone still shares
+       the generation call's blind spot when its own knowledge is stale and
+       no grounding evidence turns up; a differently-trained model is less
+       likely to be wrong about the exact same fact in the exact same way.
+       Both checks must agree "valid" for a candidate to pass.
+
+    Returns None if nothing passes within the attempt budget — the caller
+    skips this cycle rather than risk posting a wrong claim."""
     from app.services.news_copywriter import generate_discussion_copy, factcheck_discussion_claim
 
     avoid_subjects = _recent_discussion_subjects(db, fanpage)
@@ -260,16 +267,31 @@ def _generate_general_topic(db, fanpage):
             fanpage, avoid_subjects=avoid_subjects, recent_headlines=headlines
         )
         grounding = _grounding_headlines_for_claim(db, candidate.subject_name, candidate.question)
+
         valid, reason = factcheck_discussion_claim(
             candidate.question, candidate.subject_name, niche, grounding_headlines=grounding
         )
-        if valid:
-            return candidate
-        logger.warning(
-            "Discussion: fanpage %d general-knowledge claim rejected by fact-check: %r (%s)",
-            fanpage.id, candidate.question, reason,
+        if not valid:
+            logger.warning(
+                "Discussion: fanpage %d general-knowledge claim rejected by fact-check: %r (%s)",
+                fanpage.id, candidate.question, reason,
+            )
+            avoid_subjects = [candidate.subject_name] + avoid_subjects
+            continue
+
+        valid2, reason2 = factcheck_discussion_claim(
+            candidate.question, candidate.subject_name, niche,
+            grounding_headlines=grounding, force_provider="groq",
         )
-        avoid_subjects = [candidate.subject_name] + avoid_subjects
+        if not valid2:
+            logger.warning(
+                "Discussion: fanpage %d general-knowledge claim rejected by cross-check (groq): %r (%s)",
+                fanpage.id, candidate.question, reason2,
+            )
+            avoid_subjects = [candidate.subject_name] + avoid_subjects
+            continue
+
+        return candidate
 
     logger.info(
         "Discussion: fanpage %d general-knowledge topic failed fact-check %d time(s), skipping this cycle",
