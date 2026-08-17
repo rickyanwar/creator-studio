@@ -769,13 +769,23 @@ GALLERY_REUSE_COOLDOWN_MIN_DAYS = 14
 GALLERY_REUSE_COOLDOWN_MAX_DAYS = 28
 
 
-def _eligible_rows(base_query, limit: int = 8):
+def _eligible_rows(base_query, limit: int = 8, allow_stale_reuse: bool = True):
     """Randomized candidate pool respecting the reuse cooldown: images never
     used, or not used within a randomized 14-28 day window, come first (in
     random order, not always the newest download) — the same photo shouldn't
-    reappear every run. Falls back to the least-recently-used images if the
-    cooldown-eligible pool is empty (small keyword pools shouldn't just stop
-    producing images)."""
+    reappear every run.
+
+    `allow_stale_reuse=True` (default) falls back to the least-recently-used
+    images when the cooldown pool is empty, so a small keyword/niche pool
+    doesn't just stop producing images — this is the right call for a caller
+    with no fresher source of its own. Callers that DO have a fresher
+    fallback (a live Getty/Google search) should pass
+    `allow_stale_reuse=False` so an empty cooldown pool comes back empty here
+    too instead of silently handing back a stale-but-technically-available
+    photo — that emptiness is what makes the caller actually try the fresh
+    search instead of skipping straight to reuse. Call again with
+    `allow_stale_reuse=True` afterward as the true last resort if the fresh
+    search also comes up empty."""
     import random
     from datetime import datetime, timedelta
 
@@ -792,7 +802,7 @@ def _eligible_rows(base_query, limit: int = 8):
         .limit(limit)
         .all()
     )
-    if rows:
+    if rows or not allow_stale_reuse:
         return rows
     # Cooldown pool exhausted (e.g. a niche with very few photos) — reuse the
     # one used longest ago rather than refuse to produce an image at all.
@@ -811,12 +821,21 @@ def _mark_gallery_image_used(db, gi) -> None:
     db.commit()
 
 
-def find_gallery_datauri(db, subject: str, exclude_path: str | None = None, use_vision: bool = True, image_type: str | None = None):
+def find_gallery_datauri(
+    db, subject: str, exclude_path: str | None = None, use_vision: bool = True,
+    image_type: str | None = None, allow_stale_reuse: bool = True,
+):
     """Find the best gallery image whose keyword matches the subject, honoring
     the reuse cooldown and picking randomly among eligible candidates (not
     always the newest download) — see _eligible_rows. When several match,
     9Router vision picks the best — constrained to `image_type` ("face"/
-    "action") so split layouts stay consistent. Marks the picked image used."""
+    "action") so split layouts stay consistent. Marks the picked image used.
+
+    `allow_stale_reuse=False` makes this return (None, None) when the cooldown
+    pool is empty instead of reusing a stale photo — pass this when the
+    caller has a fresher fallback (a live Getty/Google search) it should try
+    first, then call this again with the default True as the true last
+    resort if that fresh search also finds nothing."""
     from sqlalchemy import func, or_
     from app.models.gallery import GalleryImage
 
@@ -834,9 +853,9 @@ def find_gallery_datauri(db, subject: str, exclude_path: str | None = None, use_
     rows = []
     # Prefer pre-labelled images matching the wanted type (from download-time vision)
     if image_type in ("face", "action"):
-        rows = _eligible_rows(base.filter(GalleryImage.label == image_type))
+        rows = _eligible_rows(base.filter(GalleryImage.label == image_type), allow_stale_reuse=allow_stale_reuse)
     if not rows:
-        rows = _eligible_rows(base)
+        rows = _eligible_rows(base, allow_stale_reuse=allow_stale_reuse)
 
     usable = [gi for gi in rows if gi.local_path and gi.local_path != exclude_path and os.path.exists(gi.local_path)]
     if not usable:
@@ -910,8 +929,10 @@ def fetch_subject_datauri(subject: str, image_type: str = "face", niche: str = "
     s = get_settings()
     # Always keep the niche in the query, even for portraits — a bare surname
     # (e.g. "Guevara") can collide with a far more famous unrelated person
-    # (Che Guevara) in stock-photo search results without it.
-    query = f"{subject} {niche} portrait" if image_type == "face" else f"{subject} {niche}"
+    # (Che Guevara) in stock-photo search results without it. "press" on a
+    # face query steers Getty toward press-conference/paddock closeups
+    # (clean, forward-facing) rather than wide/candid shots.
+    query = f"{subject} {niche} portrait press" if image_type == "face" else f"{subject} {niche}"
     url = s.gallery_search_url_template.format(query=quote(query), page=1)
     try:
         md = _9router_fetch_markdown(url)
@@ -1019,30 +1040,37 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
     card shows a clean, relevant photo instead of the original IG screenshot
     (which often carries the source page's own text/branding).
 
-    Order: a matching gallery image we already downloaded (vision-picked) →
-    a fresh Getty search if the gallery has nothing good. Returns (datauri, path)
-    or (None, None) so the caller can fall back to the IG image.
+    Order: a cooldown-fresh gallery image we already downloaded (vision-
+    picked) → a fresh Getty search → a stale (cooldown-expired) gallery photo
+    as the true last resort, rather than reusing one within its cooldown just
+    because a fresh search also came up empty. Returns (datauri, path) or
+    (None, None) so the caller can fall back to the IG image.
 
     `exclude_path` (a GalleryImage.local_path) is forwarded to
     find_gallery_datauri so a History "Re-edit with new image" retry can rule
-    out the exact photo it picked last time — without this, a subject with
-    only one or two gallery photos would just get the same one back forever,
-    since find_gallery_datauri's own reuse-cooldown pool only ever falls
-    through to a fresh search when it has ZERO eligible candidates, not when
-    it's excluding one specific already-used photo.
+    out the exact photo it picked last time.
     """
     primary, _ = extract_two_subjects(title, niche)
     if not primary:
         return None, None
     image_type = pick_split_image_type(title, niche)  # "face" or "action"
-    uri, gi = find_gallery_datauri(db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type)
+    uri, gi = find_gallery_datauri(
+        db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type,
+        allow_stale_reuse=False,
+    )
     if uri:
-        logger.info("Recreate main: gallery photo for %r (%s)", primary, image_type)
+        logger.info("Recreate main: fresh gallery photo for %r (%s)", primary, image_type)
         return uri, (gi.local_path if gi else None)
     uri = fetch_subject_datauri(primary, image_type, niche)
     if uri:
         logger.info("Recreate main: fresh Getty photo for %r (%s)", primary, image_type)
         return uri, None
+    uri, gi = find_gallery_datauri(
+        db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type,
+    )
+    if uri:
+        logger.info("Recreate main: stale gallery photo for %r (%s) — nothing fresher available", primary, image_type)
+        return uri, (gi.local_path if gi else None)
     logger.info("Recreate main: no photo for %r — falling back to IG image", primary)
     return None, None
 

@@ -99,15 +99,7 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
     text = f"{article.scraped_title} {article.scraped_content or ''}".lower()
     matched = [k for k in keywords if k in text]
 
-    if matched:
-        pool = _eligible_rows(
-            db.query(GalleryImage).filter(
-                # A photo can feature more than one person — also match images
-                # tagged with a pool keyword as a secondary (extra) tag.
-                or_(GalleryImage.keyword.in_(matched), GalleryImage.extra_keywords.overlap(matched)),
-                GalleryImage.is_deleted == False,
-            )
-        )
+    def _pick_from_pool(pool):
         for img in pool:
             if excluded_gallery_id is not None and img.id == excluded_gallery_id:
                 continue
@@ -119,9 +111,25 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
                 return f"data:image/jpeg;base64,{base64.b64encode(data).decode()}", img, f"gallery:{img.id}"
             except OSError as exc:
                 logger.warning("Design: gallery image %d unreadable (%s) — skipping", img.id, exc)
+        return None
 
-    # No gallery image at all (subject-specific AND niche-keyword both came up
-    # empty) — search fresh instead of jumping straight to the raw article photo.
+    matched_query = None
+    if matched:
+        matched_query = db.query(GalleryImage).filter(
+            # A photo can feature more than one person — also match images
+            # tagged with a pool keyword as a secondary (extra) tag.
+            or_(GalleryImage.keyword.in_(matched), GalleryImage.extra_keywords.overlap(matched)),
+            GalleryImage.is_deleted == False,
+        )
+        # Cooldown-fresh only here — a stale match isn't allowed to win over
+        # the fresh Getty/Google search below just because it exists.
+        picked = _pick_from_pool(_eligible_rows(matched_query, allow_stale_reuse=False))
+        if picked:
+            return picked
+
+    # No cooldown-fresh gallery image (subject-specific AND niche-keyword both
+    # came up empty/stale) — search fresh instead of jumping straight to the
+    # raw article photo or a stale reuse.
     excerpt = (article.scraped_content or "")[:600]
     try:
         uri = fetch_topic_datauri(title, niche, excerpt=excerpt)
@@ -149,6 +157,14 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
             )
         except Exception as exc:
             logger.warning("Design: hero image fetch failed for job %d: %s", job.id, exc)
+
+    # Absolute last resort: nothing fresh anywhere — reuse a stale niche-pool
+    # photo rather than stall the job entirely.
+    if matched_query is not None:
+        picked = _pick_from_pool(_eligible_rows(matched_query))
+        if picked:
+            logger.info("Design: job %d falling back to a stale (cooldown-expired) gallery photo — nothing fresher available", job.id)
+            return picked
 
     return None, None, None
 
@@ -365,13 +381,14 @@ def render_discussion(self, job_id: int):
             logger.warning("Discussion: job %d has no usable template", job_id)
             return
 
-        # ── Image: gallery-first by subject, fresh Getty fallback ──
+        # ── Image: fresh-gallery first (cooldown-respecting), fresh Getty
+        # fallback, stale-gallery reuse only as the true last resort ──
         subject = (job.design_caption or "").strip()
         niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
         image_src, gallery_image, image_marker = None, None, None
         if subject:
             try:
-                uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face")
+                uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face", allow_stale_reuse=False)
                 if uri:
                     image_src, gallery_image, image_marker = uri, gi, (f"gallery:{gi.id}" if gi else "gallery")
             except Exception as exc:
@@ -383,6 +400,15 @@ def render_discussion(self, job_id: int):
                         image_src, image_marker = uri, "search"
                 except Exception as exc:
                     logger.warning("Discussion: Getty fetch failed for %r (job %d): %s", subject, job_id, exc)
+            if not image_src:
+                # Nothing fresh anywhere — reuse a stale gallery photo rather
+                # than stall the card entirely.
+                try:
+                    uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face")
+                    if uri:
+                        image_src, gallery_image, image_marker = uri, gi, (f"gallery:{gi.id}" if gi else "gallery")
+                except Exception as exc:
+                    logger.warning("Discussion: stale-gallery fallback failed for %r (job %d): %s", subject, job_id, exc)
 
         if not image_src:
             job.status = PublishJobStatus.pending_design
