@@ -17,18 +17,83 @@ from app.config import get_settings
 
 _KEYWORD_INTERVAL_HOURS = 24
 
-# web/fetch is a paid call (jina-reader) — don't spend it on a keyword that's
-# already at capacity, and only spend it on a subject that's currently
-# newsworthy (mentioned in a recently scraped article) unless it's critically
-# under-stocked, so a quiet keyword doesn't get stuck at 0 forever. See
-# [[feedback-maximize-9router-fallbacks]]'s sibling lesson from 2026-08-16:
-# cost-consciousness here, reliability there — different tradeoffs for a paid
-# per-call API vs a retry chain.
+# web/fetch is a paid call (jina-reader) — don't spend it where it won't pay
+# off. "Where it pays off" splits into two tiers (2026-08-17, replacing one
+# flat max_images cap that every keyword shared regardless of popularity):
+#
+# - Actively newsworthy (mentioned in a recently scraped article — a rider
+#   racing every week, say) → genuinely new editorial coverage keeps showing
+#   up on Getty every event, so it's worth building a deep archive: grows all
+#   the way to _ACTIVE_KEYWORD_CEILING. This is gated on being IN THE NEWS,
+#   not on how often OUR system has historically picked its photos — pick
+#   rate is a lagging signal a keyword that was previously stuck at capacity
+#   (see download_keyword's docstring) could never climb out of on its own.
+# - Quiet (not currently in the news) → capped much lower
+#   (_QUIET_KEYWORD_CEILING), and only topped up while its own cooldown-fresh
+#   pool is thin relative to its actual pick rate (_fresh_supply_status) —
+#   no point re-fetching a subject nothing is currently drawing from.
 _MENTION_LOOKBACK_DAYS = 7
-_MENTION_BOOTSTRAP_FLOOR = 5
+_ACTIVE_KEYWORD_CEILING = 500
+_QUIET_KEYWORD_CEILING = 60
+
+# Usage-based fresh-supply target for a QUIET keyword: tracks its actual pick
+# rate instead of a number every keyword shares. FRESH_POOL_TARGET_WEEKS is
+# how many weeks of fresh supply, at the observed pick rate, to stay ahead
+# by; FLOOR is the minimum buffer even at ~0 usage, so a brand-new or
+# never-mentioned keyword still bootstraps past zero instead of starving.
+_USAGE_LOOKBACK_DAYS = 30
+_FRESH_POOL_TARGET_WEEKS = 3
+_FRESH_POOL_FLOOR = 8
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _fresh_supply_status(db, keyword: str) -> tuple[int, int, int]:
+    """(fresh_count, target, active_count) for one keyword.
+
+    fresh_count: images currently past the reuse-cooldown gate (usable right
+    now without violating [[gallery-reuse-cooldown]]/find_gallery_datauri's
+    14-28 day window — using the floor here is intentionally conservative,
+    i.e. this may slightly undercount what's "fresh").
+    target: how big that fresh pool should be for a QUIET keyword, scaled to
+    its actual pick rate over the last _USAGE_LOOKBACK_DAYS (a
+    distinct-images-with-a-recent-last_used_at count — the closest proxy to
+    "times picked" available without a dedicated usage-events log, and a
+    reasonable one since the cooldown means an image is rarely picked twice
+    inside one lookback window). Not used for an actively-newsworthy keyword
+    — see _ACTIVE_KEYWORD_CEILING in download_all_keywords."""
+    from app.models.gallery import GalleryImage
+    from app.services.design_images import GALLERY_REUSE_COOLDOWN_MIN_DAYS
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cooldown_cutoff = now - timedelta(days=GALLERY_REUSE_COOLDOWN_MIN_DAYS)
+    usage_cutoff = now - timedelta(days=_USAGE_LOOKBACK_DAYS)
+
+    active_count = (
+        db.query(GalleryImage)
+        .filter(GalleryImage.keyword == keyword, GalleryImage.is_deleted == False)
+        .count()
+    )
+    fresh_count = (
+        db.query(GalleryImage)
+        .filter(
+            GalleryImage.keyword == keyword, GalleryImage.is_deleted == False,
+            (GalleryImage.last_used_at.is_(None)) | (GalleryImage.last_used_at < cooldown_cutoff),
+        )
+        .count()
+    )
+    recent_picks = (
+        db.query(GalleryImage)
+        .filter(
+            GalleryImage.keyword == keyword, GalleryImage.is_deleted == False,
+            GalleryImage.last_used_at >= usage_cutoff,
+        )
+        .count()
+    )
+    weekly_rate = recent_picks / (_USAGE_LOOKBACK_DAYS / 7)
+    target = int(min(_QUIET_KEYWORD_CEILING, max(_FRESH_POOL_FLOOR, round(weekly_rate * _FRESH_POOL_TARGET_WEEKS))))
+    return fresh_count, target, active_count
 
 
 def _recently_mentioned(db, keyword: str, cutoff: datetime) -> bool:
@@ -57,10 +122,13 @@ def _recently_mentioned(db, keyword: str, cutoff: datetime) -> bool:
 @celery_app.task(name="app.tasks.gallery_downloader.download_all_keywords")
 def download_all_keywords():
     """Dispatch a download for every active keyword whose daily interval
-    elapsed, an already-full keyword, and (unless critically low on stock) a
-    keyword that hasn't been mentioned in a recently scraped article — both
-    checks exist purely to avoid spending paid web/fetch calls where they
-    won't help (full) or aren't currently relevant (not in the news).
+    elapsed and that's below its tier's ceiling — actively-newsworthy
+    keywords (mentioned in a recently scraped article) grow toward
+    _ACTIVE_KEYWORD_CEILING regardless of past pick rate; quiet ones stop
+    once their own cooldown-fresh pool already covers their actual usage
+    (_fresh_supply_status), capped at the much smaller
+    _QUIET_KEYWORD_CEILING. Both exist purely to avoid spending paid
+    web/fetch calls where they won't help.
 
     Skips entirely while Settings.gallery_scraping_paused is set — a global
     kill switch for the scheduled sweep. Doesn't affect an explicit
@@ -68,7 +136,7 @@ def download_all_keywords():
     that always runs regardless of these budget checks."""
     db = SessionLocal()
     try:
-        from app.models.gallery import GalleryKeyword, GalleryImage
+        from app.models.gallery import GalleryKeyword
         from app.models.settings import Settings
 
         row = db.query(Settings).filter_by(id=1).first()
@@ -84,31 +152,52 @@ def download_all_keywords():
             if kw.last_downloaded_at and now - kw.last_downloaded_at < timedelta(hours=_KEYWORD_INTERVAL_HOURS):
                 continue
 
-            active_count = (
-                db.query(GalleryImage)
-                .filter(GalleryImage.keyword == kw.keyword, GalleryImage.is_deleted == False)
-                .count()
+            fresh_count, usage_target, active_count = _fresh_supply_status(db, kw.keyword)
+            mentioned = _recently_mentioned(db, kw.keyword, mention_cutoff)
+
+            if mentioned:
+                if active_count >= _ACTIVE_KEYWORD_CEILING:
+                    logger.debug(
+                        "Gallery: keyword %r (active in the news) already at its ceiling (%d/%d) — skipping",
+                        kw.keyword, active_count, _ACTIVE_KEYWORD_CEILING,
+                    )
+                    continue
+                needed = _ACTIVE_KEYWORD_CEILING - active_count
+            else:
+                if active_count >= _QUIET_KEYWORD_CEILING:
+                    logger.debug("Gallery: keyword %r (quiet) at its ceiling (%d/%d) — skipping", kw.keyword, active_count, _QUIET_KEYWORD_CEILING)
+                    continue
+                if fresh_count >= usage_target:
+                    logger.debug(
+                        "Gallery: keyword %r (quiet) has enough fresh supply for its usage (%d fresh >= target %d) — skipping",
+                        kw.keyword, fresh_count, usage_target,
+                    )
+                    continue
+                needed = min(usage_target - fresh_count, _QUIET_KEYWORD_CEILING - active_count)
+
+            download_keyword.delay(kw.id, max_num=needed)
+            logger.info(
+                "Gallery: dispatched keyword %d (%s, %s) — active=%d, fresh=%d/target=%d, requesting %d",
+                kw.id, kw.keyword, "newsworthy" if mentioned else "quiet", active_count, fresh_count, usage_target, needed,
             )
-            if active_count >= kw.max_images:
-                logger.debug("Gallery: keyword %r already at capacity (%d/%d) — skipping", kw.keyword, active_count, kw.max_images)
-                continue
-
-            if active_count >= _MENTION_BOOTSTRAP_FLOOR and not _recently_mentioned(db, kw.keyword, mention_cutoff):
-                logger.debug(
-                    "Gallery: keyword %r not mentioned in any article in the last %d days — skipping this cycle",
-                    kw.keyword, _MENTION_LOOKBACK_DAYS,
-                )
-                continue
-
-            download_keyword.delay(kw.id)
-            logger.info("Gallery: dispatched keyword %d (%s) — active=%d/%d", kw.id, kw.keyword, active_count, kw.max_images)
     finally:
         db.close()
 
 
 @celery_app.task(name="app.tasks.gallery_downloader.download_keyword", bind=True, max_retries=1)
-def download_keyword(self, keyword_id: int):
-    """Download new images for one keyword: collect URLs → dedup → validate → store."""
+def download_keyword(self, keyword_id: int, max_num: int | None = None):
+    """Download new images for one keyword: collect URLs → dedup → validate → store.
+
+    `max_num` caps how many NEW images this run may add. Defaults to the
+    keyword's remaining room under its hard ceiling (max_images minus what's
+    already active) rather than blindly requesting max_images every run —
+    that bug was why 54/57 active keywords had silently grown 2x+ past their
+    own cap (2026-08-17) and then got stuck skipped forever by the capacity
+    check in download_all_keywords, which never revisits a count that only
+    grows. The scheduled sweep now passes a smaller, usage-based figure via
+    this param (see _fresh_supply_status); an explicit "Download Now" from
+    the UI leaves it unset and gets the default top-up-to-ceiling behavior.
+    """
     db = SessionLocal()
     try:
         from app.models.gallery import GalleryKeyword, GalleryImage
@@ -121,6 +210,19 @@ def download_keyword(self, keyword_id: int):
         # Stamp immediately so a failing keyword still respects its interval
         kw.last_downloaded_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
+
+        active_count = (
+            db.query(GalleryImage)
+            .filter(GalleryImage.keyword == kw.keyword, GalleryImage.is_deleted == False)
+            .count()
+        )
+        effective_max = max_num if max_num is not None else max(0, kw.max_images - active_count)
+        if effective_max <= 0:
+            logger.debug(
+                "Gallery: keyword %d (%s) has no room to download (active=%d, cap=%d)",
+                keyword_id, kw.keyword, active_count, kw.max_images,
+            )
+            return
 
         slug = keyword_slug(kw.keyword)
         dest_dir = Path(settings.storage_base_path) / "gallery" / slug
@@ -136,7 +238,7 @@ def download_keyword(self, keyword_id: int):
             results = download_images(
                 keyword=kw.keyword,
                 dest_dir=dest_dir,
-                max_num=kw.max_images,
+                max_num=effective_max,
                 min_size=(kw.min_width, kw.min_height),
                 license_filter=kw.license_filter,
                 skip_urls=skip_urls,

@@ -76,7 +76,11 @@ class Settings(BaseSettings):
     # Second source tried only when a topic search (design_images.fetch_topic_datauri)
     # finds nothing on Getty — covers stories with no matching editorial stock photo.
     gallery_search_url_template_google: str = "https://www.google.com/search?q={query}&tbm=isch"
-    gallery_max_pages: int = 10
+    # Raised 2026-08-17 (was 10): the early-stop-on-consecutive-dupes logic
+    # already keeps a caught-up keyword cheap, so the ceiling mainly matters
+    # for an actively-newsworthy keyword catching up toward the higher
+    # active-image target — a shallow cap was cutting that reach short.
+    gallery_max_pages: int = 20
     # Upscale small gallery images (e.g. Getty 612px comps) via FSRCNN x2 + sharpen.
     # FSRCNN is ~0.9s/img on CPU (EDSR is ~80x heavier). Default model in
     # app/sr_models/FSRCNN_x2.pb; see services/upscaler.py to swap to EDSR.

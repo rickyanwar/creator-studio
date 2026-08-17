@@ -12,8 +12,8 @@ class GalleryKeyword(Base):
     keyword = Column(String(128), unique=True, nullable=False)
     niche = Column(String(64), nullable=True, index=True)  # e.g. "F1", "MotoGP", "UFC" — free text
     is_active = Column(Boolean, default=True, nullable=False, server_default="true")
-    max_images = Column(Integer, nullable=False, server_default="50")
-    max_pages = Column(Integer, nullable=False, server_default="10")  # search-result pages to fetch per run
+    max_images = Column(Integer, nullable=False, server_default="500")
+    max_pages = Column(Integer, nullable=False, server_default="20")  # search-result pages to fetch per run
     min_width = Column(Integer, nullable=False, server_default="200")
     min_height = Column(Integer, nullable=False, server_default="200")
     source_engine = Column(String(16), nullable=False, server_default="bing")  # bing | google | 9router
