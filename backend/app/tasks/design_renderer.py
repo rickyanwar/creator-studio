@@ -42,13 +42,17 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
        unused gallery image (covers headlines with no single clear subject)
     3. no gallery match at all → fresh topic search (Getty, then Google Images)
        on the headline itself, kept only if 9Router vision confirms the result
-       actually matches this story (design_images.fetch_topic_datauri) — this
-       is what used to fall straight through to the raw article image below.
-    4. article hero image (scraped_image_url), downloaded on the fly and
-       ALSO vision-checked against the headline before being trusted — an
-       article's og:image is sometimes a section banner/unrelated photo, not
-       an image of the actual story.
-    5. None → job needs a manual image
+       actually matches this story (design_images.fetch_topic_datauri).
+    4. None → job needs a manual image
+
+    The article's own scraped_image_url (its og:image / hero photo) is
+    deliberately NOT used here (removed 2026-08-17) — it's the original
+    publisher's/photographer's photo, not licensed editorial stock like
+    Getty, so auto-publishing it is a real copyright exposure. It's still
+    offered as one labelled, human-reviewed option in the Designer's manual
+    candidate list (api/publish_jobs.get_design_payload) — a person
+    consciously choosing it is a different risk than the pipeline silently
+    picking it for them.
 
     `exclude_marker` (from job.last_image_marker) is whatever this function
     returned as the marker last time it ran for this job — the History
@@ -57,15 +61,14 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
     photo again: tier 1 excludes it via source_news_main's exclude_path (its
     gallery lookup is NOT a fresh search — it hits the same downloaded photos
     first, so without this a subject with only one or two gallery images
-    would just get the same one back forever), the matching GalleryImage row
-    is skipped in tier 2, and tier 4 is skipped entirely if it's the same
-    scraped_image_url as before. Tier 3 is a genuinely fresh AI search each
-    call already, so no exclusion is needed there.
+    would just get the same one back forever), and the matching GalleryImage
+    row is skipped in tier 2. Tier 3 is a genuinely fresh AI search each call
+    already, so no exclusion is needed there.
     """
     from sqlalchemy import or_
     from app.models.gallery import GalleryImage
     from app.services.design_images import (
-        niche_keywords, source_news_main, fetch_topic_datauri, vision_verify_match,
+        niche_keywords, source_news_main, fetch_topic_datauri,
         _eligible_rows, _mark_gallery_image_used,
     )
 
@@ -128,8 +131,9 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
             return picked
 
     # No cooldown-fresh gallery image (subject-specific AND niche-keyword both
-    # came up empty/stale) — search fresh instead of jumping straight to the
-    # raw article photo or a stale reuse.
+    # came up empty/stale) — search fresh instead of jumping straight to a
+    # stale reuse. Deliberately does NOT fall back to the article's own
+    # scraped_image_url — see the docstring's copyright note.
     excerpt = (article.scraped_content or "")[:600]
     try:
         uri = fetch_topic_datauri(title, niche, excerpt=excerpt)
@@ -137,26 +141,6 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
             return uri, None, "search"
     except Exception as exc:
         logger.warning("Design: topic-photo search failed for job %d: %s", job.id, exc)
-
-    if article.scraped_image_url and exclude_marker != f"scraped:{article.scraped_image_url}":
-        try:
-            resp = httpx.get(
-                article.scraped_image_url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; MediaBot/1.0)"},
-                timeout=30.0, follow_redirects=True,
-            )
-            resp.raise_for_status()
-            mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
-            content = resp.content
-            check = vision_verify_match(content, title, excerpt=excerpt)
-            if check["match"]:
-                return f"data:{mime};base64,{base64.b64encode(content).decode()}", None, f"scraped:{article.scraped_image_url}"
-            logger.info(
-                "Design: article hero image failed vision context-check for job %d (%s) — discarding",
-                job.id, check,
-            )
-        except Exception as exc:
-            logger.warning("Design: hero image fetch failed for job %d: %s", job.id, exc)
 
     # Absolute last resort: nothing fresh anywhere — reuse a stale niche-pool
     # photo rather than stall the job entirely.

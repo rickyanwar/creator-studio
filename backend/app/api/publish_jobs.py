@@ -184,7 +184,13 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
     category = job_template.category if job_template and job_template.category else "news"
     template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
 
-    # image candidates: fanpage gallery niches first, then the article hero
+    # image candidates: fanpage gallery niches only. The article's own
+    # scraped_image_url (its og:image/hero photo) is deliberately NOT offered
+    # here (removed 2026-08-17) — it's the original publisher's/
+    # photographer's photo, not licensed editorial stock, so surfacing it as
+    # a one-click option is a real copyright exposure even with a human in
+    # the loop. See design_renderer.select_image_for_job's docstring for the
+    # matching removal from the automatic pipeline.
     candidates: list[dict] = []
     if fanpage and fanpage.mode2_gallery_niches:
         from sqlalchemy import or_
@@ -207,9 +213,6 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
             {"public_url": i.public_url, "keyword": i.keyword, "is_used": i.is_used, "width": i.width, "height": i.height}
             for i in imgs
         ]
-    if article and article.scraped_image_url:
-        candidates.insert(0, {"public_url": article.scraped_image_url, "keyword": "article hero", "is_used": False, "width": None, "height": None})
-
     # IG-recreate: the recreated design uses the IG post's own image(s)
     if job.content_type == ContentType.ig_recreate and job.post_id:
         from app.models.posts import Post
