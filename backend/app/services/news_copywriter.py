@@ -449,7 +449,46 @@ def _generate_with_fallback(
         )
         return result, provider
     except ValueError as parse_exc:
-        if provider != "router" or force_provider is not None:
+        if force_provider is not None:
+            _log_ai_copy_event(
+                context=context, fanpage_id=fanpage_id, article_id=article_id,
+                outcome="failed", models_tried=models_tried, final_provider=None,
+                error_message=str(parse_exc), latency_ms=_elapsed_ms(),
+            )
+            raise
+
+        if provider == "groq":
+            # Groq (gpt-oss-120b, a reasoning model) can still come back
+            # empty/truncated on some prompts even with a generous max_tokens
+            # (see _call_groq) — this branch only gets reached when 9Router
+            # itself was already exhausted (generate_caption fell through to
+            # Groq internally), so a same-provider retry wouldn't help; one
+            # retry via Gemini before giving up, same "don't lose the whole
+            # pair over one bad response" philosophy as the router recovery
+            # below. Found 2026-08-18: a 9Router outage forced several
+            # fanpages onto Groq, and every one of its unparseable responses
+            # was a permanently lost post with no recovery attempt at all.
+            logger.warning("Groq output failed to parse — retrying via Gemini: %s", parse_exc)
+            models_tried.append("gemini")
+            try:
+                raw, recovered_provider = generate_caption(prompt, force_provider="gemini")
+                result = parse_fn(raw)
+                _log_ai_copy_event(
+                    context=context, fanpage_id=fanpage_id, article_id=article_id,
+                    outcome="recovered", models_tried=models_tried, final_provider=recovered_provider,
+                    error_message=f"groq output unparseable: {parse_exc}",
+                    latency_ms=_elapsed_ms(),
+                )
+                return result, recovered_provider
+            except Exception as final_exc:
+                _log_ai_copy_event(
+                    context=context, fanpage_id=fanpage_id, article_id=article_id,
+                    outcome="failed", models_tried=models_tried, final_provider=None,
+                    error_message=str(final_exc), latency_ms=_elapsed_ms(),
+                )
+                raise
+
+        if provider != "router":
             _log_ai_copy_event(
                 context=context, fanpage_id=fanpage_id, article_id=article_id,
                 outcome="failed", models_tried=models_tried, final_provider=None,

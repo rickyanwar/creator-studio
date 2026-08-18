@@ -257,7 +257,23 @@ def _call_groq(prompt: str) -> str:
         completion = client.chat.completions.create(
             model=settings.groq_model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1024,
+            # groq_model is gpt-oss-120b (2026-08-17, replacing a retired
+            # model) — a reasoning model that spends hidden chain-of-thought
+            # tokens before the visible answer, same as the 9Router reasoning
+            # routes _call_router already budgets generously for (see its
+            # comment). The old max_tokens=1024 here predates that model
+            # swap and was too small to leave any room for the actual JSON
+            # once reasoning ran — every Groq fallback during 9Router's
+            # 2026-08-18 00:15 outage came back empty or truncated because of
+            # this, losing several news posts with no further recovery
+            # (a Groq parse failure isn't retried the way a router one is).
+            # Can't just copy _call_router's 8192 though — this account's
+            # Groq tier caps at 8000 tokens/minute for (prompt + max_tokens)
+            # combined per request (a 413 confirmed this empirically), and
+            # the largest realistic prompt here (news_copy, capped by
+            # _MAX_CONTENT_CHARS) runs ~2000-2500 tokens, so 5000 leaves
+            # headroom on both sides.
+            max_tokens=5000,
             temperature=0.7,
         )
         return completion.choices[0].message.content.strip()
