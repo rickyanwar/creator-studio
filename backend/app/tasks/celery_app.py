@@ -67,6 +67,33 @@ celery_app.conf.beat_schedule = {
         "schedule": 1800,
         "options": {"expires": 1700},
     },
+    # Event-calendar refresh: daily — keeps next_event_date current so the
+    # gallery downloader knows when a keyword is in its press/practice/race
+    # window (see gallery_downloader.py's _EVENT_WINDOW_DAYS_BEFORE). Each
+    # keyword self-throttles the paid search fallback independently
+    # (_EVENT_LOOKUP_INTERVAL_DAYS), so running this daily doesn't mean daily
+    # spend per keyword.
+    "refresh-gallery-event-dates": {
+        "task": "app.tasks.gallery_downloader.refresh_keyword_event_dates",
+        "schedule": crontab(hour=2, minute=0),
+    },
+    # Event-time refresh: every 3 hours — only actually spends a search for a
+    # keyword that's IN its event window with next_event_datetime_utc still
+    # unknown (see gallery_downloader.py's refresh_keyword_event_times), so
+    # frequent ticks just mean catching a newly-published schedule sooner,
+    # not extra spend on keywords with nothing to check.
+    "refresh-gallery-event-times": {
+        "task": "app.tasks.gallery_downloader.refresh_keyword_event_times",
+        "schedule": crontab(minute=0, hour="*/3"),
+    },
+    # Prominence refresh: weekly (Monday 03:00 UTC) — classifies each keyword
+    # star/regular/minor (see gallery_downloader.py's _interval_hours_for).
+    # Each keyword self-throttles the recheck (_PROMINENCE_RECHECK_INTERVAL_DAYS),
+    # and this is a plain text 9Router call, not a paid web/fetch.
+    "refresh-gallery-prominence": {
+        "task": "app.tasks.gallery_downloader.refresh_keyword_prominence",
+        "schedule": crontab(hour=3, minute=0, day_of_week=1),
+    },
     # News copywriter sweep: catches articles scraped before a fanpage
     # subscribed, dropped tasks, and partial AI failures
     "copywrite-pending-articles": {

@@ -770,10 +770,16 @@ GALLERY_REUSE_COOLDOWN_MAX_DAYS = 28
 
 
 def _eligible_rows(base_query, limit: int = 8, allow_stale_reuse: bool = True):
-    """Randomized candidate pool respecting the reuse cooldown: images never
-    used, or not used within a randomized 14-28 day window, come first (in
-    random order, not always the newest download) — the same photo shouldn't
-    reappear every run.
+    """Candidate pool respecting the reuse cooldown: images never used, or not
+    used within a randomized 14-28 day window, are eligible. Ordered by
+    captured_at (the real-world shot date parsed from the Getty caption —
+    see image_downloader._parse_caption_date) descending first, so the
+    freshest-dated photos fill the pool find_gallery_datauri's vision pick
+    chooses from — a photo from this week's race beats one from last month
+    whenever both are eligible. Images with no parsed date (older rows from
+    before captured_at existed, or non-Getty sources) sort last, not
+    excluded. Random within same-date/no-date ties, not always the newest
+    *download* — the same photo still shouldn't reappear every run.
 
     `allow_stale_reuse=True` (default) falls back to the least-recently-used
     images when the cooldown pool is empty, so a small keyword/niche pool
@@ -798,7 +804,7 @@ def _eligible_rows(base_query, limit: int = 8, allow_stale_reuse: bool = True):
         base_query.filter(
             (GalleryImage.last_used_at.is_(None)) | (GalleryImage.last_used_at < cutoff)
         )
-        .order_by(func.random())
+        .order_by(GalleryImage.captured_at.desc().nullslast(), func.random())
         .limit(limit)
         .all()
     )
@@ -826,10 +832,11 @@ def find_gallery_datauri(
     image_type: str | None = None, allow_stale_reuse: bool = True,
 ):
     """Find the best gallery image whose keyword matches the subject, honoring
-    the reuse cooldown and picking randomly among eligible candidates (not
-    always the newest download) — see _eligible_rows. When several match,
-    9Router vision picks the best — constrained to `image_type` ("face"/
-    "action") so split layouts stay consistent. Marks the picked image used.
+    the reuse cooldown and favoring the freshest-shot (captured_at) eligible
+    candidates — see _eligible_rows. When several match, 9Router vision picks
+    the best among that freshest-first pool — constrained to `image_type`
+    ("face"/"action") so split layouts stay consistent. Marks the picked
+    image used.
 
     `allow_stale_reuse=False` makes this return (None, None) when the cooldown
     pool is empty instead of reusing a stale photo — pass this when the
@@ -950,7 +957,7 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
     query = f"{subject} {niche} portrait press" if image_type == "face" else f"{subject} {niche}"
     url = s.gallery_search_url_template.format(query=quote(query), page=1)
     try:
-        md = _9router_fetch_markdown(url)
+        md = _9router_fetch_markdown(url, context="subject_datauri", keyword=keyword, niche=niche)
     except Exception as exc:
         logger.warning("fetch_subject_datauri: search failed for %r: %s", subject, exc)
         return None
@@ -1037,7 +1044,7 @@ def fetch_topic_datauri(title: str, niche: str, excerpt: str = "", max_candidate
 
     def _collect(url: str, pattern, group: int) -> list[str]:
         try:
-            md = _9router_fetch_markdown(url)
+            md = _9router_fetch_markdown(url, context="topic_datauri", keyword=query[:128], niche=niche)
         except Exception as exc:
             logger.warning("fetch_topic_datauri: fetch failed for %r: %s", query, exc)
             return []

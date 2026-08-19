@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, Date, DateTime, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from app.database import Base
 
@@ -20,6 +20,46 @@ class GalleryKeyword(Base):
     license_filter = Column(String(64), nullable=False, server_default="commercial,modify")
     last_downloaded_at = Column(DateTime, nullable=True)
     last_download_error = Column(String(512), nullable=True)
+    # Best-known date of this keyword's next race/match/fight — lets
+    # download_all_keywords spend freely during its press/practice/race
+    # window and throttle harder the rest of the time. Detected by
+    # app.services.event_calendar (article mining, then a paid web-search
+    # fallback), never entered manually. NULL means "no schedule detected
+    # yet" — treated like an ordinary (non-event) keyword until it is.
+    next_event_date = Column(Date, nullable=True, index=True)
+    # Last time refresh_keyword_event_dates tried to (re)detect next_event_date
+    # for this keyword — throttles the paid search fallback independently of
+    # this task's own run cadence.
+    event_date_checked_at = Column(DateTime, nullable=True)
+    # Precise UTC start time of the event itself, when known — see
+    # app.services.event_calendar.detect_event_time (one targeted schedule
+    # search, distinct from the broader "when's the next race" search behind
+    # next_event_date). Refines the bare next_event_date window: lets
+    # download_all_keywords tighten checking specifically around "event time
+    # + Getty's ~2-3h upload lag" instead of blindly polling all day. NULL
+    # until a schedule search actually finds one (schedules are often
+    # unpublished until close to the event) — the date-only window/interval
+    # tiers are the safe fallback in that case, never starved on it.
+    next_event_datetime_utc = Column(DateTime, nullable=True)
+    # Last time this event cycle's time was (attempted to be) detected —
+    # throttles that search independently of event_date_checked_at, and
+    # resets implicitly once next_event_date moves to a new event (a stale
+    # check from the PREVIOUS event cycle shouldn't block detecting the new
+    # one — see refresh_keyword_event_dates).
+    event_time_checked_at = Column(DateTime, nullable=True)
+    # Automatic prominence classification — "star" | "regular" | "minor", or
+    # NULL if never classified. See app.services.keyword_prominence: blends
+    # real scraped-mention frequency with the model's own knowledge of who's
+    # a top-tier name in the niche. Lets download_all_keywords check a star
+    # daily even far from their next event (they generate news year-round)
+    # while throttling a minor name harder than the ordinary far-from-event
+    # default. NULL/unrecognized behaves exactly like "regular" — a
+    # classification failure never throttles harder than before this existed.
+    prominence_tier = Column(String(16), nullable=True, index=True)
+    # Last time refresh_keyword_prominence tried to classify this keyword —
+    # throttles the classification call's own cadence (prominence rarely
+    # changes week to week, unlike next_event_date).
+    prominence_checked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -44,6 +84,13 @@ class GalleryImage(Base):
     # Vision label at download time: "face" | "action" | "other" — lets the
     # designer pick the right kind of photo per news context.
     label = Column(String(16), nullable=True, index=True)
+    # Shot date parsed from the Getty editorial caption (e.g. "...on August
+    # 09, 2026 in Northampton, England.") — see
+    # image_downloader._parse_caption_date. Free to obtain (already in the
+    # markdown page paid for), but not guaranteed: NULL means no date could
+    # be parsed from the caption (non-Getty source, unrecognized caption
+    # shape), not that the photo has no real shot date.
+    captured_at = Column(Date, nullable=True, index=True)
     is_used = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
     # When this image was last picked for a render — drives the reuse cooldown
     # (don't reuse within N days) separately from is_used (which only tracks

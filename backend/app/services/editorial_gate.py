@@ -60,7 +60,7 @@ def _search_snippets(query: str) -> str:
     s = get_settings()
     url = s.editorial_factcheck_search_url_template.format(query=quote(query))
     try:
-        return _9router_fetch_markdown(url)[:_MAX_SEARCH_CHARS]
+        return _9router_fetch_markdown(url, context="editorial_factcheck", keyword=query[:128])[:_MAX_SEARCH_CHARS]
     except Exception as exc:
         logger.warning("Editorial gate: search failed for %r: %s", query, exc)
         return ""

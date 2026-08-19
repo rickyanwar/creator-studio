@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -128,6 +128,46 @@ def list_niches(db: DB, _: CurrentUser):
         .all()
     )
     return [r[0] for r in rows]
+
+
+@router.get("/fetch-stats")
+def get_fetch_stats(db: DB, _: CurrentUser, days: int = Query(14, le=90)):
+    """Daily paid 9Router web/fetch (jina-reader) call counts, by day and by
+    context — see app.models.gallery_fetch_events. Built 2026-08-20 so
+    actual Jina spend is queryable instead of estimated, following the
+    gallery-download throttling work in gallery_downloader.py. `context`
+    distinguishes the gallery keyword downloader from editorial_gate's
+    fact-check search, event_calendar's date/time detection, and
+    design_images.py's live single-image searches — all paid calls route
+    through the same underlying function but aren't all "gallery spend"."""
+    from sqlalchemy import case, func
+    from app.models.gallery_fetch_events import GalleryFetchEvent
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    day_col = func.date(GalleryFetchEvent.created_at)
+
+    rows = (
+        db.query(
+            day_col.label("day"),
+            GalleryFetchEvent.context,
+            func.count().label("calls"),
+            func.sum(case((GalleryFetchEvent.success.is_(False), 1), else_=0)).label("failures"),
+        )
+        .filter(GalleryFetchEvent.created_at >= cutoff)
+        .group_by(day_col, GalleryFetchEvent.context)
+        .order_by(day_col.desc())
+        .all()
+    )
+
+    days_map: dict[str, dict] = {}
+    for day, context, calls, failures in rows:
+        day_str = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        entry = days_map.setdefault(day_str, {"date": day_str, "total": 0, "failures": 0, "by_context": {}})
+        entry["total"] += calls
+        entry["failures"] += failures or 0
+        entry["by_context"][context] = calls
+
+    return {"days": sorted(days_map.values(), key=lambda d: d["date"], reverse=True)}
 
 
 @router.post("/keywords")

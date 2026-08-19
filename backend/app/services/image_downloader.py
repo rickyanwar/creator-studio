@@ -19,6 +19,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
@@ -42,6 +43,7 @@ class DownloadedImage:
     height: int
     engine: str  # "9router"
     label: str | None = None  # vision label: "face" | "action" | "other"
+    captured_at: date | None = None  # shot date parsed from the Getty caption, if found
 
 
 def keyword_slug(keyword: str) -> str:
@@ -56,16 +58,26 @@ def download_images(
     license_filter: str = "commercial,modify",  # kept for API compat; unused by the 9Router backend
     skip_urls: set[str] | frozenset[str] = frozenset(),
     max_pages: int | None = None,
+    allow_topup: bool = True,
 ) -> list[DownloadedImage]:
     """Collect image URLs for a keyword via 9Router web-fetch and download the
-    ones that pass dedup (skip_urls) and min-size validation."""
-    urls = _collect_urls_9router(keyword, max_num * 2, skip_urls, max_pages)
+    ones that pass dedup (skip_urls) and min-size validation.
+
+    `allow_topup=False` skips the "{keyword} press" top-up phrase even if the
+    bare search underdelivers — a second paid web/fetch call that only pays
+    off for a keyword worth building a deep archive for. The scheduled
+    downloader passes False for quiet-tier keywords (see
+    gallery_downloader.download_keyword); an explicit "Download Now" leaves
+    the default True."""
+    urls, captured_dates = _collect_urls_9router(keyword, max_num * 2, skip_urls, max_pages, allow_topup)
 
     if not urls:
         logger.info("Gallery: no new image URLs for keyword %r (all already downloaded)", keyword)
         return []
 
-    return _fetch_and_store(urls, dest_dir, max_num, min_size, skip_urls, "9router", subject=keyword)
+    return _fetch_and_store(
+        urls, dest_dir, max_num, min_size, skip_urls, "9router", subject=keyword, captured_dates=captured_dates,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +99,42 @@ _IMG_URL_RE = re.compile(
 # _IMG_URL_RE comes back empty (see design_images.fetch_topic_datauri).
 _MD_IMG_ANY_RE = re.compile(r"!\[[^\]]*\]\((https?://[^\s)\"'<>]+)\)")
 
+# Same shape as _IMG_URL_RE but also captures the alt-text caption, e.g.
+# ![Marc Marquez ... at Silverstone Circuit on August 09, 2026 in
+# Northampton, England.](https://media.gettyimages.com/id/.../photo/foo.jpg?...)
+# — Getty editorial captions consistently dateline the shot this way, so the
+# capture date can be read straight out of text we already paid to fetch, at
+# zero extra web/fetch cost. Only used by the gallery-keyword download path
+# (_collect_urls_for_phrase); the shared _IMG_URL_RE stays untouched for
+# design_images.py's single-image fetch, which doesn't need the date.
+_CAPTION_IMG_RE = re.compile(
+    r"!\[([^\]]*)\]\((https?://[^\s)\"'<>]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s)\"'<>]*)?)\)",
+    re.IGNORECASE,
+)
+
+_MONTH_NAMES = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+}
+_CAPTION_DATE_RE = re.compile(
+    r"\bon\s+(" + "|".join(_MONTH_NAMES) + r")\s+(\d{1,2}),?\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+
+
+def _parse_caption_date(caption: str) -> date | None:
+    """Best-effort shot date from a Getty editorial caption. Returns None for
+    captions that don't dateline this way (e.g. non-Getty sources) — callers
+    treat a missing date as "unknown", never as an error."""
+    m = _CAPTION_DATE_RE.search(caption)
+    if not m:
+        return None
+    month = _MONTH_NAMES[m.group(1).lower()]
+    try:
+        return date(int(m.group(3)), month, int(m.group(2)))
+    except ValueError:
+        return None
+
 
 def _dedup_key(url: str) -> str:
     """Stable per-image dedup key. Getty signs each media URL with a `c=`
@@ -95,9 +143,44 @@ def _dedup_key(url: str) -> str:
     return url.split("?", 1)[0]
 
 
-def _9router_fetch_markdown(search_url: str) -> str:
+def _log_fetch_event(
+    context: str, keyword: str | None, niche: str | None, url: str,
+    error_message: str | None, latency_ms: int,
+) -> None:
+    """Fire-and-forget log of one paid web/fetch call — see
+    app.models.gallery_fetch_events. Swallows its own failures (a logging
+    hiccup must never break the actual fetch it's observing) and opens its
+    own short-lived session rather than threading `db` through every caller
+    of _9router_fetch_markdown, several of which don't have one in scope."""
+    try:
+        from app.database import SessionLocal
+        from app.models.gallery_fetch_events import GalleryFetchEvent
+
+        db = SessionLocal()
+        try:
+            db.add(GalleryFetchEvent(
+                context=context, keyword=keyword, niche=niche, url=url[:1024],
+                success=error_message is None, error_message=error_message, latency_ms=latency_ms,
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.debug("Gallery: fetch-event logging failed (non-fatal)", exc_info=True)
+
+
+def _9router_fetch_markdown(
+    search_url: str, context: str = "unknown", keyword: str | None = None, niche: str | None = None,
+) -> str:
     """Fetch a URL through 9Router's jina-reader web-fetch and return its
-    markdown text. Raises on transport/HTTP/API error."""
+    markdown text. Raises on transport/HTTP/API error.
+
+    `context`/`keyword`/`niche` are purely for gallery_fetch_events logging
+    (see _log_fetch_event) — they don't affect the fetch itself. Every
+    caller should pass a `context` identifying what spent this call
+    (gallery search, editorial fact-check, event date/time detection, ...)."""
+    import time
+
     from app.services.nine_router import get_nine_router_config
 
     settings = get_settings()
@@ -106,20 +189,29 @@ def _9router_fetch_markdown(search_url: str) -> str:
     if not base:
         raise RuntimeError("9Router base URL is not configured — cannot fetch gallery images")
 
-    resp = httpx.post(
-        f"{base}/web/fetch",
-        headers={
-            "Authorization": f"Bearer {cfg.api_key}",
-            "Content-Type": "application/json",
-        },
-        json={"url": search_url, "provider": settings.gallery_fetch_provider},
-        timeout=60.0,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if isinstance(data, dict) and data.get("error"):
-        raise RuntimeError(f"9Router web-fetch error: {data['error']}")
-    return (data.get("content") or {}).get("text", "") if isinstance(data, dict) else ""
+    started = time.monotonic()
+    error_message: str | None = None
+    try:
+        resp = httpx.post(
+            f"{base}/web/fetch",
+            headers={
+                "Authorization": f"Bearer {cfg.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"url": search_url, "provider": settings.gallery_fetch_provider},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict) and data.get("error"):
+            raise RuntimeError(f"9Router web-fetch error: {data['error']}")
+        return (data.get("content") or {}).get("text", "") if isinstance(data, dict) else ""
+    except Exception as exc:
+        error_message = str(exc)[:512]
+        raise
+    finally:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        _log_fetch_event(context, keyword, niche, search_url, error_message, latency_ms)
 
 
 # Extra search phrase tried only as a top-up when the base keyword search
@@ -136,6 +228,7 @@ def _collect_urls_for_phrase(
     skip_urls: set[str] | frozenset[str],
     seen_keys: set[str],
     pages: int,
+    captured_dates: dict[str, date],
 ) -> list[str]:
     """Collect NEW candidate image URLs for one search phrase by fetching
     search-result pages (newest-first) through 9Router (jina-reader) and
@@ -146,7 +239,12 @@ def _collect_urls_for_phrase(
     (`seen_keys`, shared/mutated across phrases by the caller). Walks pages
     until enough new URLs are found, a page yields no new images (caught up —
     since results are sorted newest-first), or the page cap is reached.
-    Returns full signed URLs (needed to actually download)."""
+    Returns full signed URLs (needed to actually download).
+
+    `captured_dates` is shared/mutated across phrases like `seen_keys`: each
+    newly collected URL's dedup key is mapped to its shot date, parsed for
+    free from the Getty caption already sitting in this same markdown (see
+    _parse_caption_date) — no extra web/fetch spent to learn it."""
     settings = get_settings()
     template = settings.gallery_search_url_template
     encoded = quote(phrase)
@@ -158,18 +256,19 @@ def _collect_urls_for_phrase(
     for page in range(1, pages + 1):
         search_url = template.format(query=encoded, page=page)
         try:
-            markdown = _9router_fetch_markdown(search_url)
+            markdown = _9router_fetch_markdown(search_url, context="gallery", keyword=phrase)
         except Exception as exc:
             logger.warning("Gallery: 9Router fetch failed for %r page %d (%s)", phrase, page, exc)
             break
 
-        page_urls = [m.group(0) for m in _IMG_URL_RE.finditer(markdown)]
-        if not page_urls:
+        page_matches = list(_CAPTION_IMG_RE.finditer(markdown))
+        if not page_matches:
             break  # end of results
 
         page_new = 0
         early_stop = False
-        for u in page_urls:
+        for m in page_matches:
+            caption, u = m.group(1), m.group(2)
             key = _dedup_key(u)
             if key in seen_keys:
                 continue  # same image seen earlier this run (pagination overlap or other phrase)
@@ -186,10 +285,13 @@ def _collect_urls_for_phrase(
             consecutive_dupes = 0
             collected.append(u)
             page_new += 1
+            found_date = _parse_caption_date(caption)
+            if found_date:
+                captured_dates[key] = found_date
 
         logger.info(
             "Gallery: phrase %r page %d — %d urls, %d new (consecutive already-have=%d)",
-            phrase, page, len(page_urls), page_new, consecutive_dupes,
+            phrase, page, len(page_matches), page_new, consecutive_dupes,
         )
 
         if early_stop:
@@ -212,25 +314,33 @@ def _collect_urls_9router(
     max_num: int,
     skip_urls: set[str] | frozenset[str] = frozenset(),
     max_pages: int | None = None,
-) -> list[str]:
+    allow_topup: bool = True,
+) -> tuple[list[str], dict[str, date]]:
     """Collect NEW candidate image URLs for a keyword, trying the bare keyword
     first and only spending extra web/fetch calls on the "{keyword} press"
-    variant if the bare search didn't find enough — see _TOPUP_QUERY_SUFFIX."""
+    variant if the bare search didn't find enough — see _TOPUP_QUERY_SUFFIX.
+    `allow_topup=False` skips that second call outright.
+
+    Returns (urls, captured_dates) — captured_dates maps each URL's dedup key
+    to its parsed Getty shot date where one was found (see
+    _collect_urls_for_phrase); a key absent from the dict just means no date
+    could be parsed, not that lookup failed."""
     settings = get_settings()
     pages = max_pages if max_pages and max_pages > 0 else settings.gallery_max_pages
     seen_keys: set[str] = set()  # shared across phrases this run
+    captured_dates: dict[str, date] = {}
 
-    collected = _collect_urls_for_phrase(keyword, max_num, skip_urls, seen_keys, pages)
+    collected = _collect_urls_for_phrase(keyword, max_num, skip_urls, seen_keys, pages, captured_dates)
 
-    if len(collected) < max_num and _TOPUP_QUERY_SUFFIX:
+    if allow_topup and len(collected) < max_num and _TOPUP_QUERY_SUFFIX:
         topup_phrase = f"{keyword} {_TOPUP_QUERY_SUFFIX}"
         remaining = max_num - len(collected)
-        topup = _collect_urls_for_phrase(topup_phrase, remaining, skip_urls, seen_keys, pages)
+        topup = _collect_urls_for_phrase(topup_phrase, remaining, skip_urls, seen_keys, pages, captured_dates)
         if topup:
             logger.info("Gallery: keyword %r topped up with %d image(s) via %r", keyword, len(topup), topup_phrase)
         collected.extend(topup)
 
-    return collected
+    return collected, captured_dates
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -245,7 +355,9 @@ def _fetch_and_store(
     skip_urls: set[str] | frozenset[str],
     engine: str,
     subject: str | None = None,
+    captured_dates: dict[str, date] | None = None,
 ) -> list[DownloadedImage]:
+    captured_dates = captured_dates or {}
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
     min_w, min_h = min_size
@@ -323,6 +435,7 @@ def _fetch_and_store(
             width=final_img.width,
             height=final_img.height,
             engine=engine,
+            captured_at=captured_dates.get(key),
             label=label,
         ))
 
