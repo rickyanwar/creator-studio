@@ -7,7 +7,7 @@ whether anything is imminent. next_event_date is detected automatically by
 app.services.event_calendar (mined from scraped articles, falling back to a
 paid web-search only when that turns up nothing) — never entered manually.
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: 99b7247ea4ee
 Revises: 507e8c06f625
 Create Date: 2026-08-19
 """
@@ -16,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "a1b2c3d4e5f6"
+revision = "99b7247ea4ee"
 down_revision = "507e8c06f625"
 branch_labels = None
 depends_on = None

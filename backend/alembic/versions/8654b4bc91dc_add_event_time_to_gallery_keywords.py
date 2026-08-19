@@ -6,8 +6,8 @@ next_event_date window so download_all_keywords can tighten checking
 specifically around "event time + Getty's ~2-3h upload lag" instead of
 blindly polling all day at a flat interval.
 
-Revision ID: d4e5f6a7b8c9
-Revises: c3d4e5f6a7b8
+Revision ID: 8654b4bc91dc
+Revises: 7266d65b50e4
 Create Date: 2026-08-20
 """
 
@@ -15,8 +15,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "d4e5f6a7b8c9"
-down_revision = "c3d4e5f6a7b8"
+revision = "8654b4bc91dc"
+down_revision = "7266d65b50e4"
 branch_labels = None
 depends_on = None
 

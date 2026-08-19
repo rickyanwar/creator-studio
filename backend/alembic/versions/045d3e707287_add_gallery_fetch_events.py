@@ -5,8 +5,8 @@ app.models.gallery_fetch_events and image_downloader._9router_fetch_markdown
 — so actual daily Jina spend is queryable instead of estimated, following
 2026-08-20's gallery-download throttling work.
 
-Revision ID: e5f6a7b8c9d0
-Revises: d4e5f6a7b8c9
+Revision ID: 045d3e707287
+Revises: 8654b4bc91dc
 Create Date: 2026-08-20
 """
 
@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "e5f6a7b8c9d0"
-down_revision = "d4e5f6a7b8c9"
+revision = "045d3e707287"
+down_revision = "8654b4bc91dc"
 branch_labels = None
 depends_on = None
 

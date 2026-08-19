@@ -6,8 +6,8 @@ next event (they generate news year-round — transfers, interviews,
 controversies) while throttling a minor/backmarker name harder than the
 ordinary far-from-event default. Never manually tagged.
 
-Revision ID: c3d4e5f6a7b8
-Revises: b2c3d4e5f6a7
+Revision ID: 7266d65b50e4
+Revises: 0a6f595cb9d0
 Create Date: 2026-08-20
 """
 
@@ -15,8 +15,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "c3d4e5f6a7b8"
-down_revision = "b2c3d4e5f6a7"
+revision = "7266d65b50e4"
+down_revision = "0a6f595cb9d0"
 branch_labels = None
 depends_on = None
 
