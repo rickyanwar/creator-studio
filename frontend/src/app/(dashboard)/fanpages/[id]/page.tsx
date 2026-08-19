@@ -254,13 +254,19 @@ export default function FanpageEditPage() {
   const { id } = useParams<{ id: string }>();
   const fanpageId = parseInt(id);
   const router = useRouter();
-  const { data: fp, mutate } = useSWR(`fanpage-${fanpageId}`, () => fetcher(fanpageId), {
-    revalidateOnFocus: false,
-  });
+  const { data: fp, mutate } = useSWR(`fanpage-${fanpageId}`, () => fetcher(fanpageId));
 
   const [form, setForm] = useState<Partial<FanpageDetail>>({});
   const [saving, setSaving] = useState(false);
-  const formInitialized = useRef(false);
+  // Tracks whether the admin has touched any field THIS visit — not "has the
+  // form ever been initialized". Bug (2026-08-20): the old flag stayed true
+  // forever after the first sync, so once revalidateOnFocus was disabled the
+  // form could freeze on a stale snapshot indefinitely (e.g. a tab left open
+  // across an out-of-band DB change) with no way to tell the admin was ever
+  // shown wrong data. Now `fp` keeps syncing into `form` on every fresh fetch
+  // (mount, focus, post-save revalidation) right up until the first edit —
+  // after that, syncing stops so an in-progress edit is never clobbered.
+  const hasEdited = useRef(false);
   const [newSource, setNewSource] = useState("");
   const [wmUploading, setWmUploading] = useState(false);
 
@@ -375,13 +381,13 @@ export default function FanpageEditPage() {
   }
 
   useEffect(() => {
-    if (fp && !formInitialized.current) {
+    if (fp && !hasEdited.current) {
       setForm({ ...fp });
-      formInitialized.current = true;
     }
   }, [fp]);
 
   function set(key: string, value: unknown) {
+    hasEdited.current = true;
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -389,7 +395,9 @@ export default function FanpageEditPage() {
     setSaving(true);
     try {
       await updateFanpage(fanpageId, form);
-      // Revalidate without overwriting the local form — ig_sources may have changed
+      // A save just committed, so the form now matches the server exactly —
+      // safe (and correct) to let it resume following live server data again.
+      hasEdited.current = false;
       mutate(undefined, { revalidate: true });
     } catch {
       alert("Save failed. Please try again.");
