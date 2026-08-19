@@ -221,5 +221,6 @@ export interface AppSettings {
   gallery_scraping_paused: boolean;
   nine_router_base_url: string | null;
   nine_router_model: string | null;
+  nine_router_discussion_model: string | null;
   has_nine_router_key: boolean;
 }

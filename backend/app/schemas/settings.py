@@ -25,6 +25,7 @@ class SettingsUpdate(BaseModel):
     nine_router_base_url: Optional[str] = None
     nine_router_api_key: Optional[str] = None  # plain — will be encrypted before saving
     nine_router_model: Optional[str] = None
+    nine_router_discussion_model: Optional[str] = None
 
 
 class SettingsOut(BaseModel):
@@ -51,6 +52,7 @@ class SettingsOut(BaseModel):
     gallery_ai_filter_last_criteria: Optional[str] = None
     nine_router_base_url: Optional[str] = None
     nine_router_model: Optional[str] = None
+    nine_router_discussion_model: Optional[str] = None
     has_nine_router_key: bool = False
 
     model_config = {"from_attributes": False}

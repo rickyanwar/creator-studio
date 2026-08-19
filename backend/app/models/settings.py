@@ -64,5 +64,13 @@ class Settings(Base):
     nine_router_base_url = Column(String(256), nullable=True)
     nine_router_api_key_encrypted = Column(String(512), nullable=True)
     nine_router_model = Column(String(128), nullable=True)
+    # Model/combo used specifically for Mode 4 discussion/hot-take copy
+    # (news_copywriter.generate_discussion_copy / factcheck_discussion_claim)
+    # — separate from nine_router_model so a stronger combo route can be
+    # dialed in for this one feature without affecting news copy (Mode 2),
+    # and swapped back from the Settings UI if it misbehaves (see
+    # nine_router.py's NineRouterConfig.discussion_model). NULL falls back
+    # to _DEFAULT_DISCUSSION_MODEL ("smart-combo").
+    nine_router_discussion_model = Column(String(128), nullable=True)
 
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

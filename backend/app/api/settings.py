@@ -47,6 +47,7 @@ def get_settings(db: DB, _: CurrentUser):
         gallery_ai_filter_last_criteria=row.gallery_ai_filter_last_criteria,
         nine_router_base_url=row.nine_router_base_url,
         nine_router_model=row.nine_router_model,
+        nine_router_discussion_model=row.nine_router_discussion_model,
         has_nine_router_key=bool(row.nine_router_api_key_encrypted),
     )
 

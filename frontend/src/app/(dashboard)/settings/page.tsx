@@ -37,6 +37,7 @@ export default function SettingsPage() {
         scraper_relays: settings.scraper_relays ?? "",
         nine_router_base_url: settings.nine_router_base_url ?? "",
         nine_router_model: settings.nine_router_model ?? "",
+        nine_router_discussion_model: settings.nine_router_discussion_model ?? "",
         nine_router_api_key: "",
         gemini_api_key: "",
         groq_api_key: "",
@@ -408,6 +409,20 @@ export default function SettingsPage() {
             onChange={(e) => set("nine_router_model", e.target.value)}
           />
           <p className="text-xs text-text-secondary mt-1">A model id from your dashboard, or a combo name. Not <code>auto</code>.</p>
+        </div>
+        <div>
+          <label className="label">Discussion / Hot Take Model</label>
+          <input
+            className="input-rect"
+            placeholder="smart-combo"
+            value={form.nine_router_discussion_model as string ?? ""}
+            onChange={(e) => set("nine_router_discussion_model", e.target.value)}
+          />
+          <p className="text-xs text-text-secondary mt-1">
+            Used only for Mode 4 discussion/hot-take copy — everything else keeps using the Model above.
+            Leave blank to use the built-in default (<code>smart-combo</code>); swap it here if that combo
+            starts misbehaving.
+          </p>
         </div>
         <div>
           <label className="label">

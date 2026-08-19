@@ -20,12 +20,20 @@ logger = logging.getLogger(__name__)
 _TTL = 30.0
 _cache: dict = {"cfg": None, "at": 0.0}
 
+# Built-in default for discussion_model when Settings.nine_router_discussion_model
+# is unset — a stronger combo route specifically for Mode 4 hot-take/discussion
+# copy (2026-08-20, user request), kept separate from the general `model` (used
+# by news copy and everything else) so it can be dialed back from the Settings
+# UI without touching the rest of the pipeline if it misbehaves.
+_DEFAULT_DISCUSSION_MODEL = "smart-combo"
+
 
 @dataclass
 class NineRouterConfig:
     base_url: str
     api_key: str
     model: str
+    discussion_model: str
 
     @property
     def enabled(self) -> bool:
@@ -37,6 +45,7 @@ def _resolve() -> NineRouterConfig:
     base_url = env.nine_router_base_url
     api_key = env.nine_router_api_key
     model = env.nine_router_model
+    discussion_model = _DEFAULT_DISCUSSION_MODEL
 
     try:
         from app.database import SessionLocal
@@ -53,12 +62,17 @@ def _resolve() -> NineRouterConfig:
                     model = row.nine_router_model
                 if row.nine_router_api_key_encrypted:
                     api_key = decrypt(row.nine_router_api_key_encrypted)
+                if row.nine_router_discussion_model:
+                    discussion_model = row.nine_router_discussion_model
         finally:
             db.close()
     except Exception as exc:  # never let a settings read break AI calls
         logger.warning("9Router config DB read failed, using env defaults: %s", exc)
 
-    return NineRouterConfig(base_url=(base_url or "").rstrip("/"), api_key=api_key or "", model=model or "")
+    return NineRouterConfig(
+        base_url=(base_url or "").rstrip("/"), api_key=api_key or "", model=model or "",
+        discussion_model=discussion_model,
+    )
 
 
 def get_nine_router_config(force: bool = False) -> NineRouterConfig:

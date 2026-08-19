@@ -285,9 +285,18 @@ def _call_groq(prompt: str) -> str:
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_caption(prompt: str, force_provider: AIProviderName | None = None) -> tuple[str, AIProviderName]:
+def generate_caption(
+    prompt: str, force_provider: AIProviderName | None = None, preferred_router_model: str | None = None,
+) -> tuple[str, AIProviderName]:
     """
     Generate a caption. Returns (caption_text, provider_used).
+
+    `preferred_router_model`, when set, is tried FIRST (ahead of the
+    configured default model) — e.g. news_copywriter's discussion contexts
+    pass NineRouterConfig.discussion_model here so Mode 4 hot-take/discussion
+    copy gets a stronger combo route than the rest of the pipeline, while
+    still falling through to the configured default + ROUTER_MODEL_FALLBACKS
+    + Gemini/Groq on failure like every other call.
 
     Raises RuntimeError if both providers fail.
     """
@@ -303,13 +312,15 @@ def generate_caption(prompt: str, force_provider: AIProviderName | None = None) 
         text = _call_gemini(prompt)
         return text, "gemini"
 
-    # 9Router is the primary provider when configured. Try the configured
-    # model first, then ROUTER_MODEL_FALLBACKS, before falling through to the
-    # Gemini→Groq failover below — a hard API error (timeout/402/etc.) on one
-    # router model doesn't mean the whole provider is down.
+    # 9Router is the primary provider when configured. Try (in order) the
+    # preferred model if given, then the configured model, then
+    # ROUTER_MODEL_FALLBACKS, before falling through to the Gemini→Groq
+    # failover below — a hard API error (timeout/402/etc.) on one router
+    # model doesn't mean the whole provider is down.
     if _router_enabled():
         last_router_exc: Exception | None = None
-        for model in [None, *ROUTER_MODEL_FALLBACKS]:
+        models_to_try = ([preferred_router_model] if preferred_router_model else []) + [None, *ROUTER_MODEL_FALLBACKS]
+        for model in models_to_try:
             try:
                 text = _call_router(prompt, model=model)
                 return text, "router"

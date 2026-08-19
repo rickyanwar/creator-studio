@@ -429,6 +429,11 @@ def _generate_with_fallback(
     Gemini as the last resort. Every outcome (success/recovered/failed) is
     logged to ai_copy_events so degradation is visible on the dashboard
     without grepping worker logs on the VPS.
+
+    Discussion contexts ("discussion_copy"/"discussion_factcheck") get
+    NineRouterConfig.discussion_model tried FIRST (see generate_caption's
+    preferred_router_model) — a stronger combo route reserved for Mode 4
+    hot-take/discussion, editable from Settings without touching news copy.
     """
     import time
 
@@ -438,7 +443,12 @@ def _generate_with_fallback(
     def _elapsed_ms() -> int:
         return int((time.monotonic() - t0) * 1000)
 
-    raw, provider = generate_caption(prompt, force_provider=force_provider)
+    preferred_router_model = None
+    if force_provider is None and context.startswith("discussion"):
+        from app.services.nine_router import get_nine_router_config
+        preferred_router_model = get_nine_router_config().discussion_model
+
+    raw, provider = generate_caption(prompt, force_provider=force_provider, preferred_router_model=preferred_router_model)
     models_tried.append(provider)
     try:
         result = parse_fn(raw)
