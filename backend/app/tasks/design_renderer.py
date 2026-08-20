@@ -468,13 +468,45 @@ def render_discussion(self, job_id: int):
         db.close()
 
 
+# How long a job that already failed with "needs manual image" sits out
+# before this sweep will retry it automatically again. Without this, a
+# subject with no findable photo (select_image_for_job /
+# render_discussion both just set status back to pending_design — see
+# their "needs a manual image" branches) never leaves this query's result
+# set, so every ~2min tick re-ran the full (expensive, paid Getty/gallery
+# search) photo lookup for the exact same doomed-to-fail job forever —
+# found 2026-08-20 via 9 "Fight Today" discussion jobs stuck retrying in a
+# loop, each attempt burning real web/fetch spend for zero progress and
+# crowding the shared 10-per-sweep slot budget other fanpages' genuinely
+# new jobs need. A human can still jump the cooldown any time via "Open in
+# Designer" in the Queue, which attaches a photo directly.
+_NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_HOURS = 6
+
+
 @celery_app.task(name="app.tasks.design_renderer.render_pending_designs")
 def render_pending_designs():
     """Sweep: auto-render pending_design jobs for fanpages in auto mode."""
     db = SessionLocal()
     try:
+        from datetime import datetime, timedelta, timezone
+
+        from sqlalchemy import or_
+
         from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
         from app.models.target_fanpages import TargetFanpage, PublishMode
+
+        retry_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            hours=_NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_HOURS
+        )
+        # A job stuck on "needs manual image" only re-qualifies once its
+        # last attempt is older than the cooldown; anything else (a job
+        # that's never been attempted, or failed for some other reason)
+        # is untouched by this and still picked up every sweep as before.
+        not_stuck_on_missing_image = or_(
+            PublishJob.last_error.is_(None),
+            ~PublishJob.last_error.ilike("needs manual image%"),
+            PublishJob.updated_at < retry_cutoff,
+        )
 
         jobs = (
             db.query(PublishJob.id)
@@ -483,6 +515,7 @@ def render_pending_designs():
                 PublishJob.status == PublishJobStatus.pending_design,
                 PublishJob.content_type == ContentType.news_content,
                 TargetFanpage.mode2_publish_mode == PublishMode.auto,
+                not_stuck_on_missing_image,
             )
             .limit(10)
             .all()
@@ -503,6 +536,7 @@ def render_pending_designs():
             .filter(
                 PublishJob.status == PublishJobStatus.pending_design,
                 PublishJob.content_type == ContentType.discussion,
+                not_stuck_on_missing_image,
             )
             .limit(10)
             .all()
