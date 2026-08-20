@@ -474,7 +474,7 @@ function KpiCard({
 
   const inner = (
     <div
-      className="relative rounded-2xl p-5 overflow-hidden flex flex-col min-h-[160px]"
+      className="relative rounded-2xl p-5 overflow-hidden flex flex-col h-full min-h-[160px]"
       style={{ background: v.bg }}
     >
       {/* Dot-pattern texture */}
@@ -531,7 +531,7 @@ function KpiCard({
   );
 
   if (href) return (
-    <a href={href} className="block hover:scale-[1.02] transition-transform duration-200">{inner}</a>
+    <a href={href} className="block h-full hover:scale-[1.02] transition-transform duration-200">{inner}</a>
   );
   return inner;
 }
