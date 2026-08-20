@@ -733,9 +733,15 @@ def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> di
     fresh topic-search results before trusting them — see
     design_renderer.select_image_for_job and fetch_topic_datauri.
 
-    Returns {"match": bool, "confidence": 0.0-1.0}. Fails OPEN (match=True) on
-    any parse/API error — a flaky vision call shouldn't block the whole
-    pipeline, only an explicit "no" from the model should veto the image."""
+    Returns {"match": bool, "confidence": 0.0-1.0}. Fails CLOSED (match=False)
+    on any parse/API error (changed 2026-08-20 — real posts had nearly gone
+    out with a mismatched photo under the old fail-open behavior): this is
+    the only gate fetch_topic_datauri has on an UNVERIFIED fresh Google/Getty
+    topic search, its riskiest photo source since it's not searching for a
+    named subject. An unverifiable candidate is treated the same as a "no" —
+    consistent with fetch_topic_datauri's own stated principle that a wrong
+    photo is worse than no photo, so failing this check just means that one
+    candidate is skipped, not that the whole pipeline blocks."""
     try:
         content = [
             {"type": "text", "text": (
@@ -752,13 +758,13 @@ def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> di
         raw = _vision_chat(content, max_tokens=1500, context="vision_verify_match")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
-            return {"match": True, "confidence": 0.0}
+            return {"match": False, "confidence": 0.0}
         import json as _json
         d = _json.loads(m.group(0))
         return {"match": bool(d.get("match")), "confidence": float(d.get("confidence") or 0)}
     except Exception as exc:
-        logger.warning("vision_verify_match failed: %s", exc)
-        return {"match": True, "confidence": 0.0}
+        logger.warning("vision_verify_match failed (treating as no-match): %s", exc)
+        return {"match": False, "confidence": 0.0}
 
 
 # A photo shouldn't reappear across a fanpage's feed too often (user
