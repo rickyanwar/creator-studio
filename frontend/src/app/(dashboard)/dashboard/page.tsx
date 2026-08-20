@@ -107,7 +107,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── KPI cards ──────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-5">
         <KpiCard
           icon="solar:graph-up-bold-duotone"
           label="Published Today"
@@ -161,6 +161,21 @@ export default function DashboardPage() {
           }
           sparkline={SPARKLINES.purple}
           href="/logs"
+        />
+        <KpiCard
+          icon="solar:gallery-wide-bold-duotone"
+          label="Gallery Fetch Today"
+          value={isLoading ? "—" : String(data?.gallery_fetch_stats.total ?? 0)}
+          trend={
+            isLoading ? ""
+            : (data?.gallery_fetch_stats.failed ?? 0) > 0
+              ? `${data!.gallery_fetch_stats.failed} failed`
+              : `${data?.gallery_fetch_stats.success ?? 0} ok`
+          }
+          trendUp={(data?.gallery_fetch_stats.failed ?? 0) === 0}
+          variant={(data?.gallery_fetch_stats.failed ?? 0) > 0 ? "red" : "green"}
+          sparkline={(data?.gallery_fetch_stats.failed ?? 0) > 0 ? SPARKLINES.red : SPARKLINES.green}
+          href="/gallery"
         />
       </div>
 

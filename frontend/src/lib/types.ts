@@ -183,6 +183,11 @@ export interface DashboardStats {
     failed: number;
     success_rate: number | null;
   };
+  gallery_fetch_stats: {
+    total: number;
+    success: number;
+    failed: number;
+  };
 }
 
 export interface CrawlerHealth {

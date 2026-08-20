@@ -22,6 +22,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
     from app.models.target_fanpages import TargetFanpage
     from app.models.posts import Post
     from app.models.ai_copy_events import AICopyEvent
+    from app.models.gallery_fetch_events import GalleryFetchEvent
 
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -89,6 +90,21 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         "success_rate": round(100 * (ai_success + ai_recovered) / ai_total, 1) if ai_total else None,
     }
 
+    # Gallery web/fetch (jina-reader) health today — see
+    # app.models.gallery_fetch_events / GET /gallery/fetch-stats for the
+    # fuller breakdown by context; this is just the "gallery" (scheduled
+    # keyword downloader) slice, scoped for the dashboard KPI card.
+    gallery_events_today = (
+        db.query(GalleryFetchEvent)
+        .filter(GalleryFetchEvent.created_at >= today_start, GalleryFetchEvent.context == "gallery")
+        .all()
+    )
+    gallery_fetch_stats = {
+        "total": len(gallery_events_today),
+        "success": sum(1 for e in gallery_events_today if e.success),
+        "failed": sum(1 for e in gallery_events_today if not e.success),
+    }
+
     return {
         "published_today": published_today,
         "failed_today": failed_today,
@@ -99,6 +115,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         "disk_used_mb": disk_used_mb,
         "disk_total_mb": disk_total_mb,
         "ai_stats": ai_stats,
+        "gallery_fetch_stats": gallery_fetch_stats,
     }
 
 
