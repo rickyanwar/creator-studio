@@ -337,3 +337,56 @@ def _maybe_mark_post_done(db, post):
     if non_terminal == 0:
         post.status = PostStatus.done
         db.commit()
+
+
+@celery_app.task(name="app.tasks.publisher.recover_stuck_auto_publishes")
+def recover_stuck_auto_publishes():
+    """Re-trigger publish_job for pending_publish jobs whose fanpage is set
+    to auto — catches Mode 4 discussion cards (and Mode 2 news, same gap)
+    that rendered successfully while the fanpage was still manual_review and
+    have sat waiting for a human "Publish" click ever since, even after an
+    admin later flips the fanpage to auto.
+
+    render_discussion/render_design only check discussion_publish_mode /
+    mode2_publish_mode ONCE, at the moment rendering finishes — nothing else
+    ever revisits an already-rendered pending_publish job, so a publish-mode
+    change never applies retroactively to a queue that built up under the
+    old setting. Found 2026-08-20: 7 discussion cards for two fanpages sat
+    at pending_publish for 1-2 days after being switched to auto, because
+    only newly-rendered cards from that point on were auto-publishing.
+
+    Safe to run frequently — publish_job's own atomic pending_publish→
+    publishing claim means a job already mid-publish (or already picked up
+    by this same sweep concurrently) is just a no-op the second time."""
+    db = SessionLocal()
+    try:
+        from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
+        from app.models.target_fanpages import TargetFanpage, PublishMode
+
+        discussion_jobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.content_type == ContentType.discussion,
+                TargetFanpage.discussion_publish_mode == PublishMode.auto,
+            )
+            .all()
+        )
+        news_jobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.content_type == ContentType.news_content,
+                TargetFanpage.mode2_publish_mode == PublishMode.auto,
+            )
+            .all()
+        )
+        job_ids = [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs]
+        for job_id in job_ids:
+            publish_job.delay(job_id)
+        if job_ids:
+            logger.info("Recovery: re-dispatched %d pending_publish job(s) stuck under a now-auto fanpage", len(job_ids))
+    finally:
+        db.close()

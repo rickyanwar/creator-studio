@@ -134,6 +134,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.image_watermark.recover_stuck_watermarks",
         "schedule": 1800,  # every 30 minutes
     },
+    # Recovery: re-publish pending_publish jobs whose fanpage was switched to
+    # auto AFTER the card had already rendered — a publish-mode change never
+    # applies retroactively otherwise (see publisher.recover_stuck_auto_publishes)
+    "recover-stuck-auto-publishes": {
+        "task": "app.tasks.publisher.recover_stuck_auto_publishes",
+        "schedule": 1800,  # every 30 minutes
+    },
     # Cleanup: every 2 hours
     "cleanup-media": {
         "task": "app.tasks.cleanup.cleanup_old_media",
