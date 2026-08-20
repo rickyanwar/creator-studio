@@ -9,8 +9,13 @@ at once. Topics come from:
     sources that hasn't already been turned into a job for this fanpage
     (fact-grounded — the article is passed to the copywriter).
   - "evergreen": the least-recently-used active DiscussionTopic seed
-    (opinion-only — see news_copywriter.generate_discussion_copy).
-  - "both": try news first, fall back to evergreen.
+    (opinion-only — see news_copywriter.generate_discussion_copy). Falls back
+    to the AI's own general knowledge (below) when the seed pool is empty.
+  - "both": the AI's own general-knowledge hot take (see _generate_general_topic
+    — fact-checked, cross-checked on a second provider) is tried FIRST, since
+    this is the source that produces "does X deserve Y" / "was X right to do
+    Y" style cards without needing a fresh article. Only falls back to news,
+    then an evergreen seed, if the general candidate fails fact-check twice.
 
 Each card becomes a PublishJob(content_type=discussion, status=pending_design):
   design_title=question, design_subtitle=label, design_caption=subject name.
@@ -302,11 +307,15 @@ def _generate_general_topic(db, fanpage):
 
 def _create_one(db, fanpage) -> bool:
     """Generate a single discussion card for the fanpage. Returns True if a job
-    was created. Picks the topic source per discussion_topic_mode; on 'both',
-    news is preferred, then an evergreen seed, then the AI's own general
-    knowledge of the fanpage's niche — hot takes don't have to ride an
-    article, so this last tier keeps cards flowing even when nothing fresh
-    is available (news mode alone stays news-only by design)."""
+    was created. Picks the topic source per discussion_topic_mode. On 'both'
+    the AI's own general knowledge of the fanpage's niche (fact-checked, see
+    _generate_general_topic) is tried FIRST — hot takes don't need to ride an
+    article, and this is the source that actually produces the "does X
+    deserve Y" / "was X right to do Y" style cards the user wants as the
+    default, not a last resort. news/evergreen are kept as a fallback for
+    'both' only if the general candidate fails fact-check twice, so the daily
+    quota still gets filled. 'news' alone stays news-only by design; 'evergreen'
+    alone still falls back to general when its seed pool is empty (unchanged)."""
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
     from app.models.target_fanpages import PublishMode
     from app.services.news_copywriter import generate_discussion_copy
@@ -316,28 +325,32 @@ def _create_one(db, fanpage) -> bool:
 
     article = None
     topic = None
-    if mode in ("news", "both"):
-        article = _pick_news_article(db, fanpage)
-    if article is None and mode in ("evergreen", "both"):
-        topic = _pick_evergreen_topic(db, fanpage)
-
-    if article is None and topic is None and mode == "news":
-        logger.info("Discussion: fanpage %d has no available topic (mode=%s)", fanpage.id, mode)
-        return False
+    copy = None
 
     try:
-        if article is not None:
-            copy = generate_discussion_copy(fanpage, article=article)
-        elif topic is not None:
-            copy = generate_discussion_copy(
-                fanpage, seed_text=topic.seed_text, subject_hint=topic.subject_hint
-            )
-        else:
+        if mode == "both":
             copy = _generate_general_topic(db, fanpage)
-            if copy is None:
-                return False
+
+        if copy is None:
+            if mode in ("news", "both"):
+                article = _pick_news_article(db, fanpage)
+            if article is None and mode in ("evergreen", "both"):
+                topic = _pick_evergreen_topic(db, fanpage)
+
+            if article is not None:
+                copy = generate_discussion_copy(fanpage, article=article)
+            elif topic is not None:
+                copy = generate_discussion_copy(
+                    fanpage, seed_text=topic.seed_text, subject_hint=topic.subject_hint
+                )
+            elif mode == "evergreen":
+                copy = _generate_general_topic(db, fanpage)
     except Exception as exc:
         logger.error("Discussion: copy generation failed for fanpage %d: %s", fanpage.id, exc)
+        return False
+
+    if copy is None:
+        logger.info("Discussion: fanpage %d has no available topic (mode=%s)", fanpage.id, mode)
         return False
 
     # Prefer a discussion-tagged template; fall back to the fanpage's News
