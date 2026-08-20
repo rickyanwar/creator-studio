@@ -726,12 +726,19 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
         return 0
 
 
-def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> dict:
+def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "", niche: str = "") -> dict:
     """Ask 9Router vision whether a candidate photo actually depicts this news
     story (same person(s)/team/vehicle/event) rather than a generic or
     unrelated stock photo. Used to gate the article's scraped hero image and
     fresh topic-search results before trusting them — see
     design_renderer.select_image_for_job and fetch_topic_datauri.
+
+    `niche` (e.g. "MotoGP", "UFC") disambiguates name collisions across
+    fields — a bare-name Google/Getty search for someone like a team
+    principal or a common name can just as easily surface an unrelated
+    person who happens to share it in a totally different sport/industry.
+    Passed straight through to the prompt so the model checks identity
+    within the right context, not just visual plausibility.
 
     Returns {"match": bool, "confidence": 0.0-1.0}. Fails CLOSED (match=False)
     on any parse/API error (changed 2026-08-20 — real posts had nearly gone
@@ -746,11 +753,15 @@ def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> di
         content = [
             {"type": "text", "text": (
                 f'News headline: "{title[:200]}"\n'
+                + (f'Niche/field: "{niche}"\n' if niche else "")
                 + (f'Article excerpt: "{excerpt[:400]}"\n' if excerpt else "")
                 + "Does this photo actually depict THIS story's subject — the "
                 "same named person(s), team, vehicle, or event/scene the "
                 "headline is about? A generic/unrelated stock photo, or a "
-                "photo of a clearly different person or team, is NOT a match.\n"
+                "photo of a clearly different person or team, is NOT a match — "
+                "including someone who merely SHARES A NAME with the subject "
+                "but belongs to a different field than the niche above (e.g. "
+                "a same-named person from another sport, industry, or era).\n"
                 'Reply with ONLY a JSON object {"match": true|false, "confidence": 0.00-1.00}.'
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
@@ -765,6 +776,68 @@ def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "") -> di
     except Exception as exc:
         logger.warning("vision_verify_match failed (treating as no-match): %s", exc)
         return {"match": False, "confidence": 0.0}
+
+
+def vision_verify_subject(image_bytes: bytes, subject: str, niche: str = "") -> dict:
+    """Ask 9Router vision whether a candidate photo is actually a picture of
+    `subject` (as opposed to a same-named but different person, or a
+    generic/wrong photo). Gates the two subject-photo sources that had NO
+    identity check at all before 2026-08-20 — find_gallery_datauri (a bare
+    keyword/name substring match; the photo could have been mistagged, or a
+    different niche's identically-named subject) and fetch_subject_datauri
+    (a fresh Getty/Google search keyed on name+niche text, which steers
+    results but never confirms them). Both previously handed vision_pick_best
+    a candidate pool it only ranks by clarity/quality, never by identity —
+    found after real posts nearly went out with the wrong same-named person's
+    photo (e.g. a UFC fighter's search returning an unrelated person who
+    happens to share the name).
+
+    Returns {"match": bool, "confidence": 0.0-1.0}. Fails CLOSED (match=False)
+    on any parse/API error, same reasoning as vision_verify_match — treating
+    an unverifiable candidate as a non-match just means it's skipped, since
+    every caller already has a further fallback (another candidate, a fresh
+    search, or a "needs manual image" state) rather than nothing at all."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                f'Subject: "{subject}"\n'
+                + (f'Niche/field: "{niche}"\n' if niche else "")
+                + "Is this photo actually of THIS specific person — the named "
+                "subject above, in the stated niche/field? Reply NOT a match "
+                "if this is clearly a different person, even one who shares "
+                "the same (or a similar) name but belongs to a different "
+                "sport, industry, or era, or if the photo doesn't clearly "
+                "show an identifiable person at all.\n"
+                'Reply with ONLY a JSON object {"match": true|false, "confidence": 0.00-1.00}.'
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=1500, context="vision_verify_subject")
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return {"match": False, "confidence": 0.0}
+        import json as _json
+        d = _json.loads(m.group(0))
+        return {"match": bool(d.get("match")), "confidence": float(d.get("confidence") or 0)}
+    except Exception as exc:
+        logger.warning("vision_verify_subject failed (treating as no-match): %s", exc)
+        return {"match": False, "confidence": 0.0}
+
+
+def _filter_verified_subject(uris: list[str], subject: str, niche: str = "") -> list[str]:
+    """Run vision_verify_subject over each candidate data-URI, keeping only
+    the ones confirmed to actually be `subject`. Shared by
+    find_gallery_datauri and fetch_subject_datauri so both get the same
+    identity gate before vision_pick_best ranks whatever survives."""
+    verified = []
+    for uri in uris:
+        try:
+            raw_bytes = base64.b64decode(uri.split(",", 1)[1])
+        except Exception:
+            continue
+        if vision_verify_subject(raw_bytes, subject, niche)["match"]:
+            verified.append(uri)
+    return verified
 
 
 # A photo shouldn't reappear across a fanpage's feed too often (user
@@ -835,14 +908,22 @@ def _mark_gallery_image_used(db, gi) -> None:
 
 def find_gallery_datauri(
     db, subject: str, exclude_path: str | None = None, use_vision: bool = True,
-    image_type: str | None = None, allow_stale_reuse: bool = True,
+    image_type: str | None = None, allow_stale_reuse: bool = True, niche: str = "",
 ):
     """Find the best gallery image whose keyword matches the subject, honoring
     the reuse cooldown and favoring the freshest-shot (captured_at) eligible
-    candidates — see _eligible_rows. When several match, 9Router vision picks
-    the best among that freshest-first pool — constrained to `image_type`
-    ("face"/"action") so split layouts stay consistent. Marks the picked
-    image used.
+    candidates — see _eligible_rows. Candidates are then identity-verified
+    (vision_verify_subject) before 9Router vision picks the best among what's
+    left — constrained to `image_type` ("face"/"action") so split layouts
+    stay consistent. Marks the picked image used.
+
+    The identity check matters here specifically because the initial match
+    above is a bare keyword/extra_keywords substring — a photo tagged
+    "anthony smith" could be a different Anthony Smith than the one this
+    call means, or simply mistagged; nothing before this confirmed WHO is in
+    the photo, only that it downloaded under a matching label. Found
+    2026-08-20 after real posts nearly went out with a same-named but wrong
+    person's photo.
 
     `allow_stale_reuse=False` makes this return (None, None) when the cooldown
     pool is empty instead of reusing a stale photo — pass this when the
@@ -875,6 +956,12 @@ def find_gallery_datauri(
         return None, None
 
     uris = [file_to_datauri(gi.local_path) for gi in usable]
+    if use_vision:
+        by_uri = {uri: gi for uri, gi in zip(uris, usable)}
+        uris = _filter_verified_subject(uris, subject, niche)
+        if not uris:
+            return None, None
+        usable = [by_uri[uri] for uri in uris]
     best = vision_pick_best(uris, subject, image_type=image_type) if use_vision else 0
     _mark_gallery_image_used(db, usable[best])
     return uris[best], usable[best]
@@ -911,12 +998,17 @@ def extract_two_subjects(title: str, niche: str):
         "Which specific PEOPLE is it about? If it clearly features TWO distinct "
         "named people (e.g. a rider/driver and a rival/teammate), reply exactly as "
         '`Name One | Name Two`. If it is about only ONE main person, reply with '
-        "just that one name. People only — no teams/brands. No extra words."
+        'just that one name. If there is no single specific named PERSON the '
+        'headline is about (e.g. it\'s about an organization, event, vehicle, or '
+        'decision — no individual is the subject), reply exactly `NONE`. '
+        "People only — no teams/brands. No extra words."
     )
     try:
         out, _ = generate_caption(prompt)
         s = (out or "").strip().strip('".')
-        parts = [p.strip() for p in s.split("|") if p.strip()]
+        if not s or s.upper() == "NONE":
+            return None, None
+        parts = [p.strip() for p in s.split("|") if p.strip() and p.strip().upper() != "NONE"]
         if len(parts) >= 2:
             return parts[0][:40], parts[1][:40]
         return (parts[0][:40] if parts else None), None
@@ -1014,13 +1106,27 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
     if not survivors:
         return None
 
-    uris = [uri for _, uri in survivors]
+    # Identity-verify each candidate before ranking — this query's own text
+    # match (subject+niche keywords) steers Getty but never confirms the
+    # result; without this, a wrong same-named person (or, per the
+    # "None"-subject bug fixed 2026-08-20, a nonsense query landing on an
+    # unrelated stock photo) would go straight to vision_pick_best, which
+    # only ranks clarity/quality, never identity.
+    verified = [
+        (gi, uri) for gi, uri in survivors
+        if vision_verify_subject(base64.b64decode(uri.split(",", 1)[1]), subject, niche)["match"]
+    ]
+    if not verified:
+        logger.info("fetch_subject_datauri: no candidate verified as %r among %d stored", subject, len(survivors))
+        return None
+
+    uris = [uri for _, uri in verified]
     best = vision_pick_best(uris, subject, image_type=image_type)
-    picked_gi, picked_uri = survivors[best]
+    picked_gi, picked_uri = verified[best]
     _mark_gallery_image_used(db, picked_gi)
     logger.info(
-        "fetch_subject_datauri: %r (%s) → %d candidate(s) stored, picked %d",
-        subject, image_type, len(survivors), best,
+        "fetch_subject_datauri: %r (%s) → %d/%d candidate(s) verified, picked %d",
+        subject, image_type, len(verified), len(survivors), best,
     )
     return picked_uri
 
@@ -1082,7 +1188,7 @@ def fetch_topic_datauri(title: str, niche: str, excerpt: str = "", max_candidate
         except Exception:
             continue
         checked += 1
-        check = vision_verify_match(data, title, excerpt)
+        check = vision_verify_match(data, title, excerpt, niche)
         if check["match"]:
             verified.append("data:image/jpeg;base64," + base64.b64encode(data).decode())
 
@@ -1115,7 +1221,7 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
     image_type = pick_split_image_type(title, niche)  # "face" or "action"
     uri, gi = find_gallery_datauri(
         db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type,
-        allow_stale_reuse=False,
+        allow_stale_reuse=False, niche=niche,
     )
     if uri:
         logger.info("Recreate main: fresh gallery photo for %r (%s)", primary, image_type)
@@ -1125,7 +1231,7 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
         logger.info("Recreate main: fresh Getty photo for %r (%s)", primary, image_type)
         return uri, None
     uri, gi = find_gallery_datauri(
-        db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type,
+        db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type, niche=niche,
     )
     if uri:
         logger.info("Recreate main: stale gallery photo for %r (%s) — nothing fresher available", primary, image_type)
@@ -1139,12 +1245,12 @@ def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face",
     split. Fetches fresh from Getty first, falls back to the gallery."""
     left = fetch_subject_datauri(db, primary, image_type, niche)
     if not left:
-        left, lg = find_gallery_datauri(db, primary, use_vision=True, image_type=image_type)
+        left, lg = find_gallery_datauri(db, primary, use_vision=True, image_type=image_type, niche=niche)
     if not left:
         return None
     right = fetch_subject_datauri(db, secondary, image_type, niche)
     if not right:
-        right, rg = find_gallery_datauri(db, secondary, use_vision=True, image_type=image_type)
+        right, rg = find_gallery_datauri(db, secondary, use_vision=True, image_type=image_type, niche=niche)
     if not right:
         return None
     return [left, right]
@@ -1300,7 +1406,7 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
             return template_json, _with_inset(template_json, [main_datauri])
         uri = fetch_subject_datauri(db, subject, "face", niche)
         if not uri:
-            uri, _ = find_gallery_datauri(db, subject, exclude_path=main_path, image_type="face")
+            uri, _ = find_gallery_datauri(db, subject, exclude_path=main_path, image_type="face", niche=niche)
         if not uri:
             logger.info("Design: no photo found for secondary subject %r", subject)
             return template_json, _with_inset(template_json, [main_datauri])
@@ -1327,7 +1433,7 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         logger.info("Design: no secondary subject for %r — image widened to full width", title[:50])
         tj = _widen_to_full(template_json, canvas_width)
         return tj, _with_inset(tj, [main_datauri])
-    uri, gi = find_gallery_datauri(db, subject, exclude_path=main_path)
+    uri, gi = find_gallery_datauri(db, subject, exclude_path=main_path, niche=niche)
     if not uri:
         logger.info("Design: no gallery image for secondary subject %r — image widened to full width", subject)
         tj = _widen_to_full(template_json, canvas_width)

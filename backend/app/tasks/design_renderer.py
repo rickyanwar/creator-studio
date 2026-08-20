@@ -372,7 +372,7 @@ def render_discussion(self, job_id: int):
         image_src, gallery_image, image_marker = None, None, None
         if subject:
             try:
-                uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face", allow_stale_reuse=False)
+                uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face", allow_stale_reuse=False, niche=niche)
                 if uri:
                     image_src, gallery_image, image_marker = uri, gi, (f"gallery:{gi.id}" if gi else "gallery")
             except Exception as exc:
@@ -388,7 +388,7 @@ def render_discussion(self, job_id: int):
                 # Nothing fresh anywhere — reuse a stale gallery photo rather
                 # than stall the card entirely.
                 try:
-                    uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face")
+                    uri, gi = find_gallery_datauri(db, subject, use_vision=True, image_type="face", niche=niche)
                     if uri:
                         image_src, gallery_image, image_marker = uri, gi, (f"gallery:{gi.id}" if gi else "gallery")
                 except Exception as exc:
