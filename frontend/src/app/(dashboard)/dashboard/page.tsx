@@ -148,21 +148,6 @@ export default function DashboardPage() {
           sparkline={SPARKLINES.red}
         />
         <KpiCard
-          icon="solar:cpu-bolt-bold-duotone"
-          label="AI Success Rate"
-          value={isLoading || !data?.ai_stats.total ? "—" : `${data.ai_stats.success_rate}%`}
-          trend={isLoading || !data?.ai_stats.total ? "24h" : `${data.ai_stats.total} calls`}
-          trendUp={(data?.ai_stats.success_rate ?? 100) >= 95}
-          variant={
-            !data?.ai_stats.total ? "purple"
-            : data.ai_stats.success_rate! >= 95 ? "green"
-            : data.ai_stats.success_rate! >= 80 ? "amber"
-            : "red"
-          }
-          sparkline={SPARKLINES.purple}
-          href="/logs"
-        />
-        <KpiCard
           icon="solar:gallery-wide-bold-duotone"
           label="Gallery Fetch Today"
           value={isLoading ? "—" : String(data?.gallery_fetch_stats.total ?? 0)}
@@ -176,6 +161,21 @@ export default function DashboardPage() {
           variant={(data?.gallery_fetch_stats.failed ?? 0) > 0 ? "red" : "green"}
           sparkline={(data?.gallery_fetch_stats.failed ?? 0) > 0 ? SPARKLINES.red : SPARKLINES.green}
           href="/gallery"
+        />
+        <KpiCard
+          icon="solar:cpu-bolt-bold-duotone"
+          label="AI Success Rate"
+          value={isLoading || !data?.ai_stats.total ? "—" : `${data.ai_stats.success_rate}%`}
+          trend={isLoading || !data?.ai_stats.total ? "24h" : `${data.ai_stats.total} calls`}
+          trendUp={(data?.ai_stats.success_rate ?? 100) >= 95}
+          variant={
+            !data?.ai_stats.total ? "purple"
+            : data.ai_stats.success_rate! >= 95 ? "green"
+            : data.ai_stats.success_rate! >= 80 ? "amber"
+            : "red"
+          }
+          sparkline={SPARKLINES.purple}
+          href="/logs"
         />
       </div>
 
