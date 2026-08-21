@@ -23,10 +23,20 @@ from app.database import SessionLocal
 # several fanpages within seconds of each other.
 _FANPAGE_STAGGER_MIN = 60
 _FANPAGE_STAGGER_MAX = 1500
+# Breaking news (see NewsCopy.is_breaking): still stagger fanpages sharing
+# the same story a little (so it doesn't look like one bot fired N posts in
+# the same instant), but nowhere near the normal band — speed matters more
+# than pattern-avoidance for a story fans are actively refreshing for.
+_BREAKING_STAGGER_MIN = 5
+_BREAKING_STAGGER_MAX = 90
 
 
-def _fanpage_stagger(slot: int) -> int:
-    return 0 if slot == 0 else random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
+def _fanpage_stagger(slot: int, breaking: bool = False) -> int:
+    if slot == 0:
+        return 0
+    if breaking:
+        return random.randint(_BREAKING_STAGGER_MIN, _BREAKING_STAGGER_MAX)
+    return random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
 
 
 logger = logging.getLogger(__name__)
@@ -135,18 +145,23 @@ def copywrite_article(self, article_id: int):
                 ai_provider_used=copy.provider,
                 design_template_id=template.id if template else None,
                 status=PublishJobStatus.pending_design,
+                is_breaking=copy.is_breaking,
             )
             db.add(job)
             db.commit()
             created += 1
+            if copy.is_breaking:
+                logger.info("Copywriter: article %d fanpage %d flagged BREAKING — will skip normal publish pacing", article_id, fp.id)
 
             # Auto mode: render (staggered so fanpages sharing this article
             # don't all publish within seconds of each other); review mode
-            # waits for the designer.
+            # waits for the designer. Breaking news gets a much shorter
+            # stagger — speed matters more than pattern-avoidance here, see
+            # _fanpage_stagger.
             from app.models.target_fanpages import PublishMode
             if fp.mode2_publish_mode == PublishMode.auto:
                 from app.tasks.design_renderer import render_design
-                stagger = _fanpage_stagger(slot)
+                stagger = _fanpage_stagger(slot, breaking=copy.is_breaking)
                 render_design.apply_async(args=[job.id], countdown=stagger)
                 slot += 1
 

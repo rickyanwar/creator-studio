@@ -59,3 +59,5 @@ celerybeat.pid
 session_*.json
 session.json
 test-renders/
+split-test-output/
+local_media/

@@ -51,6 +51,12 @@ class PublishJob(Base):
     design_image_path = Column(String(512), nullable=True)  # rendered PNG (Phase 2D)
     design_image_url = Column(String(512), nullable=True)
     design_template_id = Column(Integer, nullable=True)     # FK to design_templates (Phase 2D)
+    # AI's own call (from the same news-copy generation, see news_copywriter.py
+    # build_news_copy_prompt TASK 1) on whether this is significant enough
+    # breaking news to skip the normal per-fanpage publish pacing/daily-cap
+    # queue — see publisher._next_schedule_at's `breaking` param. Only ever
+    # set for content_type=news_content; false/unset means "schedule normally".
+    is_breaking = Column(Boolean, default=False, nullable=False, server_default="false")
 
     ai_generated_caption = Column(Text, nullable=True)
     ai_provider_used = Column(Enum(AIProvider), nullable=True)

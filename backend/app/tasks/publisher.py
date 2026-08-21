@@ -50,7 +50,7 @@ def _push_past_sleep(dt_wib: datetime, start: int, end: int) -> datetime:
 _MAX_DAY_HOPS = 60  # bounded — even a multi-week backlog resolves well inside this
 
 
-def _next_schedule_at(db, fanpage_id: int) -> datetime:
+def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
     """This fanpage's next Facebook go-live slot: the EARLIEST WIB day (starting
     from now) that still has room under the daily cap, with the actual time
     spaced a random 10-20 min gap after THAT DAY's own latest scheduled post,
@@ -66,17 +66,35 @@ def _next_schedule_at(db, fanpage_id: int) -> datetime:
     multi-day publish lag with no way to self-correct. Scanning day-by-day and
     anchoring the gap to each day's own last post lets a lower-volume day
     absorb the catch-up instead of the backlog only ever growing.
+
+    `breaking=True` (see PublishJob.is_breaking / news_copywriter's
+    is_breaking classification) skips ALL of the above — no daily-cap check,
+    no gap-after-last-post spacing, no day-hopping — and goes out as close to
+    "now" as the fanpage's sleep window allows. The point of flagging
+    something breaking is that it's time-sensitive; queuing it behind the
+    normal pacing logic (which can legitimately push a post out by hours or
+    into the next day once a fanpage's daily cap is hit) defeats that
+    entirely. Still respects the sleep window — even breaking news shouldn't
+    post at 3am to an inactive audience.
     """
-    from sqlalchemy import func
-    from app.models.publish_jobs import PublishJob
     from app.models.target_fanpages import TargetFanpage
 
     fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
-    daily_limit = (fanpage.publish_daily_limit if fanpage else None) or _DEFAULT_DAILY_LIMIT
     sleep_start = fanpage.publish_sleep_start_hour if fanpage else None
     sleep_end = fanpage.publish_sleep_end_hour if fanpage else None
-
     floor_utc = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
+
+    if breaking:
+        if sleep_start is not None and sleep_end is not None:
+            floor_wib = floor_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
+            pushed_wib = _push_past_sleep(floor_wib, sleep_start, sleep_end)
+            return pushed_wib.astimezone(timezone.utc).replace(tzinfo=None)
+        return floor_utc
+
+    from sqlalchemy import func
+    from app.models.publish_jobs import PublishJob
+
+    daily_limit = (fanpage.publish_daily_limit if fanpage else None) or _DEFAULT_DAILY_LIMIT
     day_wib = floor_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
 
     for _ in range(_MAX_DAY_HOPS):
@@ -284,7 +302,7 @@ def _publish_news_job(db, job):
     client = get_repliz_client_from_db(db)
     from app.services.repliz_client import format_schedule_at
 
-    scheduled_for = _next_schedule_at(db, job.fanpage_id)
+    scheduled_for = _next_schedule_at(db, job.fanpage_id, breaking=job.is_breaking)
     response = client.create_image_schedule(
         account_id=fanpage.repliz_account_id,
         description=job.ai_generated_caption or "",

@@ -82,6 +82,7 @@ class NewsCopy:
     provider: AIProviderName
     subtitle: str = ""  # short sub-headline for the design (may carry **red** markers)
     category: str = "news"  # "news" | "quote" — which template pool to render on
+    is_breaking: bool = False  # significant enough to skip the normal publish pacing queue
 
 
 def _effective_title_max_chars(fanpage, article) -> int:
@@ -122,7 +123,7 @@ def build_news_copy_prompt(fanpage, article) -> str:
     cta_text = _eff_news(news_source, fanpage, "caption_cta_text", "mode2_caption_cta_text")
     custom_prompt = _eff_news(news_source, fanpage, "caption_custom_prompt", "mode2_caption_custom_prompt")
 
-    return f"""Act as a top-tier sports social media copywriter — the caliber of ESPN, Bleacher Report, or a top motorsport/combat-sports fan page — writing for the Facebook Fanpage "{fanpage.name}". Sharp, credible, and highly readable. Never generic, never robotic, never clickbait-fake.
+    return f"""Act as a professional sports journalist and social media editor — the caliber of ESPN, Bleacher Report, or a top motorsport/combat-sports fan page — writing for the Facebook Fanpage "{fanpage.name}". You've covered this sport for years: you know the storylines, the rivalries, and how a real beat reporter phrases things. Sharp, credible, and highly readable. Never generic, never robotic, never clickbait-fake.
 
 SOURCE NEWS ARTICLE (from {source_name}):
 TITLE: {article.scraped_title}
@@ -132,16 +133,19 @@ CONTENT:
 TASK 1 — CLASSIFY. Decide which design fits this article best:
    - "quote": choose this ONLY when a quoted statement from a named person IS the actual news — the headline-worthy hook is what someone SAID (a bold reaction, callout, promise, controversial claim), not something that happened. Ask: "if I had to headline this in one line, would it be the quote itself?" — only then is it "quote".
    - "news": everything else, INCLUDING articles that happen to contain a quote as supporting color. If the headline-worthy hook is an event — a result, transfer, signing, injury, ranking, schedule change, announcement — classify it "news" even if a person is quoted somewhere in the body reacting to it. A quote can still appear in the caption body either way (see TASK 2, item 3).
-   - Default to "news" when unsure. Most articles are "news" — "quote" is the minority case where a person's own words are themselves the story, not commentary on the story.
+   - Default to "news" when unsure — this matters: aim for roughly 9 out of 10 articles landing as "news". "quote" is a rare exception (a person's own words being the whole story, not just color commentary), not a coin flip. A sports article quoting someone reacting to a result is still "news" about that result.
+
+TASK 1B — IS THIS BREAKING? Set "is_breaking" true ONLY for the kind of story fans are actively refreshing feeds for right now — a major contract signing/extension, a driver/rider/fighter transfer, a title-deciding or major race/fight RESULT, a big injury, a retirement or major roster change, an official confirmation of something that's been rumored. Ask: "would a fan who missed this for 3 hours feel like they missed something?" If yes → true. Routine content — previews, analysis, rankings chatter, minor updates, opinion pieces, anything speculative/rumor-stage — is "is_breaking": false. This should be RARE (most articles are false); when true, this post skips the normal publish queue and goes out immediately, so only flag it for stories that actually deserve that.
 
 TASK 2 — WRITE THE COPY, substantially rewritten in your own words (do not copy sentences from the source). The fields depend on the type you chose:
 
 IF "type" is "news":
 1. "title" — the headline that will be printed ON the image design.
-   - Stay close to the source TITLE above: keep all its facts and names, and rewrite it only to make it more engaging (stronger verbs, urgency, hook like "BREAKING:" / "OFFICIAL:" when it fits). Translate to {language} if needed.
+   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a hook ("BREAKING:" / "OFFICIAL:" / "CONFIRMED:" when it genuinely fits), a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Translate to {language} if needed.
    - Keep roughly the SAME LENGTH as the source TITLE (or slightly longer with the hook) — do NOT shorten it or compress it into a vague topic label.
    - GOOD example: source "Di Giannantonio to join Red Bull KTM Factory Racing" → "BREAKING: Fabio Di Giannantonio is officially joining Red Bull KTM Factory Racing!"
    - BAD example: "MotoGP Shake-Up" (dropped the facts, too short)
+   - BAD example: "You Won't Believe What Marquez Just Did" (withholds the actual news — this is the "far from the original title" failure mode to avoid)
    - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 5 words) in double asterisks so it renders in red, e.g. "Marc Marquez takes **his first pole** at Sachsenring". Mark exactly ONE phrase; leave the rest unmarked.
    - Maximum {_effective_title_max_chars(fanpage, article)} characters (the ** markers do not count)
    - No hashtags, no emoji, no quote marks
@@ -172,13 +176,14 @@ IF "type" is "quote":
    - End with call-to-action: {cta_text if cta_text else "none"}
 {attribution_line}
    - Additional notes: {custom_prompt if custom_prompt else "none"}
+   - Write like a human beat reporter who actually follows this sport, not a language model summarizing an article. Concretely avoid: generic openers ("In an exciting turn of events...", "Big news for fans of..."), telling the reader how to feel instead of giving them a reason to feel it ("This is huge!", "Unbelievable!" with nothing concrete backing it up), restating the headline in slightly different words as the first sentence, hedge-everything phrasing ("it seems that", "reportedly" used more than once), and stacking generic adjectives (exciting, amazing, incredible) instead of a specific detail. Instead: lead with the single most interesting concrete fact, use plain confident sentences a real editor would publish, and let specifics (numbers, names, direct stakes) do the work a superlative would otherwise be doing.
 
-OUTPUT: only a raw JSON object {{"type": "news|quote", "title": "...", "subtitle": "...", "caption": "..."}} — no markdown fences, no explanation."""
+OUTPUT: only a raw JSON object {{"type": "news|quote", "is_breaking": true|false, "title": "...", "subtitle": "...", "caption": "..."}} — no markdown fences, no explanation."""
 
 
-def _parse_news_copy(raw: str) -> tuple[str, str, str, str]:
+def _parse_news_copy(raw: str) -> tuple[str, bool, str, str, str]:
     """Parse the model's JSON output, tolerating markdown fences and stray text.
-    Returns (category, title, subtitle, caption); subtitle may be empty."""
+    Returns (category, is_breaking, title, subtitle, caption); subtitle may be empty."""
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
     # models occasionally prepend/append prose — grab the outermost JSON object
     match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
@@ -188,12 +193,13 @@ def _parse_news_copy(raw: str) -> tuple[str, str, str, str]:
     category = str(data.get("type") or "news").strip().lower()
     if category not in ("news", "quote"):
         category = "news"
+    is_breaking = bool(data.get("is_breaking") is True)
     title = str(data.get("title") or "").strip()
     subtitle = str(data.get("subtitle") or "").strip()
     caption = str(data.get("caption") or "").strip()
     if not title or not caption:
         raise ValueError(f"AI output missing title/caption: {raw[:200]!r}")
-    return category, title, subtitle, caption
+    return category, is_breaking, title, subtitle, caption
 
 
 # ── Mode 4: Discussion / hot-take cards ──────────────────────────────────────
@@ -599,7 +605,7 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     the calling task owns retry/backoff.
     """
     prompt = build_news_copy_prompt(fanpage, article)
-    (category, title, subtitle, caption), provider = _generate_with_fallback(
+    (category, is_breaking, title, subtitle, caption), provider = _generate_with_fallback(
         prompt, _parse_news_copy, force_provider,
         context="news_copy", fanpage_id=fanpage.id, article_id=article.id,
     )
@@ -617,4 +623,7 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     if category == "quote":
         caption = _sync_caption_quote(caption, title)
 
-    return NewsCopy(title=title, caption=caption, provider=provider, subtitle=subtitle, category=category)
+    return NewsCopy(
+        title=title, caption=caption, provider=provider, subtitle=subtitle,
+        category=category, is_breaking=is_breaking,
+    )
