@@ -36,6 +36,9 @@ yarn-error.log*
 *.swo
 .DS_Store
 
+# Local docker-compose overrides (personal dev machine port remaps, etc.)
+docker-compose.override.yml
+
 # Media (stored on VPS, not in repo)
 /media/
 /backend/media/

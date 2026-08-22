@@ -286,10 +286,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 450,
@@ -422,10 +432,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 450,
@@ -539,11 +559,21 @@
           "top": 0,
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "fill": "#374151",
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "fill": "#374151",
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 380,
@@ -698,10 +728,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 450,
@@ -847,10 +887,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -953,10 +1003,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1059,10 +1119,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1165,10 +1235,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1271,10 +1351,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1377,10 +1467,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1483,10 +1583,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1633,10 +1743,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1783,10 +1903,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,
@@ -1933,10 +2063,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 450,
@@ -2095,10 +2235,20 @@
           "fill": "#111111",
           "left": 0,
           "type": "rect",
-          "width": 1080,
+          "width": 540,
           "height": 1350,
           "selectable": false,
           "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
         },
         {
           "top": 800,

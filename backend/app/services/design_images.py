@@ -469,13 +469,22 @@ def extract_secondary_subject(title: str, niche: str) -> str | None:
         return None
 
 
-def detect_focus_point(image_bytes: bytes) -> list:
+def detect_focus_point(image_bytes: bytes, for_split: bool = False) -> list:
     """Return [fx, fy] (0..1) of the main subject to focus the crop on — the
     largest detected face, else the salient object, else slightly above centre.
     Vertical is biased UP (smaller fy raises the subject in the crop) because the
     bottom of the card carries the text overlay — we keep the subject clear of it.
-    OpenCV runs locally in ~ms (no API)."""
-    default = [0.5, 0.34]
+    OpenCV runs locally in ~ms (no API).
+
+    `for_split=True` (a side-by-side split half, see build_split_srcs) skips
+    that upward bias — the split photo area has no text overlaid on it (the
+    headline sits in its own black band below), so lifting the face away from
+    its true centre only pushes the crop off-target. Found 2026-08-21: a
+    split half is already a much tighter horizontal crop than a full-width
+    template (half the canvas width, same landscape source photos), so this
+    bias — harmless on a full-bleed single photo — was enough there to clip
+    straight through the chin/mouth or land on an ear instead of the face."""
+    default = [0.5, 0.34] if not for_split else [0.5, 0.42]
     try:
         import cv2
         import numpy as np
@@ -497,9 +506,14 @@ def detect_focus_point(image_bytes: bytes) -> list:
             # default. float() — np.float64 is not JSON-serializable.
             if fw >= 0.14 * w:
                 cx = (fx + fw / 2) / w
-                # Lift the face toward the upper third so it sits above the text
-                # overlay (only bites when the source is tall enough to move).
-                cy = min(0.44, max(0.24, (fy + fh / 2) / h - 0.08))
+                if for_split:
+                    # True face centre, no upward lift — a little below centre
+                    # so chin/shoulders stay in frame on a tight vertical crop.
+                    cy = min(0.62, max(0.3, (fy + fh / 2) / h + 0.04))
+                else:
+                    # Lift the face toward the upper third so it sits above the text
+                    # overlay (only bites when the source is tall enough to move).
+                    cy = min(0.44, max(0.24, (fy + fh / 2) / h - 0.08))
                 return [round(float(cx), 4), round(float(cy), 4)]
 
         # No usable face → saliency: focus on the main object/subject (bike,
@@ -518,8 +532,12 @@ def detect_focus_point(image_bytes: bytes) -> list:
                     # leathers/bike) and would push the subject into the text
                     # overlay, so blend toward the upper default and keep cy high.
                     cx = min(0.8, max(0.2, M["m10"] / M["m00"] / w))
-                    cy = 0.55 * (M["m01"] / M["m00"] / h) + 0.45 * 0.34
-                    cy = min(0.46, max(0.26, cy))
+                    if for_split:
+                        cy = 0.55 * (M["m01"] / M["m00"] / h) + 0.45 * 0.42
+                        cy = min(0.62, max(0.3, cy))
+                    else:
+                        cy = 0.55 * (M["m01"] / M["m00"] / h) + 0.45 * 0.34
+                        cy = min(0.46, max(0.26, cy))
                     return [round(float(cx), 4), round(float(cy), 4)]
         except Exception as exc:
             logger.debug("saliency focus failed: %s", exc)
@@ -528,16 +546,31 @@ def detect_focus_point(image_bytes: bytes) -> list:
     return default
 
 
-def vision_focus_point(image_bytes: bytes) -> list | None:
+def vision_focus_point(image_bytes: bytes, for_split: bool = False) -> list | None:
     """Ask 9Router vision for the MAIN subject's focal point as [x, y] fractions
     (where the crop should centre — usually the face/head). Returns None on any
-    problem so the caller can fall back to OpenCV. Runs on 9Router (no VPS cost)."""
+    problem so the caller can fall back to OpenCV. Runs on 9Router (no VPS cost).
+
+    `for_split=True` — see detect_focus_point's docstring: a split half has no
+    text overlaid on the photo itself, so the prompt and clamp range drop the
+    "clear the bottom text" framing and just centre on the actual face."""
     try:
         # x/y are fractions of the frame, so a downscaled copy is fine here —
         # and keeps the request under the router's size limit (see _vision_datauri).
         datauri = _vision_datauri(image_bytes)
-        content = [
-            {"type": "text", "text": (
+        if for_split:
+            prompt = (
+                "This photo is one half of a side-by-side split news graphic "
+                "(cropped to a narrow vertical strip — expect a tight crop). "
+                "Find the MAIN subject's face/head (or the key point of a "
+                "vehicle if there's no clear face). "
+                'Reply with ONLY a JSON object {"x":0.00-1.00,"y":0.00-1.00} — '
+                "the point the crop should centre on so the FULL face (chin to "
+                "forehead, both eyes) stays in frame. x is fraction from left, "
+                "y from top."
+            )
+        else:
+            prompt = (
                 "This photo is the full-bleed background of a news graphic whose "
                 "headline sits along the BOTTOM. Find the MAIN subject (the "
                 "person's/vehicle's key point — a face/head, or a car/bike). "
@@ -545,7 +578,9 @@ def vision_focus_point(image_bytes: bytes) -> list | None:
                 "point the crop should centre on so the subject stays fully in "
                 "frame and clear of the bottom text. x is fraction from left, y "
                 "from top (the subject is usually in the upper half)."
-            )},
+            )
+        content = [
+            {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": datauri}},
         ]
         raw = _vision_chat(content, max_tokens=1500, context="vision_focus_point").strip()
@@ -556,6 +591,8 @@ def vision_focus_point(image_bytes: bytes) -> list | None:
         d = _json.loads(m.group(0))
         x = float(d.get("x")); y = float(d.get("y"))
         if 0 <= x <= 1 and 0 <= y <= 1:
+            if for_split:
+                return [round(min(0.85, max(0.15, x)), 4), round(min(0.75, max(0.2, y)), 4)]
             # keep the subject slightly above centre so it clears the bottom text
             return [round(min(0.85, max(0.15, x)), 4), round(min(0.7, max(0.15, y)), 4)]
     except Exception as exc:
@@ -563,23 +600,72 @@ def vision_focus_point(image_bytes: bytes) -> list | None:
     return None
 
 
-def focus_points_for(image_srcs: list) -> list:
+def focus_points_for(image_srcs: list, for_split: bool = False) -> list:
     """Compute a focus point per data-URI image (for the renderer). When vision
     focus is enabled, the 9Router vision model chooses the point (best for the
-    full-bleed portrait templates); otherwise OpenCV face/saliency is used."""
+    full-bleed portrait templates); otherwise OpenCV face/saliency is used.
+
+    `for_split` is NOT "is this a split image" — it's "does nothing get
+    drawn over the BOTTOM of this specific photo after compositing." Pass
+    `for_split=True` only for a layout where the split half has no overlay
+    on it at all (an old flat-band-below-photo design where the photo area
+    and the text band are two separate, non-overlapping regions) — it drops
+    the upward face-lift bias since there's no text/scrim to clear.
+    `for_split=False` (the default) is correct whenever a scrim/gradient or
+    any other overlay is drawn over part of the photo itself — including a
+    split half rendered on a template whose scrim is baked over the photo's
+    bottom portion (the current real-template split layout, see
+    build_split_srcs) — because that's exactly the "lift the face clear of
+    the overlay" situation this bias exists for. Found the hard way
+    2026-08-21: using `for_split=True` on the real-template split layout let
+    faces land under the scrim with no correction at all.
+
+    For a 2-entry split pair specifically, also see `align_split_focus_points`
+    — this function computes each entry's focus point independently, so the
+    two heads can land at different heights even when both individually
+    clear the overlay."""
     from app.config import get_settings
     use_vision = get_settings().vision_focus_enabled
+    default = [0.5, 0.42]
     out = []
     for uri in image_srcs:
         try:
             b = base64.b64decode(uri.split(",", 1)[1]) if "," in uri else b""
             if not b:
-                out.append([0.5, 0.42]); continue
-            fp = vision_focus_point(b) if use_vision else None
-            out.append(fp or detect_focus_point(b))
+                out.append(default); continue
+            fp = vision_focus_point(b, for_split=for_split) if use_vision else None
+            out.append(fp or detect_focus_point(b, for_split=for_split))
         except Exception:
-            out.append([0.5, 0.42])
+            out.append(default)
     return out
+
+
+def align_split_focus_points(focus_points: list) -> list:
+    """Given exactly 2 focus points (a left/right split pair, see
+    focus_points_for), level their vertical (y) component to the SAFER
+    (smaller — higher up in frame) of the two — so both heads land at the
+    same height in the final composite instead of wherever each photo's own
+    face happened to sit, AND neither ends up lower than it would have been
+    on its own. Each side's focus point is otherwise computed independently
+    (its own face position within ITS OWN photo), which can leave the two
+    heads at visibly different heights even when both individually clear
+    the overlay — user feedback on a real render: "kepala Norris seharusnya
+    sejajar dengan kepala Max".
+
+    min() rather than a plain average: averaging can still push a tightly-
+    cropped face DOWN toward risk — found on a real render (Marquez, a
+    much tighter close-up than Bagnaia in that pair) where the average
+    landed low enough to clip his mouth/chin under the scrim, i.e. the
+    average was "between the two" but not "safe for both". A tighter crop
+    has less vertical margin for the same fy than a looser one, so meeting
+    in the middle isn't actually a safe middle for the tighter photo — only
+    using the more conservative (smaller/higher) of the two guarantees
+    neither photo ends up worse off than its own independent bias already
+    was. No-op (returns input unchanged) unless given exactly 2 points."""
+    if len(focus_points) != 2:
+        return focus_points
+    safe_fy = min(focus_points[0][1], focus_points[1][1])
+    return [[focus_points[0][0], safe_fy], [focus_points[1][0], safe_fy]]
 
 
 def classify_image_type(image_bytes: bytes) -> str:
@@ -724,6 +810,396 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
     except Exception as exc:
         logger.warning("vision_pick_best failed (%s) — using first", exc)
         return 0
+
+
+_FRAME_RANK = {"HEAD": 0, "HALF": 1, "FULL": 2}
+
+
+def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
+    """One vision call: classify EVERY candidate's body-framing (HEAD /
+    HALF-body / FULL-body) up front, as its own separate step. `labeled` is
+    a list of (label, datauri) — labels are the caller's own (e.g. "L1",
+    "R2"). Returns {label: "HEAD"|"HALF"|"FULL"}; a label missing from the
+    result (unparseable reply) is left out, not guessed.
+
+    Split out from the pairing decision itself (2026-08-21) because asking
+    one call to both classify AND pick let the model's final answer quietly
+    violate its own same-category rule — visibly, on real test renders
+    (a tight HEAD shot paired against a HALF-body shot despite an explicit
+    "this is the single most important rule" instruction). Classification
+    is an easy, low-ambiguity sub-task; enforcing the match is far more
+    reliable done in plain Python (see vision_pick_split_pair) than hoped
+    for from a multi-step instruction the model has to hold across a whole
+    reasoning chain.
+
+    Face-SIZE matching (as opposed to this HEAD/HALF/FULL bucket) is handled
+    separately by `_face_width_fraction` — an OpenCV pixel measurement on the
+    two already-chosen photos, not a vision guess. A first version asked
+    this same call to also eyeball a face-width fraction per candidate, but
+    that number was too imprecise to catch a real mismatch on a live test
+    render (two HALF-body photos the model itself called "similar enough"
+    that were visibly not) — a deterministic measurement on the final pair
+    beats an LLM's guess across a dozen candidates at once."""
+    content = [{
+        "type": "text",
+        "text": (
+            "Classify how much of the body is visible in EACH numbered photo "
+            "below. Categories: HEAD (tight face / head-and-shoulders only), "
+            "HALF (waist-up — chest and arms visible, e.g. a standing/podium/"
+            "pit-lane shot), FULL (most of the person, head to at least "
+            "mid-thigh). Reply with exactly ONE line per photo, in the form "
+            "`LABEL:CATEGORY` (e.g. `L1:HALF`) — nothing else, no explanation."
+        ),
+    }]
+    for label, uri in labeled:
+        content.append({"type": "text", "text": f"{label}:"})
+        content.append({"type": "image_url", "image_url": {"url": _vision_datauri(base64.b64decode(uri.split(",", 1)[1]))}})
+    raw = _vision_chat(content, max_tokens=1500, context="vision_classify_split_frame")
+    return {
+        m.group(1).upper(): m.group(2).upper()
+        for m in re.finditer(r"\b([LR]\d+)\s*:\s*(HEAD|HALF|FULL)\b", raw, re.IGNORECASE)
+    }
+
+
+def _face_width_fraction(image_bytes: bytes) -> float | None:
+    """OpenCV Haar-cascade measurement of the largest detected face's width
+    as a fraction of the photo's total width — a real pixel measurement, not
+    a vision model's guess (see _classify_split_frames docstring for why
+    that guess wasn't precise enough). Same cascade/confidence threshold as
+    detect_focus_point. Returns None if no confident face is found (the
+    caller then skips zoom correction for that photo rather than act on a
+    guess)."""
+    try:
+        import cv2
+        import numpy as np
+
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
+                                         minSize=(int(w * 0.06), int(h * 0.06)))
+        if not len(faces):
+            return None
+        _, _, fw, _ = max(faces, key=lambda f: f[2] * f[3])
+        if fw < 0.14 * w:  # same "trust only clearly-sized faces" floor as detect_focus_point
+            return None
+        return float(fw) / float(w)
+    except Exception as exc:
+        logger.debug("_face_width_fraction failed: %s", exc)
+        return None
+
+
+def _vision_face_width_fraction(image_bytes: bytes) -> float | None:
+    """Vision fallback for _face_width_fraction when OpenCV's Haar cascade
+    finds no confident face — a known Haar weakness on a tilted/angled/
+    chin-down/chin-on-fist pose (found on a real render: a Verstappen
+    candidate in exactly that pose came back with no OpenCV detection, so
+    the size-mismatch correction never even had a measurement to act on and
+    silently no-opped — the underlying bug wasn't the correction logic,
+    it was having no signal at all for that photo). Better an imprecise
+    estimate than none. Asks about ONE image in isolation — not a batch of
+    many candidates at once, which is what made the earlier all-in-one
+    classify+fraction attempt imprecise (see _classify_split_frames'
+    docstring) — a single focused image is a much easier estimate."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                "What fraction of this photo's WIDTH does the person's face "
+                "(just the face, not hair/head) take up? Reply with ONLY a "
+                "number from 0.05 (tiny, far away) to 0.60 (extreme close-up "
+                "filling the frame) — nothing else, no explanation."
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=1500, context="vision_face_width_fraction")
+        m = re.search(r"(0?\.\d+|1(?:\.0+)?)", raw)
+        return float(m.group(1)) if m else None
+    except Exception as exc:
+        logger.debug("_vision_face_width_fraction failed: %s", exc)
+        return None
+
+
+def _pick_best_aesthetic_pair(left_candidates: list, right_candidates: list, primary: str,
+                               secondary: str, image_type: str | None = None) -> tuple[int, int, bool]:
+    """Given candidates ALREADY narrowed to the same framing category (see
+    vision_pick_split_pair), pick the best-looking LEFT/RIGHT pair AND judge
+    whether it's actually good enough to publish. Always makes this call —
+    even with exactly one candidate per side — so a genuinely bad SINGLE
+    option gets REJECTED instead of blindly waved through just because
+    there was nothing to "choose" between; the caller then tries the next
+    framing-distance tier instead of forcing a bad pair to render. Found via
+    a real user-rejected render (2026-08-21): two same-category HALF-body
+    photos, one badly underexposed/moody next to one bright/sunlit, plus
+    stray background ad-board text awkwardly cropped into both strips —
+    passed the OLD version of this function because there was only one
+    same-category pair, so nothing was ever judged, just accepted.
+
+    Returns (left_index, right_index, accepted)."""
+    style = (
+        "close-up FACE/head-and-shoulders portraits" if image_type == "face"
+        else "ACTION shots (riding/driving/on track)" if image_type == "action"
+        else "photos"
+    )
+    content = [{
+        "type": "text",
+        "text": (
+            f"These are candidate {style} for a side-by-side split graphic: "
+            f"{primary} on the LEFT half, {secondary} on the RIGHT half — all "
+            "already matched for similar body-framing. Pick the best-LOOKING "
+            "LEFT+RIGHT pair, judging:\n"
+            "- Full face visible with margin — each photo is CROPPED HARD "
+            "into a narrow vertical strip, so reject anything too tight to "
+            "survive that.\n"
+            "- Similar EXPOSURE/BRIGHTNESS between the two photos — one dark/"
+            "moody photo next to one bright/sunlit one reads as broken, even "
+            "if each looks fine alone.\n"
+            "- No distracting background element that would get awkwardly "
+            "cropped into the narrow strip — stray text/logo fragments, "
+            "another person's head, a sign cut in half. Prefer a cleaner "
+            "background over a busier one.\n"
+            "- Similar facing direction and background tone, so the two "
+            "halves read as one cohesive graphic.\n\n"
+            f"LEFT candidates are numbered L1..L{len(left_candidates)}, then "
+            f"RIGHT candidates are numbered R1..R{len(right_candidates)}.\n"
+            "Reply on exactly TWO lines: line 1 is your best pick as `L# R#`; "
+            "line 2 is `OK` if that pair is genuinely good enough to publish "
+            "as-is, or `REJECT` if even your best pick has a real problem "
+            "from the list above. Be honest — reply REJECT rather than pick "
+            "something you wouldn't be happy to see published."
+        ),
+    }]
+    for i, uri in enumerate(left_candidates):
+        content.append({"type": "text", "text": f"L{i + 1}:"})
+        content.append({"type": "image_url", "image_url": {"url": _vision_datauri(base64.b64decode(uri.split(",", 1)[1]))}})
+    for j, uri in enumerate(right_candidates):
+        content.append({"type": "text", "text": f"R{j + 1}:"})
+        content.append({"type": "image_url", "image_url": {"url": _vision_datauri(base64.b64decode(uri.split(",", 1)[1]))}})
+    raw = _vision_chat(content, max_tokens=1500, context="vision_pick_split_pair")
+    lm = re.search(r"L\s*(\d+)", raw, re.IGNORECASE)
+    rm = re.search(r"R\s*(\d+)", raw, re.IGNORECASE)
+    li = (int(lm.group(1)) - 1) if lm else 0
+    ri = (int(rm.group(1)) - 1) if rm else 0
+    li = li if 0 <= li < len(left_candidates) else 0
+    ri = ri if 0 <= ri < len(right_candidates) else 0
+    accepted = not re.search(r"\bREJECT\b", raw, re.IGNORECASE)
+    return li, ri, accepted
+
+
+# Assumed split-slot geometry (see build_split_srcs / load_real_split_template
+# in the test harness). vision_pick_split_pair runs before any template is
+# chosen, so this can't be read from the actual render target — kept in
+# sync by hand with whatever the test harness's real-template mutation
+# currently uses. Height is 880, NOT the full 1350 canvas height: at full
+# height a 540-wide slot's aspect ratio (1:2.5) forces such a severe
+# horizontal crop that the zoom-correction tuning in this file couldn't
+# actually fix it — found 2026-08-22 via user feedback on the full-height
+# version ("terlalu di zoom, bibirnya sampai tidak kelihatan" — BOTH sides
+# too tight, not a left/right mismatch this file's corrections address).
+# 880 overlaps the real template's scrim (fixed at top=800) by 80px so the
+# photo/text seam still blends for free. If the seeded split template's
+# geometry ever changes, this needs to move with it.
+_SPLIT_SLOT_W = 540
+_SPLIT_SLOT_H = 880
+# Fraction of the zoomed visible window a face is allowed to fill at most —
+# the remaining fraction is safety margin so a real face (which is wider
+# than the tight "face" landmark box detection measures) doesn't touch the
+# edge.
+_SPLIT_ZOOM_SAFETY_MARGIN = 0.15
+# Absolute ceiling regardless of how much margin the geometry says is
+# available. A photo where the face starts out tiny (a wide far-away shot)
+# can compute a huge geometrically-"safe" z_max — nothing would crop — but
+# blowing a small face up 2x+ still looks visibly soft/upscaled and, more
+# fundamentally, means that photo was a poor candidate for THIS pairing to
+# begin with (its native framing is too far from its partner's for a zoom
+# fix to paper over). Found 2026-08-22: z_max alone produced 1.63x/2.13x
+# corrections that were technically crop-safe but still looked wrong —
+# adaptive-per-photo fixes the CROP-SAFETY failure mode, this ceiling
+# guards the separate "just don't upscale that much" one.
+_MAX_SPLIT_ZOOM_ABSOLUTE = 1.3
+# Below this face-size ratio (smaller/larger), don't bother correcting —
+# the difference isn't visually significant and the fraction estimate
+# itself is a rough vision guess, not a measurement.
+_SPLIT_ZOOM_RATIO_THRESHOLD = 1.08
+
+
+def _max_safe_zoom(image_bytes: bytes, face_width_frac: float) -> float:
+    """How much EXTRA zoom (beyond the base cover-fit crop) THIS SPECIFIC
+    photo can take before its face would spill outside the split slot's
+    visible window — computed per photo from its own real dimensions and
+    face size, not a single flat number applied to every image.
+
+    Replaced a flat `_MAX_SPLIT_ZOOM` constant (2026-08-21) after user
+    feedback made the tradeoff explicit either way: tuned loose enough
+    (1.5) to close a real size gap, it cropped through a face on a
+    different, tighter-cropped photo; tuned conservative enough (1.15) to
+    be safe there, it under-corrected a pair with real spare margin (still
+    visibly mismatched). Both failures trace to the same root cause: a
+    fixed cap can't be simultaneously right for a photo with lots of margin
+    and one with almost none — "every image is different" (user, verbatim)
+    — so the cap has to be computed FROM each photo's own geometry instead
+    of guessed as one constant for all of them.
+
+    Math: the base cover-fit crop (zoom=1.0) already shows
+    `_SPLIT_SLOT_W / (scale * img_w)` of the source photo's width, where
+    `scale = max(_SPLIT_SLOT_W/img_w, _SPLIT_SLOT_H/img_h)`. Extra zoom `z`
+    shrinks that visible fraction to `.../z`. Solving for the largest `z`
+    that still keeps the face within `(1 - _SPLIT_ZOOM_SAFETY_MARGIN)` of
+    that shrinking window gives a real per-photo ceiling instead of a
+    guess. Returns 1.0 (no safe headroom to zoom at all) on any failure to
+    read the image or a degenerate face fraction."""
+    if face_width_frac <= 0:
+        return 1.0
+    try:
+        import cv2
+        import numpy as np
+
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            return 1.0
+        img_h, img_w = img.shape[:2]
+        if not img_w or not img_h:
+            return 1.0
+    except Exception as exc:
+        logger.debug("_max_safe_zoom failed: %s", exc)
+        return 1.0
+
+    scale = max(_SPLIT_SLOT_W / img_w, _SPLIT_SLOT_H / img_h)
+    visible_width_frac_at_1x = (_SPLIT_SLOT_W / scale) / img_w
+    z_max = (visible_width_frac_at_1x * (1 - _SPLIT_ZOOM_SAFETY_MARGIN)) / face_width_frac
+    return max(1.0, min(z_max, _MAX_SPLIT_ZOOM_ABSOLUTE))
+
+
+def vision_pick_split_pair(left_candidates: list, right_candidates: list, primary: str, secondary: str,
+                            image_type: str | None = None) -> tuple[int, int, float, float, bool]:
+    """For a side-by-side split (two subjects, one photo each), pick the
+    LEFT/RIGHT candidate pair whose pose and framing match best — same rough
+    zoom level (both head-and-shoulders or both waist-up, not one tight face
+    crop next to one wide action shot), similar facing direction, and a
+    similar background tone — so the two halves read as one cohesive graphic
+    instead of two unrelated stock photos stitched together.
+
+    Three-phase: (1) `_classify_split_frames` labels every candidate's
+    body-framing in one call, then this function groups every (left, right)
+    index pair by framing-category distance in plain Python (a hard
+    constraint, not a hoped-for instruction) — distance 0 = exact
+    same-category match; (2) starting from the SMALLEST distance tier,
+    `_pick_best_aesthetic_pair` both picks the best-looking pair in that tier
+    AND judges whether it's actually good enough (full face w/ margin,
+    matched exposure/lighting, no distracting cropped background element) —
+    if rejected, move to the next tier instead of forcing a bad pair through
+    (found via a real user-rejected render: same-category but one photo
+    underexposed next to one bright, plus stray background text cropped
+    into both strips — the old version only ran this check when MULTIPLE
+    pairs tied on distance, so a lone same-category pair got waved through
+    unjudged); every tier exhausted with no accept falls back to the closest
+    tier's top pick rather than produce nothing; (3) even within a matched
+    pair, one subject's face can still render visibly smaller than the
+    other's — the chosen pair's face fractions are measured (OpenCV, see
+    `_face_width_fraction`) and a corrective zoom computed for the
+    smaller-faced side, capped per-photo by `_max_safe_zoom` (not a flat
+    constant — see its docstring for why), for the renderer to apply on top
+    of its normal cover-fit crop.
+
+    `left_candidates`/`right_candidates` are lists of data-URIs (already
+    identity-verified — this call only judges composition, not who's in the
+    photo). Returns (left_index, right_index, left_zoom, right_zoom,
+    accepted). `accepted=False` means every framing tier's best pick still
+    failed the aesthetic/quality gate (see _pick_best_aesthetic_pair) — e.g.
+    the only available photo of one subject has their face turned away or
+    buried in a crowd. The caller (build_split_srcs) must treat that as "no
+    acceptable split pair" and let prepare_design_images fall back to a
+    single photo, rather than ship the rejected pick — found 2026-08-22 via
+    two real user-rejected renders (Verstappen buried in crowd/smoke;
+    Makhachev showing the back of his head) that BOTH hit this exact
+    rejected-but-shipped-anyway path. This is the same "a bad photo is worse
+    than no photo" principle already applied elsewhere in this file (see
+    vision_verify_match/vision_verify_subject's fail-closed behavior) —
+    previously this was the one place in the split pipeline that failed
+    OPEN instead. Falls back to (0, 0, 1.0, 1.0, True) if vision is
+    unavailable or either list is empty — a hard error, not a quality
+    judgment, so there's no "rejection" signal to honor; best-effort still
+    beats crashing the whole render."""
+    if not left_candidates or not right_candidates:
+        return 0, 0, 1.0, 1.0, True
+    if len(left_candidates) == 1 and len(right_candidates) == 1:
+        return 0, 0, 1.0, 1.0, True
+    try:
+        left_labels = [f"L{i + 1}" for i in range(len(left_candidates))]
+        right_labels = [f"R{j + 1}" for j in range(len(right_candidates))]
+        frames = _classify_split_frames(
+            list(zip(left_labels, left_candidates)) + list(zip(right_labels, right_candidates))
+        )
+        # A label the model's reply didn't cover (parse miss) defaults to
+        # HALF — the middle rank, so it's never automatically the "best"
+        # match nor the "worst" mismatch against an unknown partner.
+        def rank(label: str) -> int:
+            return _FRAME_RANK.get(frames.get(label, ""), 1)
+
+        by_dist: dict[int, list[tuple[int, int]]] = {}
+        for li in range(len(left_candidates)):
+            for ri in range(len(right_candidates)):
+                d = abs(rank(left_labels[li]) - rank(right_labels[ri]))
+                by_dist.setdefault(d, []).append((li, ri))
+
+        li = ri = None
+        fallback: tuple[int, int] | None = None
+        for d in sorted(by_dist):
+            pairs = by_dist[d]
+            left_idx = sorted({p[0] for p in pairs})
+            right_idx = sorted({p[1] for p in pairs})
+            sub_li, sub_ri, accepted = _pick_best_aesthetic_pair(
+                [left_candidates[i] for i in left_idx],
+                [right_candidates[j] for j in right_idx],
+                primary, secondary, image_type,
+            )
+            cand = (left_idx[sub_li], right_idx[sub_ri])
+            if fallback is None:
+                fallback = cand  # closest-framing tier's top pick, kept as a last resort
+            if accepted:
+                li, ri = cand
+                break
+
+        if li is None:
+            # Every tier's best pick was rejected on quality (mismatched
+            # exposure, distracting crop, a subject whose face isn't even
+            # visible, etc.) — do NOT ship the closest-tier pick anyway
+            # (2026-08-22: that's exactly what produced two real
+            # user-rejected renders). No acceptable pair exists among these
+            # candidates; tell the caller so it can fall back to a single
+            # photo instead.
+            logger.warning(
+                "vision_pick_split_pair: every framing tier rejected on quality for %r|%r — no acceptable split pair",
+                primary, secondary,
+            )
+            return fallback[0], fallback[1], 1.0, 1.0, False
+
+        zoom_l, zoom_r = 1.0, 1.0
+        left_bytes = base64.b64decode(left_candidates[li].split(",", 1)[1])
+        right_bytes = base64.b64decode(right_candidates[ri].split(",", 1)[1])
+        # Vision fallback ONLY when OpenCV finds nothing (angled/tilted pose
+        # it can't detect) — never overrides a real OpenCV measurement, so
+        # the common case stays free and precise.
+        frac_l = _face_width_fraction(left_bytes) or _vision_face_width_fraction(left_bytes)
+        frac_r = _face_width_fraction(right_bytes) or _vision_face_width_fraction(right_bytes)
+        if frac_l and frac_r and frac_l > 0 and frac_r > 0:
+            ratio = max(frac_l, frac_r) / min(frac_l, frac_r)
+            if ratio >= _SPLIT_ZOOM_RATIO_THRESHOLD:
+                # Cap computed from THIS photo's own geometry (see
+                # _max_safe_zoom), not a flat constant — every photo has a
+                # different amount of safe margin.
+                if frac_l < frac_r:
+                    zoom_l = min(ratio, _max_safe_zoom(left_bytes, frac_l))
+                else:
+                    zoom_r = min(ratio, _max_safe_zoom(right_bytes, frac_r))
+        return li, ri, zoom_l, zoom_r, True
+    except Exception as exc:
+        logger.warning("vision_pick_split_pair failed (%s) — using first of each", exc)
+        return 0, 0, 1.0, 1.0, True
 
 
 def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "", niche: str = "") -> dict:
@@ -906,30 +1382,25 @@ def _mark_gallery_image_used(db, gi) -> None:
     db.commit()
 
 
-def find_gallery_datauri(
+def _gallery_verified_candidates(
     db, subject: str, exclude_path: str | None = None, use_vision: bool = True,
     image_type: str | None = None, allow_stale_reuse: bool = True, niche: str = "",
+    pool_limit: int = 8,
 ):
-    """Find the best gallery image whose keyword matches the subject, honoring
-    the reuse cooldown and favoring the freshest-shot (captured_at) eligible
-    candidates — see _eligible_rows. Candidates are then identity-verified
-    (vision_verify_subject) before 9Router vision picks the best among what's
-    left — constrained to `image_type` ("face"/"action") so split layouts
-    stay consistent. Marks the picked image used.
+    """Shared lookup behind find_gallery_datauri and find_gallery_datauris:
+    matching gallery rows for `subject`, honoring the reuse cooldown and
+    favoring freshest-shot eligible candidates (see _eligible_rows), then
+    identity-verified (vision_verify_subject) when use_vision. Returns a
+    list of (datauri, GalleryImage) tuples, NOT yet reduced to a winner.
 
-    The identity check matters here specifically because the initial match
-    above is a bare keyword/extra_keywords substring — a photo tagged
-    "anthony smith" could be a different Anthony Smith than the one this
-    call means, or simply mistagged; nothing before this confirmed WHO is in
-    the photo, only that it downloaded under a matching label. Found
-    2026-08-20 after real posts nearly went out with a same-named but wrong
-    person's photo.
-
-    `allow_stale_reuse=False` makes this return (None, None) when the cooldown
-    pool is empty instead of reusing a stale photo — pass this when the
-    caller has a fresher fallback (a live Getty/Google search) it should try
-    first, then call this again with the default True as the true last
-    resort if that fresh search also finds nothing."""
+    `pool_limit` is how many raw DB rows _eligible_rows samples BEFORE
+    identity verification (default 8, matching the single-photo callers).
+    A caller doing its own joint selection over a shrunk post-verification
+    list (e.g. build_split_srcs picking a pose-matched pair) should pass a
+    higher value — the single-photo pick only ever needs its eventual
+    winner to survive verification, but a joint pick needs enough SURVIVORS
+    left after verification to have real pairing choices, and identity
+    verification alone already discards a chunk of any raw sample."""
     from sqlalchemy import func, or_
     from app.models.gallery import GalleryImage
 
@@ -947,24 +1418,72 @@ def find_gallery_datauri(
     rows = []
     # Prefer pre-labelled images matching the wanted type (from download-time vision)
     if image_type in ("face", "action"):
-        rows = _eligible_rows(base.filter(GalleryImage.label == image_type), allow_stale_reuse=allow_stale_reuse)
+        rows = _eligible_rows(base.filter(GalleryImage.label == image_type), limit=pool_limit, allow_stale_reuse=allow_stale_reuse)
     if not rows:
-        rows = _eligible_rows(base, allow_stale_reuse=allow_stale_reuse)
+        rows = _eligible_rows(base, limit=pool_limit, allow_stale_reuse=allow_stale_reuse)
 
     usable = [gi for gi in rows if gi.local_path and gi.local_path != exclude_path and os.path.exists(gi.local_path)]
     if not usable:
-        return None, None
+        return []
 
     uris = [file_to_datauri(gi.local_path) for gi in usable]
     if use_vision:
         by_uri = {uri: gi for uri, gi in zip(uris, usable)}
         uris = _filter_verified_subject(uris, subject, niche)
         if not uris:
-            return None, None
+            return []
         usable = [by_uri[uri] for uri in uris]
+    return list(zip(uris, usable))
+
+
+def find_gallery_datauri(
+    db, subject: str, exclude_path: str | None = None, use_vision: bool = True,
+    image_type: str | None = None, allow_stale_reuse: bool = True, niche: str = "",
+):
+    """Find the best gallery image whose keyword matches the subject — see
+    _gallery_verified_candidates for the matching/verification rules. 9Router
+    vision picks the best of what's left, constrained to `image_type`
+    ("face"/"action") so split layouts stay consistent. Marks the picked
+    image used.
+
+    The identity check matters here specifically because the initial match
+    is a bare keyword/extra_keywords substring — a photo tagged
+    "anthony smith" could be a different Anthony Smith than the one this
+    call means, or simply mistagged; nothing before this confirmed WHO is in
+    the photo, only that it downloaded under a matching label. Found
+    2026-08-20 after real posts nearly went out with a same-named but wrong
+    person's photo.
+
+    `allow_stale_reuse=False` makes this return (None, None) when the cooldown
+    pool is empty instead of reusing a stale photo — pass this when the
+    caller has a fresher fallback (a live Getty/Google search) it should try
+    first, then call this again with the default True as the true last
+    resort if that fresh search also finds nothing."""
+    candidates = _gallery_verified_candidates(
+        db, subject, exclude_path, use_vision, image_type, allow_stale_reuse, niche,
+    )
+    if not candidates:
+        return None, None
+    uris = [uri for uri, _ in candidates]
     best = vision_pick_best(uris, subject, image_type=image_type) if use_vision else 0
-    _mark_gallery_image_used(db, usable[best])
-    return uris[best], usable[best]
+    picked_uri, picked_gi = candidates[best]
+    _mark_gallery_image_used(db, picked_gi)
+    return picked_uri, picked_gi
+
+
+def find_gallery_datauris(
+    db, subject: str, exclude_path: str | None = None, image_type: str | None = None,
+    allow_stale_reuse: bool = True, niche: str = "", top_n: int = 3, pool_limit: int = 8,
+):
+    """Like find_gallery_datauri but returns up to `top_n` identity-verified
+    candidate (datauri, GalleryImage) tuples instead of picking a winner —
+    for callers doing their own joint selection (e.g. a pose-matched split
+    pair). Always identity-verifies (there's no single-winner vision_pick_best
+    step here to skip). See _gallery_verified_candidates for `pool_limit`."""
+    candidates = _gallery_verified_candidates(
+        db, subject, exclude_path, True, image_type, allow_stale_reuse, niche, pool_limit,
+    )
+    return candidates[:top_n]
 
 
 def pick_split_image_type(title: str, niche: str) -> str:
@@ -989,19 +1508,35 @@ def pick_split_image_type(title: str, niche: str) -> str:
 
 
 def extract_two_subjects(title: str, niche: str):
-    """Return (primary, secondary|None). If the headline is clearly about TWO
-    distinct people, both are returned → the caller uses a split layout."""
+    """Return (primary, secondary|None). Only returns two names when a
+    side-by-side split illustration is actually the right editorial call —
+    NOT just whenever two people happen to be named. See build_prompt below
+    for the distinction (a name mentioned in passing vs. two people the
+    graphic should actually put face-to-face)."""
     from app.services.ai_caption import generate_caption
 
     prompt = (
-        f'This is a {niche} news headline: "{title}".\n'
-        "Which specific PEOPLE is it about? If it clearly features TWO distinct "
-        "named people (e.g. a rider/driver and a rival/teammate), reply exactly as "
-        '`Name One | Name Two`. If it is about only ONE main person, reply with '
-        'just that one name. If there is no single specific named PERSON the '
-        'headline is about (e.g. it\'s about an organization, event, vehicle, or '
-        'decision — no individual is the subject), reply exactly `NONE`. '
-        "People only — no teams/brands. No extra words."
+        f'Act as a professional sports graphic designer laying out a social '
+        f'media card for this {niche} headline: "{title}".\n\n'
+        "Decide how many people this card should feature, as a real editorial "
+        "call — not just a name count:\n"
+        '- TWO people, side-by-side (`Name One | Name Two`) — ONLY when the '
+        "headline is genuinely about a head-to-head: a duel, rivalry, "
+        "comparison ('X vs Y', 'who's better'), a direct exchange between "
+        "them (X said something ABOUT or TO Y, a clash/incident between "
+        "them), or they share the moment equally (both won, both were "
+        "involved in the same incident). Ask yourself: would a reader "
+        "instinctively expect to see BOTH faces side by side for this story? "
+        "If the honest answer is anything less than a clear yes, don't force "
+        "a two-name reply just because a second name appears in the text.\n"
+        "- ONE person — the default whenever a single individual is clearly "
+        "the story's main subject, even if one or more OTHER named people are "
+        "mentioned as context, a source, an opponent they merely faced, or a "
+        "minor detail. A single strong hero photo beats a forced pairing.\n"
+        "- `NONE` — no individual person is the subject at all (an "
+        "organization, event, vehicle, or decision instead).\n\n"
+        "Reply with ONLY the result in the exact format above — the one/two "
+        "name(s) or NONE. People only — no teams/brands. No explanation."
     )
     try:
         out, _ = generate_caption(prompt)
@@ -1017,13 +1552,16 @@ def extract_two_subjects(title: str, niche: str):
         return None, None
 
 
-def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5):
+def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5):
     """Fetch fresh, context-appropriate candidate photos of `subject` straight
     from the Getty search (via 9Router/jina), store the ones that pass the
     same quality gate the scheduled downloader uses (dest keyword = the
-    subject, lowercased), and let vision pick the best of what's usable.
+    subject, lowercased), and identity-verify each before returning.
     `image_type` shapes the query ("face" → portrait, "action" → riding).
-    Returns a data-URI or None.
+    Returns a list of (GalleryImage, datauri) tuples, ranked as Getty
+    returned them (newest/most-relevant first) — NOT yet reduced to a single
+    winner, so callers can do their own joint selection (e.g. picking a
+    pose-matched pair for a split layout).
 
     Storing every candidate (not just the winner) — rather than the old
     behavior of returning a bare in-memory data-URI — fixes a real bug found
@@ -1058,7 +1596,7 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
         md = _9router_fetch_markdown(url, context="subject_datauri", keyword=keyword, niche=niche)
     except Exception as exc:
         logger.warning("fetch_subject_datauri: search failed for %r: %s", subject, exc)
-        return None
+        return []
 
     candidate_urls: list[str] = []
     seen: set = set()
@@ -1069,7 +1607,7 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
         seen.add(u)
         candidate_urls.append(u)
     if not candidate_urls:
-        return None
+        return []
 
     skip_urls = {
         u for (u,) in
@@ -1078,7 +1616,7 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
     dest_dir = Path(s.storage_base_path) / "gallery" / keyword_slug(keyword)
     saved = _fetch_and_store(candidate_urls, dest_dir, max_candidates, (300, 300), skip_urls, "9router-live", subject=subject)
     if not saved:
-        return None
+        return []
 
     survivors: list[tuple] = []  # (GalleryImage, datauri)
     for item in saved:
@@ -1104,7 +1642,7 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
         survivors.append((gi, file_to_datauri(item.local_path)))
 
     if not survivors:
-        return None
+        return []
 
     # Identity-verify each candidate before ranking — this query's own text
     # match (subject+niche keywords) steers Getty but never confirms the
@@ -1118,17 +1656,35 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
     ]
     if not verified:
         logger.info("fetch_subject_datauri: no candidate verified as %r among %d stored", subject, len(survivors))
-        return None
+    return verified
 
+
+def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5):
+    """Single-best convenience wrapper around _fetch_verified_subject_candidates
+    for callers that just want one photo (discussion cards, the inset flow).
+    Returns a data-URI or None."""
+    verified = _fetch_verified_subject_candidates(db, subject, image_type, niche, max_candidates)
+    if not verified:
+        return None
     uris = [uri for _, uri in verified]
     best = vision_pick_best(uris, subject, image_type=image_type)
     picked_gi, picked_uri = verified[best]
     _mark_gallery_image_used(db, picked_gi)
     logger.info(
-        "fetch_subject_datauri: %r (%s) → %d/%d candidate(s) verified, picked %d",
-        subject, image_type, len(verified), len(survivors), best,
+        "fetch_subject_datauri: %r (%s) → %d candidate(s) verified, picked %d",
+        subject, image_type, len(verified), best,
     )
     return picked_uri
+
+
+def fetch_subject_datauris(db, subject: str, image_type: str = "face", niche: str = "MotoGP",
+                            max_candidates: int = 5, top_n: int = 3):
+    """Like fetch_subject_datauri but returns up to `top_n` identity-verified
+    candidate (GalleryImage, datauri) tuples instead of picking a winner —
+    for callers doing their own joint selection (e.g. a pose-matched split
+    pair)."""
+    verified = _fetch_verified_subject_candidates(db, subject, image_type, niche, max_candidates)
+    return verified[:top_n]
 
 
 def fetch_topic_datauri(title: str, niche: str, excerpt: str = "", max_candidates: int = 6):
@@ -1241,19 +1797,72 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
 
 
 def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face", niche: str = "MotoGP"):
-    """Two context-appropriate, vision-picked photos (same style) for a left/right
-    split. Fetches fresh from Getty first, falls back to the gallery."""
-    left = fetch_subject_datauri(db, primary, image_type, niche)
-    if not left:
-        left, lg = find_gallery_datauri(db, primary, use_vision=True, image_type=image_type, niche=niche)
-    if not left:
+    """Two context-appropriate photos (same style) for a left/right split.
+    Fetches several fresh candidates from Getty per side first, tops up from
+    the gallery if fewer than 2 came back, then asks vision to pick the
+    LEFT/RIGHT pair whose pose/framing match best (see vision_pick_split_pair)
+    — a wide action shot next to a tight face crop reads as sloppy even when
+    both photos are individually fine, so the pairing is judged jointly
+    rather than picking each side's "best" photo in isolation.
+
+    Returns `([left_uri, right_uri], [zoom_left, zoom_right])`, or `None` if
+    either side has no usable candidate at all. The zoom pair is a
+    corrective per-photo zoom (see vision_pick_split_pair) the renderer
+    should apply on top of its normal cover-fit crop so both faces render
+    at a similar apparent size — the caller (prepare_design_images) stashes
+    it onto the returned template_json for design_renderer to pick up."""
+    def _candidates(subject: str) -> list:
+        # Normalize to (datauri, GalleryImage) regardless of source: fresh
+        # Getty (fetch_subject_datauris) yields (GalleryImage, uri); gallery
+        # top-up (find_gallery_datauris) yields (uri, GalleryImage). A wider
+        # pool gives vision_pick_split_pair (and its framing-category +
+        # quality-gate logic) real odds of finding a genuinely matched pair
+        # instead of settling for whatever's available — pool_limit=30
+        # validated 2026-08-21 against a 30-pair test batch as a solid
+        # quality/cost middle ground (the default single-photo-pick pool of
+        # 8 was found to quietly starve this to 1-2 verified survivors even
+        # for well-photographed subjects; 50 gave the best results in
+        # testing but is expensive to run on every job).
+        fresh = fetch_subject_datauris(db, subject, image_type, niche, top_n=8)
+        pairs = [(uri, gi) for gi, uri in fresh]
+        if len(pairs) < 2:
+            pairs += find_gallery_datauris(
+                db, subject, image_type=image_type, niche=niche, top_n=8 - len(pairs), pool_limit=30,
+            )
+        return pairs
+
+    left_pairs = _candidates(primary)
+    if not left_pairs:
         return None
-    right = fetch_subject_datauri(db, secondary, image_type, niche)
-    if not right:
-        right, rg = find_gallery_datauri(db, secondary, use_vision=True, image_type=image_type, niche=niche)
-    if not right:
+    right_pairs = _candidates(secondary)
+    if not right_pairs:
         return None
-    return [left, right]
+
+    left_uris = [uri for uri, _ in left_pairs]
+    right_uris = [uri for uri, _ in right_pairs]
+    li, ri, zoom_l, zoom_r, accepted = vision_pick_split_pair(left_uris, right_uris, primary, secondary, image_type)
+    if not accepted:
+        # No candidate pair cleared the quality gate (see
+        # vision_pick_split_pair's docstring) — a bad split is worse than no
+        # split, so don't mark anything used and let the caller
+        # (prepare_design_images) fall back to a single photo instead.
+        logger.info(
+            "build_split_srcs: %r | %r (%s) — no pair cleared the quality gate, skipping split",
+            primary, secondary, image_type,
+        )
+        return None
+
+    left_uri, left_gi = left_pairs[li]
+    right_uri, right_gi = right_pairs[ri]
+    if left_gi is not None:
+        _mark_gallery_image_used(db, left_gi)
+    if right_gi is not None:
+        _mark_gallery_image_used(db, right_gi)
+    logger.info(
+        "build_split_srcs: %r | %r (%s) — chose pair L%d/R%d from %d/%d candidates (zoom_l=%.2f zoom_r=%.2f)",
+        primary, secondary, image_type, li + 1, ri + 1, len(left_pairs), len(right_pairs), zoom_l, zoom_r,
+    )
+    return [left_uri, right_uri], [zoom_l, zoom_r]
 
 
 def analyze_subject_side(main_datauri: str) -> str:
@@ -1419,10 +2028,20 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
     primary, secondary = extract_two_subjects(title, niche)
     if primary and secondary:
         image_type = pick_split_image_type(title, niche)
-        srcs = build_split_srcs(db, primary, secondary, image_type, niche)
-        if srcs:
+        built = build_split_srcs(db, primary, secondary, image_type, niche)
+        if built:
+            srcs, zooms = built
             logger.info("Design: split layout %r | %r (%s)", primary, secondary, image_type)
-            return template_json, _with_inset(template_json, srcs)
+            out_srcs = _with_inset(template_json, srcs)
+            # Stashed on the template JSON rather than widening this
+            # function's return signature (every OTHER branch here returns
+            # a plain (template_json, image_srcs) 2-tuple) — an extra root
+            # key Fabric.js's loadFromJSON simply ignores. The renderer call
+            # site (design_renderer.render_design) pops it back off before
+            # building the /render request body.
+            tj = dict(template_json)
+            tj["_splitImageZooms"] = zooms
+            return tj, out_srcs
         logger.info("Design: split sourcing failed for %r | %r — falling back", primary, secondary)
 
     subject = secondary if (primary and secondary) else extract_secondary_subject(title, niche)

@@ -225,7 +225,10 @@ def render_design(self, job_id: int):
 
         # Two-slot templates also get a secondary photo (inset/split — see
         # design_images.prepare_design_images) with face-aware focus crops.
-        from app.services.design_images import prepare_design_images, focus_points_for, watermark_datauri
+        from app.services.design_images import (
+            prepare_design_images, focus_points_for, align_split_focus_points,
+            watermark_datauri, find_role_object,
+        )
         title = job.design_title or article.scraped_title
         template_json, image_srcs = prepare_design_images(
             db, template.template_json, template.canvas_width,
@@ -233,6 +236,30 @@ def render_design(self, job_id: int):
             main_path=gallery_image.local_path if gallery_image else None,
             expand=bool(fanpage.design_expand),
         )
+        # See build_split_srcs / prepare_design_images's split-flow branch —
+        # the corrective per-photo zoom is stashed here rather than widening
+        # prepare_design_images's return signature (every other branch there
+        # returns a plain 2-tuple).
+        image_zooms = template_json.pop("_splitImageZooms", None)
+
+        # A rectangular image_2 with both slots filled means prepare_design_images
+        # took the split flow (see its "Split flow" branch). Both photos DO
+        # have an overlay on them — the real template's scrim gradient is
+        # baked over the bottom ~40% of the full-height split photo (not a
+        # separate non-overlapping band) — so this is exactly the situation
+        # for_split=False's upward face-lift bias exists for; for_split=True
+        # is for the OLD flat-band-below-photo design where nothing is drawn
+        # over the photo at all. See focus_points_for's docstring — this was
+        # backwards until 2026-08-21 (found via a real render: faces landing
+        # under the scrim with for_split=True's no-lift behavior).
+        image_2_slot = find_role_object(template_json, "image_2")
+        is_split = (
+            image_2_slot is not None and image_2_slot.get("type") == "rect"
+            and len(image_srcs) >= 2 and image_srcs[0] and image_srcs[1]
+        )
+        focus_points = focus_points_for(image_srcs, for_split=False)
+        if is_split:
+            focus_points = align_split_focus_points(focus_points)
 
         # ── Render via Puppeteer + Fabric.js service ──
         resp = httpx.post(
@@ -250,7 +277,8 @@ def render_design(self, job_id: int):
                 "watermark": fanpage.watermark_text or "",
                 "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,
-                "focus_points": focus_points_for(image_srcs),
+                "focus_points": focus_points,
+                "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
             },
             timeout=_RENDER_TIMEOUT,
@@ -347,6 +375,7 @@ def render_discussion(self, job_id: int):
         from app.services.design_images import (
             resolve_template, find_gallery_datauri, fetch_subject_datauri,
             prepare_design_images, focus_points_for, watermark_datauri,
+            align_split_focus_points, find_role_object,
         )
 
         template = resolve_template(db, "discussion", fanpage=fanpage, job_template_id=job.design_template_id)
@@ -401,13 +430,30 @@ def render_discussion(self, job_id: int):
             logger.warning("Discussion: job %d needs a manual image (subject=%r)", job_id, subject)
             return
 
-        # Single-slot template → smart secondary sourcing off; still honour expand.
+        # smart=True: a discussion card whose template has a rect image_2 slot
+        # (see extract_two_subjects/build_split_srcs) can now split into two
+        # photos when job.design_title itself reads as a genuine head-to-head
+        # ("X vs Y", "who's better") — hot-take questions are framed as
+        # debates far more often than regular news headlines, so this tier
+        # fires often. Falls back to the single `image_src` already sourced
+        # above (main_datauri) whenever the title isn't duel-shaped or split
+        # sourcing comes up empty — unchanged single-photo behavior either way.
         template_json, image_srcs = prepare_design_images(
             db, template.template_json, template.canvas_width,
             job.design_title or "", niche, image_src,
             main_path=gallery_image.local_path if gallery_image else None,
-            smart=False, expand=bool(fanpage.design_expand),
+            smart=True, expand=bool(fanpage.design_expand),
         )
+        image_zooms = template_json.pop("_splitImageZooms", None)
+
+        image_2_slot = find_role_object(template_json, "image_2")
+        is_split = (
+            image_2_slot is not None and image_2_slot.get("type") == "rect"
+            and len(image_srcs) >= 2 and image_srcs[0] and image_srcs[1]
+        )
+        focus_points = focus_points_for(image_srcs, for_split=False)
+        if is_split:
+            focus_points = align_split_focus_points(focus_points)
 
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
@@ -420,7 +466,8 @@ def render_discussion(self, job_id: int):
                 "watermark": fanpage.watermark_text or "",
                 "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,
-                "focus_points": focus_points_for(image_srcs),
+                "focus_points": focus_points,
+                "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
             },
             timeout=_RENDER_TIMEOUT,

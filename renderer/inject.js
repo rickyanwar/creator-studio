@@ -10,7 +10,7 @@
  * the same placeholder contract for its live preload — keep the two in sync.
  */
 window.renderTemplate = function renderTemplate(args) {
-  const { templateJson, width, height, title, subtitle, caption, label, watermark, watermarkImage, imageSrc, imageSrcs, focusPoints } = args;
+  const { templateJson, width, height, title, subtitle, caption, label, watermark, watermarkImage, imageSrc, imageSrcs, focusPoints, imageZooms } = args;
 
   // Watermark drawn on EVERY design (branding), top-left, on top of everything.
   // An IMAGE (logo) takes priority when provided; otherwise a semi-transparent
@@ -444,7 +444,14 @@ window.renderTemplate = function renderTemplate(args) {
               const cx = slot.left + slotW / 2;
               const cy = slot.top + slotH / 2;
               const idx = canvas.getObjects().indexOf(slot);
-              const scale = Math.max(slotW / img.width, slotH / img.height);
+              // Extra corrective zoom on top of the base cover-fit scale (e.g.
+              // a split-pair half whose subject's face renders smaller than
+              // its partner's — see design_images.py's face-size matching).
+              // Still clamped below like the base case, so it can only zoom
+              // IN further (crop tighter), never reveal space outside the
+              // slot's cover-fit bounds.
+              const zoom = (Array.isArray(imageZooms) && imageZooms[si] > 0) ? imageZooms[si] : 1;
+              const scale = Math.max(slotW / img.width, slotH / img.height) * zoom;
               const iw = img.width * scale;
               const ih = img.height * scale;
               // Focus point (fraction of image, e.g. the detected face). Position
