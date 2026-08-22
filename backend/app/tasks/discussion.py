@@ -185,6 +185,33 @@ def _recent_discussion_questions(db, fanpage) -> list[str]:
     return [q for (q,) in rows if q]
 
 
+def _todays_discussion_questions(db, fanpage) -> list[str]:
+    """Every discussion line this fanpage has ALREADY posted today (WIB
+    calendar day) — a HARD "don't repeat this" list, distinct from (and
+    stronger than) _recent_discussion_questions' softer last-week guidance.
+    User's explicit ask (2026-08-22): a single day's own batch of cards must
+    read as genuinely different from each other, not just spaced out across
+    the week — a fanpage generating 6/day all needing to feel distinct from
+    one another is a tighter bar than avoiding repeats over 7 days."""
+    from app.models.publish_jobs import PublishJob, ContentType
+
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    day_start, day_end = _wib_day_bounds_utc(now_utc)
+    rows = (
+        db.query(PublishJob.design_title)
+        .filter(
+            PublishJob.fanpage_id == fanpage.id,
+            PublishJob.content_type == ContentType.discussion,
+            PublishJob.created_at >= day_start,
+            PublishJob.created_at < day_end,
+            PublishJob.design_title.isnot(None),
+        )
+        .order_by(PublishJob.created_at.desc())
+        .all()
+    )
+    return [q for (q,) in rows if q]
+
+
 _HEADLINES_CONTEXT_DAYS = 60
 _HEADLINES_CONTEXT_LIMIT = 20
 _GENERAL_FACTCHECK_ATTEMPTS = 2
@@ -307,12 +334,13 @@ def _generate_general_topic(db, fanpage):
     avoid_subjects = _recent_discussion_subjects(db, fanpage)
     headlines = _recent_headlines(db, fanpage)
     recent_questions = _recent_discussion_questions(db, fanpage)
+    todays_questions = _todays_discussion_questions(db, fanpage)
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
 
     for _attempt in range(_GENERAL_FACTCHECK_ATTEMPTS):
         candidate = generate_discussion_copy(
             fanpage, avoid_subjects=avoid_subjects, recent_headlines=headlines,
-            recent_questions=recent_questions,
+            recent_questions=recent_questions, todays_questions=todays_questions,
         )
         grounding = _grounding_headlines_for_claim(db, candidate.subject_name, candidate.question)
 

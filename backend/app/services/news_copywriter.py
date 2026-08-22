@@ -294,7 +294,7 @@ OUTPUT: only a raw JSON object {{"label": "DISCUSSION|HOT TAKE", "question": "..
 
 def build_discussion_general_prompt(
     fanpage, avoid_subjects: list[str], recent_headlines: list[str],
-    recent_questions: list[str] | None = None,
+    recent_questions: list[str] | None = None, todays_questions: list[str] | None = None,
 ) -> str:
     """Prompt: invent a debate card from the model's own general/current
     knowledge of the fanpage's niche — used when there's no fresh unclaimed
@@ -322,7 +322,13 @@ def build_discussion_general_prompt(
     though avoid_subjects was correctly blocking literal subject repeats.
     Showing the actual recent lines lets the model see the pattern it's
     stuck in and break out of it, which merely varying the subject name
-    can't fix on its own."""
+    can't fix on its own.
+
+    `todays_questions` (this fanpage's own cards from TODAY's WIB calendar
+    day only) is a HARD constraint layered on top of `recent_questions`'
+    softer week-long guidance — user's explicit ask (2026-08-22): a single
+    day's whole batch must read as genuinely different card-to-card, which
+    is a tighter bar than merely not repeating within the week."""
     language = fanpage.mode2_caption_language
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     avoid_line = ""
@@ -340,10 +346,21 @@ def build_discussion_general_prompt(
             f"this same angle/framing/sentence-structure again, even on a different "
             f"person; pick a genuinely different TYPE of debate this time):\n{rq_list}"
         )
+    todays_block = ""
+    if todays_questions:
+        tq_list = "\n".join(f"- {q}" for q in todays_questions)
+        todays_block = (
+            f"\n\nALREADY POSTED TODAY on this exact page (HARD constraint — today's "
+            f"whole batch must feel genuinely different card-to-card, this is stricter "
+            f"than the week-long list above): do NOT repeat any of these angles, "
+            f"subjects, or sentence-structures today, no exceptions:\n{tq_list}"
+        )
 
-    return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" (niche: {niche}). There is no fresh news article to work from right now — invent an ORIGINAL debate post from your own knowledge of {niche} that will make fans argue in the comments.{avoid_line}{headlines_block}{recent_questions_block}
+    return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" (niche: {niche}). There is no fresh news article to work from right now — invent an ORIGINAL debate post from your own knowledge of {niche} that will make fans argue in the comments.{avoid_line}{headlines_block}{recent_questions_block}{todays_block}
 
 Produce ONE discussion card about a genuinely contested, current-or-recent topic in {niche}. Vary the ANGLE each time — don't lean on the same type of take repeatedly. Examples of DIFFERENT angles to rotate across (not an exhaustive list, and not a ranking of which to prefer): a head-to-head rivalry ("who wins between X and Y"), a controversial call/decision, a team/contract/lineup decision, a tactical or technical debate, a legacy/GOAT comparison, a retirement or move question, "was X right to do Y", an underrated/overrated take. An underrated/overrated take is only ONE option among many, not a default — do not reach for it just because it's easy to make fact-check-proof; if this page has used it recently (see above), pick a different angle this time.
+
+It must feel genuinely FRESH, not a reskin of something this page already ran with a different name slotted in. Before finalizing, judge which realistic candidate topic would actually drive the STRONGEST engagement (comments, shares, arguments) from this niche's fans RIGHT NOW — favor something genuinely divisive and current over a generic, safe, low-friction pick.
 
 1. "label" — either "DISCUSSION" (an open question) or "HOT TAKE" (a bold, arguable claim stated as fact). Pick whichever is more provocative.
 2. "question" — the single big line printed on the image.
@@ -584,14 +601,16 @@ def generate_discussion_copy(
     avoid_subjects: list[str] | None = None,
     recent_headlines: list[str] | None = None,
     recent_questions: list[str] | None = None,
+    todays_questions: list[str] | None = None,
     force_provider: AIProviderName | None = None,
 ) -> DiscussionCopy:
     """Generate one Mode 4 discussion card. Pass `article` (news-seeded,
     fact-grounded), `seed_text` (evergreen, opinion-only), or neither — the
     model then invents the whole topic from its own knowledge of the
     fanpage's niche (general-knowledge fallback, used when both other
-    sources are exhausted). `recent_headlines`/`recent_questions` only apply
-    to that last case — see build_discussion_general_prompt.
+    sources are exhausted). `recent_headlines`/`recent_questions`/
+    `todays_questions` only apply to that last case — see
+    build_discussion_general_prompt.
 
     Raises on AI failure (both providers down) or unparseable output — the
     calling task owns retry/backoff.
@@ -603,6 +622,7 @@ def generate_discussion_copy(
     else:
         prompt = build_discussion_general_prompt(
             fanpage, avoid_subjects or [], recent_headlines or [], recent_questions or [],
+            todays_questions or [],
         )
 
     (label, question, subject, caption), provider = _generate_with_fallback(
