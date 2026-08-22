@@ -119,8 +119,18 @@ _RECENT_SUBJECTS_LIMIT = 15
 
 
 def _recent_discussion_subjects(db, fanpage) -> list[str]:
-    """Subjects used in this fanpage's last _RECENT_SUBJECTS_DAYS discussion
-    cards, so the general-knowledge prompt doesn't repeat the same person."""
+    """Distinct subjects used in this fanpage's last _RECENT_SUBJECTS_DAYS
+    discussion cards (up to _RECENT_SUBJECTS_LIMIT of them), so the
+    general-knowledge prompt doesn't repeat the same person.
+
+    The dedup cap is applied to the OUTPUT (distinct subjects), not the raw
+    row fetch — a fanpage with a high discussion_daily_count can rack up
+    well over 15 job rows within the 14-day window, and capping the SQL
+    query itself at 15 rows (the bug here until 2026-08-22) meant a subject
+    from a few days ago could silently fall out of the raw fetch before
+    dedup ever saw it — confirmed on a real fanpage where the exact same
+    line ("Alex Rins is the most underrated rider in MotoGP") got generated
+    twice, 2 days apart, well inside the supposed 14-day avoid-window."""
     from app.models.publish_jobs import PublishJob, ContentType
 
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_RECENT_SUBJECTS_DAYS)
@@ -133,7 +143,6 @@ def _recent_discussion_subjects(db, fanpage) -> list[str]:
             PublishJob.design_caption.isnot(None),
         )
         .order_by(PublishJob.created_at.desc())
-        .limit(_RECENT_SUBJECTS_LIMIT)
         .all()
     )
     seen, out = set(), []
@@ -141,7 +150,39 @@ def _recent_discussion_subjects(db, fanpage) -> list[str]:
         if subject and subject not in seen:
             seen.add(subject)
             out.append(subject)
+            if len(out) >= _RECENT_SUBJECTS_LIMIT:
+                break
     return out
+
+
+_RECENT_QUESTIONS_DAYS = 7
+_RECENT_QUESTIONS_LIMIT = 8
+
+
+def _recent_discussion_questions(db, fanpage) -> list[str]:
+    """This fanpage's last _RECENT_QUESTIONS_DAYS discussion lines (ANY
+    subject, most recent first) — passed to the general-knowledge prompt as
+    "don't reuse this same angle" context. Distinct from
+    _recent_discussion_subjects: that one stops the SAME PERSON from being
+    picked again; this one stops the same TYPE OF TAKE ("is X underrated")
+    from being reused on a DIFFERENT person, which subject-avoidance alone
+    can't catch — see build_discussion_general_prompt's docstring."""
+    from app.models.publish_jobs import PublishJob, ContentType
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_RECENT_QUESTIONS_DAYS)
+    rows = (
+        db.query(PublishJob.design_title)
+        .filter(
+            PublishJob.fanpage_id == fanpage.id,
+            PublishJob.content_type == ContentType.discussion,
+            PublishJob.created_at >= cutoff,
+            PublishJob.design_title.isnot(None),
+        )
+        .order_by(PublishJob.created_at.desc())
+        .limit(_RECENT_QUESTIONS_LIMIT)
+        .all()
+    )
+    return [q for (q,) in rows if q]
 
 
 _HEADLINES_CONTEXT_DAYS = 60
@@ -265,11 +306,13 @@ def _generate_general_topic(db, fanpage):
 
     avoid_subjects = _recent_discussion_subjects(db, fanpage)
     headlines = _recent_headlines(db, fanpage)
+    recent_questions = _recent_discussion_questions(db, fanpage)
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
 
     for _attempt in range(_GENERAL_FACTCHECK_ATTEMPTS):
         candidate = generate_discussion_copy(
-            fanpage, avoid_subjects=avoid_subjects, recent_headlines=headlines
+            fanpage, avoid_subjects=avoid_subjects, recent_headlines=headlines,
+            recent_questions=recent_questions,
         )
         grounding = _grounding_headlines_for_claim(db, candidate.subject_name, candidate.question)
 

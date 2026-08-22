@@ -292,7 +292,10 @@ DEBATE SEED (the user's idea, may be rough): {seed_text}{hint_line}
 OUTPUT: only a raw JSON object {{"label": "DISCUSSION|HOT TAKE", "question": "...", "subject": "...", "caption": "..."}} — no markdown fences, no explanation."""
 
 
-def build_discussion_general_prompt(fanpage, avoid_subjects: list[str], recent_headlines: list[str]) -> str:
+def build_discussion_general_prompt(
+    fanpage, avoid_subjects: list[str], recent_headlines: list[str],
+    recent_questions: list[str] | None = None,
+) -> str:
     """Prompt: invent a debate card from the model's own general/current
     knowledge of the fanpage's niche — used when there's no fresh unclaimed
     article and no evergreen seed left. Unlike the evergreen prompt, this one
@@ -307,7 +310,19 @@ def build_discussion_general_prompt(fanpage, avoid_subjects: list[str], recent_h
     now-decided title race as still open. It's a second line of defense on
     top of steering the model away from settled-outcome predictions; the
     caller (discussion.py) still runs a separate fact-check pass on the
-    output before accepting it."""
+    output before accepting it.
+
+    `recent_questions` (this fanpage's own last ~week of discussion cards,
+    ANY subject) exists for a different reason than avoid_subjects: found
+    2026-08-22 via a real user report — a fanpage's cards had all converged
+    on the exact same "is X the most underrated rider" angle across many
+    DIFFERENT subjects, because that framing is this prompt's own explicit
+    example AND the safest possible answer under the "don't bet on an
+    undecided outcome" rule below, so the model kept defaulting to it even
+    though avoid_subjects was correctly blocking literal subject repeats.
+    Showing the actual recent lines lets the model see the pattern it's
+    stuck in and break out of it, which merely varying the subject name
+    can't fix on its own."""
     language = fanpage.mode2_caption_language
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     avoid_line = ""
@@ -317,10 +332,18 @@ def build_discussion_general_prompt(fanpage, avoid_subjects: list[str], recent_h
     if recent_headlines:
         headlines_list = "\n".join(f"- {h}" for h in recent_headlines)
         headlines_block = f"\n\nRECENT HEADLINES from this page's own news feed (last ~2 months, for context only — treat any result/outcome they report as already decided, do not contradict them):\n{headlines_list}"
+    recent_questions_block = ""
+    if recent_questions:
+        rq_list = "\n".join(f"- {q}" for q in recent_questions)
+        recent_questions_block = (
+            f"\n\nTHIS PAGE'S OWN RECENT DISCUSSION CARDS (last ~week — do NOT reuse "
+            f"this same angle/framing/sentence-structure again, even on a different "
+            f"person; pick a genuinely different TYPE of debate this time):\n{rq_list}"
+        )
 
-    return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" (niche: {niche}). There is no fresh news article to work from right now — invent an ORIGINAL debate post from your own knowledge of {niche} that will make fans argue in the comments.{avoid_line}{headlines_block}
+    return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" (niche: {niche}). There is no fresh news article to work from right now — invent an ORIGINAL debate post from your own knowledge of {niche} that will make fans argue in the comments.{avoid_line}{headlines_block}{recent_questions_block}
 
-Produce ONE discussion card about a genuinely contested, current-or-recent topic in {niche} — a rivalry, a controversial call, a "who's better" comparison, a "does X deserve Y" question, an underrated/overrated take, etc.
+Produce ONE discussion card about a genuinely contested, current-or-recent topic in {niche}. Vary the ANGLE each time — don't lean on the same type of take repeatedly. Examples of DIFFERENT angles to rotate across (not an exhaustive list, and not a ranking of which to prefer): a head-to-head rivalry ("who wins between X and Y"), a controversial call/decision, a team/contract/lineup decision, a tactical or technical debate, a legacy/GOAT comparison, a retirement or move question, "was X right to do Y", an underrated/overrated take. An underrated/overrated take is only ONE option among many, not a default — do not reach for it just because it's easy to make fact-check-proof; if this page has used it recently (see above), pick a different angle this time.
 
 1. "label" — either "DISCUSSION" (an open question) or "HOT TAKE" (a bold, arguable claim stated as fact). Pick whichever is more provocative.
 2. "question" — the single big line printed on the image.
@@ -328,7 +351,7 @@ Produce ONE discussion card about a genuinely contested, current-or-recent topic
    - If label is "HOT TAKE": phrase as a punchy declarative statement (no question mark).
    - Language: {language}. Max {_DISCUSSION_MAX_QUESTION_CHARS} characters. No hashtags, no emoji.
    - It must be DEBATABLE (roughly 50/50) — not something everyone already agrees on.
-   - CRITICAL — do not bet on an undecided outcome: avoid framing like "X will win/beat/achieve Y" about a title, race, or result that may already be decided by the time this posts. Prefer debating something that stays true regardless of results already in: ability, decisions, legacy, comparisons, "was X right to do Y", "is X overrated/underrated". If you genuinely aren't sure whether an outcome is already decided, don't bet on it — debate the reasoning/opinion around it instead.
+   - CRITICAL — do not bet on an undecided outcome: avoid framing like "X will win/beat/achieve Y" about a title, race, or result that may already be decided by the time this posts. Prefer debating something that stays true regardless of results already in: ability, decisions, legacy, comparisons, rivalries, tactics, "was X right to do Y". If you genuinely aren't sure whether an outcome is already decided, don't bet on it — debate the reasoning/opinion around it instead. This constraint is about TIMING, not an instruction to default to any one specific angle.
    - You may cite facts/stats/records you're genuinely confident about, but if you're not sure of an exact number, describe it qualitatively (e.g. "dominated" instead of guessing a score) rather than risk stating something wrong.
 3. "subject" — the ONE person the card photo should show (the central figure of the debate), full name. Max 40 chars.
 {_discussion_caption_block(fanpage, None)}
@@ -560,14 +583,15 @@ def generate_discussion_copy(
     subject_hint: str | None = None,
     avoid_subjects: list[str] | None = None,
     recent_headlines: list[str] | None = None,
+    recent_questions: list[str] | None = None,
     force_provider: AIProviderName | None = None,
 ) -> DiscussionCopy:
     """Generate one Mode 4 discussion card. Pass `article` (news-seeded,
     fact-grounded), `seed_text` (evergreen, opinion-only), or neither — the
     model then invents the whole topic from its own knowledge of the
     fanpage's niche (general-knowledge fallback, used when both other
-    sources are exhausted). `recent_headlines` only applies to that last
-    case — see build_discussion_general_prompt.
+    sources are exhausted). `recent_headlines`/`recent_questions` only apply
+    to that last case — see build_discussion_general_prompt.
 
     Raises on AI failure (both providers down) or unparseable output — the
     calling task owns retry/backoff.
@@ -577,7 +601,9 @@ def generate_discussion_copy(
     elif seed_text:
         prompt = build_discussion_evergreen_prompt(fanpage, seed_text, subject_hint)
     else:
-        prompt = build_discussion_general_prompt(fanpage, avoid_subjects or [], recent_headlines or [])
+        prompt = build_discussion_general_prompt(
+            fanpage, avoid_subjects or [], recent_headlines or [], recent_questions or [],
+        )
 
     (label, question, subject, caption), provider = _generate_with_fallback(
         prompt, _parse_discussion_copy, force_provider,
