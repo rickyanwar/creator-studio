@@ -61,6 +61,21 @@ _MENTION_LOOKBACK_DAYS = 7
 _ACTIVE_KEYWORD_CEILING = 500
 _QUIET_KEYWORD_CEILING = 60
 
+# Eviction (2026-08-22): _ACTIVE_KEYWORD_CEILING was designed as a stock-size
+# TARGET ("grows toward" — see download_all_keywords' docstring), but with no
+# eviction it silently became a lifetime accumulation cap instead — a
+# keyword that filled up over a few quiet weeks then sat permanently frozen
+# at its ceiling, even during its own event window, which is exactly when
+# fresh photos matter most. Found via a real user report: an actual F1 race
+# weekend where the top drivers (Verstappen, Norris, Leclerc, Russell, etc.)
+# had ALL been stuck at exactly 500 since the day before the race, so
+# download_all_keywords was skipping every one of them right when Getty
+# started flooding practice/quali/race coverage. Only evicts when a keyword
+# is BOTH at its ceiling AND inside its event window — outside a window
+# there's no freshness pressure to justify displacing existing stock, so the
+# ordinary "at cap → skip" behavior is untouched there.
+_EVENT_WINDOW_EVICTION_BATCH = 30
+
 # Event-aware throttle (2026-08-19), on top of the newsworthy/quiet split
 # above: a keyword can also carry a detected GalleryKeyword.next_event_date
 # (see app.services.event_calendar + refresh_keyword_event_dates below). If
@@ -286,6 +301,36 @@ def _recently_mentioned(db, keyword: str, cutoff: datetime) -> bool:
     )
 
 
+def _evict_oldest_images(db, keyword: str, count: int) -> int:
+    """Soft-delete up to `count` of a keyword's oldest active images — see
+    _EVENT_WINDOW_EVICTION_BATCH for when/why this is called. Ordered by
+    captured_at ascending with NULLS FIRST, then downloaded_at ascending: a
+    row with no captured_at predates the caption-date-parsing feature
+    entirely (image_downloader.py's Getty-caption date parser), so it's
+    reliably OLDER than any row that does have one, not merely "unknown
+    age" — treating it as the oldest tier is correct, not a guess. Doesn't
+    touch the file on disk or break anything already published: a design
+    rendered from this photo has its own copy (the data-URI baked into the
+    final PNG), so soft-deleting the source gallery_images row can't affect
+    it. Returns how many rows were actually evicted (may be less than
+    `count` if the keyword has fewer active images than that)."""
+    from app.models.gallery import GalleryImage
+
+    rows = (
+        db.query(GalleryImage)
+        .filter(GalleryImage.keyword == keyword, GalleryImage.is_deleted == False)
+        .order_by(GalleryImage.captured_at.asc().nullsfirst(), GalleryImage.downloaded_at.asc())
+        .limit(count)
+        .all()
+    )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for gi in rows:
+        gi.is_deleted = True
+        gi.deleted_at = now
+    db.commit()
+    return len(rows)
+
+
 @celery_app.task(name="app.tasks.gallery_downloader.download_all_keywords")
 def download_all_keywords():
     """Dispatch a download for every active keyword whose daily interval
@@ -296,6 +341,12 @@ def download_all_keywords():
     (_fresh_supply_status), capped at the much smaller
     _QUIET_KEYWORD_CEILING. Both exist purely to avoid spending paid
     web/fetch calls where they won't help.
+
+    A keyword AT its ceiling during its own event window gets its oldest
+    stock evicted to make room instead of being skipped (see
+    _evict_oldest_images) — the ceiling is a stock-size target, not a
+    lifetime cap, and freshness matters most exactly when a keyword is in
+    its event window.
 
     Skips entirely while Settings.gallery_scraping_paused is set — a global
     kill switch for the scheduled sweep. Doesn't affect an explicit
@@ -329,11 +380,25 @@ def download_all_keywords():
 
             if active_tier:
                 if active_count >= _ACTIVE_KEYWORD_CEILING:
-                    logger.debug(
-                        "Gallery: keyword %r (%s) already at its ceiling (%d/%d) — skipping",
-                        kw.keyword, tier_label, active_count, _ACTIVE_KEYWORD_CEILING,
+                    if not in_event_window:
+                        logger.debug(
+                            "Gallery: keyword %r (%s) already at its ceiling (%d/%d) — skipping",
+                            kw.keyword, tier_label, active_count, _ACTIVE_KEYWORD_CEILING,
+                        )
+                        continue
+                    # At its ceiling DURING its own event window — the one
+                    # time a frozen lifetime cap actively works against the
+                    # goal instead of for it (see _EVENT_WINDOW_EVICTION_BATCH).
+                    # Evict the oldest stock to make room for this weekend's
+                    # fresh photos rather than skip the keyword entirely.
+                    evicted = _evict_oldest_images(db, kw.keyword, _EVENT_WINDOW_EVICTION_BATCH)
+                    if not evicted:
+                        continue  # nothing to evict (shouldn't happen at cap, but be safe)
+                    active_count -= evicted
+                    logger.info(
+                        "Gallery: keyword %r at its ceiling during event window — evicted %d oldest photo(s) to make room",
+                        kw.keyword, evicted,
                     )
-                    continue
                 needed = _ACTIVE_KEYWORD_CEILING - active_count
             else:
                 if active_count >= _QUIET_KEYWORD_CEILING:
