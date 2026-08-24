@@ -227,7 +227,8 @@ def render_design(self, job_id: int):
         # design_images.prepare_design_images) with face-aware focus crops.
         from app.services.design_images import (
             prepare_design_images, focus_points_for, align_split_focus_points,
-            watermark_datauri, find_role_object,
+            watermark_datauri, find_role_object, _safe_face_cy_ceiling,
+            fix_unsafe_single_photo_face,
         )
         title = job.design_title or article.scraped_title
         template_json, image_srcs = prepare_design_images(
@@ -257,7 +258,32 @@ def render_design(self, job_id: int):
             image_2_slot is not None and image_2_slot.get("type") == "rect"
             and len(image_srcs) >= 2 and image_srcs[0] and image_srcs[1]
         )
-        focus_points = focus_points_for(image_srcs, for_split=False)
+        # The chosen template's own title-box position, not a flat guess —
+        # see _safe_face_cy_ceiling's docstring (found 2026-08-24 via 5 real
+        # renders where the face landed under the title text on templates
+        # whose title starts much higher than the old flat 0.44/0.7 ceiling
+        # assumed).
+        safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
+        # Single-photo-only safety net: a landscape source on this canvas's
+        # portrait aspect has ZERO cover-fit vertical slack (confirmed via
+        # real-number testing 2026-08-24 — corrective zoom, the split fix's
+        # approach, does NOT work here, see fix_unsafe_single_photo_face's
+        # docstring for why), so the ceiling above can compute the right
+        # target but the renderer has no room to actually honor it. Content-
+        # aware-fills the photo instead when that's genuinely the case; a
+        # no-op (returns None, image_srcs[0] left untouched) for the common
+        # case where real slack already exists or the face is already safe.
+        if not is_split and image_srcs and image_srcs[0]:
+            try:
+                main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
+                fixed = fix_unsafe_single_photo_face(
+                    main_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+                )
+                if fixed:
+                    image_srcs[0] = fixed
+            except Exception as exc:
+                logger.warning("Design: fix_unsafe_single_photo_face failed for job %d: %s", job_id, exc)
+        focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
         if is_split:
             focus_points = align_split_focus_points(focus_points)
 
@@ -375,7 +401,8 @@ def render_discussion(self, job_id: int):
         from app.services.design_images import (
             resolve_template, find_gallery_datauri, fetch_subject_datauri,
             prepare_design_images, focus_points_for, watermark_datauri,
-            align_split_focus_points, find_role_object,
+            align_split_focus_points, find_role_object, _safe_face_cy_ceiling,
+            fix_unsafe_single_photo_face,
         )
 
         template = resolve_template(db, "discussion", fanpage=fanpage, job_template_id=job.design_template_id)
@@ -451,7 +478,21 @@ def render_discussion(self, job_id: int):
             image_2_slot is not None and image_2_slot.get("type") == "rect"
             and len(image_srcs) >= 2 and image_srcs[0] and image_srcs[1]
         )
-        focus_points = focus_points_for(image_srcs, for_split=False)
+        safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
+        # See render_design's identical block for why this is needed
+        # (zero cover-fit vertical slack on a landscape photo — the ceiling
+        # alone can't be honored without it).
+        if not is_split and image_srcs and image_srcs[0]:
+            try:
+                main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
+                fixed = fix_unsafe_single_photo_face(
+                    main_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+                )
+                if fixed:
+                    image_srcs[0] = fixed
+            except Exception as exc:
+                logger.warning("Discussion: fix_unsafe_single_photo_face failed for job %d: %s", job_id, exc)
+        focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
         if is_split:
             focus_points = align_split_focus_points(focus_points)
 

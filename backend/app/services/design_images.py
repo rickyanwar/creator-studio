@@ -411,7 +411,8 @@ _SPLIT_MAX_SYNTHETIC_FILL = 0.45
 def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
                                 zoom: float = 1.0, top_bias: float = 0.16,
                                 feather: int = 24, downscale: int = 5,
-                                face_bbox: tuple[float, float, float, float] | None = None) -> bytes | None:
+                                face_bbox: tuple[float, float, float, float] | None = None,
+                                target_cy: float = 0.34) -> bytes | None:
     """Fit `image_bytes` to `target_w` (scaled further by `zoom`), then fill
     the remaining canvas with content-aware synthesis (cv2.xphoto
     INPAINT_FSR_BEST) instead of reflect_extend's mirror-flip — built
@@ -423,9 +424,15 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
     `face_bbox` (fx, fy, fw, fh — normalized fractions of the ORIGINAL
     image, from `_dominant_face_bbox`) drives BOTH crop axes when given:
     - vertical: the real photo is positioned so the face's centre lands at
-      the same ~0.34-from-top safe zone detect_focus_point/vision_focus_point
-      already use for the ordinary (non-split) case, clamped in-bounds —
-      NOT a blind top_bias split. This matters more here than elsewhere: the
+      `target_cy` (default 0.34, matching detect_focus_point/vision_focus_point's
+      own default for the ordinary non-split case) — NOT a blind top_bias
+      split. Callers with a specific template's own safe ceiling in hand
+      (see `_safe_face_cy_ceiling`, used by `fix_unsafe_single_photo_face`)
+      should pass THAT instead of relying on the flat default — a template
+      whose title starts higher or lower than "typical" needs a different
+      target, the same way the split path's own target was tuned by hand
+      for its own template's geometry rather than assumed. This matters more
+      here than elsewhere: the
       caller pre-fits the composite to the EXACT slot size, so the renderer's
       own cover-fit ends up at ~1.0 scale with no slack left to reposition
       afterward — this function's placement is the ONLY thing standing
@@ -466,12 +473,10 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
         arr_full = np.asarray(img_full)
         h_full = arr_full.shape[0]
 
-        safe_cy = 0.34
-
         def _placement(gap: int) -> int:
             if face_bbox:
                 face_cy_px = (face_bbox[1] + face_bbox[3] / 2) * h_full
-                pt = int(round(target_h * safe_cy - face_cy_px))
+                pt = int(round(target_h * target_cy - face_cy_px))
                 return max(0, min(gap, pt))
             return int(gap * top_bias)
 
@@ -479,7 +484,7 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
             over = h_full - target_h
             if face_bbox:
                 face_cy_px = (face_bbox[1] + face_bbox[3] / 2) * h_full
-                t = max(0, min(over, int(round(face_cy_px - target_h * safe_cy))))
+                t = max(0, min(over, int(round(face_cy_px - target_h * target_cy))))
             else:
                 t = int(over * top_bias)
             out = io.BytesIO()
@@ -583,6 +588,77 @@ def content_aware_split_pair(left_bytes: bytes, right_bytes: bytes, slot_w: int,
     )
 
 
+def fix_unsafe_single_photo_face(image_bytes: bytes, canvas_width: int, canvas_height: int,
+                                  safe_cy_ceiling: float) -> str | None:
+    """Safety net for the SINGLE full-width photo case (not a split half —
+    see content_aware_split_pair for that): when a landscape source photo's
+    face would land past the template's safe ceiling AND ordinary cover-fit
+    has NO vertical slack to reposition it, content-aware-fill the photo at
+    a wider, less-zoomed framing instead — same technique as the split fix,
+    generalized here.
+
+    Found 2026-08-24 investigating 5 real user-flagged renders: adding
+    corrective ZOOM (the split fix's approach) does NOT work for this case
+    and was tried and rejected — zooming in on the template's fixed target
+    point moves every OTHER point (including the face, which is naturally
+    BELOW that point) proportionally further from centre, eventually
+    cropping it out entirely, confirmed both by hand-derived geometry and
+    by testing it against real face-position numbers. This is a fundamentally
+    different situation from the split fix's zoom_l/zoom_r, which zooms IN
+    ON THE FACE ITSELF (a pure size adjustment, anchor = face) rather than
+    trying to reposition a face relative to a DIFFERENT fixed anchor point —
+    only content-aware fill (choosing what to show and where, not
+    constrained by "must crop to exactly fill") can actually move a face
+    that has zero natural repositioning room.
+
+    Why img_ar > slot_ar is the exact zero-slack condition: cover-fit picks
+    scale = max(slot_w/img_w, slot_h/img_h); when img_w/img_h (img_ar) >
+    slot_w/slot_h (slot_ar), the HEIGHT ratio wins the max(), which makes
+    img_h * scale equal slot_h EXACTLY (by construction) — i.e. the whole
+    image height is always shown, zero pixels of vertical cover-fit slack,
+    regardless of what focus point is computed. A near-square or portrait
+    source (img_ar <= slot_ar) already has real vertical slack and doesn't
+    need this — the normal focus-point ceiling clamp (see
+    _safe_face_cy_ceiling) is sufficient there on its own.
+
+    Only fires when genuinely needed (no face, or the face's natural
+    position already clears the ceiling, or the aspect ratio already has
+    slack → returns None, caller keeps the original photo + normal
+    cover-fit). zoom=1.0 (show the whole photo width, no extra tightening)
+    is deliberately the safest possible choice — this is a correctness
+    safety net, not a framing/aesthetic enhancement, so it errs toward
+    "definitely keeps the face fully visible" over "looks tightly cropped"."""
+    face = _dominant_face_bbox(image_bytes)
+    if not face:
+        return None
+    try:
+        import io
+        from PIL import Image
+
+        iw, ih = Image.open(io.BytesIO(image_bytes)).size
+    except Exception:
+        return None
+    if not iw or not ih or not canvas_height:
+        return None
+    img_ar = iw / ih
+    slot_ar = canvas_width / canvas_height
+    if img_ar <= slot_ar:
+        return None  # real cover-fit slack already exists — normal path handles it
+    natural_cy = face[1] + face[3] / 2 - 0.08  # same lift bias detect_focus_point uses
+    if natural_cy <= safe_cy_ceiling:
+        return None  # already safe at zoom=1, no fix needed
+    filled = content_aware_split_extend(
+        image_bytes, canvas_width, canvas_height, zoom=1.0, face_bbox=face, target_cy=safe_cy_ceiling,
+    )
+    if not filled:
+        return None
+    logger.info(
+        "fix_unsafe_single_photo_face: applied (natural_cy=%.2f > ceiling=%.2f, img_ar=%.2f > slot_ar=%.2f)",
+        natural_cy, safe_cy_ceiling, img_ar, slot_ar,
+    )
+    return "data:image/jpeg;base64," + base64.b64encode(filled).decode()
+
+
 def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | None:
     """Decide per-image whether the frame needs filling and how. Returns the
     composite bytes, or None to leave the photo untouched (plain cover + focus).
@@ -668,7 +744,39 @@ def extract_secondary_subject(title: str, niche: str) -> str | None:
         return None
 
 
-def detect_focus_point(image_bytes: bytes, for_split: bool = False) -> list:
+def _safe_face_cy_ceiling(template_json: dict, canvas_height: float) -> float:
+    """How far down (0..1 fraction of canvas height) a subject's face CENTRE
+    can safely sit before the CHOSEN template's own title text risks covering
+    it — derived from that template's actual `title` (or `scrim`, if no
+    title role exists) object position, not a flat guess.
+
+    Found 2026-08-24 via 5 real user-flagged renders where the face landed
+    under the title text: `detect_focus_point`/`vision_focus_point` clamped
+    the target to a flat ceiling (0.44 for the OpenCV path, 0.7 for the
+    vision path) regardless of which template ended up being used — but a
+    template's own title box can start anywhere from ~44% down (e.g. "News
+    Highlight — Green · Center (Quote overlay)", "News Highlight — Green ·
+    Left") to ~75-78% down (the plainer Quote Card templates). A flat 0.44
+    ceiling leaves ~0 margin against a title starting at 44%, and the
+    vision path's 0.7 ceiling doesn't even try — it was never checked
+    against any specific template's real geometry at all.
+
+    -0.10 margin below the title's own top accounts for the face's own
+    height extending below its centre point (a real face box, not just its
+    centre, must clear the title) — the same kind of fixed lift already
+    used elsewhere in this file (e.g. detect_focus_point's own "-0.08").
+    Floored at 0.20 so an unusually high title box doesn't push the target
+    absurdly close to the very top of the frame."""
+    if not canvas_height:
+        return 0.44
+    title = find_role_object(template_json, "title") or find_role_object(template_json, "scrim")
+    if not title:
+        return 0.44
+    top_frac = float(title.get("top", canvas_height * 0.44)) / canvas_height
+    return round(max(0.20, min(0.7, top_frac - 0.10)), 4)
+
+
+def detect_focus_point(image_bytes: bytes, for_split: bool = False, safe_cy_ceiling: float | None = None) -> list:
     """Return [fx, fy] (0..1) of the main subject to focus the crop on — the
     largest detected face, else the salient object, else slightly above centre.
     Vertical is biased UP (smaller fy raises the subject in the crop) because the
@@ -682,8 +790,14 @@ def detect_focus_point(image_bytes: bytes, for_split: bool = False) -> list:
     split half is already a much tighter horizontal crop than a full-width
     template (half the canvas width, same landscape source photos), so this
     bias — harmless on a full-bleed single photo — was enough there to clip
-    straight through the chin/mouth or land on an ear instead of the face."""
-    default = [0.5, 0.34] if not for_split else [0.5, 0.42]
+    straight through the chin/mouth or land on an ear instead of the face.
+
+    `safe_cy_ceiling` (non-split only — see `_safe_face_cy_ceiling`): caps
+    how far down the target can sit, computed from the ACTUAL chosen
+    template's title position. Defaults to the old flat 0.44 when omitted
+    (callers that don't have a template in hand yet)."""
+    ceiling = 0.44 if safe_cy_ceiling is None else safe_cy_ceiling
+    default = [0.5, min(0.34, ceiling)] if not for_split else [0.5, 0.42]
     try:
         import cv2
         import numpy as np
@@ -712,7 +826,7 @@ def detect_focus_point(image_bytes: bytes, for_split: bool = False) -> list:
                 else:
                     # Lift the face toward the upper third so it sits above the text
                     # overlay (only bites when the source is tall enough to move).
-                    cy = min(0.44, max(0.24, (fy + fh / 2) / h - 0.08))
+                    cy = min(ceiling, max(0.24, (fy + fh / 2) / h - 0.08))
                 return [round(float(cx), 4), round(float(cy), 4)]
 
         # No usable face → saliency: focus on the main object/subject (bike,
@@ -736,7 +850,7 @@ def detect_focus_point(image_bytes: bytes, for_split: bool = False) -> list:
                         cy = min(0.62, max(0.3, cy))
                     else:
                         cy = 0.55 * (M["m01"] / M["m00"] / h) + 0.45 * 0.34
-                        cy = min(0.46, max(0.26, cy))
+                        cy = min(min(0.46, ceiling), max(0.26, cy))
                     return [round(float(cx), 4), round(float(cy), 4)]
         except Exception as exc:
             logger.debug("saliency focus failed: %s", exc)
@@ -745,14 +859,21 @@ def detect_focus_point(image_bytes: bytes, for_split: bool = False) -> list:
     return default
 
 
-def vision_focus_point(image_bytes: bytes, for_split: bool = False) -> list | None:
+def vision_focus_point(image_bytes: bytes, for_split: bool = False, safe_cy_ceiling: float | None = None) -> list | None:
     """Ask 9Router vision for the MAIN subject's focal point as [x, y] fractions
     (where the crop should centre — usually the face/head). Returns None on any
     problem so the caller can fall back to OpenCV. Runs on 9Router (no VPS cost).
 
     `for_split=True` — see detect_focus_point's docstring: a split half has no
     text overlaid on the photo itself, so the prompt and clamp range drop the
-    "clear the bottom text" framing and just centre on the actual face."""
+    "clear the bottom text" framing and just centre on the actual face.
+
+    `safe_cy_ceiling` (non-split only — see `_safe_face_cy_ceiling`): the
+    model is only ASKED to stay clear of the bottom text (the prompt has no
+    idea how much of the canvas that actually is) — this is the hard
+    enforcement, same role as detect_focus_point's ceiling. Defaults to the
+    old flat 0.7 when omitted, which is permissive enough to have let a
+    real face land under a title box that started as high as 44% down."""
     try:
         # x/y are fractions of the frame, so a downscaled copy is fine here —
         # and keeps the request under the router's size limit (see _vision_datauri).
@@ -793,13 +914,14 @@ def vision_focus_point(image_bytes: bytes, for_split: bool = False) -> list | No
             if for_split:
                 return [round(min(0.85, max(0.15, x)), 4), round(min(0.75, max(0.2, y)), 4)]
             # keep the subject slightly above centre so it clears the bottom text
-            return [round(min(0.85, max(0.15, x)), 4), round(min(0.7, max(0.15, y)), 4)]
+            ceiling = 0.7 if safe_cy_ceiling is None else safe_cy_ceiling
+            return [round(min(0.85, max(0.15, x)), 4), round(min(ceiling, max(0.15, y)), 4)]
     except Exception as exc:
         logger.warning("vision_focus_point failed: %s", exc)
     return None
 
 
-def focus_points_for(image_srcs: list, for_split: bool = False) -> list:
+def focus_points_for(image_srcs: list, for_split: bool = False, safe_cy_ceiling: float | None = None) -> list:
     """Compute a focus point per data-URI image (for the renderer). When vision
     focus is enabled, the 9Router vision model chooses the point (best for the
     full-bleed portrait templates); otherwise OpenCV face/saliency is used.
@@ -822,7 +944,13 @@ def focus_points_for(image_srcs: list, for_split: bool = False) -> list:
     For a 2-entry split pair specifically, also see `align_split_focus_points`
     — this function computes each entry's focus point independently, so the
     two heads can land at different heights even when both individually
-    clear the overlay."""
+    clear the overlay.
+
+    `safe_cy_ceiling` (non-split only — see `_safe_face_cy_ceiling`): pass
+    the ACTUAL chosen template's computed ceiling so the target adapts to
+    that template's own title position instead of a flat guess. Omit to
+    keep the old flat-ceiling behavior (callers without a template in hand,
+    or the split path, which has its own separate ceiling logic already)."""
     from app.config import get_settings
     use_vision = get_settings().vision_focus_enabled
     default = [0.5, 0.42]
@@ -832,8 +960,8 @@ def focus_points_for(image_srcs: list, for_split: bool = False) -> list:
             b = base64.b64decode(uri.split(",", 1)[1]) if "," in uri else b""
             if not b:
                 out.append(default); continue
-            fp = vision_focus_point(b, for_split=for_split) if use_vision else None
-            out.append(fp or detect_focus_point(b, for_split=for_split))
+            fp = vision_focus_point(b, for_split=for_split, safe_cy_ceiling=safe_cy_ceiling) if use_vision else None
+            out.append(fp or detect_focus_point(b, for_split=for_split, safe_cy_ceiling=safe_cy_ceiling))
         except Exception:
             out.append(default)
     return out
