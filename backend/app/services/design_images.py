@@ -384,6 +384,205 @@ def _dominant_face_bbox(image_bytes: bytes) -> tuple[float, float, float, float]
         return None
 
 
+# Target: both split halves' faces end up at the SAME fraction of the slot's
+# width (see content_aware_split_pair). Tuned 2026-08-24 through many rounds
+# of real user feedback on an actual split render (Marquez/Bagnaia, then
+# validated across 5 more real pairs) — cover-fit's forced scale on this
+# template's narrow 0.4-aspect split slot was putting a landscape 612x408
+# photo's face at 85-93% of the slot's width (an uncomfortably tight,
+# "too zoomed" crop the ordinary zoom_l/zoom_r correction can't fix, since
+# that only ever zooms IN further — see vision_pick_split_pair). 0.62 was
+# the level the user settled on as looking right, not a theoretical ideal —
+# revisit if a differently-shaped template is added.
+_SPLIT_TARGET_FACE_FRAC = 0.62
+# Above this, content_aware_split_pair backs OFF and leaves that pair on the
+# existing cover-fit + zoom_l/zoom_r path instead of forcing it. A photo
+# whose face is already large relative to its own frame needs LESS zoom to
+# reach _SPLIT_TARGET_FACE_FRAC, which means MORE of the final canvas has to
+# be invented — real-world validation (2026-08-24, 5 test pairs) found the
+# two photos users flagged as looking wrong were the two with the least
+# zoom-in headroom (57%/54% synthetic fill) — but two OTHER photos at
+# similarly high ratios (55%/52%) were NOT flagged, so this is a risk
+# signal, not a precise predictor; 0.45 is a deliberately conservative
+# reading of that data, not a proven exact cutoff.
+_SPLIT_MAX_SYNTHETIC_FILL = 0.45
+
+
+def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
+                                zoom: float = 1.0, top_bias: float = 0.16,
+                                feather: int = 24, downscale: int = 5,
+                                face_bbox: tuple[float, float, float, float] | None = None) -> bytes | None:
+    """Fit `image_bytes` to `target_w` (scaled further by `zoom`), then fill
+    the remaining canvas with content-aware synthesis (cv2.xphoto
+    INPAINT_FSR_BEST) instead of reflect_extend's mirror-flip — built
+    specifically for split-photo halves (see content_aware_split_pair), not
+    a general reflect_extend replacement (smart_expand's face path already
+    has fit_with_blur_bg; this is for when a split slot's forced cover-fit
+    scale would otherwise crop far too tight — see _SPLIT_TARGET_FACE_FRAC).
+
+    `face_bbox` (fx, fy, fw, fh — normalized fractions of the ORIGINAL
+    image, from `_dominant_face_bbox`) drives BOTH crop axes when given:
+    - vertical: the real photo is positioned so the face's centre lands at
+      the same ~0.34-from-top safe zone detect_focus_point/vision_focus_point
+      already use for the ordinary (non-split) case, clamped in-bounds —
+      NOT a blind top_bias split. This matters more here than elsewhere: the
+      caller pre-fits the composite to the EXACT slot size, so the renderer's
+      own cover-fit ends up at ~1.0 scale with no slack left to reposition
+      afterward — this function's placement is the ONLY thing standing
+      between the face and the template's bottom text/scrim band.
+    - horizontal: at high zoom the width crop is narrow enough that a blind
+      centre-crop can slice through an off-centre face — found via a real
+      bug (zoom=3.45, face centred at x=0.403, blind crop window
+      [0.372,0.628] clipped the face's left edge at 0.279). Centres on the
+      face's own x instead.
+    Falls back to a blind top_bias/centre split when no face is given —
+    same convention reflect_extend already uses.
+
+    The inpaint runs on a `downscale`-times-smaller canvas — FSR_BEST's
+    runtime blows up non-linearly with fill area (195s at full res for a
+    73%-empty 480x1200 canvas vs ~12s at 1/5 scale) — then the result is
+    upscaled with LANCZOS and blended against the sharp source at the seam.
+    Returns None on failure (caller should fall back to the raw photo)."""
+    try:
+        import io
+
+        import cv2
+        import numpy as np
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        iw, ih = img.size
+        scale = (target_w / iw) * zoom
+        rw, rh = max(1, round(iw * scale)), max(1, round(ih * scale))
+        img_full = img.resize((rw, rh))
+        if rw > target_w:
+            if face_bbox:
+                face_cx_px = (face_bbox[0] + face_bbox[2] / 2) * rw
+                l = int(round(face_cx_px - target_w / 2))
+                l = max(0, min(rw - target_w, l))
+            else:
+                l = (rw - target_w) // 2
+            img_full = img_full.crop((l, 0, l + target_w, rh))
+        arr_full = np.asarray(img_full)
+        h_full = arr_full.shape[0]
+
+        safe_cy = 0.34
+
+        def _placement(gap: int) -> int:
+            if face_bbox:
+                face_cy_px = (face_bbox[1] + face_bbox[3] / 2) * h_full
+                pt = int(round(target_h * safe_cy - face_cy_px))
+                return max(0, min(gap, pt))
+            return int(gap * top_bias)
+
+        if h_full >= target_h:
+            over = h_full - target_h
+            if face_bbox:
+                face_cy_px = (face_bbox[1] + face_bbox[3] / 2) * h_full
+                t = max(0, min(over, int(round(face_cy_px - target_h * safe_cy))))
+            else:
+                t = int(over * top_bias)
+            out = io.BytesIO()
+            Image.fromarray(arr_full[t:t + target_h]).save(out, "JPEG", quality=92)
+            return out.getvalue()
+
+        pt = _placement(target_h - h_full)
+
+        dw, dh = max(8, target_w // downscale), max(8, target_h // downscale)
+        d_arr = np.asarray(
+            Image.fromarray(arr_full).resize((dw, max(1, round(h_full * dw / target_w))))
+        )
+        dh_src = min(d_arr.shape[0], dh)
+        pt_d = min(int(round(pt / target_h * dh)), dh - dh_src)
+        canvas = np.zeros((dh, dw, 3), np.uint8)
+        canvas[pt_d:pt_d + dh_src] = d_arr[:dh_src]
+        mask = np.zeros((dh, dw), np.uint8)
+        mask[pt_d:pt_d + dh_src] = 255
+        bgr = cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR)
+        filled = np.zeros_like(bgr)
+        cv2.xphoto.inpaint(bgr, mask, filled, cv2.xphoto.INPAINT_FSR_BEST)
+        filled_rgb = cv2.cvtColor(filled, cv2.COLOR_BGR2RGB)
+
+        filled_full = np.asarray(
+            Image.fromarray(filled_rgb).resize((target_w, target_h), Image.LANCZOS)
+        ).astype(np.float32)
+
+        ys = np.arange(target_h)
+        rt = np.clip((ys - pt) / feather, 0, 1)
+        rb = np.clip((pt + h_full - 1 - ys) / feather, 0, 1)
+        alpha = np.minimum(rt, rb)[:, None, None]
+        sharp = np.zeros((target_h, target_w, 3), np.float32)
+        sharp[pt:pt + h_full] = arr_full
+        res = filled_full * (1 - alpha) + sharp * alpha
+        out = io.BytesIO()
+        Image.fromarray(np.clip(res, 0, 255).astype(np.uint8)).save(out, "JPEG", quality=92)
+        return out.getvalue()
+    except Exception as exc:
+        logger.warning("content_aware_split_extend failed: %s", exc)
+        return None
+
+
+def content_aware_split_pair(left_bytes: bytes, right_bytes: bytes, slot_w: int, slot_h: int):
+    """Try content-aware fill on BOTH split halves at once, targeting the
+    SAME face-width-of-slot fraction (_SPLIT_TARGET_FACE_FRAC) for both —
+    "equal by construction" rather than measuring one side and chasing the
+    other to match it (an earlier version of this did that; the user's own
+    verdict comparing them side by side was that even a supposedly-exact
+    numeric match didn't always look equal, so aiming both at the same
+    independently-computed target is the more robust rule to generalize).
+
+    Returns (left_datauri, right_datauri) on success, or None if either
+    side has no detected face, either side's synthetic-fill requirement
+    exceeds _SPLIT_MAX_SYNTHETIC_FILL (see its docstring — a photo whose
+    face is already large relative to its frame needs too little zoom,
+    meaning too much of the canvas would be invented), or either fill call
+    fails outright. None tells the caller (build_split_srcs) to keep the
+    existing cover-fit + zoom_l/zoom_r behavior for this pair instead —
+    content-aware is a conditional upgrade, not a hard requirement."""
+    left_face = _dominant_face_bbox(left_bytes)
+    right_face = _dominant_face_bbox(right_bytes)
+    if not left_face or not right_face:
+        return None
+
+    def _target_zoom_and_fill(face_w_frac: float, img_w: int, img_h: int) -> tuple[float, float]:
+        fit_scale = slot_w / img_w
+        target_scale = _SPLIT_TARGET_FACE_FRAC * slot_w / (face_w_frac * img_w)
+        zoom = target_scale / fit_scale
+        synthetic_fill = max(0.0, 1 - (img_h * target_scale) / slot_h)
+        return zoom, synthetic_fill
+
+    try:
+        import io
+        from PIL import Image
+
+        left_iw, left_ih = Image.open(io.BytesIO(left_bytes)).size
+        right_iw, right_ih = Image.open(io.BytesIO(right_bytes)).size
+    except Exception:
+        return None
+
+    zoom_l, fill_l = _target_zoom_and_fill(left_face[2], left_iw, left_ih)
+    zoom_r, fill_r = _target_zoom_and_fill(right_face[2], right_iw, right_ih)
+    if fill_l > _SPLIT_MAX_SYNTHETIC_FILL or fill_r > _SPLIT_MAX_SYNTHETIC_FILL:
+        logger.info(
+            "content_aware_split_pair: synthetic fill too high (left=%.0f%% right=%.0f%%, cap=%.0f%%) — "
+            "keeping cover-fit for this pair", fill_l * 100, fill_r * 100, _SPLIT_MAX_SYNTHETIC_FILL * 100,
+        )
+        return None
+
+    left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face)
+    right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face)
+    if not left_filled or not right_filled:
+        return None
+    logger.info(
+        "content_aware_split_pair: applied (zoom_l=%.2f fill=%.0f%%, zoom_r=%.2f fill=%.0f%%)",
+        zoom_l, fill_l * 100, zoom_r, fill_r * 100,
+    )
+    return (
+        "data:image/jpeg;base64," + base64.b64encode(left_filled).decode(),
+        "data:image/jpeg;base64," + base64.b64encode(right_filled).decode(),
+    )
+
+
 def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | None:
     """Decide per-image whether the frame needs filling and how. Returns the
     composite bytes, or None to leave the photo untouched (plain cover + focus).
@@ -1821,7 +2020,8 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
     return None, None
 
 
-def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face", niche: str = "MotoGP"):
+def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face", niche: str = "MotoGP",
+                      slot_w: int | None = None, slot_h: int | None = None):
     """Two context-appropriate photos (same style) for a left/right split.
     Fetches several fresh candidates from Getty per side, and ALWAYS also
     pulls from the existing gallery (an already-used photo is fair game —
@@ -1831,12 +2031,33 @@ def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face",
     individually fine, so the pairing is judged jointly rather than picking
     each side's "best" photo in isolation.
 
+    `slot_w`/`slot_h` (pixel dims of the split slot at render scale — the
+    caller already computes this for `_expand_datauri`'s target, e.g.
+    `slot.get("width") * DESIGN_SCALE`) are optional but enable a second
+    pass: for `image_type == "face"`, once the pair is picked,
+    `content_aware_split_pair` is tried on the chosen photos — cover-fit's
+    forced scale on this template's narrow split-slot aspect crops a normal
+    landscape stock photo's face uncomfortably tight (85-93% of the slot's
+    width — the ordinary zoom_l/zoom_r correction can only zoom IN further,
+    never loosen that), so both halves are re-composited to a wider, less-
+    zoomed framing with the vacated canvas filled in (not left blank) —
+    see content_aware_split_pair's docstring for the "equal by construction"
+    target and its conditional bail-out (a photo whose face is already
+    large relative to its frame needs too little zoom, meaning too much of
+    the canvas would need to be invented — that pair just keeps the
+    ordinary cover-fit + zoom_l/zoom_r result instead). Omit slot_w/slot_h
+    (or pass image_type="action") to skip this pass entirely and get the
+    original cover-fit-only behavior.
+
     Returns `([left_uri, right_uri], [zoom_left, zoom_right])`, or `None` if
     either side has no usable candidate at all. The zoom pair is a
     corrective per-photo zoom (see vision_pick_split_pair) the renderer
     should apply on top of its normal cover-fit crop so both faces render
     at a similar apparent size — the caller (prepare_design_images) stashes
-    it onto the returned template_json for design_renderer to pick up."""
+    it onto the returned template_json for design_renderer to pick up.
+    When the content-aware pass above is used, both photos are already
+    pre-fit to the exact slot size, so zoom is [1.0, 1.0] (the renderer's
+    own cover-fit ends up a no-op)."""
     def _candidates(subject: str) -> list:
         # Normalize to (datauri, GalleryImage) regardless of source: fresh
         # Getty (fetch_subject_datauris) yields (GalleryImage, uri); gallery
@@ -1902,6 +2123,17 @@ def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face",
         "build_split_srcs: %r | %r (%s) — chose pair L%d/R%d from %d/%d candidates (zoom_l=%.2f zoom_r=%.2f)",
         primary, secondary, image_type, li + 1, ri + 1, len(left_pairs), len(right_pairs), zoom_l, zoom_r,
     )
+
+    if image_type == "face" and slot_w and slot_h:
+        try:
+            left_bytes = base64.b64decode(left_uri.split(",", 1)[1])
+            right_bytes = base64.b64decode(right_uri.split(",", 1)[1])
+            filled = content_aware_split_pair(left_bytes, right_bytes, slot_w, slot_h)
+            if filled:
+                return list(filled), [1.0, 1.0]
+        except Exception as exc:
+            logger.warning("build_split_srcs: content_aware_split_pair errored (%s) — using cover-fit", exc)
+
     return [left_uri, right_uri], [zoom_l, zoom_r]
 
 
@@ -2068,7 +2300,10 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
     primary, secondary = extract_two_subjects(title, niche)
     if primary and secondary:
         image_type = pick_split_image_type(title, niche)
-        built = build_split_srcs(db, primary, secondary, image_type, niche)
+        split_slot_w = int(slot.get("width", 0) * slot.get("scaleX", 1)) * DESIGN_SCALE
+        split_slot_h = int(slot.get("height", 0) * slot.get("scaleY", 1)) * DESIGN_SCALE
+        built = build_split_srcs(db, primary, secondary, image_type, niche,
+                                  slot_w=split_slot_w, slot_h=split_slot_h)
         if built:
             srcs, zooms = built
             logger.info("Design: split layout %r | %r (%s)", primary, secondary, image_type)
