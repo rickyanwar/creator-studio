@@ -25,6 +25,19 @@ _RETRY_BACKOFF = [300, 900, 2700]  # 5/15/45 minutes
 _MIN_POST_GAP_SECONDS = 300
 _MAX_POST_GAP_SECONDS = 2100
 
+# Same idea for breaking news, but much tighter — a human posting two
+# separate breaking stories back to back would still leave a few minutes
+# between them, not the full 5-35 min band a routine post uses (that would
+# defeat the point of flagging something breaking in the first place).
+# Triangular (not flat random.randint): a real editor reacts quickly most of
+# the time and only occasionally takes closer to the full 10 min, so draws
+# should cluster around the mode (7 min) and taper toward both edges — a flat
+# distribution would land at the 5 min floor or 10 min ceiling just as often
+# as anywhere in between, which reads as more mechanical than a person.
+_BREAKING_MIN_GAP_SECONDS = 300   # 5 min
+_BREAKING_MAX_GAP_SECONDS = 600   # 10 min
+_BREAKING_GAP_MODE_SECONDS = 420  # 7 min — most draws cluster here
+
 _DEFAULT_DAILY_LIMIT = 45
 
 
@@ -68,15 +81,25 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
     absorb the catch-up instead of the backlog only ever growing.
 
     `breaking=True` (see PublishJob.is_breaking / news_copywriter's
-    is_breaking classification) skips ALL of the above — no daily-cap check,
-    no gap-after-last-post spacing, no day-hopping — and goes out as close to
-    "now" as the fanpage's sleep window allows. The point of flagging
-    something breaking is that it's time-sensitive; queuing it behind the
-    normal pacing logic (which can legitimately push a post out by hours or
-    into the next day once a fanpage's daily cap is hit) defeats that
-    entirely. Still respects the sleep window — even breaking news shouldn't
-    post at 3am to an inactive audience.
-    """
+    is_breaking classification) skips the daily-cap check and day-hopping —
+    and goes out as close to "now" as the fanpage's sleep window allows. The
+    point of flagging something breaking is that it's time-sensitive; queuing
+    it behind the normal pacing logic (which can legitimately push a post out
+    by hours or into the next day once a fanpage's daily cap is hit) defeats
+    that entirely. Still respects the sleep window — even breaking news
+    shouldn't post at 3am to an inactive audience.
+
+    It does still enforce one thing: a short minimum gap
+    (_BREAKING_MIN_GAP_SECONDS-_BREAKING_MAX_GAP_SECONDS, ~5-10 min) since
+    this SAME fanpage's own most recent scheduled post (breaking or not).
+    Found 2026-08-23 via a real user report: two separate breaking stories
+    landing on the same fanpage within seconds of each other reads as an
+    obvious bot, even though each one individually deserves to skip the
+    normal queue — "time-sensitive" doesn't mean "simultaneous with this
+    page's last post." Unlike the normal path's day-scoped gap check, this
+    looks at the fanpage's all-time latest scheduled_for (a second breaking
+    story minutes after the first, possibly crossing a WIB midnight, should
+    still respect the gap)."""
     from app.models.target_fanpages import TargetFanpage
 
     fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
@@ -85,11 +108,25 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
     floor_utc = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
 
     if breaking:
+        from sqlalchemy import func
+        from app.models.publish_jobs import PublishJob
+
+        last_scheduled = (
+            db.query(func.max(PublishJob.scheduled_for))
+            .filter(PublishJob.fanpage_id == fanpage_id, PublishJob.scheduled_for.isnot(None))
+            .scalar()
+        )
+        candidate_utc = floor_utc
+        if last_scheduled:
+            gap = timedelta(seconds=random.triangular(
+                _BREAKING_MIN_GAP_SECONDS, _BREAKING_MAX_GAP_SECONDS, _BREAKING_GAP_MODE_SECONDS,
+            ))
+            candidate_utc = max(candidate_utc, last_scheduled + gap)
         if sleep_start is not None and sleep_end is not None:
-            floor_wib = floor_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
-            pushed_wib = _push_past_sleep(floor_wib, sleep_start, sleep_end)
+            candidate_wib = candidate_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
+            pushed_wib = _push_past_sleep(candidate_wib, sleep_start, sleep_end)
             return pushed_wib.astimezone(timezone.utc).replace(tzinfo=None)
-        return floor_utc
+        return candidate_utc
 
     from sqlalchemy import func
     from app.models.publish_jobs import PublishJob
