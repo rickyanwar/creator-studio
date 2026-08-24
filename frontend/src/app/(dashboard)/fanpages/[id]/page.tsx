@@ -564,7 +564,11 @@ export default function FanpageEditPage() {
 
       {/* ── Section 2: Caption Criteria ────────────────── */}
       <section className="card space-y-5">
-        <h2 className="text-base font-semibold text-text-primary">Caption Criteria</h2>
+        <h2 className="text-base font-semibold text-text-primary">Mode 1: IG Repost — Caption Criteria</h2>
+        <p className="text-sm text-text-secondary -mt-3">
+          Used by Mode 1 (IG repost) and Mode 3 (IG recreate). Mode 2 (News Content) has its own
+          separate criteria — including its own Hashtag Count — further down this page.
+        </p>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
