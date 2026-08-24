@@ -812,15 +812,15 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
         return 0
 
 
-_FRAME_RANK = {"HEAD": 0, "HALF": 1, "FULL": 2}
+_FRAME_RANK = {"HEAD": 0, "HALF": 1, "FULL": 2, "VEHICLE": 10}
 
 
 def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
-    """One vision call: classify EVERY candidate's body-framing (HEAD /
-    HALF-body / FULL-body) up front, as its own separate step. `labeled` is
-    a list of (label, datauri) — labels are the caller's own (e.g. "L1",
-    "R2"). Returns {label: "HEAD"|"HALF"|"FULL"}; a label missing from the
-    result (unparseable reply) is left out, not guessed.
+    """One vision call: classify EVERY candidate's shot type up front, as its
+    own separate step. `labeled` is a list of (label, datauri) — labels are
+    the caller's own (e.g. "L1", "R2"). Returns {label: "HEAD"|"HALF"|"FULL"
+    |"VEHICLE"}; a label missing from the result (unparseable reply) is left
+    out, not guessed.
 
     Split out from the pairing decision itself (2026-08-21) because asking
     one call to both classify AND pick let the model's final answer quietly
@@ -832,7 +832,23 @@ def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
     for from a multi-step instruction the model has to hold across a whole
     reasoning chain.
 
-    Face-SIZE matching (as opposed to this HEAD/HALF/FULL bucket) is handled
+    `VEHICLE` added 2026-08-23 after a real user report, backed by 4/4
+    checked production renders: an "action" search for a driver/rider
+    sometimes returns a photo where the CAR/BIKE dominates the frame and the
+    person is tiny/unclear (e.g. a wide on-track shot), while the OTHER side
+    of the same split returned a tight face portrait — HEAD/HALF/FULL all
+    describe how much of a PERSON's body shows, so a vehicle-dominant photo
+    doesn't cleanly fit any of them and was landing in whatever bucket the
+    model guessed, with nothing stopping it from pairing against a
+    close-up face. `_FRAME_RANK["VEHICLE"]=10` deliberately isolates it from
+    the HEAD/HALF/FULL 0-2 spectrum — its distance to every person-framing
+    category is then always far larger than any person-to-person distance,
+    so vision_pick_split_pair's tier system only ever treats two VEHICLE
+    shots as a top-tier match against each other, never against a person
+    shot. The user's own framing: "face dengan face, mobil dengan mobil,
+    motor dengan motor."
+
+    Face-SIZE matching (as opposed to this framing bucket) is handled
     separately by `_face_width_fraction` — an OpenCV pixel measurement on the
     two already-chosen photos, not a vision guess. A first version asked
     this same call to also eyeball a face-width fraction per candidate, but
@@ -843,11 +859,16 @@ def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
     content = [{
         "type": "text",
         "text": (
-            "Classify how much of the body is visible in EACH numbered photo "
-            "below. Categories: HEAD (tight face / head-and-shoulders only), "
-            "HALF (waist-up — chest and arms visible, e.g. a standing/podium/"
-            "pit-lane shot), FULL (most of the person, head to at least "
-            "mid-thigh). Reply with exactly ONE line per photo, in the form "
+            "Classify EACH numbered photo below into ONE of these categories. "
+            "HEAD (tight face / head-and-shoulders only), HALF (waist-up — "
+            "chest and arms visible, e.g. a standing/podium/pit-lane shot), "
+            "FULL (most of the person, head to at least mid-thigh) — these "
+            "three are about how much of the PERSON's body shows. VEHICLE is "
+            "different: use it when the car/motorcycle itself is the main "
+            "subject of the frame and the rider/driver is small, unclear, "
+            "turned away, or otherwise not the clear focus (e.g. a wide "
+            "on-track action shot) — even if a person is technically visible "
+            "in it. Reply with exactly ONE line per photo, in the form "
             "`LABEL:CATEGORY` (e.g. `L1:HALF`) — nothing else, no explanation."
         ),
     }]
@@ -857,7 +878,7 @@ def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
     raw = _vision_chat(content, max_tokens=1500, context="vision_classify_split_frame")
     return {
         m.group(1).upper(): m.group(2).upper()
-        for m in re.finditer(r"\b([LR]\d+)\s*:\s*(HEAD|HALF|FULL)\b", raw, re.IGNORECASE)
+        for m in re.finditer(r"\b([LR]\d+)\s*:\s*(HEAD|HALF|FULL|VEHICLE)\b", raw, re.IGNORECASE)
     }
 
 
@@ -951,6 +972,10 @@ def _pick_best_aesthetic_pair(left_candidates: list, right_candidates: list, pri
             f"{primary} on the LEFT half, {secondary} on the RIGHT half — all "
             "already matched for similar body-framing. Pick the best-LOOKING "
             "LEFT+RIGHT pair, judging:\n"
+            "- HARD REJECT if one side is a vehicle-dominant shot (the car/bike "
+            "is the clear subject, the rider/driver small or unclear) while the "
+            "other is a person-forward shot (a clear face/body) — face-with-face, "
+            "vehicle-with-vehicle only, never mixed, no exceptions.\n"
             "- Full face visible with margin — each photo is CROPPED HARD "
             "into a narrow vertical strip, so reject anything too tight to "
             "survive that.\n"
@@ -1798,12 +1823,13 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
 
 def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face", niche: str = "MotoGP"):
     """Two context-appropriate photos (same style) for a left/right split.
-    Fetches several fresh candidates from Getty per side first, tops up from
-    the gallery if fewer than 2 came back, then asks vision to pick the
-    LEFT/RIGHT pair whose pose/framing match best (see vision_pick_split_pair)
-    — a wide action shot next to a tight face crop reads as sloppy even when
-    both photos are individually fine, so the pairing is judged jointly
-    rather than picking each side's "best" photo in isolation.
+    Fetches several fresh candidates from Getty per side, and ALWAYS also
+    pulls from the existing gallery (an already-used photo is fair game —
+    see the note below), then asks vision to pick the LEFT/RIGHT pair whose
+    pose/framing match best (see vision_pick_split_pair) — a wide action
+    shot next to a tight face crop reads as sloppy even when both photos are
+    individually fine, so the pairing is judged jointly rather than picking
+    each side's "best" photo in isolation.
 
     Returns `([left_uri, right_uri], [zoom_left, zoom_right])`, or `None` if
     either side has no usable candidate at all. The zoom pair is a
@@ -1814,7 +1840,7 @@ def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face",
     def _candidates(subject: str) -> list:
         # Normalize to (datauri, GalleryImage) regardless of source: fresh
         # Getty (fetch_subject_datauris) yields (GalleryImage, uri); gallery
-        # top-up (find_gallery_datauris) yields (uri, GalleryImage). A wider
+        # reuse (find_gallery_datauris) yields (uri, GalleryImage). A wider
         # pool gives vision_pick_split_pair (and its framing-category +
         # quality-gate logic) real odds of finding a genuinely matched pair
         # instead of settling for whatever's available — pool_limit=30
@@ -1823,12 +1849,26 @@ def build_split_srcs(db, primary: str, secondary: str, image_type: str = "face",
         # 8 was found to quietly starve this to 1-2 verified survivors even
         # for well-photographed subjects; 50 gave the best results in
         # testing but is expensive to run on every job).
+        #
+        # Gallery reuse used to only fire when the fresh count was thin
+        # (<2) — changed 2026-08-23 after a real user report: a fresh
+        # "action" search can come back with several candidates that are
+        # ALL poorly matched for pairing (e.g. every fresh result is a wide
+        # vehicle-dominant shot, see the VEHICLE framing category), while
+        # the gallery already holds a better-framed photo of the same
+        # subject from an earlier save — one that never got a chance to
+        # compete because the top-up only kicked in on COUNT, not quality.
+        # User's own framing: reusing an already-used photo for ONE side of
+        # a genuine 2-subject split is fine; that's different from (and not
+        # to be confused with) forcing the exact same single photo onto
+        # BOTH sides when there's only one subject at all — that idea was
+        # considered and explicitly rejected for the single-subject case,
+        # which still widens to full width instead (see prepare_design_images).
         fresh = fetch_subject_datauris(db, subject, image_type, niche, top_n=8)
         pairs = [(uri, gi) for gi, uri in fresh]
-        if len(pairs) < 2:
-            pairs += find_gallery_datauris(
-                db, subject, image_type=image_type, niche=niche, top_n=8 - len(pairs), pool_limit=30,
-            )
+        pairs += find_gallery_datauris(
+            db, subject, image_type=image_type, niche=niche, top_n=8, pool_limit=30,
+        )
         return pairs
 
     left_pairs = _candidates(primary)
