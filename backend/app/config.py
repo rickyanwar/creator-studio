@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Second source tried only when a topic search (design_images.fetch_topic_datauri)
     # finds nothing on Getty — covers stories with no matching editorial stock photo.
     gallery_search_url_template_google: str = "https://www.google.com/search?q={query}&tbm=isch"
+    # Mode 5 (Pinterest content): AI-keyword search results, single fetch —
+    # Pinterest search is infinite-scroll, no {page} param.
+    pinterest_search_url_template: str = "https://www.pinterest.com/search/pins/?q={query}"
     # Raised 2026-08-17 (was 10): the early-stop-on-consecutive-dupes logic
     # already keeps a caught-up keyword cheap, so the ceiling mainly matters
     # for an actively-newsworthy keyword catching up toward the higher

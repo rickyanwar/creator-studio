@@ -345,6 +345,16 @@ window.renderTemplate = function renderTemplate(args) {
             const textCy = subObj.top + subObj.height / 2;
             badge.set({ width: newW, left: cx - newW / 2, top: textCy - badge.height / 2 });
           }
+        } else if (subObj) {
+          // No subtitle data for this job — hide the placeholder instead of
+          // leaving the template's own seed/sample text (e.g. the literal
+          // word "Subtitle") baked into the final PNG. Same "no value = no
+          // element" rule already applied to caption/watermark above — this
+          // branch was missing here (never hit before Mode 5, the first
+          // caller that legitimately has no subtitle to show).
+          subObj.set({ visible: false });
+          const badge = objects.find((o) => o.placeholderRole === "subtitleBadge");
+          if (badge) badge.set({ visible: false });
         }
 
         // ── Caption placeholder (small descriptive line under the name/badge;

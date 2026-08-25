@@ -177,11 +177,13 @@ def resolve_template(db, category: str, fanpage=None, job_template_id: int | Non
     (is_default) template tagged with this category, fanpage-specific
     override preferred over global.
 
-    category: "quote" | "news" | "discussion". A "news"-category template serves
-    both Mode 2 news_content jobs and Mode 3 ig_recreate posts classified "news";
-    "quote" serves ig_recreate posts classified "quote"; "discussion" serves
-    Mode 4 debate cards — one global pool per category instead of separate
-    per-mode template fields."""
+    category: "quote" | "news" | "discussion". A "news"-category template
+    serves Mode 2 news_content jobs, Mode 3 ig_recreate posts classified
+    "news", AND Mode 5 Pinterest ideas whose bound photo has no detected
+    face; "quote" serves ig_recreate posts classified "quote" and Mode 5
+    ideas whose photo DOES have a face (see render_pinterest); "discussion"
+    serves Mode 4 debate cards — one global pool per category instead of
+    separate per-mode template fields."""
     from app.models.design_templates import DesignTemplate
 
     if job_template_id:
@@ -621,16 +623,29 @@ def fix_unsafe_single_photo_face(image_bytes: bytes, canvas_width: int, canvas_h
     need this — the normal focus-point ceiling clamp (see
     _safe_face_cy_ceiling) is sufficient there on its own.
 
-    Only fires when genuinely needed (no face, or the face's natural
-    position already clears the ceiling, or the aspect ratio already has
-    slack → returns None, caller keeps the original photo + normal
-    cover-fit). zoom=1.0 (show the whole photo width, no extra tightening)
-    is deliberately the safest possible choice — this is a correctness
-    safety net, not a framing/aesthetic enhancement, so it errs toward
-    "definitely keeps the face fully visible" over "looks tightly cropped"."""
-    face = _dominant_face_bbox(image_bytes)
-    if not face:
-        return None
+    Only fires when genuinely needed (the face's natural position already
+    clears the ceiling, or the aspect ratio already has slack → returns
+    None, caller keeps the original photo + normal cover-fit). zoom=1.0
+    (show the whole photo width, no extra tightening) is deliberately the
+    safest possible choice — this is a correctness safety net, not a
+    framing/aesthetic enhancement, so it errs toward "definitely keeps the
+    face fully visible" over "looks tightly cropped".
+
+    2026-08-25: two no-face fallbacks were tried and REJECTED here for the
+    helmeted-rider/car-action case (same zero-slack condition, no face to
+    anchor on) — real-render testing on a Mode 5 Senna/McLaren photo found:
+    (1) a vision-point-anchored content-aware fill stayed visibly soft/
+    discolored regardless of how tightly the invented-area fraction was
+    capped (40%, 30%, 12% all looked bad — the defect is the inpaint
+    algorithm's output quality on this content, not the amount invented);
+    (2) reflect_extend (mirror+blur+darken, no hallucinated detail) looked
+    clean but was still ultimately rejected per the user's own call: for
+    Mode 5 specifically, a photo that doesn't already crop well should be
+    excluded at candidate-selection time rather than patched at render
+    time — see photo_crops_well, used by
+    pinterest_source.build_idea_from_candidate. This function stays
+    face-only; a no-face landscape photo just returns None here (normal
+    cover-fit), same as before either fallback existed."""
     try:
         import io
         from PIL import Image
@@ -644,9 +659,22 @@ def fix_unsafe_single_photo_face(image_bytes: bytes, canvas_width: int, canvas_h
     slot_ar = canvas_width / canvas_height
     if img_ar <= slot_ar:
         return None  # real cover-fit slack already exists — normal path handles it
+
+    face = _dominant_face_bbox(image_bytes)
+    if not face:
+        # No face — see docstring: both a content-aware fallback and a
+        # reflect_extend fallback were tried here (2026-08-25) and reverted.
+        # Per the user's final call for Mode 5 specifically: don't try to
+        # salvage a bad-fitting photo with a crop/extend trick at render
+        # time — see photo_crops_well, which render_pinterest checks BEFORE
+        # calling this at all, to decide whether to use the template or post
+        # the (upscaled) photo directly with no template/crop.
+        return None
+
     natural_cy = face[1] + face[3] / 2 - 0.08  # same lift bias detect_focus_point uses
     if natural_cy <= safe_cy_ceiling:
         return None  # already safe at zoom=1, no fix needed
+
     filled = content_aware_split_extend(
         image_bytes, canvas_width, canvas_height, zoom=1.0, face_bbox=face, target_cy=safe_cy_ceiling,
     )
@@ -657,6 +685,40 @@ def fix_unsafe_single_photo_face(image_bytes: bytes, canvas_width: int, canvas_h
         natural_cy, safe_cy_ceiling, img_ar, slot_ar,
     )
     return "data:image/jpeg;base64," + base64.b64encode(filled).decode()
+
+
+def photo_crops_well(image_bytes: bytes, canvas_width: int, canvas_height: int) -> bool:
+    """Mode 5 (Pinterest) gate: can this photo go on the design template at
+    all, or should it post directly with no template/crop?
+
+    Same zero-vertical-slack condition as fix_unsafe_single_photo_face: a
+    landscape source (img_ar > slot_ar) forced onto this portrait canvas
+    always shows its FULL height compressed to fit, with zero room to
+    reposition — fine when a detected face lets fix_unsafe_single_photo_face
+    correct it, but for a no-face action/vehicle shot every attempted fix
+    (content-aware fill, reflect_extend) looked worse than not cropping at
+    all (real render testing, 2026-08-25). Rather than force that photo
+    through the template with a bad crop, render_pinterest skips the
+    template entirely for it and posts the (already-upscaled)
+    photo as-is — this function is what tells it which path to take.
+
+    True: portrait/near-square source (real cover-fit slack exists), or a
+    landscape source WITH a detected face (fix_unsafe_single_photo_face
+    handles it). False: landscape, no face — nothing left to safely fix it."""
+    try:
+        import io
+        from PIL import Image
+
+        iw, ih = Image.open(io.BytesIO(image_bytes)).size
+    except Exception:
+        return True  # can't tell — don't block the photo over a decode hiccup
+    if not iw or not ih or not canvas_height:
+        return True
+    img_ar = iw / ih
+    slot_ar = canvas_width / canvas_height
+    if img_ar <= slot_ar:
+        return True
+    return _dominant_face_bbox(image_bytes) is not None
 
 
 def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | None:
@@ -1652,6 +1714,139 @@ def vision_verify_subject(image_bytes: bytes, subject: str, niche: str = "") -> 
         return {"match": False, "confidence": 0.0}
 
 
+def vision_check_pin_description(image_bytes: bytes, description: str, niche: str = "", custom_prompt: str = "") -> dict:
+    """Mode 5 (Pinterest): a curated pin's own page sometimes carries a real
+    caption (see image_downloader.fetch_pin) — before trusting it as the
+    idea's title/description, ask vision whether the photo actually matches
+    what it claims. Same fail-closed convention as vision_verify_match: an
+    unverifiable description is treated as wrong, not trusted by default
+    (see feedback-image-accuracy-over-availability — a wrong caption on a
+    real post is worse than skipping this one candidate).
+
+    `custom_prompt` (fanpage.pinterest_custom_prompt — e.g. "You are a
+    passionate Formula 1 historian...") steers the WRITING STYLE of the
+    cleaned description that comes back, so every idea for this page reads
+    in the page's own persona/voice, not a generic factual caption.
+
+    Returns {"valid": bool, "title": str, "description": str} — on
+    valid=True the model hands back both a short title (the queue needs one
+    and Pinterest's own description text is prose, not a title) and a
+    tightened/cleaned version of the description rather than the raw
+    scraped text verbatim."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                (f"{custom_prompt.strip()}\n" if custom_prompt else "")
+                + f'Claimed description of this photo: "{description[:400]}"\n'
+                + (f'Niche/field: "{niche}"\n' if niche else "")
+                + "Does this photo actually match that description — same "
+                "named person(s)/team/vehicle/event, no factual mismatch? "
+                "Reply invalid if the description is wrong, generic, or "
+                "doesn't match what's actually shown.\n"
+                'Reply with ONLY a JSON object {"valid": true|false, '
+                '"title": "short name/subject, max 60 chars, empty string '
+                'if invalid", "description": "a clean 1-2 sentence version '
+                'of the description if valid, else empty string"}.'
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=1500, context="vision_check_pin_description")
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return {"valid": False, "title": "", "description": ""}
+        import json as _json
+        d = _json.loads(m.group(0))
+        return {
+            "valid": bool(d.get("valid")),
+            "title": str(d.get("title") or "").strip()[:60],
+            "description": str(d.get("description") or "").strip(),
+        }
+    except Exception as exc:
+        logger.warning("vision_check_pin_description failed (treating as invalid): %s", exc)
+        return {"valid": False, "title": "", "description": ""}
+
+
+def vision_identify_pin_subject(image_bytes: bytes, niche: str = "", custom_prompt: str = "") -> dict:
+    """Mode 5 (Pinterest): a board/search-grid pin has no caption at all
+    (confirmed — Pinterest's grid markdown never carries one) — ask vision
+    to identify what's actually in the photo from scratch. Fails CLOSED
+    (identified=False) whenever the model isn't confident of a SPECIFIC,
+    named subject — never fabricate a caption for a photo nobody can
+    actually place; the candidate is simply skipped by the caller, same
+    principle as vision_verify_subject.
+
+    `custom_prompt` (fanpage.pinterest_custom_prompt) steers the generated
+    description's voice — see vision_check_pin_description's docstring.
+
+    Returns {"identified": bool, "title": str, "description": str}."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                (f"{custom_prompt.strip()}\n" if custom_prompt else "")
+                + (f'Niche/field: "{niche}"\n' if niche else "")
+                + "Identify the specific, named person, team, vehicle, or "
+                "event/moment shown in this photo, within the niche above. "
+                "Only answer if you're genuinely confident — a generic or "
+                "unrecognizable photo (crowd, unnamed car, unclear scene) "
+                "should NOT be identified.\n"
+                'Reply with ONLY a JSON object {"identified": true|false, '
+                '"title": "short name/subject, max 60 chars", "description": '
+                '"1-2 sentence caption suitable for a social media post"}.'
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=1500, context="vision_identify_pin_subject")
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return {"identified": False, "title": "", "description": ""}
+        import json as _json
+        d = _json.loads(m.group(0))
+        return {
+            "identified": bool(d.get("identified")),
+            "title": str(d.get("title") or "").strip()[:60],
+            "description": str(d.get("description") or "").strip(),
+        }
+    except Exception as exc:
+        logger.warning("vision_identify_pin_subject failed (treating as unidentified): %s", exc)
+        return {"identified": False, "title": "", "description": ""}
+
+
+def vision_has_watermark(image_bytes: bytes) -> bool:
+    """Mode 5 (Pinterest): stock/editorial photo agencies (LAT Images, XPB,
+    RaceFans, etc.) commonly stamp a visible logo/URL/copyright mark on their
+    images. The Quote/News templates usually crop tight enough to cut it out
+    by luck, but the no-crop direct-post fallback (photo_crops_well=False,
+    design_renderer.render_pinterest) posts the frame untouched — so an
+    agency mark there stays fully visible on the published post. Real batch
+    testing this session (3/3 direct-post samples checked) surfaced this.
+    Fails CLOSED (assume a watermark is present) on any error — same
+    convention as vision_check_pin_description/vision_identify_pin_subject;
+    an unverifiable photo is skipped, not risked."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                "Does this photo have a visible watermark, logo, website URL, "
+                "or copyright/credit text stamped on it by a photo agency or "
+                "media outlet (e.g. a corner logo, a semi-transparent URL "
+                "overlay, a \"© ...\" credit line)? Ignore text/logos that are "
+                "part of the actual photographed scene itself (sponsor "
+                "decals on a car or racesuit, signage in the background).\n"
+                'Reply with ONLY a JSON object {"has_watermark": true|false}.'
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=200, context="vision_has_watermark")
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return True
+        import json as _json
+        d = _json.loads(m.group(0))
+        return bool(d.get("has_watermark", True))
+    except Exception as exc:
+        logger.warning("vision_has_watermark failed (treating as watermarked): %s", exc)
+        return True
+
+
 def _filter_verified_subject(uris: list[str], subject: str, niche: str = "") -> list[str]:
     """Run vision_verify_subject over each candidate data-URI, keeping only
     the ones confirmed to actually be `subject`. Shared by
@@ -2401,6 +2596,17 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
             main_datauri = _expand_datauri(main_datauri, tw * DESIGN_SCALE, th * DESIGN_SCALE)
 
     if not smart:
+        # A rectangular image_2 (split) slot left in place with only one
+        # photo would render as a half-canvas photo next to an empty grey
+        # panel — widen "image" to the full canvas and hide image_2, same
+        # treatment the smart=True "only one subject" branch below already
+        # applies. A circular inset is left alone (an unfilled small inset
+        # doesn't read as visually broken the way a blank half-canvas panel
+        # does), matching smart=True's own no-subject-found behavior for it.
+        slot = find_role_object(template_json, "image_2")
+        if slot is not None and slot.get("type") == "rect":
+            tj = _widen_to_full(template_json, canvas_width)
+            return tj, _with_inset(tj, [main_datauri])
         return template_json, _with_inset(template_json, [main_datauri])
 
     slot = find_role_object(template_json, "image_2")

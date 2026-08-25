@@ -112,6 +112,42 @@ class TargetFanpage(Base):
     # "news" | "evergreen" | "both" — where the scheduler draws topics from.
     discussion_topic_mode = Column(String(16), default="both", nullable=False, server_default="both")
 
+    # ── Mode 5: Pinterest content ──────────────────
+    # A photo is the seed instead of text: candidates are pulled from
+    # Pinterest, turned into reviewable PinterestContentIdea rows (title +
+    # description + a bound GalleryImage), and consumed FIFO on this
+    # fanpage's own pacing (see app/tasks/pinterest.py) into a rendered
+    # card. No dedicated Mode 5 template setting — it reuses the SAME
+    # Quote/News template pools Mode 2/3 already have (default_quote_
+    # template_id / default_news_template_id above), picking between them
+    # per idea by whether the bound photo has a detected face: a face reads
+    # as a quote-style portrait (badge/name treatment), no face reads as a
+    # news-style scene (headline over the full photo) — see
+    # render_pinterest's own face check, mirrors ig_content_classifier's
+    # news/quote split for Mode 3 without needing a second AI call.
+    pinterest_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    pinterest_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
+    pinterest_daily_count = Column(Integer, default=2, nullable=False, server_default="2")
+    # "curated" | "ai_keyword" | "both" — where idea candidates are pulled
+    # from. On "both", ai_keyword is tried first each tick, falling back to
+    # the curated PinterestSource rotation only when it yields nothing new.
+    pinterest_source_mode = Column(String(16), default="both", nullable=False, server_default="both")
+    # Free-text persona/angle the admin writes for this page, e.g. "You are
+    # a passionate Formula 1 historian and journalist covering the 1970s-90s
+    # golden era." Injected into both the AI-keyword topic pick
+    # (generate_pinterest_search_keyword) and the photo description/caption
+    # generation (vision_identify_pin_subject / vision_check_pin_description)
+    # so every idea for this page reads in the same voice/angle — same idea
+    # as caption_custom_prompt, but Mode 5 has no copywriter call to attach
+    # it to, so it gets its own field threaded through the vision calls.
+    pinterest_custom_prompt = Column(Text, default="", nullable=False, server_default="")
+    # Hashtags appended to the Facebook post caption only (never drawn on the
+    # design image) — same "N relevant hashtags" convention as
+    # mode2_caption_hashtag_count, generated fresh at consume time
+    # (news_copywriter.generate_pinterest_hashtags) since Mode 5 ideas carry
+    # no caption field of their own to bake them into.
+    pinterest_hashtag_count = Column(Integer, default=5, nullable=False, server_default="5")
+
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
     caption_language = Column(String(8), default="en", nullable=False)
@@ -137,4 +173,6 @@ class TargetFanpage(Base):
     source_links = relationship("FanpageSource", back_populates="fanpage", cascade="all, delete-orphan")
     news_source_links = relationship("FanpageNewsSource", back_populates="fanpage", cascade="all, delete-orphan")
     discussion_topics = relationship("DiscussionTopic", back_populates="fanpage", cascade="all, delete-orphan")
+    pinterest_sources = relationship("PinterestSource", back_populates="fanpage", cascade="all, delete-orphan")
+    pinterest_content_ideas = relationship("PinterestContentIdea", back_populates="fanpage", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="fanpage")

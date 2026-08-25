@@ -16,7 +16,7 @@ const fetcher = async () => {
     listJobs({ status: "pending_publish", limit: 100 }),
   ]);
   const news = [...(design.data as PublishJob[]), ...(publish.data as PublishJob[])]
-    .filter((j) => j.content_type === "news_content" || j.content_type === "ig_recreate" || j.content_type === "discussion");
+    .filter((j) => j.content_type === "news_content" || j.content_type === "ig_recreate" || j.content_type === "discussion" || j.content_type === "pinterest_content");
   return [...(review.data as PublishJob[]), ...news].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
@@ -43,7 +43,7 @@ function timeAgo(iso: string) {
 
 /* Use source URL when public URL is localhost */
 function resolveUrls(job: PublishJob): string[] {
-  if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion") {
+  if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content") {
     return job.design_image_url ? [job.design_image_url] : [];
   }
   const pub = job.image_public_urls ?? [];
@@ -229,8 +229,8 @@ function QueueCard({
   const albumCount = urls.length;
   const caption = job.ai_generated_caption ?? "";
   const createdAt = (job as unknown as Record<string, string>).created_at;
-  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion";
-  const needsDesign = (job.content_type === "news_content" || job.content_type === "discussion") && job.status === "pending_design";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content";
+  const needsDesign = (job.content_type === "news_content" || job.content_type === "discussion" || job.content_type === "pinterest_content") && job.status === "pending_design";
 
   const mediaIcon =
     job.media_type === "album"
@@ -259,7 +259,7 @@ function QueueCard({
           <p className="text-sm font-semibold text-text-primary truncate">{fanpage}</p>
           <p className="text-xs text-text-secondary truncate">
             {createdAt ? timeAgo(createdAt) : ""}{createdAt ? " · " : ""}
-            {isNews ? (job.design_title ?? (job.content_type === "discussion" ? "Discussion" : "News content")) : `@${job.ig_username}`}
+            {isNews ? (job.design_title ?? (job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : "News content")) : `@${job.ig_username}`}
           </p>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -282,7 +282,7 @@ function QueueCard({
           <>
             <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-info-main bg-[rgba(0,184,217,0.12)] px-2 py-0.5 rounded-full">
               <Icon icon="solar:document-text-bold-duotone" width={11} />
-              {job.content_type === "discussion" ? "Discussion" : "News"}
+              {job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : "News"}
             </span>
             <span className="flex items-center gap-1 text-xs text-text-secondary">
               <Icon icon={needsDesign ? "solar:pen-2-bold-duotone" : "solar:check-circle-bold-duotone"} width={12} />
@@ -424,7 +424,7 @@ function Lightbox({
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const color = avatarColor(fanpage);
   const caption = job.ai_generated_caption ?? "";
-  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content";
   const total = urls.length;
   const createdAt = (job as unknown as Record<string, string>).created_at;
 
@@ -501,12 +501,12 @@ function Lightbox({
               <div className="min-w-0">
                 <p className="text-white text-xs font-semibold leading-none">{fanpage}</p>
                 <p className="text-white/60 text-[10px] mt-0.5">
-                  {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : "News content")) : `@${job.ig_username}`}
+                  {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : "News content")) : `@${job.ig_username}`}
                   {createdAt ? ` · ${timeAgo(createdAt)}` : ""}
                 </p>
               </div>
               <span className="ml-auto text-[10px] font-semibold text-white/60 uppercase tracking-wide bg-white/10 px-2 py-0.5 rounded-full">
-                {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.media_type}
+                {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.content_type === "pinterest_content" ? "pinterest" : job.media_type}
               </span>
             </div>
 

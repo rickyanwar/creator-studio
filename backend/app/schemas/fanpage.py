@@ -62,6 +62,14 @@ class FanpageBase(BaseModel):
     discussion_topic_mode: str = "both"  # "news" | "evergreen" | "both"
     default_discussion_template_id: Optional[int] = None
 
+    # ── Mode 5: Pinterest content ──
+    pinterest_enabled: bool = False
+    pinterest_publish_mode: PublishMode = PublishMode.manual_review
+    pinterest_daily_count: int = 2
+    pinterest_source_mode: str = "both"  # "curated" | "ai_keyword" | "both"
+    pinterest_custom_prompt: str = ""
+    pinterest_hashtag_count: int = 5
+
 
 class FanpageUpdate(FanpageBase):
     pass
@@ -137,11 +145,53 @@ class DiscussionTopicUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class PinterestSourceRef(BaseModel):
+    id: int
+    source_url: str
+    label: Optional[str] = None
+    is_active: bool = True
+    times_used: int = 0
+    last_used_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PinterestSourceAdd(BaseModel):
+    source_url: str
+    label: Optional[str] = None
+
+
+class PinterestSourceUpdate(BaseModel):
+    source_url: Optional[str] = None
+    label: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class PinterestContentIdeaRef(BaseModel):
+    id: int
+    gallery_image_id: int
+    title: str
+    description: str
+    source_type: str
+    status: str
+    created_at: datetime
+    used_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PinterestContentIdeaUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
 class FanpageDetailOut(FanpageOut):
     ig_sources: list[IGSourceRef] = []
     ig_source_usernames: list[str] = []  # kept for backward compat
     news_sources: list[NewsSourceRef] = []
     discussion_topics: list[DiscussionTopicRef] = []
+    pinterest_sources: list[PinterestSourceRef] = []
+    pinterest_content_ideas: list[PinterestContentIdeaRef] = []
 
 
 class FanpageNewsSourceAdd(BaseModel):

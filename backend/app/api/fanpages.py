@@ -14,9 +14,14 @@ from app.schemas.fanpage import (
     PreviewNewsCopyRequest, PreviewNewsCopyResponse,
     FanpageSourceRecreateUpdate,
     DiscussionTopicAdd, DiscussionTopicUpdate,
+    PinterestSourceAdd, PinterestSourceUpdate, PinterestContentIdeaUpdate,
 )
 
 router = APIRouter(prefix="/fanpages", tags=["fanpages"])
+
+# Mode 5 content-ideas queue can grow to hundreds/month — pages of this size
+# keep both the fanpage-detail hydration and the dedicated list endpoint cheap.
+_IDEAS_PAGE_SIZE = 50
 
 
 @router.get("", response_model=list[FanpageOut])
@@ -77,6 +82,29 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
         .all()
     )
     out.discussion_topics = [DiscussionTopicRef.model_validate(t) for t in topics]
+
+    from app.models.pinterest_sources import PinterestSource
+    from app.models.pinterest_content_ideas import PinterestContentIdea
+    from app.schemas.fanpage import PinterestSourceRef, PinterestContentIdeaRef
+    pin_sources = (
+        db.query(PinterestSource)
+        .filter_by(fanpage_id=fanpage_id)
+        .order_by(PinterestSource.id.asc())
+        .all()
+    )
+    out.pinterest_sources = [PinterestSourceRef.model_validate(s) for s in pin_sources]
+    # First page only (oldest-pending-first, matching FIFO consumption order)
+    # — a fanpage can accumulate hundreds of ideas/month, so the full queue
+    # is NOT hydrated here; the UI's "Content Ideas Queue" section pages
+    # through the rest via GET /pinterest-content-ideas.
+    ideas = (
+        db.query(PinterestContentIdea)
+        .filter_by(fanpage_id=fanpage_id, status="pending")
+        .order_by(PinterestContentIdea.created_at.asc())
+        .limit(_IDEAS_PAGE_SIZE)
+        .all()
+    )
+    out.pinterest_content_ideas = [PinterestContentIdeaRef.model_validate(i) for i in ideas]
     return out
 
 
@@ -277,6 +305,123 @@ def delete_discussion_topic(fanpage_id: int, topic_id: int, db: DB, _: CurrentUs
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
     db.delete(topic)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Mode 5: Pinterest content (per fanpage) ──
+
+@router.post("/{fanpage_id}/pinterest-sources", status_code=status.HTTP_201_CREATED)
+def add_pinterest_source(fanpage_id: int, body: PinterestSourceAdd, db: DB, _: CurrentUser):
+    from app.models.target_fanpages import TargetFanpage
+    from app.models.pinterest_sources import PinterestSource
+
+    fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+    url = (body.source_url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="source_url is required")
+
+    source = PinterestSource(
+        fanpage_id=fanpage_id,
+        source_url=url,
+        label=(body.label or "").strip() or None,
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    from app.schemas.fanpage import PinterestSourceRef
+    return PinterestSourceRef.model_validate(source)
+
+
+@router.put("/{fanpage_id}/pinterest-sources/{source_id}")
+def update_pinterest_source(fanpage_id: int, source_id: int, body: PinterestSourceUpdate, db: DB, _: CurrentUser):
+    from app.models.pinterest_sources import PinterestSource
+
+    source = db.query(PinterestSource).filter_by(id=source_id, fanpage_id=fanpage_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "source_url" in data and data["source_url"] is not None:
+        data["source_url"] = data["source_url"].strip()
+    if "label" in data:
+        data["label"] = (data["label"] or "").strip() or None
+    for field, value in data.items():
+        setattr(source, field, value)
+    db.commit()
+    db.refresh(source)
+    from app.schemas.fanpage import PinterestSourceRef
+    return PinterestSourceRef.model_validate(source)
+
+
+@router.delete("/{fanpage_id}/pinterest-sources/{source_id}")
+def delete_pinterest_source(fanpage_id: int, source_id: int, db: DB, _: CurrentUser):
+    from app.models.pinterest_sources import PinterestSource
+
+    source = db.query(PinterestSource).filter_by(id=source_id, fanpage_id=fanpage_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    db.delete(source)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/{fanpage_id}/pinterest-content-ideas")
+def list_pinterest_content_ideas(fanpage_id: int, db: DB, _: CurrentUser, status: str = "pending", offset: int = 0):
+    """Paginated queue listing (oldest-first, matching FIFO consumption
+    order) — the UI's "Load more" button pages through this instead of the
+    fanpage-detail payload, which only hydrates the first page (see
+    _IDEAS_PAGE_SIZE)."""
+    from app.models.pinterest_content_ideas import PinterestContentIdea
+    from app.schemas.fanpage import PinterestContentIdeaRef
+
+    rows = (
+        db.query(PinterestContentIdea)
+        .filter_by(fanpage_id=fanpage_id, status=status)
+        .order_by(PinterestContentIdea.created_at.asc())
+        .offset(offset)
+        .limit(_IDEAS_PAGE_SIZE)
+        .all()
+    )
+    return {
+        "items": [PinterestContentIdeaRef.model_validate(i) for i in rows],
+        "has_more": len(rows) == _IDEAS_PAGE_SIZE,
+    }
+
+
+@router.put("/{fanpage_id}/pinterest-content-ideas/{idea_id}")
+def update_pinterest_content_idea(fanpage_id: int, idea_id: int, body: PinterestContentIdeaUpdate, db: DB, _: CurrentUser):
+    """Edit a queued idea's title/description before it's consumed into a
+    job — never re-picks the bound photo."""
+    from app.models.pinterest_content_ideas import PinterestContentIdea
+
+    idea = db.query(PinterestContentIdea).filter_by(id=idea_id, fanpage_id=fanpage_id).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "title" in data and data["title"] is not None:
+        data["title"] = data["title"].strip()
+    if "description" in data and data["description"] is not None:
+        data["description"] = data["description"].strip()
+    for field, value in data.items():
+        setattr(idea, field, value)
+    db.commit()
+    db.refresh(idea)
+    from app.schemas.fanpage import PinterestContentIdeaRef
+    return PinterestContentIdeaRef.model_validate(idea)
+
+
+@router.delete("/{fanpage_id}/pinterest-content-ideas/{idea_id}")
+def delete_pinterest_content_idea(fanpage_id: int, idea_id: int, db: DB, _: CurrentUser):
+    from app.models.pinterest_content_ideas import PinterestContentIdea
+
+    idea = db.query(PinterestContentIdea).filter_by(id=idea_id, fanpage_id=fanpage_id).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    db.delete(idea)
     db.commit()
     return {"ok": True}
 

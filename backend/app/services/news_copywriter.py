@@ -673,3 +673,92 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
         title=title, caption=caption, provider=provider, subtitle=subtitle,
         category=category, is_breaking=is_breaking,
     )
+
+
+def _parse_pinterest_keyword(raw: str) -> str:
+    cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"no JSON object in AI output: {raw[:200]!r}")
+    data = json.loads(match.group(0))
+    keyword = str(data.get("keyword") or "").strip()
+    if not keyword:
+        raise ValueError(f"AI output missing keyword: {raw[:200]!r}")
+    return keyword
+
+
+def generate_pinterest_search_keyword(fanpage, avoid_keywords: list[str] | None = None) -> str:
+    """Mode 5 (Pinterest, AI-keyword path): mirrors Mode 4's
+    _generate_general_topic — the AI picks a niche search phrase from its own
+    knowledge (e.g. "Ayrton Senna Lotus 1985"), used to build a Pinterest
+    search URL. Unlike a discussion claim this makes no factual assertion of
+    its own (it's just a search query), so it doesn't need the fact-check
+    gate general-knowledge discussion topics go through.
+
+    Raises on AI failure — the caller (pinterest_source.collect_new_candidates)
+    falls back to the curated PinterestSource rotation.
+
+    `fanpage.pinterest_custom_prompt` (e.g. "You are a passionate Formula 1
+    historian covering the 1970s-90s golden era") steers WHICH topics get
+    picked, same persona/angle also injected into the photo description
+    generation (see design_images.vision_identify_pin_subject) so a page's
+    ideas read as one consistent voice, not just a shared niche."""
+    niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+    avoid_line = ""
+    if avoid_keywords:
+        avoid_line = f"\nAVOID these — already searched recently, pick something else: {', '.join(avoid_keywords)}"
+    persona_line = ""
+    if fanpage.pinterest_custom_prompt:
+        persona_line = f"\n{fanpage.pinterest_custom_prompt.strip()}"
+
+    prompt = f"""Act as a content researcher for a Facebook Fanpage in the "{niche}" niche.{persona_line} Pick ONE specific, evocative Pinterest search phrase that would surface great EVERGREEN photos for this niche — a legendary figure, an iconic car/livery, a historic team, a memorable moment or era. Favor something specific (a name + team/era) over a generic category.{avoid_line}
+
+OUTPUT: only a raw JSON object {{"keyword": "..."}} — no markdown fences, no explanation."""
+
+    (keyword,), provider = _generate_with_fallback(
+        prompt, lambda raw: (_parse_pinterest_keyword(raw),),
+        context="pinterest_keyword", fanpage_id=fanpage.id,
+    )
+    return keyword
+
+
+def _parse_pinterest_hashtags(raw: str) -> str:
+    cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"no JSON object in AI output: {raw[:200]!r}")
+    data = json.loads(match.group(0))
+    tags = str(data.get("hashtags") or "").strip()
+    if not tags:
+        raise ValueError(f"AI output missing hashtags: {raw[:200]!r}")
+    return tags
+
+
+def generate_pinterest_hashtags(fanpage, title: str, description: str) -> str:
+    """Mode 5: hashtags for the Facebook POST caption only — never drawn on
+    the design image, appended separately at consume time (see
+    app/tasks/pinterest.py's _consume_one) since the idea's own
+    title/description (shown on the card + editable in the queue) should
+    stay clean. Mirrors mode2_caption_hashtag_count's "exactly N specific,
+    relevant hashtags, no generic filler" convention.
+
+    Raises on AI failure — caller should treat a failed call as
+    "no hashtags this time" rather than block the post over it."""
+    niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+    count = fanpage.pinterest_hashtag_count or 0
+    persona_line = f"\n{fanpage.pinterest_custom_prompt.strip()}" if fanpage.pinterest_custom_prompt else ""
+
+    prompt = f"""Act as a social media editor for a Facebook Fanpage in the "{niche}" niche.{persona_line}
+
+Post title: "{title[:200]}"
+Post description: "{description[:400]}"
+
+Write EXACTLY {count} specific, relevant hashtags for this post — no generic filler (#love #viral #instagood), no spaces within a tag, each starting with #.
+
+OUTPUT: only a raw JSON object {{"hashtags": "#tag1 #tag2 ..."}} — no markdown fences, no explanation."""
+
+    (tags,), provider = _generate_with_fallback(
+        prompt, lambda raw: (_parse_pinterest_hashtags(raw),),
+        context="pinterest_hashtags", fanpage_id=fanpage.id,
+    )
+    return tags

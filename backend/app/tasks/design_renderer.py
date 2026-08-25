@@ -556,6 +556,192 @@ def render_discussion(self, job_id: int):
         db.close()
 
 
+@celery_app.task(name="app.tasks.design_renderer.render_pinterest", bind=True, max_retries=2)
+def render_pinterest(self, job_id: int):
+    """Render a Mode 5 Pinterest card: the exact photo a consumed
+    PinterestContentIdea was bound to (job.source_gallery_image_id) — no
+    article, no photo search, unlike render_design/render_discussion.
+    job.design_title/design_caption carry the idea's own title/description
+    verbatim (see app/tasks/pinterest.py's _create_one) — no separate AI
+    copywriting step, per the user's own flow: the idea's text IS the post's
+    text. No dedicated Mode 5 template — reuses the Quote/News pools,
+    picking between them per idea by whether the bound photo has a
+    detected face (quote = has a face, news = doesn't). Every text field is
+    sent in the render payload regardless of which ones that template
+    actually defines (each is a no-op in the renderer when absent)."""
+    db = SessionLocal()
+    try:
+        from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
+        from app.models.target_fanpages import TargetFanpage, PublishMode
+        from app.models.gallery import GalleryImage
+
+        claimed = (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.id == job_id,
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.pinterest_content,
+            )
+            .update({"status": PublishJobStatus.rendering}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
+            return
+
+        job = db.query(PublishJob).filter_by(id=job_id).first()
+        fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+        gallery_image = (
+            db.query(GalleryImage).filter_by(id=job.source_gallery_image_id).first()
+            if job.source_gallery_image_id else None
+        )
+        if not fanpage or not gallery_image or not gallery_image.local_path or not os.path.exists(gallery_image.local_path):
+            job.status = PublishJobStatus.pending_design
+            job.last_error = "fanpage or source photo missing"
+            db.commit()
+            return
+
+        from app.services.design_images import (
+            resolve_template, prepare_design_images, focus_points_for, watermark_datauri,
+            _safe_face_cy_ceiling, fix_unsafe_single_photo_face, photo_crops_well,
+            _dominant_face_bbox,
+        )
+
+        image_bytes = Path(gallery_image.local_path).read_bytes()
+
+        # No dedicated Mode 5 template setting — reuses the same Quote/News
+        # pools Mode 2/3 already have, per the user's own call ("bisa
+        # memilih template news atau quote, tergantung jenis kontennya").
+        # A detected face reads as a quote-style portrait (name/badge
+        # treatment); no face reads as a news-style scene (headline over
+        # the full photo) — same signal photo_crops_well/
+        # fix_unsafe_single_photo_face already compute, just used here to
+        # pick the category instead of gating a crop-time fix.
+        category = "quote" if _dominant_face_bbox(image_bytes) else "news"
+        template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
+        if not template or not template.template_json:
+            job.status = PublishJobStatus.pending_design
+            job.last_error = f"no {category} template configured — create one in Template Designer"
+            db.commit()
+            logger.warning("Pinterest: job %d has no usable template", job_id)
+            return
+
+        # A photo that doesn't crop well onto this template (landscape, no
+        # detected face — see photo_crops_well's docstring for why no
+        # automatic fix was kept for that case) skips the template
+        # entirely and posts directly: the (already-upscaled, see
+        # image_downloader._fetch_and_store) source photo as its own post
+        # image, title/description as plain post text — no crop, no
+        # overlay. Per the user's own call for Mode 5: don't force a bad
+        # crop onto a photo that was never going to fit.
+        if not photo_crops_well(image_bytes, template.canvas_width, template.canvas_height):
+            job.design_image_path = gallery_image.local_path
+            job.design_image_url = gallery_image.public_url
+            job.design_template_id = None
+            job.last_image_marker = f"gallery:{gallery_image.id}"
+            job.status = PublishJobStatus.pending_publish
+            job.last_error = None
+            gallery_image.is_used = True
+            db.commit()
+            logger.info(
+                "Pinterest: job %d posted directly (photo doesn't crop well onto template %d)",
+                job_id, template.id,
+            )
+            if fanpage.pinterest_publish_mode == PublishMode.auto:
+                from app.tasks.publisher import publish_job
+                publish_job.delay(job.id)
+            return
+
+        image_src = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
+        niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+
+        template_json, image_srcs = prepare_design_images(
+            db, template.template_json, template.canvas_width,
+            job.design_title or "", niche, image_src,
+            main_path=gallery_image.local_path, smart=False, expand=bool(fanpage.design_expand),
+        )
+
+        # Single photo only (smart=False never splits) — same face-safety
+        # pass render_design/render_discussion apply, see their identical
+        # blocks for why fix_unsafe_single_photo_face is needed alongside
+        # the ceiling alone.
+        safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
+        if image_srcs and image_srcs[0]:
+            try:
+                main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
+                fixed = fix_unsafe_single_photo_face(
+                    main_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+                )
+                if fixed:
+                    image_srcs[0] = fixed
+            except Exception as exc:
+                logger.warning("Pinterest: fix_unsafe_single_photo_face failed for job %d: %s", job_id, exc)
+        focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
+
+        # No render-style branch: the renderer only touches a
+        # title/subtitle/caption/label slot when the template actually
+        # defines that placeholderRole (a no-op otherwise, confirmed in
+        # renderer/inject.js — each block is gated on `objectFound &&
+        # value`), so sending all of them is safe regardless of which
+        # roles this one dedicated Pinterest template happens to use.
+        payload = {
+            "template_json": template_json,
+            "width": template.canvas_width,
+            "height": template.canvas_height,
+            "title": job.design_title or "",
+            "subtitle": "",
+            "caption": job.design_caption or "",
+            "label": "SPOTLIGHT",
+            "watermark": fanpage.watermark_text or "",
+            "watermark_image": watermark_datauri(fanpage),
+            "image_srcs": image_srcs,
+            "focus_points": focus_points,
+            "image_zooms": None,
+            "scale": settings.design_render_scale,
+        }
+
+        resp = httpx.post(f"{settings.renderer_url.rstrip('/')}/render", json=payload, timeout=_RENDER_TIMEOUT)
+        resp.raise_for_status()
+        png_bytes = resp.content
+
+        designs_dir = Path(settings.storage_base_path) / "designs"
+        designs_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"job_{job.id}_{uuid.uuid4().hex[:8]}.png"
+        (designs_dir / filename).write_bytes(png_bytes)
+
+        job.design_image_path = str(designs_dir / filename)
+        job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
+        job.design_template_id = template.id
+        job.last_image_marker = f"gallery:{gallery_image.id}"
+        job.status = PublishJobStatus.pending_publish
+        job.last_error = None
+        gallery_image.is_used = True
+        db.commit()
+
+        logger.info("Pinterest: job %d rendered → %s (%d bytes)", job_id, filename, len(png_bytes))
+
+        if fanpage.pinterest_publish_mode == PublishMode.auto:
+            from app.tasks.publisher import publish_job
+            publish_job.delay(job.id)
+
+    except Exception as exc:
+        from celery.exceptions import Retry, MaxRetriesExceededError
+        if isinstance(exc, (Retry, MaxRetriesExceededError)):
+            raise
+        db.rollback()
+        logger.error("Pinterest: job %d render failed: %s", job_id, exc, exc_info=True)
+        try:
+            from app.models.publish_jobs import PublishJob, PublishJobStatus
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            if job and job.status == PublishJobStatus.rendering:
+                job.status = PublishJobStatus.pending_design
+                db.commit()
+        except Exception:
+            db.rollback()
+        raise self.retry(exc=exc, countdown=180)
+    finally:
+        db.close()
+
+
 # How long a job that already failed with "needs manual image" sits out
 # before this sweep will retry it automatically again. Without this, a
 # subject with no findable photo (select_image_for_job /
@@ -632,10 +818,27 @@ def render_pending_designs():
         for (job_id,) in djobs:
             render_discussion.delay(job_id)
 
-        if jobs or djobs:
+        # Mode 5 Pinterest cards: same "always auto-render" reasoning as
+        # discussion — no manual Designer-canvas path, render_pinterest
+        # itself gates auto-*publish* on pinterest_publish_mode.
+        pjobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.pinterest_content,
+                not_stuck_on_missing_image,
+            )
+            .limit(10)
+            .all()
+        )
+        for (job_id,) in pjobs:
+            render_pinterest.delay(job_id)
+
+        if jobs or djobs or pjobs:
             logger.info(
-                "Design sweep: dispatched %d news + %d discussion renders",
-                len(jobs), len(djobs),
+                "Design sweep: dispatched %d news + %d discussion + %d pinterest renders",
+                len(jobs), len(djobs), len(pjobs),
             )
     finally:
         db.close()

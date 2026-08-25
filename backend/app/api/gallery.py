@@ -11,7 +11,7 @@ from app.config import get_settings
 router = APIRouter(prefix="/gallery", tags=["gallery"])
 settings = get_settings()
 
-_VALID_ENGINES = ("bing", "google", "9router")
+_VALID_ENGINES = ("bing", "google", "9router", "pinterest")
 
 
 class KeywordBody(BaseModel):

@@ -13,6 +13,8 @@ from app.models.scraped_articles import ScrapedArticle, ArticleStatus
 from app.models.gallery import GalleryKeyword, GalleryImage
 from app.models.design_templates import DesignTemplate
 from app.models.discussion_topics import DiscussionTopic
+from app.models.pinterest_sources import PinterestSource
+from app.models.pinterest_content_ideas import PinterestContentIdea
 from app.models.ai_copy_events import AICopyEvent
 
 __all__ = [
@@ -42,5 +44,7 @@ __all__ = [
     "GalleryImage",
     "DesignTemplate",
     "DiscussionTopic",
+    "PinterestSource",
+    "PinterestContentIdea",
     "AICopyEvent",
 ]

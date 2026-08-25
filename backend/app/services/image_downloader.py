@@ -467,3 +467,108 @@ def validate_and_store_upload(file_bytes: bytes, dest_dir: str | Path, min_size:
         height=img.height,
         engine="manual",
     )
+
+
+# ── Mode 5: Pinterest content source ──────────────────────────────────────
+#
+# Three live probes (a board fetch, a search-results fetch, a profile fetch)
+# confirmed: neither a board grid nor a search-results grid ever exposes a
+# per-pin permalink or description through _9router_fetch_markdown —
+# Pinterest's grid is JS-routed, so jina-reader's markdown has no anchor
+# around each thumbnail, just `![Image N: Pin](https://i.pinimg.com/...)`
+# with placeholder alt text. A profile URL is different: it lists that
+# user's boards as real anchor-wrapped links with real titles/pin-counts,
+# e.g. `[![img] ![img] ## Ferrari - Mistrzowskie zespoły F1 , 550 Pins ,
+# 7y](https://.../adamgawliczek3/ferrari-mistrzowskie-zespoly-f1/)`. A single
+# pin permalink page's own markdown was never reached by crawling (nothing
+# links to one) — its description shape below is a best-effort heuristic,
+# unconfirmed against a live fetch; if it never captures anything in
+# practice, callers already treat a missing description the same as an
+# absent one (fall through to vision-identify).
+
+_PIN_IMG_RE = re.compile(r"!\[[^\]]*\]\((https://i\.pinimg\.com/[^)\s]+)\)")
+_PROFILE_BOARD_RE = re.compile(r"##[^\]]*\bPins\b[^\]]*\]\((https://[^)\s]+pinterest\.com/[^)\s]+)\)")
+_PIN_URL_RE = re.compile(r"pinterest\.com/pin/\d+/?")
+_PROFILE_URL_RE = re.compile(r"pinterest\.com/[^/]+/?$")
+
+
+@dataclass
+class PinCandidate:
+    image_url: str
+    description: str | None = None
+
+
+def _upgrade_pin_image_url(url: str) -> str:
+    """Pinterest's CDN serves the same image at multiple sizes under
+    different path segments (e.g. `236x`, `736x`, `originals`) — swap the
+    thumbnail segment for the largest available so downstream min-size
+    filtering isn't fighting a deliberately small preview."""
+    return re.sub(r"/\d+x(?:_[A-Z0-9]+)?/", "/originals/", url, count=1)
+
+
+def classify_pinterest_url(url: str) -> str:
+    """"pin" | "profile" | "board", by URL shape alone (no fetch needed) —
+    a pin permalink (`/pin/<id>/`), a bare profile (`/<username>/`, no
+    further path segment), or anything else (a board, `/<username>/<slug>/`)."""
+    if _PIN_URL_RE.search(url):
+        return "pin"
+    if _PROFILE_URL_RE.search(url):
+        return "profile"
+    return "board"
+
+
+def fetch_profile_boards(url: str) -> list[str]:
+    """Fetch a Pinterest profile page and return every board URL it lists."""
+    markdown = _9router_fetch_markdown(url, context="pinterest_profile")
+    return list(dict.fromkeys(m.group(1) for m in _PROFILE_BOARD_RE.finditer(markdown)))
+
+
+def fetch_board_pins(url: str, limit: int = 10) -> list[PinCandidate]:
+    """Fetch a Pinterest board (or search-results) page and return its pin
+    thumbnails. Grid pages never carry real per-pin descriptions (confirmed
+    live) — every candidate comes back with description=None."""
+    markdown = _9router_fetch_markdown(url, context="pinterest_board")
+    seen: set[str] = set()
+    out: list[PinCandidate] = []
+    for m in _PIN_IMG_RE.finditer(markdown):
+        img_url = _upgrade_pin_image_url(m.group(1))
+        key = _dedup_key(img_url)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(PinCandidate(image_url=img_url))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def search_pinterest_candidates(search_url: str, limit: int = 10) -> list[PinCandidate]:
+    """AI-keyword path: same grid shape as a board, just a search-results URL."""
+    return fetch_board_pins(search_url, limit=limit)
+
+
+def fetch_pin(url: str) -> PinCandidate | None:
+    """Fetch a single Pinterest pin permalink page. Returns its main photo,
+    plus a description IF the page markdown carries a plausible plain-text
+    caption line (not a nav/boilerplate string, not a link/image/heading) —
+    best-effort, see module note above. None if no image was found at all."""
+    markdown = _9router_fetch_markdown(url, context="pinterest_pin")
+    m = _PIN_IMG_RE.search(markdown)
+    if not m:
+        return None
+    image_url = _upgrade_pin_image_url(m.group(1))
+
+    description = None
+    _BOILERPLATE = {"log in", "sign up", "explore", "search"}
+    for line in markdown.splitlines():
+        text = line.strip()
+        if not (15 <= len(text) <= 300):
+            continue
+        if text.startswith(("#", "[", "!", "http")) or "](" in text:
+            continue
+        if text.lower() in _BOILERPLATE:
+            continue
+        description = text
+        break
+
+    return PinCandidate(image_url=image_url, description=description)

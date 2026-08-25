@@ -227,6 +227,30 @@ export const updateDiscussionTopic = (
 export const deleteDiscussionTopic = (fanpageId: number, topicId: number) =>
   api.delete(`/fanpages/${fanpageId}/discussion-topics/${topicId}`);
 
+// ── Fanpage Mode 5 (Pinterest content) ───────────────────────────────────────
+export const addPinterestSource = (
+  fanpageId: number,
+  data: { source_url: string; label?: string }
+) => api.post(`/fanpages/${fanpageId}/pinterest-sources`, data);
+export const updatePinterestSource = (
+  fanpageId: number,
+  sourceId: number,
+  data: { source_url?: string; label?: string | null; is_active?: boolean }
+) => api.put(`/fanpages/${fanpageId}/pinterest-sources/${sourceId}`, data);
+export const deletePinterestSource = (fanpageId: number, sourceId: number) =>
+  api.delete(`/fanpages/${fanpageId}/pinterest-sources/${sourceId}`);
+export const listPinterestContentIdeas = (
+  fanpageId: number,
+  params: { status?: string; offset?: number } = {}
+) => api.get(`/fanpages/${fanpageId}/pinterest-content-ideas`, { params });
+export const updatePinterestContentIdea = (
+  fanpageId: number,
+  ideaId: number,
+  data: { title?: string; description?: string }
+) => api.put(`/fanpages/${fanpageId}/pinterest-content-ideas/${ideaId}`, data);
+export const deletePinterestContentIdea = (fanpageId: number, ideaId: number) =>
+  api.delete(`/fanpages/${fanpageId}/pinterest-content-ideas/${ideaId}`);
+
 // ── Design Templates ─────────────────────────────────────────────────────────
 export const listTemplates = (fanpageId?: number) =>
   api.get("/templates", { params: fanpageId ? { fanpage_id: fanpageId } : {} });

@@ -30,6 +30,7 @@ celery_app = Celery(
         "app.tasks.news_copywriter",
         "app.tasks.design_renderer",
         "app.tasks.discussion",
+        "app.tasks.pinterest",
     ],
 )
 
@@ -111,6 +112,14 @@ celery_app.conf.beat_schedule = {
     # to discussion_daily_count, paced across the 08:00–22:00 WIB window.
     "generate-discussion-content": {
         "task": "app.tasks.discussion.generate_discussion_content",
+        "schedule": 1800,
+        "options": {"expires": 1700},
+    },
+    # Mode 5 Pinterest content: same cadence/window as Mode 4 — tops up the
+    # idea queue and consumes one idea per fanpage per tick toward
+    # pinterest_daily_count.
+    "generate-pinterest-content": {
+        "task": "app.tasks.pinterest.generate_pinterest_content",
         "schedule": 1800,
         "options": {"expires": 1700},
     },

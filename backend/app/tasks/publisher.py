@@ -204,9 +204,10 @@ def publish_job(self, job_id: int):
         job = db.query(PublishJob).filter_by(id=job_id).first()
 
         from app.models.publish_jobs import ContentType
-        # news_content, ig_recreate and discussion all publish a single rendered
-        # design PNG via the same path (design_image_url + ai_generated_caption).
-        if job.content_type in (ContentType.news_content, ContentType.ig_recreate, ContentType.discussion):
+        # news_content, ig_recreate, discussion, and pinterest_content all
+        # publish a single rendered design PNG via the same path
+        # (design_image_url + ai_generated_caption).
+        if job.content_type in (ContentType.news_content, ContentType.ig_recreate, ContentType.discussion, ContentType.pinterest_content):
             _publish_news_job(db, job)
             return
 
@@ -308,7 +309,7 @@ def publish_job(self, job_id: int):
 def _publish_news_job(db, job):
     """Publish a news_content job (Feature 2, Phase 2E): single image post
     whose media is the rendered design PNG. No Post row involved."""
-    from app.models.publish_jobs import PublishJobStatus
+    from app.models.publish_jobs import PublishJobStatus, ContentType
     from app.models.target_fanpages import TargetFanpage
     from app.models.scraped_articles import ScrapedArticle, ArticleStatus
     from app.services.repliz_client import get_repliz_client_from_db
@@ -363,6 +364,20 @@ def _publish_news_job(db, job):
         article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
         if article:
             article.status = ArticleStatus.published
+
+    if job.content_type == ContentType.pinterest_content and job.source_gallery_image_id:
+        # Mode 5: once an idea's post actually goes live, it has no further
+        # use sitting in the queue (the queue is for reviewing/editing
+        # ideas BEFORE they post, not a history log — History already
+        # covers that) — delete it rather than accumulate months of
+        # "used" rows behind the pending ones (flagged by the user: ~400
+        # ideas/month at scale). Matched via the shared GalleryImage since
+        # each pin is only ever ingested into one idea (source_image_url
+        # dedup), so this is a safe 1:1 lookup without a separate FK.
+        from app.models.pinterest_content_ideas import PinterestContentIdea
+        db.query(PinterestContentIdea).filter_by(
+            gallery_image_id=job.source_gallery_image_id, status="used",
+        ).delete(synchronize_session=False)
 
     db.commit()
     logger.info(
@@ -438,7 +453,17 @@ def recover_stuck_auto_publishes():
             )
             .all()
         )
-        job_ids = [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs]
+        pinterest_jobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.content_type == ContentType.pinterest_content,
+                TargetFanpage.pinterest_publish_mode == PublishMode.auto,
+            )
+            .all()
+        )
+        job_ids = [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs] + [j for (j,) in pinterest_jobs]
         for job_id in job_ids:
             publish_job.delay(job_id)
         if job_ids:

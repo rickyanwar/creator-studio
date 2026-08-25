@@ -12,7 +12,7 @@ export type PublishJobStatus =
   | "published"
   | "failed"
   | "skipped";
-export type ContentType = "ig_repost" | "news_content";
+export type ContentType = "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content";
 export type AIProvider = "gemini" | "groq";
 export type MediaType = "image" | "album";
 export type PostStatus = "crawled" | "editing_image" | "stored" | "pending_fanout" | "done" | "cleaned";
@@ -76,6 +76,13 @@ export interface Fanpage {
   discussion_daily_count: number;
   discussion_topic_mode: string; // "news" | "evergreen" | "both"
   default_discussion_template_id: number | null;
+  // ── Mode 5: Pinterest content ──
+  pinterest_enabled: boolean;
+  pinterest_publish_mode: PublishMode;
+  pinterest_daily_count: number;
+  pinterest_source_mode: string; // "curated" | "ai_keyword" | "both"
+  pinterest_custom_prompt: string;
+  pinterest_hashtag_count: number;
 }
 
 export interface DiscussionTopicRef {
@@ -106,11 +113,33 @@ export interface IGSourceRef {
   caption_custom_prompt: string | null;
 }
 
+export interface PinterestSourceRef {
+  id: number;
+  source_url: string;
+  label: string | null;
+  is_active: boolean;
+  times_used: number;
+  last_used_at: string | null;
+}
+
+export interface PinterestContentIdeaRef {
+  id: number;
+  gallery_image_id: number;
+  title: string;
+  description: string;
+  source_type: string; // "ai_keyword" | "curated"
+  status: string; // "pending" | "used"
+  created_at: string;
+  used_at: string | null;
+}
+
 export interface FanpageDetail extends Fanpage {
   ig_sources: IGSourceRef[];
   ig_source_usernames: string[];
   news_sources: NewsSourceRef[];
   discussion_topics: DiscussionTopicRef[];
+  pinterest_sources: PinterestSourceRef[];
+  pinterest_content_ideas: PinterestContentIdeaRef[];
 }
 
 export interface Burner {
@@ -133,7 +162,7 @@ export interface PublishJob {
   id: number;
   post_id: number | null;
   fanpage_id: number;
-  content_type: "ig_repost" | "news_content" | "ig_recreate" | "discussion";
+  content_type: "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content";
   source_article_id: number | null;
   design_title: string | null;
   design_image_url: string | null;

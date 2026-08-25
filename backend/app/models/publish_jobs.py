@@ -23,6 +23,7 @@ class ContentType(str, enum.Enum):
     news_content = "news_content"
     ig_recreate = "ig_recreate"  # IG post classified + rebuilt on a quote/news template
     discussion = "discussion"    # Mode 4: AI-generated debate/hot-take card (news- or evergreen-seeded)
+    pinterest_content = "pinterest_content"  # Mode 5: photo-seeded card from a consumed PinterestContentIdea
 
 
 class AIProvider(str, enum.Enum):
@@ -45,6 +46,9 @@ class PublishJob(Base):
     # ── Content source (Feature 2) ────────────────
     content_type = Column(Enum(ContentType), default=ContentType.ig_repost, nullable=False, server_default="ig_repost")
     source_article_id = Column(Integer, ForeignKey("scraped_articles.id", ondelete="CASCADE"), nullable=True, index=True)
+    # Mode 5 only: the specific GalleryImage a consumed PinterestContentIdea
+    # was bound to — render_pinterest loads it directly, no search needed.
+    source_gallery_image_id = Column(Integer, ForeignKey("gallery_images.id", ondelete="SET NULL"), nullable=True, index=True)
     design_title = Column(Text, nullable=True)          # AI headline that goes on the design
     design_subtitle = Column(Text, nullable=True)       # AI sub-headline (may carry **red** markers)
     design_caption = Column(Text, nullable=True)        # AI caption line under the name badge (e.g. "on X's Y")
