@@ -663,7 +663,8 @@ def render_pinterest(self, job_id: int):
         # the full photo) — same signal photo_crops_well/
         # fix_unsafe_single_photo_face already compute, just used here to
         # pick the category instead of gating a crop-time fix.
-        category = "quote" if _dominant_face_bbox(image_bytes) else "news"
+        has_quote = any(q in (job.design_title or "") for q in ['"', '“', '”'])
+        category = "quote" if has_quote else "news"
         template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
         if not template or not template.template_json:
             job.status = PublishJobStatus.pending_design

@@ -120,7 +120,8 @@ def _consume_one(db, fanpage) -> bool:
     if gi and gi.local_path:
         try:
             image_bytes = Path(gi.local_path).read_bytes()
-            category = "quote" if _dominant_face_bbox(image_bytes) else "news"
+            has_quote = any(q in (idea.title or "") for q in ['"', '“', '”'])
+            category = "quote" if has_quote else "news"
         except OSError:
             pass
     template = resolve_template(db, category, fanpage=fanpage)
