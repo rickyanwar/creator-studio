@@ -661,10 +661,9 @@ def render_pinterest(self, job_id: int):
         # A detected face reads as a quote-style portrait (name/badge
         # treatment); no face reads as a news-style scene (headline over
         # the full photo) — same signal photo_crops_well/
-        # fix_unsafe_single_photo_face already compute, just used here to
         # pick the category instead of gating a crop-time fix.
-        has_quote = any(q in (job.design_title or "") for q in ['"', '“', '”'])
-        category = "quote" if has_quote else "news"
+        from app.services.pinterest_classifier import classify_pinterest_content
+        category = classify_pinterest_content(job.design_title, job.design_subtitle)
         template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
         if not template or not template.template_json:
             job.status = PublishJobStatus.pending_design

@@ -116,14 +116,13 @@ def _consume_one(db, fanpage) -> bool:
     # the Queue UI shows a sensible template before the job actually
     # renders, same as render_design/render_discussion already do).
     gi = db.query(GalleryImage).filter_by(id=idea.gallery_image_id).first()
-    category = "news"
-    if gi and gi.local_path:
-        try:
-            image_bytes = Path(gi.local_path).read_bytes()
-            has_quote = any(q in (idea.title or "") for q in ['"', '“', '”'])
-            category = "quote" if has_quote else "news"
-        except OSError:
-            pass
+    try:
+        from app.services.pinterest_classifier import classify_pinterest_content
+        category = classify_pinterest_content(idea.title, idea.description)
+    except Exception as e:
+        logger.error(f"Failed to classify pinterest idea {idea.id}: {e}")
+        has_quote = any(q in (idea.title or "") for q in ['"', '“', '”'])
+        category = "quote" if has_quote else "news"
     template = resolve_template(db, category, fanpage=fanpage)
 
     # The idea's description doubles as the actual Facebook post caption —
