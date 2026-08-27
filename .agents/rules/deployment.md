@@ -3,3 +3,5 @@
 - **NEVER** make direct code modifications on the VPS (Virtual Private Server) via SSH.
 - There is a CI/CD system in place. All changes MUST be made in the local repository first.
 - To deploy changes, commit and push to the GitHub repository. The CI/CD pipeline will automatically handle the deployment to the VPS.
+
+- **STRICT REQUIREMENT FOR COMMITS:** Do NOT automatically run `git commit` or `git push`. After making local code changes, you MUST stop and ask the user to review the changes. Wait for explicit permission (e.g., "push ke github") before committing and pushing.
