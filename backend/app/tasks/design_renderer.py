@@ -213,9 +213,44 @@ def render_design(self, job_id: int):
             return
 
         # ── Image selection (workflow §C) ──
-        image_src, gallery_image, image_marker = select_image_for_job(
-            db, job, fanpage, article, exclude_marker=job.last_image_marker,
+        from app.services.design_images import (
+            prepare_design_images, focus_points_for, align_split_focus_points,
+            watermark_datauri, find_role_object, _safe_face_cy_ceiling,
+            fix_unsafe_single_photo_face, single_photo_face_fits,
         )
+
+        safe_cy_ceiling = _safe_face_cy_ceiling(template.template_json, template.canvas_height)
+
+        # A candidate whose face is already too large to ever clear the
+        # text zone (see single_photo_face_fits — real incident, 2026-08-27:
+        # quote cards shipped with the mouth/chin cropped off by the caption)
+        # is rejected outright and the NEXT candidate tried, same
+        # exclude_marker mechanism the manual "re-edit with new image" action
+        # already uses — capped so a niche with only bad photos still lands
+        # on manual review instead of looping forever.
+        image_src = gallery_image = image_marker = None
+        exclude_marker = job.last_image_marker
+        for _attempt in range(3):
+            cand_src, cand_gi, cand_marker = select_image_for_job(
+                db, job, fanpage, article, exclude_marker=exclude_marker,
+            )
+            if not cand_src:
+                break
+            try:
+                cand_bytes = base64.b64decode(cand_src.split(",", 1)[1])
+                fits = single_photo_face_fits(
+                    cand_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+                )
+            except Exception:
+                fits = True  # can't decode to check — don't block over a hiccup
+            if fits:
+                image_src, gallery_image, image_marker = cand_src, cand_gi, cand_marker
+                break
+            logger.info(
+                "Design: job %d rejected candidate %s — face too large for this template's safe zone",
+                job_id, cand_marker,
+            )
+            exclude_marker = cand_marker
         if not image_src:
             job.status = PublishJobStatus.pending_design
             job.last_error = "needs manual image — no gallery match and no article hero image"
@@ -225,15 +260,27 @@ def render_design(self, job_id: int):
 
         # Two-slot templates also get a secondary photo (inset/split — see
         # design_images.prepare_design_images) with face-aware focus crops.
-        from app.services.design_images import (
-            prepare_design_images, focus_points_for, align_split_focus_points,
-            watermark_datauri, find_role_object, _safe_face_cy_ceiling,
-            fix_unsafe_single_photo_face,
-        )
         title = job.design_title or article.scraped_title
+        # extract_two_subjects/extract_secondary_subject (called inside
+        # prepare_design_images) need a real name to reason about. A
+        # quote-category job's title is DELIBERATELY the bare quote with no
+        # name in it (news_copywriter.py's prompt: "Do NOT include the
+        # speaker's name here" — the name goes in design_subtitle's name
+        # badge instead), so passing just `title` here starves the model of
+        # any subject signal and it hallucinates a plausible-sounding pair
+        # instead of correctly answering NONE/one-person — real incident,
+        # 2026-08-25: job 4796, a George Russell quote about a Mercedes
+        # team-order swap, paired with Lando Norris/Oscar Piastri photos —
+        # neither of whom is in the story. Splicing the name badge and the
+        # original scraped headline in ahead of the bare title gives it real
+        # names to ground on whenever they exist; `title` itself (the exact
+        # on-card text) is untouched below for the actual render payload.
+        subject_title = " — ".join(
+            p for p in (job.design_subtitle, article.scraped_title, title) if p
+        ) or title
         template_json, image_srcs = prepare_design_images(
             db, template.template_json, template.canvas_width,
-            title, fanpage.name, image_src,
+            subject_title, fanpage.name, image_src,
             main_path=gallery_image.local_path if gallery_image else None,
             expand=bool(fanpage.design_expand),
         )

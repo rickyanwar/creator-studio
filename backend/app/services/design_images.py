@@ -11,6 +11,7 @@ import base64
 import logging
 import os
 import re
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -362,11 +363,106 @@ def reflect_extend(image_bytes: bytes, target_w: int, target_h: int,
         return None
 
 
+# YuNet (opencv_zoo, WIDER FACE-trained DNN) vs. the Haar cascade this file
+# used to call at 3 separate sites: Haar's bounding box shifts unpredictably
+# with pose/angle/occlusion (a cap covering the forehead, a slight head
+# turn), which is exactly what made two split-photo halves' face-WIDTH
+# measurements land inconsistently even when both photos showed a
+# similarly-sized head to a human eye — real user feedback, 2026-08-25
+# ("gambar yang dihasilkan masih kurang baik... cara crop dan pemilihan
+# zoom"), after a numeric zoom-matching fix had already made the two
+# TARGET fractions equal (0.61 vs 0.57) without the RESULT looking equal —
+# the input measurement itself was the imprecise part, not the matching
+# arithmetic. Downloaded lazily (same pattern as hq_upscale.py's ONNX
+# models) to storage_base_path/sr_models/, cached across the process
+# lifetime; every caller below still falls back to the old Haar cascade if
+# the model can't be fetched/loaded, so this can only improve on the
+# previous behavior, never regress it to "no detection at all".
+# media.githubusercontent.com, NOT raw.githubusercontent.com — the model is
+# stored via git-lfs in opencv_zoo, and raw.* only serves the LFS pointer
+# text file (131 bytes) for an LFS path, not the actual binary.
+_YUNET_MODEL_URL = "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+_YUNET_WORKING_SIZE = 640  # see _yunet_dominant_face's docstring
+_yunet_lock = threading.Lock()
+_yunet_state = {"detector": None, "failed": False}
+
+
+def _get_yunet_detector():
+    if _yunet_state["detector"] is not None or _yunet_state["failed"]:
+        return _yunet_state["detector"]
+    with _yunet_lock:
+        if _yunet_state["detector"] is not None or _yunet_state["failed"]:
+            return _yunet_state["detector"]
+        try:
+            import urllib.request
+
+            import cv2
+            from app.config import get_settings
+
+            s = get_settings()
+            model_path = os.path.join(s.storage_base_path, "sr_models", "face_detection_yunet_2023mar.onnx")
+            if not (os.path.exists(model_path) and os.path.getsize(model_path) > 100_000):
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                tmp = model_path + ".part"
+                req = urllib.request.Request(_YUNET_MODEL_URL, headers={"User-Agent": "ig-fb-reposter"})
+                with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+                    f.write(r.read())
+                os.replace(tmp, model_path)
+            _yunet_state["detector"] = cv2.FaceDetectorYN_create(model_path, "", (320, 320), score_threshold=0.6)
+            logger.info("YuNet face detector loaded")
+        except Exception as exc:
+            logger.warning("YuNet face detector unavailable, falling back to Haar cascade: %s", exc)
+            _yunet_state["failed"] = True
+        return _yunet_state["detector"]
+
+
+def _yunet_dominant_face(image_bytes: bytes) -> tuple[float, float, float, float] | None:
+    """YuNet equivalent of the Haar-based measurement below — (fx, fy, fw, fh)
+    fractions of the image for the highest-confidence detected face, or None
+    if the detector is unavailable or finds nothing. Downscales to a max
+    dimension of _YUNET_WORKING_SIZE first — found via real testing,
+    2026-08-27: run directly on a full-resolution source photo (e.g.
+    2448x1632), YuNet's own confidence for an obvious, close-up face topped
+    out around 0.58 (below the 0.6 threshold, so it silently found nothing);
+    the exact same photo resized to 640px wide detected the same face at
+    0.94 confidence. The returned bbox is normalized fractions either way,
+    so detecting on the smaller image loses no precision that matters here."""
+    detector = _get_yunet_detector()
+    if detector is None:
+        return None
+    try:
+        import cv2
+        import numpy as np
+
+        img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        scale = min(1.0, _YUNET_WORKING_SIZE / max(w, h))
+        dw, dh = max(1, round(w * scale)), max(1, round(h * scale))
+        det_img = cv2.resize(img, (dw, dh)) if scale < 1.0 else img
+        detector.setInputSize((dw, dh))
+        _, faces = detector.detect(det_img)
+        if faces is None or len(faces) == 0:
+            return None
+        fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])[:4]
+        fx, fy = max(0.0, float(fx)), max(0.0, float(fy))
+        fw, fh = min(float(fw), dw - fx), min(float(fh), dh - fy)
+        return (fx / dw, fy / dh, fw / dw, fh / dh)
+    except Exception as exc:
+        logger.debug("_yunet_dominant_face failed: %s", exc)
+        return None
+
+
 def _dominant_face_bbox(image_bytes: bytes) -> tuple[float, float, float, float] | None:
     """Largest detected face as normalized (fx, fy, fw, fh) fractions of the
     image, or None if no face found. Used both to decide "does a face dominate
     the frame" and, via fh/face-bottom, "does it reach too far down for a
-    bottom text overlay" (an extreme close-up)."""
+    bottom text overlay" (an extreme close-up). Tries YuNet first (see above
+    for why), falls back to the original Haar cascade."""
+    face = _yunet_dominant_face(image_bytes)
+    if face is not None:
+        return face
     try:
         import cv2
         import numpy as np
@@ -409,12 +505,115 @@ _SPLIT_TARGET_FACE_FRAC = 0.62
 # reading of that data, not a proven exact cutoff.
 _SPLIT_MAX_SYNTHETIC_FILL = 0.45
 
+# Where each half's face TOP (hairline, not centre — see
+# content_aware_split_extend's `anchor="top"`) lands, as a fraction of the
+# slot height. Matching WIDTH via _SPLIT_TARGET_FACE_FRAC alone still lets
+# two photos land with visibly different headroom (a cap covering the
+# forehead, a tilted head, differing amounts of hair above the detected
+# face box all shrink/grow the box without changing its width) — real user
+# feedback, 2026-08-25 ("masih tidak bagus... cara cut splitnya", pointing
+# at a Newey/Alonso pair whose heads sat at very different heights even
+# after the face-width fix). 0.12 leaves clear headroom above either head
+# without pushing shoulders/chest into the template's bottom scrim band.
+_SPLIT_HEADROOM_TARGET_CY = 0.12
+
+# How much of each half's WIDTH gets the inner-edge darkening vignette
+# (see _seam_vignette) and how dark it gets at the seam itself — two flat
+# photos butted at a hard vertical line read as "taped together", not one
+# graphic (same 2026-08-25 feedback). Kept subtle: this is meant to read as
+# depth/mood, not as an obvious dark bar.
+_SEAM_VIGNETTE_FRAC = 0.08
+_SEAM_VIGNETTE_STRENGTH = 0.35
+
+# Per-channel brightness gain is clamped to this range when nudging both
+# split halves toward their shared average (see _match_split_exposure) — a
+# photo that's genuinely under/overexposed should still look off rather
+# than being forced to match; this is a cosmetic blend for two normally-lit
+# photos with merely different colour temperature/harshness, not a fix for
+# a broken source photo.
+_SEAM_EXPOSURE_GAIN_RANGE = (0.85, 1.18)
+
+
+def _match_split_exposure(left_bytes: bytes, right_bytes: bytes) -> tuple[bytes, bytes]:
+    """Split photos usually come from two different shoots/lighting setups —
+    even once both crop cleanly, a warm/harshly-lit photo next to a cool/
+    evenly-lit one still reads as two unrelated stock photos side by side
+    rather than one graphic (real user feedback, 2026-08-25). Nudges both
+    halves' per-channel brightness toward their shared average, gain capped
+    to _SEAM_EXPOSURE_GAIN_RANGE. Returns the inputs unchanged on any
+    failure — a missed blend is a minor cosmetic loss, not worth failing
+    the whole split over."""
+    try:
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        left_arr = np.asarray(Image.open(io.BytesIO(left_bytes)).convert("RGB")).astype(np.float32)
+        right_arr = np.asarray(Image.open(io.BytesIO(right_bytes)).convert("RGB")).astype(np.float32)
+
+        left_mean = left_arr.reshape(-1, 3).mean(axis=0)
+        right_mean = right_arr.reshape(-1, 3).mean(axis=0)
+        target = (left_mean + right_mean) / 2
+        lo_gain, hi_gain = _SEAM_EXPOSURE_GAIN_RANGE
+
+        def _apply(arr: "np.ndarray", mean: "np.ndarray") -> bytes:
+            gain = np.clip(target / np.maximum(mean, 1e-3), lo_gain, hi_gain)
+            out = np.clip(arr * gain, 0, 255).astype(np.uint8)
+            buf = io.BytesIO()
+            Image.fromarray(out).save(buf, "JPEG", quality=92)
+            return buf.getvalue()
+
+        return _apply(left_arr, left_mean), _apply(right_arr, right_mean)
+    except Exception as exc:
+        logger.warning("_match_split_exposure failed (using unmatched): %s", exc)
+        return left_bytes, right_bytes
+
+
+def _seam_vignette(left_bytes: bytes, right_bytes: bytes) -> tuple[bytes, bytes]:
+    """Darkens each half's INNER edge (the side touching the shared seam) in
+    a soft linear ramp, so the join reads as depth/vignette instead of a
+    flat hard cut — the same trick real editorial "head to head" graphics
+    use. Purely multiplicative darkening (never lightens, never touches
+    hue), applied AFTER _match_split_exposure so it can't fight that pass.
+    Returns the inputs unchanged on failure."""
+    try:
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        left_arr = np.asarray(Image.open(io.BytesIO(left_bytes)).convert("RGB")).astype(np.float32)
+        right_arr = np.asarray(Image.open(io.BytesIO(right_bytes)).convert("RGB")).astype(np.float32)
+
+        w = left_arr.shape[1]
+        band = max(1, int(w * _SEAM_VIGNETTE_FRAC))
+        ramp = np.linspace(0, _SEAM_VIGNETTE_STRENGTH, band, dtype=np.float32)
+
+        left_gain = np.ones(w, dtype=np.float32)
+        left_gain[w - band:] = 1 - ramp
+        right_gain = np.ones(w, dtype=np.float32)
+        right_gain[:band] = 1 - ramp[::-1]
+
+        left_out = np.clip(left_arr * left_gain[None, :, None], 0, 255).astype(np.uint8)
+        right_out = np.clip(right_arr * right_gain[None, :, None], 0, 255).astype(np.uint8)
+
+        lo = io.BytesIO()
+        Image.fromarray(left_out).save(lo, "JPEG", quality=92)
+        ro = io.BytesIO()
+        Image.fromarray(right_out).save(ro, "JPEG", quality=92)
+        return lo.getvalue(), ro.getvalue()
+    except Exception as exc:
+        logger.warning("_seam_vignette failed (using unblended): %s", exc)
+        return left_bytes, right_bytes
+
 
 def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
                                 zoom: float = 1.0, top_bias: float = 0.16,
                                 feather: int = 24, downscale: int = 5,
                                 face_bbox: tuple[float, float, float, float] | None = None,
-                                target_cy: float = 0.34) -> bytes | None:
+                                target_cy: float = 0.34,
+                                anchor: str = "center") -> bytes | None:
     """Fit `image_bytes` to `target_w` (scaled further by `zoom`), then fill
     the remaining canvas with content-aware synthesis (cv2.xphoto
     INPAINT_FSR_BEST) instead of reflect_extend's mirror-flip — built
@@ -425,10 +624,18 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
 
     `face_bbox` (fx, fy, fw, fh — normalized fractions of the ORIGINAL
     image, from `_dominant_face_bbox`) drives BOTH crop axes when given:
-    - vertical: the real photo is positioned so the face's centre lands at
-      `target_cy` (default 0.34, matching detect_focus_point/vision_focus_point's
-      own default for the ordinary non-split case) — NOT a blind top_bias
-      split. Callers with a specific template's own safe ceiling in hand
+    - vertical: the real photo is positioned so the face lands at `target_cy`
+      (default 0.34, matching detect_focus_point/vision_focus_point's own
+      default for the ordinary non-split case) — NOT a blind top_bias split.
+      `anchor` picks WHICH point of the face that is: "center" (default) is
+      the face's vertical midpoint; "top" is the face's top edge (hairline),
+      used by content_aware_split_pair so two different photos' HEADROOM
+      matches, not just their face centers — two faces of different detected
+      height (a cap covering the forehead, a tilted head, a closer/farther
+      shot) can share a center point while still landing with visibly
+      different space above the head, which reads as sloppy/unbalanced side
+      by side (real user feedback, 2026-08-25). Callers with a specific
+      template's own safe ceiling in hand
       (see `_safe_face_cy_ceiling`, used by `fix_unsafe_single_photo_face`)
       should pass THAT instead of relying on the flat default — a template
       whose title starts higher or lower than "typical" needs a different
@@ -475,18 +682,21 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
         arr_full = np.asarray(img_full)
         h_full = arr_full.shape[0]
 
+        def _anchor_px(h: int) -> float:
+            return face_bbox[1] * h if anchor == "top" else (face_bbox[1] + face_bbox[3] / 2) * h
+
         def _placement(gap: int) -> int:
             if face_bbox:
-                face_cy_px = (face_bbox[1] + face_bbox[3] / 2) * h_full
-                pt = int(round(target_h * target_cy - face_cy_px))
+                anchor_px = _anchor_px(h_full)
+                pt = int(round(target_h * target_cy - anchor_px))
                 return max(0, min(gap, pt))
             return int(gap * top_bias)
 
         if h_full >= target_h:
             over = h_full - target_h
             if face_bbox:
-                face_cy_px = (face_bbox[1] + face_bbox[3] / 2) * h_full
-                t = max(0, min(over, int(round(face_cy_px - target_h * target_cy))))
+                anchor_px = _anchor_px(h_full)
+                t = max(0, min(over, int(round(anchor_px - target_h * target_cy))))
             else:
                 t = int(over * top_bias)
             out = io.BytesIO()
@@ -539,24 +749,61 @@ def content_aware_split_pair(left_bytes: bytes, right_bytes: bytes, slot_w: int,
     independently-computed target is the more robust rule to generalize).
 
     Returns (left_datauri, right_datauri) on success, or None if either
-    side has no detected face, either side's synthetic-fill requirement
-    exceeds _SPLIT_MAX_SYNTHETIC_FILL (see its docstring — a photo whose
-    face is already large relative to its frame needs too little zoom,
-    meaning too much of the canvas would be invented), or either fill call
-    fails outright. None tells the caller (build_split_srcs) to keep the
-    existing cover-fit + zoom_l/zoom_r behavior for this pair instead —
-    content-aware is a conditional upgrade, not a hard requirement."""
+    side has no detected face or either fill call fails outright — that
+    still tells the caller (build_split_srcs) to keep the existing
+    cover-fit + zoom_l/zoom_r behavior for this pair, but is now rare (only
+    a face-detection or encode failure, not a fill-budget decision). Each
+    side's zoom is resolved against three independent lower bounds (ideal
+    0.62 target, a hard >=1.0 floor, and whatever keeps synthetic fill at/
+    under _SPLIT_MAX_SYNTHETIC_FILL) rather than aborting the whole pair
+    whenever one side is hard — see _resolve_zoom_and_fill below for why
+    each bound exists."""
     left_face = _dominant_face_bbox(left_bytes)
     right_face = _dominant_face_bbox(right_bytes)
     if not left_face or not right_face:
         return None
 
-    def _target_zoom_and_fill(face_w_frac: float, img_w: int, img_h: int) -> tuple[float, float]:
+    # zoom must satisfy THREE independent lower bounds at once, so compute
+    # each as its own floor on zoom and take the max rather than deriving
+    # one from the other (fill is a plain decreasing function of zoom, so
+    # "raise zoom" is always the right direction for all three — no
+    # candidate bound is ever individually sufficient on its own):
+    #   1. ideal_zoom — reach _SPLIT_TARGET_FACE_FRAC exactly.
+    #   2. 1.0 — content_aware_split_extend's width-crop step only handles
+    #      zoom >= 1.0 (it crops DOWN to target_w when the resize comes out
+    #      wider — see its `if rw > target_w` branch; there's no path for
+    #      rw < target_w). A face already large relative to its own source
+    #      frame (a tight close-up candidate) can compute an ideal_zoom
+    #      BELOW 1.0 — found via real testing 2026-08-25 on an Alonso
+    #      close-up (face 47% of its own frame width): the resized image
+    #      came out narrower than the slot and the composite was badly
+    #      misaligned (ear/cap visible, no face). A face already this size
+    #      needs no zoom-in to read clearly, so 1.0 is always a safe floor.
+    #   3. zoom_for_cap — whatever zoom keeps synthetic fill at/under
+    #      _SPLIT_MAX_SYNTHETIC_FILL for THIS photo's own height. Needed
+    #      because bound 2 can itself push fill back up past the cap (zoom
+    #      1.0 covers only the image's OWN aspect ratio, which can leave a
+    #      lot of vertical gap on a narrow split slot) — checking fill at
+    #      the ideal_zoom alone and never re-checking it after flooring to
+    #      1.0 is exactly the bug bound 2's docstring above describes.
+    # Whichever bound ends up binding, fill is then computed FRESH from the
+    # zoom actually used — never carried over from an earlier candidate
+    # zoom — so it always reflects what will actually be rendered. Real
+    # incident, 2026-08-25: job 4893 Newey/Alonso, one side an extreme
+    # near-unrecognizable close crop next to a normally framed other side —
+    # this whole function exists to keep both sides on the SAME equalized
+    # pipeline instead of the old independent cover-fit + zoom_l/zoom_r
+    # path falling back for the whole pair whenever either side was hard.
+    def _resolve_zoom_and_fill(face_w_frac: float, img_w: int, img_h: int) -> tuple[float, float]:
         fit_scale = slot_w / img_w
-        target_scale = _SPLIT_TARGET_FACE_FRAC * slot_w / (face_w_frac * img_w)
-        zoom = target_scale / fit_scale
-        synthetic_fill = max(0.0, 1 - (img_h * target_scale) / slot_h)
-        return zoom, synthetic_fill
+        ideal_target_scale = _SPLIT_TARGET_FACE_FRAC * slot_w / (face_w_frac * img_w)
+        ideal_zoom = ideal_target_scale / fit_scale
+        cap_target_scale = slot_h * (1 - _SPLIT_MAX_SYNTHETIC_FILL) / img_h
+        zoom_for_cap = cap_target_scale / fit_scale
+        zoom = max(ideal_zoom, zoom_for_cap, 1.0)
+        target_scale = zoom * fit_scale
+        fill = max(0.0, 1 - (img_h * target_scale) / slot_h)
+        return zoom, fill
 
     try:
         import io
@@ -567,19 +814,32 @@ def content_aware_split_pair(left_bytes: bytes, right_bytes: bytes, slot_w: int,
     except Exception:
         return None
 
-    zoom_l, fill_l = _target_zoom_and_fill(left_face[2], left_iw, left_ih)
-    zoom_r, fill_r = _target_zoom_and_fill(right_face[2], right_iw, right_ih)
-    if fill_l > _SPLIT_MAX_SYNTHETIC_FILL or fill_r > _SPLIT_MAX_SYNTHETIC_FILL:
-        logger.info(
-            "content_aware_split_pair: synthetic fill too high (left=%.0f%% right=%.0f%%, cap=%.0f%%) — "
-            "keeping cover-fit for this pair", fill_l * 100, fill_r * 100, _SPLIT_MAX_SYNTHETIC_FILL * 100,
-        )
-        return None
+    zoom_l, fill_l = _resolve_zoom_and_fill(left_face[2], left_iw, left_ih)
+    zoom_r, fill_r = _resolve_zoom_and_fill(right_face[2], right_iw, right_ih)
 
+    # anchor="top" (aligning both faces' hairlines to the same height) was
+    # tried here and REVERTED — 2026-08-25, real user comparison of both
+    # renders: top-anchoring made the two subjects look MORE mismatched in
+    # SIZE, not less (a cap/hair obscuring one photo's detected face box
+    # shifts where "top" lands, so equalizing headroom pushed that side's
+    # zoom up further, making that face read as bigger/more dominant than
+    # the other). The user's own verdict was they preferred the plain
+    # centre-anchored default they'd already seen — back to that; SIZE
+    # parity is what _SPLIT_TARGET_FACE_FRAC's shared width target above is
+    # for, not vertical anchoring.
     left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face)
     right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face)
     if not left_filled or not right_filled:
         return None
+
+    # Cosmetic-only passes — a photo pair that's already correctly framed
+    # can still read as two unrelated stock photos taped together (real
+    # user feedback, 2026-08-25) without these: bring both halves' exposure
+    # toward their shared average, then darken each half's inner edge in a
+    # soft ramp so the seam reads as depth rather than a flat hard cut.
+    left_filled, right_filled = _match_split_exposure(left_filled, right_filled)
+    left_filled, right_filled = _seam_vignette(left_filled, right_filled)
+
     logger.info(
         "content_aware_split_pair: applied (zoom_l=%.2f fill=%.0f%%, zoom_r=%.2f fill=%.0f%%)",
         zoom_l, fill_l * 100, zoom_r, fill_r * 100,
@@ -685,6 +945,80 @@ def fix_unsafe_single_photo_face(image_bytes: bytes, canvas_width: int, canvas_h
         natural_cy, safe_cy_ceiling, img_ar, slot_ar,
     )
     return "data:image/jpeg;base64," + base64.b64encode(filled).decode()
+
+
+def single_photo_face_fits(image_bytes: bytes, canvas_width: int, canvas_height: int,
+                            safe_cy_ceiling: float) -> bool:
+    """Mode 2/3 single-photo selection gate: can THIS candidate's face ever
+    be made to clear the template's text zone, even with
+    fix_unsafe_single_photo_face's best effort — or is the face simply too
+    LARGE relative to the frame for any repositioning to save it?
+
+    Real incident, 2026-08-27: production jobs (e.g. a Sean Strickland quote
+    card, a Ralf Schumacher quote card) shipped with the face's mouth/chin
+    cropped clean off by the caption text. Root cause was in
+    fix_unsafe_single_photo_face's own trigger condition — it compared the
+    face's CENTRE (`natural_cy`) against the ceiling, with no term for the
+    face's HEIGHT at all. An extreme close-up (a paparazzi lens filling the
+    frame edge-to-edge with just a face) can have a centre that reads as
+    "safe" while the face is simply too TALL for its bottom half to fit
+    above the ceiling — the fix's own gate silently skipped a photo that
+    badly needed it, and normal cover-fit shipped it uncorrected.
+
+    Rather than extend fix_unsafe_single_photo_face to try even harder on a
+    photo like this (more content-aware fill invented across a bigger area,
+    the same class of soft/discoloured artifact already found and rejected
+    for Mode 5's no-face landscape case — see that function's own docstring),
+    this gate runs BEFORE selection commits to a candidate: reject outright
+    and let the caller try a different photo. A face that's already too
+    zoomed-in to read as a normal editorial portrait doesn't make a good
+    hero image regardless of whether the crop can technically be forced to
+    fit, and this codebase already prefers "no candidate" over "a knowingly
+    bad one" elsewhere (see feedback-image-accuracy-over-availability).
+
+    True: normal cover-fit already has vertical slack (img_ar <= slot_ar),
+    or no face was detected (a separate concern — unchanged, still handled
+    by fix_unsafe_single_photo_face/cover-fit as before), or the face WOULD
+    fit even at fix_unsafe_single_photo_face's best achievable placement.
+    False: the face is too large for that placement to clear the text zone
+    even in the best case — reject this candidate."""
+    try:
+        import io
+        from PIL import Image
+
+        iw, ih = Image.open(io.BytesIO(image_bytes)).size
+    except Exception:
+        return True  # can't tell — don't block a photo over a decode hiccup
+    if not iw or not ih or not canvas_height or not canvas_width:
+        return True
+    img_ar = iw / ih
+    slot_ar = canvas_width / canvas_height
+    if img_ar <= slot_ar:
+        return True  # real cover-fit slack already exists — not this gate's concern
+
+    face = _dominant_face_bbox(image_bytes)
+    if not face:
+        return True  # no-face landscape case — unchanged, separate concern
+
+    # fix_unsafe_single_photo_face rescales at zoom=1.0 → scale = target_w/iw
+    # (a WIDTH-fit, not cover-fit's height-fit) before repositioning, which is
+    # exactly what creates room to move the face at all — the same face
+    # height that was `fh` of the original image becomes `fh * slot_ar /
+    # img_ar` of the final canvas under that rescale (derivable from
+    # scale_width_fit / scale_height_fit = slot_ar / img_ar). Centring the
+    # face at the ceiling (the best that function's positioning can do)
+    # puts the face's bottom edge at ceiling + half that scaled height.
+    _, _, _fw, fh = face
+    scaled_fh = fh * slot_ar / img_ar
+    best_case_bottom = safe_cy_ceiling + scaled_fh / 2
+
+    # _safe_face_cy_ceiling subtracts a flat 0.10 from the template's real
+    # title/scrim top to get `safe_cy_ceiling` — undo that to recover the
+    # actual boundary the face's bottom edge must clear, then allow a small
+    # buffer (0.03) since the ceiling's own margin already has some slack
+    # built in for typical (non-extreme) face heights.
+    title_top = min(0.95, safe_cy_ceiling + 0.10)
+    return best_case_bottom <= title_top + 0.03
 
 
 def photo_crops_well(image_bytes: bytes, canvas_width: int, canvas_height: int) -> bool:
@@ -1272,13 +1606,17 @@ def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
 
 
 def _face_width_fraction(image_bytes: bytes) -> float | None:
-    """OpenCV Haar-cascade measurement of the largest detected face's width
-    as a fraction of the photo's total width — a real pixel measurement, not
-    a vision model's guess (see _classify_split_frames docstring for why
-    that guess wasn't precise enough). Same cascade/confidence threshold as
-    detect_focus_point. Returns None if no confident face is found (the
-    caller then skips zoom correction for that photo rather than act on a
-    guess)."""
+    """Largest detected face's width as a fraction of the photo's total
+    width — a real pixel measurement, not a vision model's guess (see
+    _classify_split_frames docstring for why that guess wasn't precise
+    enough). Tries YuNet first (see _dominant_face_bbox's docstring for
+    why), falls back to the original Haar cascade. Returns None if no
+    confident face is found (the caller then skips zoom correction for that
+    photo rather than act on a guess)."""
+    face = _yunet_dominant_face(image_bytes)
+    if face is not None:
+        fw_frac = face[2]
+        return fw_frac if fw_frac >= 0.14 else None  # same trust floor as detect_focus_point
     try:
         import cv2
         import numpy as np
@@ -2059,7 +2397,47 @@ def extract_two_subjects(title: str, niche: str):
     side-by-side split illustration is actually the right editorial call —
     NOT just whenever two people happen to be named. See build_prompt below
     for the distinction (a name mentioned in passing vs. two people the
-    graphic should actually put face-to-face)."""
+    graphic should actually put face-to-face).
+
+    Real production incidents, 2026-08-27 (8 examples, one Repliz ID each:
+    6415b97c, 278841cd, 277e89c3, 643e2381, 643e25a3, 279605f4, 6445414c,
+    27980e3e): every one was a genuinely single-subject story — a farewell/
+    retirement, a signing, a team-boss's commentary ABOUT a driver, a quote
+    comparing several legends — that still got split. Sharpening the prompt
+    with concrete negative examples (see _extract_two_subjects_once) measured
+    10/10 correct across all 8 real headlines, 2 runs each — but a SEPARATE
+    re-render of the same headline the same day still reproduced a wrong
+    split (Bastianini paired with Raul Fernandez, the passing "incoming
+    teammate" mention the prompt explicitly warns against). One call to a
+    non-deterministic model, however well-prompted, cannot be trusted as
+    the sole gate for a decision this consequential — this function now
+    calls it TWICE and only accepts a two-person split when both calls
+    independently agree on the exact same pairing; any disagreement (the
+    far more common outcome for a genuinely borderline/wrong case — a
+    headline that actually deserves a duel reads as unambiguous to the
+    model both times, while an incidental-mention case tends to waffle)
+    falls back to the single-subject result instead of risking a second
+    wrong split."""
+    primary1, secondary1 = _extract_two_subjects_once(title, niche)
+    if not secondary1:
+        return primary1, None
+    primary2, secondary2 = _extract_two_subjects_once(title, niche)
+    if (
+        secondary2
+        and primary1.strip().lower() == primary2.strip().lower()
+        and secondary1.strip().lower() == secondary2.strip().lower()
+    ):
+        return primary1, secondary1
+    logger.info(
+        "extract_two_subjects: disagreement across 2 calls (%r|%r vs %r|%r) — falling back to single-subject",
+        primary1, secondary1, primary2, secondary2,
+    )
+    return primary1, None
+
+
+def _extract_two_subjects_once(title: str, niche: str):
+    """Single raw call — see extract_two_subjects (the public entry point)
+    for why this is never trusted alone."""
     from app.services.ai_caption import generate_caption
 
     prompt = (
@@ -2082,6 +2460,25 @@ def extract_two_subjects(title: str, niche: str):
         "minor detail. A single strong hero photo beats a forced pairing.\n"
         "- `NONE` — no individual person is the subject at all (an "
         "organization, event, vehicle, or decision instead).\n\n"
+        "Real examples that are ONE person, not two, even though a second "
+        "name appears — study the pattern, don't just pattern-match on "
+        "'two names present':\n"
+        '- "Team bids farewell to Rider A" + a mention that Rider A joins '
+        '"Team B alongside Rider C" next season → ONE (Rider A). Rider C is '
+        "a future teammate mentioned in passing, not part of this story's "
+        "moment.\n"
+        '- "Ducati bosses confirm Rider A\'s deal with Team B" (owned/run by '
+        'Legend C) → ONE (Rider A). Legend C is named only because they own '
+        "the team, not because the story is about the two of them together.\n"
+        '- "Team boss X raises a theory about Driver Y\'s new role" → ONE '
+        "(Driver Y, the actual subject of the theory) — X is the source "
+        "making a claim, not a second face this graphic should show; if the "
+        "claim is specifically about Y being ordered to help teammate Z, "
+        "consider Y|Z instead of X, but never X paired with anyone.\n"
+        '- A quote comparing several legends (\"A was spiritual, B was '
+        'Germanic, C keeps you at a distance\") credited to speaker D → ONE '
+        "(D, the speaker) — A/B/C are a passing comparison, not this card's "
+        "subject, and are never a valid pairing with D or each other here.\n\n"
         "Reply with ONLY the result in the exact format above — the one/two "
         "name(s) or NONE. People only — no teams/brands. No explanation."
     )
@@ -2092,10 +2489,18 @@ def extract_two_subjects(title: str, niche: str):
             return None, None
         parts = [p.strip() for p in s.split("|") if p.strip() and p.strip().upper() != "NONE"]
         if len(parts) >= 2:
-            return parts[0][:40], parts[1][:40]
+            primary, secondary = parts[0][:40], parts[1][:40]
+            # Real incident, 2026-08-27: the model returned the SAME person
+            # as both primary and secondary for a single-subject story (see
+            # extract_two_subjects's docstring) — both split halves rendered
+            # as two different photos of one person. A cheap, deterministic
+            # guard: normalized-identical names can never be a valid pairing.
+            if primary.strip().lower() == secondary.strip().lower():
+                return primary, None
+            return primary, secondary
         return (parts[0][:40] if parts else None), None
     except Exception as exc:
-        logger.warning("extract_two_subjects failed: %s", exc)
+        logger.warning("_extract_two_subjects_once failed: %s", exc)
         return None, None
 
 
@@ -2652,8 +3057,24 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
             tj["_splitImageZooms"] = zooms
             return tj, out_srcs
         logger.info("Design: split sourcing failed for %r | %r — falling back", primary, secondary)
+        # extract_two_subjects already made the careful "this IS a genuine
+        # duel" call (including its own 2-call self-consistency check) —
+        # only the ORIGINAL secondary's photo wasn't sourceable. Retry with
+        # a fresh secondary name rather than abandoning the duel outright.
+        subject = extract_secondary_subject(title, niche)
+    else:
+        # extract_two_subjects already decided this is NOT a genuine duel.
+        # Real incident, 2026-08-27: falling through to
+        # extract_secondary_subject here re-litigated that call with a much
+        # looser prompt (no concept of "should a split even happen" — just
+        # "name a second subject") and reliably found the exact same
+        # passing-mention name (a farewell announcement's incoming
+        # teammate) that extract_two_subjects had correctly rejected,
+        # silently undoing the fix. A careful "no" from the stricter check
+        # is never re-litigated by the looser one — single-subject stays
+        # single-subject.
+        subject = None
 
-    subject = secondary if (primary and secondary) else extract_secondary_subject(title, niche)
     if not subject:
         # Only one subject in the whole piece — no split to show, so the main
         # photo fills the full canvas instead of sitting half-width next to
