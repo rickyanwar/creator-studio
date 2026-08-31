@@ -482,6 +482,63 @@ def _dominant_face_bbox(image_bytes: bytes) -> tuple[float, float, float, float]
         return None
 
 
+# Below this, a photo is treated as too soft/low-detail to be a usable
+# candidate — see _is_low_quality_photo. Calibrated 2026-08-31 against real
+# production data, not theoretical: job 5300's actual shipped blurry photo
+# (Manu Gonzalez, see that function's docstring) measures ~85 on this scale;
+# two confirmed-sharp real gallery photos (job 5306 Marc Marquez, job 5303
+# Fermín Aldeguer) measure ~948 and ~1697. 150 sits well clear of the
+# confirmed-bad sample with a wide margin below both confirmed-good ones. An
+# initial guess of 60 (from a synthetic Gaussian-blur test only) was tested
+# against job 5300's real photo and found to NOT catch it — real-world
+# verification is why this number moved.
+_LOW_QUALITY_MIN_EDGE = 400  # px, shorter edge
+_LOW_QUALITY_BLUR_VARIANCE = 150.0  # Laplacian variance, on a 500px-normalized copy
+
+
+def _is_low_quality_photo(image_bytes: bytes) -> bool:
+    """True if this photo is objectively too soft/low-detail to ship — the
+    quality floor single_photo_face_fits applies to every candidate,
+    independent of face detection (see its docstring for why it's
+    unconditional, not just a no-face fallback). A raw pixel-dimension check
+    alone isn't reliable here: every "search"-tier candidate
+    (fetch_topic_datauri, the Getty subject search behind
+    fetch_subject_datauri) already runs through
+    upscaler.upscale_image_bytes, whose FSRCNN super-resolution + built-in
+    unsharp mask normalizes pixel DIMENSIONS and can even inflate a naive
+    sharpness reading — real-world testing (2026-08-31, see the constants
+    above) confirmed a genuinely blurry real photo still measured well above
+    an initially-guessed threshold post-upscale, hence the higher, real-data
+    -calibrated cutoff. Measures actual sharpness (variance of the Laplacian)
+    on a size-normalized copy, comparable regardless of the bytes' pixel
+    dimensions.
+
+    Real incident, 2026-08-28: job 5300 (Manu Gonzalez) shipped a visibly
+    blurry, low-detail "search"-tier photo because single_photo_face_fits had
+    no quality floor at all — see memory bug-design-expand-oversized-face.
+    That same real photo, re-tested through this function during the fix's
+    verification, turned out to also have a tiny (7%-width) incidental
+    background face YuNet detects — confirming a no-face-only condition
+    would have missed it too, which is why this check is unconditional."""
+    try:
+        import cv2
+        import numpy as np
+
+        arr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            return False  # can't decode — not this gate's concern
+        h, w = arr.shape[:2]
+        if not h or not w or min(h, w) < _LOW_QUALITY_MIN_EDGE:
+            return True
+        scale = 500 / w
+        norm = cv2.resize(arr, (500, max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
+        variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+        return variance < _LOW_QUALITY_BLUR_VARIANCE
+    except Exception:
+        return False  # can't tell — don't block a photo over a decode hiccup
+
+
 # Target: both split halves' faces end up at the SAME fraction of the slot's
 # width (see content_aware_split_pair). Tuned 2026-08-24 through many rounds
 # of real user feedback on an actual split render (Marquez/Bagnaia, then
@@ -976,12 +1033,27 @@ def single_photo_face_fits(image_bytes: bytes, canvas_width: int, canvas_height:
     fit, and this codebase already prefers "no candidate" over "a knowingly
     bad one" elsewhere (see feedback-image-accuracy-over-availability).
 
-    True: normal cover-fit already has vertical slack (img_ar <= slot_ar),
-    or no face was detected (a separate concern — unchanged, still handled
-    by fix_unsafe_single_photo_face/cover-fit as before), or the face WOULD
-    fit even at fix_unsafe_single_photo_face's best achievable placement.
-    False: the face is too large for that placement to clear the text zone
-    even in the best case — reject this candidate."""
+    True: the photo is sharp enough to ship (see _is_low_quality_photo), AND
+    EITHER normal cover-fit already has vertical slack (img_ar <= slot_ar),
+    or no face was detected (handled by fix_unsafe_single_photo_face/
+    cover-fit as before), or the face WOULD fit even at
+    fix_unsafe_single_photo_face's best achievable placement. False: the
+    photo is too soft/low-detail to ship regardless of face, OR the face is
+    too large for that placement to clear the text zone even in the best
+    case.
+
+    2026-08-31: originally the low-quality check only ran when NO face was
+    detected at all — real incident, 2026-08-28: job 5300 (Manu Gonzalez)
+    shipped a visibly blurry "search"-tier photo (Getty/Google fallback, see
+    fetch_topic_datauri) because a face-detection failure was never
+    distinguished from "this photo is just bad quality". Verifying that
+    exact fix against job 5300's real photo (2026-08-31) found the no-face
+    condition itself was too narrow: YuNet detects a tiny (7%-width)
+    incidental background face in it, which would have bypassed a
+    no-face-only check entirely — so the quality floor now applies
+    unconditionally, before face detection even runs. A genuinely sharp
+    photo (with or without a face — an action shot, a bike/car-only shot) is
+    unaffected either way."""
     try:
         import io
         from PIL import Image
@@ -991,14 +1063,18 @@ def single_photo_face_fits(image_bytes: bytes, canvas_width: int, canvas_height:
         return True  # can't tell — don't block a photo over a decode hiccup
     if not iw or not ih or not canvas_height or not canvas_width:
         return True
+
+    if _is_low_quality_photo(image_bytes):
+        return False
+
+    face = _dominant_face_bbox(image_bytes)
+    if not face:
+        return True
+
     img_ar = iw / ih
     slot_ar = canvas_width / canvas_height
     if img_ar <= slot_ar:
         return True  # real cover-fit slack already exists — not this gate's concern
-
-    face = _dominant_face_bbox(image_bytes)
-    if not face:
-        return True  # no-face landscape case — unchanged, separate concern
 
     # fix_unsafe_single_photo_face rescales at zoom=1.0 → scale = target_w/iw
     # (a WIDTH-fit, not cover-fit's height-fit) before repositioning, which is
@@ -2990,15 +3066,23 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
       two subjects (both sides FACE or both ACTION)
     Every lookup failure degrades gracefully to fewer images.
     """
-    # Reframe the MAIN photo to fill the image slot when it would otherwise be
-    # heavily cropped. Done up-front so every path below uses the filled photo.
-    if expand:
-        img_slot = find_role_object(template_json, "image")
+    def _expand_main(datauri: str, tj) -> str:
+        # Reframe the MAIN photo to fill the image slot when it would
+        # otherwise be heavily cropped. Must run against `tj` — the template
+        # actually paired with `datauri` in the return below — not the
+        # original template_json: on split-capable templates the "image"
+        # slot only reaches its real final width (widened to the full
+        # canvas, or left half-width) once the split/no-split decision below
+        # is made. Reading the pre-decision width here produced badly
+        # oversized-face crops (confirmed 2026-08-28, see memory
+        # bug-design-expand-oversized-face).
+        img_slot = find_role_object(tj, "image")
         tw = int((img_slot or {}).get("width", canvas_width) * (img_slot or {}).get("scaleX", 1)) if img_slot else canvas_width
         th = int((img_slot or {}).get("height", 0) * (img_slot or {}).get("scaleY", 1)) if img_slot else 0
         if tw and th:
             # Build the composite at the render scale so photo detail survives.
-            main_datauri = _expand_datauri(main_datauri, tw * DESIGN_SCALE, th * DESIGN_SCALE)
+            return _expand_datauri(datauri, tw * DESIGN_SCALE, th * DESIGN_SCALE)
+        return datauri
 
     if not smart:
         # A rectangular image_2 (split) slot left in place with only one
@@ -3011,15 +3095,25 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         slot = find_role_object(template_json, "image_2")
         if slot is not None and slot.get("type") == "rect":
             tj = _widen_to_full(template_json, canvas_width)
+            if expand:
+                main_datauri = _expand_main(main_datauri, tj)
             return tj, _with_inset(tj, [main_datauri])
+        if expand:
+            main_datauri = _expand_main(main_datauri, template_json)
         return template_json, _with_inset(template_json, [main_datauri])
 
     slot = find_role_object(template_json, "image_2")
     if slot is None:
+        if expand:
+            main_datauri = _expand_main(main_datauri, template_json)
         return template_json, _with_inset(template_json, [main_datauri])
 
     if slot.get("type") in ("circle", "ellipse"):
-        # ── Inset flow ──
+        # ── Inset flow ── "image" is never widened for an inset template
+        # (only a rectangular image_2 ever triggers _widen_to_full), so its
+        # slot geometry here is already final — safe to expand up front.
+        if expand:
+            main_datauri = _expand_main(main_datauri, template_json)
         subject = extract_secondary_subject(title, niche)
         if not subject:
             logger.info("Design: no secondary subject for %r — image_2 left empty", title[:50])
@@ -3044,6 +3138,8 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         built = build_split_srcs(db, primary, secondary, image_type, niche,
                                   slot_w=split_slot_w, slot_h=split_slot_h)
         if built:
+            # Both slots get freshly-sourced photos here — main_datauri never
+            # makes it into the output, so there's nothing to expand.
             srcs, zooms = built
             logger.info("Design: split layout %r | %r (%s)", primary, secondary, image_type)
             out_srcs = _with_inset(template_json, srcs)
@@ -3081,11 +3177,19 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         # an empty grey panel.
         logger.info("Design: no secondary subject for %r — image widened to full width", title[:50])
         tj = _widen_to_full(template_json, canvas_width)
+        if expand:
+            main_datauri = _expand_main(main_datauri, tj)
         return tj, _with_inset(tj, [main_datauri])
     uri, gi = find_gallery_datauri(db, subject, exclude_path=main_path, niche=niche)
     if not uri:
         logger.info("Design: no gallery image for secondary subject %r — image widened to full width", subject)
         tj = _widen_to_full(template_json, canvas_width)
+        if expand:
+            main_datauri = _expand_main(main_datauri, tj)
         return tj, _with_inset(tj, [main_datauri])
     logger.info("Design: image_2 subject=%r → gallery image %d", subject, gi.id)
+    if expand:
+        # This slot never gets widened (image_2 stays filled at half-width),
+        # so `template_json`'s original geometry is already the final one.
+        main_datauri = _expand_main(main_datauri, template_json)
     return template_json, _with_inset(template_json, [main_datauri, uri])
