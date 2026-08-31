@@ -293,6 +293,20 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </div>
+
+              {data.disk_gallery_mb > 0 && (
+                <div className="mt-4 pt-4 border-t border-hairline flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Icon icon="solar:gallery-bold-duotone" width={14} className="text-text-secondary" />
+                    <span className="text-xs text-text-secondary">Image Gallery</span>
+                  </div>
+                  <span className="text-xs font-semibold text-text-primary">
+                    {data.disk_gallery_mb >= 1024
+                      ? `${(data.disk_gallery_mb / 1024).toFixed(1)} GB`
+                      : `${data.disk_gallery_mb} MB`}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 

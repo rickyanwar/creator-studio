@@ -205,6 +205,7 @@ export interface DashboardStats {
   }>;
   disk_used_mb: number;
   disk_total_mb: number;
+  disk_gallery_mb: number;
   ai_stats: {
     total: number;
     success: number;

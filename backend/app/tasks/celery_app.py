@@ -155,6 +155,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.cleanup.cleanup_old_media",
         "schedule": crontab(minute=0, hour="*/2"),
     },
+    # Design PNG retention: once daily at 03:00 WIB (20:00 UTC) — see
+    # cleanup.cleanup_old_designs's docstring
+    "cleanup-old-designs": {
+        "task": "app.tasks.cleanup.cleanup_old_designs",
+        "schedule": crontab(hour=20, minute=0),
+    },
     # Fanpage sync: every 6 hours
     "sync-fanpages": {
         "task": "app.tasks.fanpage_sync.sync_fanpages_from_repliz",

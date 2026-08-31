@@ -1,5 +1,6 @@
 """Dashboard overview stats endpoint."""
 
+import os
 import shutil
 from datetime import datetime, timedelta, timezone
 
@@ -74,6 +75,26 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
     except Exception:
         pass
 
+    # Gallery folder size specifically — disk_used_mb above is whole-filesystem
+    # usage (shutil.disk_usage), which doesn't say how much of that is source
+    # photos (gallery/) vs. rendered design PNGs (designs/) etc. Surfaced
+    # separately on the dashboard so growth in the reusable photo bank is
+    # visible on its own, distinct from designs/ (which now has its own
+    # 45-day retention — see app.tasks.cleanup.cleanup_old_designs).
+    disk_gallery_mb = 0
+    try:
+        gallery_path = os.path.join(media_path, "gallery")
+        total_bytes = 0
+        for dirpath, _dirnames, filenames in os.walk(gallery_path):
+            for name in filenames:
+                try:
+                    total_bytes += os.path.getsize(os.path.join(dirpath, name))
+                except OSError:
+                    pass
+        disk_gallery_mb = round(total_bytes / (1024 * 1024))
+    except Exception:
+        pass
+
     # AI copy-generation health (rolling 24h) — see logs.py's "ai" category
     # for the incident-level detail behind this number.
     ai_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
@@ -114,6 +135,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         "burners": burner_stats,
         "disk_used_mb": disk_used_mb,
         "disk_total_mb": disk_total_mb,
+        "disk_gallery_mb": disk_gallery_mb,
         "ai_stats": ai_stats,
         "gallery_fetch_stats": gallery_fetch_stats,
     }
