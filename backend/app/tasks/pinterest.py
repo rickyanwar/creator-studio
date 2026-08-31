@@ -33,8 +33,18 @@ _WINDOW_END_HOUR = 22
 # Keep the queue topped up to this many pending ideas per fanpage; only
 # fetch a small batch per tick (not the full deficit at once) so the paid
 # webfetch/vision spend spreads across ticks instead of bursting.
+#
+# _TOPUP_BATCH raised 3->6 2026-08-31: real production logs showed the
+# candidate->idea survival rate is low and volatile (watermark/description
+# -match/identify rejections) — one observed tick fetched 3 candidates and
+# kept 0 as ideas. With _consume_one popping at most 1 idea/tick, a queue
+# that nets less than ~1 surviving idea/tick on average drains and stays
+# empty, which is why a fanpage with pinterest_daily_count=25 was only
+# actually producing 6-8 jobs/day despite the 08:00-22:00 WIB window having
+# ~28 ticks to work with. Fetching more raw candidates per topup gives the
+# same survival RATE more chances to clear the 1/tick consumption bar.
 _MIN_QUEUE_SIZE = 5
-_TOPUP_BATCH = 3
+_TOPUP_BATCH = 6
 
 
 def _wib_day_bounds_utc(now_utc: datetime) -> tuple[datetime, datetime]:

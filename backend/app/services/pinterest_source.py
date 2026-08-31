@@ -30,6 +30,53 @@ def _existing_pinterest_urls(db) -> set[str]:
     }
 
 
+_RECENT_TOPICS_LIMIT = 12
+
+
+def _recent_pinterest_topics(db, fanpage) -> list[str]:
+    """Recent Mode 5 subjects for this fanpage (published/queued job titles
+    + whatever's still sitting pending in the idea queue) — passed as
+    generate_pinterest_search_keyword's `avoid_keywords` so the AI-keyword
+    path doesn't keep re-picking the same figure/car every tick.
+
+    Real incident, 2026-08-31: a fanpage with an F1-golden-era persona
+    prompt had its Mode 5 output dominated by Ayrton Senna (13 of 23 recent
+    posts) because `avoid_keywords` existed on
+    generate_pinterest_search_keyword but nothing here ever populated/passed
+    it — each tick's AI call had zero memory of what the last tick already
+    picked, so it kept converging on the most iconic answer for the prompt.
+
+    Recent PublishJob rows are used rather than PinterestContentIdea (whose
+    "used" rows get deleted once a job actually publishes — see
+    app/tasks/publisher.py's Mode 5 cleanup note) so this still has
+    real history to avoid even hours after a post went live."""
+    from app.models.publish_jobs import PublishJob, ContentType
+    from app.models.pinterest_content_ideas import PinterestContentIdea
+
+    recent_jobs = (
+        db.query(PublishJob.design_title)
+        .filter(
+            PublishJob.fanpage_id == fanpage.id,
+            PublishJob.content_type == ContentType.pinterest_content,
+        )
+        .order_by(PublishJob.created_at.desc())
+        .limit(_RECENT_TOPICS_LIMIT)
+        .all()
+    )
+    pending = (
+        db.query(PinterestContentIdea.title)
+        .filter(PinterestContentIdea.fanpage_id == fanpage.id, PinterestContentIdea.status == "pending")
+        .all()
+    )
+    seen: set[str] = set()
+    out: list[str] = []
+    for (title,) in list(pending) + list(recent_jobs):
+        if title and title not in seen:
+            seen.add(title)
+            out.append(title)
+    return out[:_RECENT_TOPICS_LIMIT]
+
+
 def collect_new_candidates(db, fanpage, mode: str, limit: int = _CANDIDATES_PER_TICK):
     """Returns list[(PinCandidate, source_type, source_ref)] not already in
     gallery_images. "both" tries ai_keyword first, falling back to the
@@ -57,7 +104,8 @@ def collect_new_candidates(db, fanpage, mode: str, limit: int = _CANDIDATES_PER_
 
     def _try_ai_keyword():
         try:
-            keyword = generate_pinterest_search_keyword(fanpage)
+            avoid = _recent_pinterest_topics(db, fanpage)
+            keyword = generate_pinterest_search_keyword(fanpage, avoid_keywords=avoid)
         except Exception as exc:
             logger.warning("Pinterest: AI-keyword generation failed for fanpage %d: %s", fanpage.id, exc)
             return []
