@@ -2225,6 +2225,74 @@ def vision_identify_pin_subject(image_bytes: bytes, niche: str = "", custom_prom
         return {"identified": False, "title": "", "description": ""}
 
 
+def vision_check_photo_quality(image_bytes: bytes) -> bool:
+    """Mode 5 (Pinterest): pins are user-uploaded/reposted and vary wildly in
+    quality — unlike Getty/editorial sources (Mode 2/3), nothing upstream
+    guarantees a press-quality original, and nothing here previously checked
+    for it at all.
+
+    Real incident, 2026-08-31: user flagged two Fight Today posts (Jon Jones
+    vs Dominick Reyes, Conor McGregor) as too blurry/low-detail to publish.
+    Pixel-level checks were tried FIRST and don't reliably catch this: both
+    photos scored a HIGH Laplacian-variance (2431, 2773 — the sharpness
+    metric design_images._is_low_quality_photo uses for Mode 2/3, see that
+    function) despite looking soft/lacking real detail to the eye — the
+    photos had already been through upscaler.upscale_image_bytes (FSRCNN),
+    whose sharpening artificially inflates edge-variance without adding
+    genuine detail, so the metric reads "sharp" while a human reviewer
+    reads "blurry, upscaled-looking." Brightness/dark-fraction/noise-
+    residual stats were also tested on the same photos and didn't separate
+    them from a confirmed-fine one either (see memory
+    feature-pinterest-content-source's incident notes). This asks the
+    vision model to make the same holistic call a human editor would,
+    instead of trying to find the right pixel formula.
+
+    Prompt calibrated 2026-08-31 against these exact 3 real photos (one
+    user-confirmed fine, two user-confirmed bad) — two earlier prompt
+    attempts failed in opposite directions (a strict one rejected all 3
+    including the fine one; a lenient one accepted all 3 including the bad
+    ones). A 1-10 detail_score + a required one-phrase evidence-based
+    `reason` (not just a bare true/false) is what finally separated them
+    correctly: Silva (fine) scored 8, Jones/McGregor (bad) scored 4 and 3
+    with reasons "low resolution and compression artifacts" — forcing the
+    model to point at specific evidence, not just intuit a verdict, is what
+    fixed it. Don't collapse this back to a bare true/false ask if this
+    ever needs re-tuning; re-verify against real photos, not assumptions —
+    a plausible-sounding prompt swung wildly both ways here before this
+    one worked.
+
+    Fails CLOSED (assume NOT good enough) on any error — same convention as
+    vision_has_watermark/vision_check_pin_description."""
+    try:
+        content = [
+            {"type": "text", "text": (
+                "Rate this photo's sharpness/detail on a scale that matters for social "
+                "media posting.\n"
+                "Look closely at fine detail: skin texture, hair strands, fabric weave, "
+                "background clarity. A photo that looks soft, waxy/plasticky, or where fine "
+                "texture is smeared/missing when you look closely — even if the overall photo "
+                "looks reasonably clear at a glance — should score LOW. This commonly happens "
+                "to photos that were digitally upscaled from a smaller original, or that have "
+                "visible compression blockiness: edges look artificially sharpened but real "
+                "texture is gone.\n"
+                'Reply with ONLY JSON: {"detail_score": 1-10, "good_quality": true|false, '
+                '"reason": "one short phrase naming specific evidence"}\n'
+                "good_quality should be true only for detail_score 6 or higher. No markdown fences."
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        raw = _vision_chat(content, max_tokens=800, context="vision_check_photo_quality")
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return False
+        import json as _json
+        d = _json.loads(m.group(0))
+        return bool(d.get("good_quality", False))
+    except Exception as exc:
+        logger.warning("vision_check_photo_quality failed (treating as low quality): %s", exc)
+        return False
+
+
 def vision_has_watermark(image_bytes: bytes) -> bool:
     """Mode 5 (Pinterest): stock/editorial photo agencies (LAT Images, XPB,
     RaceFans, etc.) commonly stamp a visible logo/URL/copyright mark on their

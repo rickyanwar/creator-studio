@@ -172,6 +172,7 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
     from app.models.pinterest_content_ideas import PinterestContentIdea
     from app.services.design_images import (
         vision_check_pin_description, vision_identify_pin_subject, vision_has_watermark,
+        vision_check_photo_quality, _is_low_quality_photo,
     )
     from app.services.image_downloader import _fetch_and_store
 
@@ -187,12 +188,34 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
     item = saved[0]
     image_bytes = Path(item.local_path).read_bytes()
 
-    # Checked before the description/identify vision call so a watermarked
-    # pin is rejected without spending a second vision call on it (see
+    # Free (no AI call) — catches genuine blur/undersized photos before
+    # spending any vision-call budget. Real incident, 2026-08-31: this
+    # alone is NOT sufficient (see vision_check_photo_quality's docstring —
+    # a real flagged-bad photo scored a HIGH sharpness variance despite
+    # looking soft/upscaled to the eye), which is why the vision check below
+    # exists too — this is just the cheap first pass for the clear-cut cases.
+    if _is_low_quality_photo(image_bytes):
+        Path(item.local_path).unlink(missing_ok=True)
+        return None
+
+    # Checked before the description/identify vision calls so a rejected
+    # pin doesn't spend extra vision-call budget on it (see
     # vision_has_watermark's docstring — real batch testing this session
     # found agency watermarks surviving straight through to the published
     # post on the no-crop direct-post fallback).
     if vision_has_watermark(image_bytes):
+        Path(item.local_path).unlink(missing_ok=True)
+        return None
+
+    # Pinterest has no equivalent of Getty's editorial-quality floor — pins
+    # are user-uploaded/reposted and vary wildly, and unlike Mode 2/3 (see
+    # single_photo_face_fits in design_images.py), nothing here previously
+    # judged photo quality at all beyond the cheap check above. Real
+    # incident, 2026-08-31: user flagged two Fight Today posts (Jon Jones vs
+    # Dominick Reyes, Conor McGregor) as too blurry/low-detail to publish —
+    # see vision_check_photo_quality's docstring for why a vision call,
+    # not more pixel math, was the fix.
+    if not vision_check_photo_quality(image_bytes):
         Path(item.local_path).unlink(missing_ok=True)
         return None
 
