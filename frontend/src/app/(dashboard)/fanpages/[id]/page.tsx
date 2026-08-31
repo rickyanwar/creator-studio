@@ -22,6 +22,10 @@ import {
   addDiscussionTopic,
   updateDiscussionTopic,
   deleteDiscussionTopic,
+  listDiscussionContentIdeas,
+  createDiscussionContentIdea,
+  updateDiscussionContentIdea,
+  deleteDiscussionContentIdea,
   addPinterestSource,
   updatePinterestSource,
   deletePinterestSource,
@@ -29,7 +33,7 @@ import {
   updatePinterestContentIdea,
   deletePinterestContentIdea,
 } from "@/lib/api";
-import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, PinterestSourceRef, PinterestContentIdeaRef } from "@/lib/types";
+import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, DiscussionContentIdeaRef, PinterestSourceRef, PinterestContentIdeaRef } from "@/lib/types";
 import { Icon } from "@iconify/react";
 import { CaptionCriteriaEditor, captionFromSource, captionToPayload, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
 
@@ -384,6 +388,82 @@ export default function FanpageEditPage() {
     await deleteDiscussionTopic(fanpageId, topicId);
     const fresh = await mutate();
     if (fresh) setForm((prev) => ({ ...prev, discussion_topics: fresh.discussion_topics }));
+  }
+
+  // ── Mode 4 Content Ideas Queue state (mirrors Mode 5's below) ──
+  const [newDiscSeed, setNewDiscSeed] = useState("");
+  const [newDiscSubjectHint, setNewDiscSubjectHint] = useState("");
+  const [discIdeaSaving, setDiscIdeaSaving] = useState(false); // AI drafts synchronously on add
+  const [editingDiscIdeaId, setEditingDiscIdeaId] = useState<number | null>(null);
+  const [editDiscQuestion, setEditDiscQuestion] = useState("");
+  const [editDiscSubject, setEditDiscSubject] = useState("");
+  const [editDiscCaption, setEditDiscCaption] = useState("");
+  const [editDiscLabel, setEditDiscLabel] = useState("DISCUSSION");
+  const [discIdeas, setDiscIdeas] = useState<DiscussionContentIdeaRef[]>([]);
+  const [discIdeasHasMore, setDiscIdeasHasMore] = useState(false);
+  const [discIdeasLoadingMore, setDiscIdeasLoadingMore] = useState(false);
+
+  const loadDiscIdeasFirstPage = useCallback(async () => {
+    const res = await listDiscussionContentIdeas(fanpageId, { status: "pending" });
+    const data = res.data as { items: DiscussionContentIdeaRef[]; has_more: boolean };
+    setDiscIdeas(data.items);
+    setDiscIdeasHasMore(data.has_more);
+  }, [fanpageId]);
+
+  async function handleLoadMoreDiscIdeas() {
+    setDiscIdeasLoadingMore(true);
+    try {
+      const res = await listDiscussionContentIdeas(fanpageId, { status: "pending", offset: discIdeas.length });
+      const data = res.data as { items: DiscussionContentIdeaRef[]; has_more: boolean };
+      setDiscIdeas((prev) => [...prev, ...data.items]);
+      setDiscIdeasHasMore(data.has_more);
+    } finally {
+      setDiscIdeasLoadingMore(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDiscIdeasFirstPage();
+  }, [loadDiscIdeasFirstPage]);
+
+  async function handleAddDiscIdea() {
+    if (!newDiscSeed.trim()) return;
+    setDiscIdeaSaving(true);
+    try {
+      const created = await createDiscussionContentIdea(fanpageId, {
+        seed_text: newDiscSeed.trim(),
+        subject_hint: newDiscSubjectHint.trim() || undefined,
+      });
+      setDiscIdeas((prev) => [created.data as DiscussionContentIdeaRef, ...prev]);
+      setNewDiscSeed("");
+      setNewDiscSubjectHint("");
+    } finally {
+      setDiscIdeaSaving(false);
+    }
+  }
+
+  function startEditDiscIdea(idea: DiscussionContentIdeaRef) {
+    setEditingDiscIdeaId(idea.id);
+    setEditDiscQuestion(idea.question);
+    setEditDiscSubject(idea.subject_name);
+    setEditDiscCaption(idea.caption);
+    setEditDiscLabel(idea.label);
+  }
+
+  async function handleSaveDiscIdea(ideaId: number) {
+    const updated = await updateDiscussionContentIdea(fanpageId, ideaId, {
+      label: editDiscLabel,
+      question: editDiscQuestion.trim(),
+      subject_name: editDiscSubject.trim(),
+      caption: editDiscCaption.trim(),
+    });
+    setEditingDiscIdeaId(null);
+    setDiscIdeas((prev) => prev.map((i) => (i.id === ideaId ? (updated.data as DiscussionContentIdeaRef) : i)));
+  }
+
+  async function handleDeleteDiscIdea(ideaId: number) {
+    await deleteDiscussionContentIdea(fanpageId, ideaId);
+    setDiscIdeas((prev) => prev.filter((i) => i.id !== ideaId));
   }
 
   // ── Mode 5 (Pinterest content) state ──
@@ -1325,7 +1405,7 @@ export default function FanpageEditPage() {
 
         {form.discussion_enabled && (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="label">Cards per day</label>
                 <input
@@ -1351,6 +1431,21 @@ export default function FanpageEditPage() {
                 </select>
                 <p className="text-[11px] text-text-secondary mt-1">
                   News = fact-grounded from Mode 2 sources. Evergreen = timeless opinion debates you seed below.
+                </p>
+              </div>
+              <div>
+                <label className="label">Label type</label>
+                <select
+                  className="input w-full"
+                  value={(form.discussion_label_mode as string | undefined) ?? "both"}
+                  onChange={(e) => set("discussion_label_mode", e.target.value)}
+                >
+                  <option value="both">Both (AI picks per card)</option>
+                  <option value="discussion">Discussion only (question)</option>
+                  <option value="hot_take">Hot Take only (bold claim)</option>
+                </select>
+                <p className="text-[11px] text-text-secondary mt-1">
+                  Restricts which badge style the AI is allowed to use on the card.
                 </p>
               </div>
             </div>
@@ -1449,6 +1544,136 @@ export default function FanpageEditPage() {
                   Add
                 </button>
               </div>
+            </div>
+
+            {/* Content ideas queue */}
+            <div className="border-t border-hairline pt-4 space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Content Ideas Queue</p>
+                <p className="text-[11px] text-text-secondary mt-0.5">
+                  Auto-populated, oldest-first — each idea is already fully drafted (label, question, subject,
+                  caption). Edit anything before it posts, or delete ideas you don&apos;t want used. Type a title
+                  below and the AI will draft the rest immediately.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder="Title/topic, e.g. Is Verstappen the most complete driver ever?"
+                  value={newDiscSeed}
+                  onChange={(e) => setNewDiscSeed(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !discIdeaSaving && handleAddDiscIdea()}
+                />
+                <input
+                  type="text"
+                  className="input sm:w-48"
+                  placeholder="Photo subject (optional)"
+                  value={newDiscSubjectHint}
+                  onChange={(e) => setNewDiscSubjectHint(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !discIdeaSaving && handleAddDiscIdea()}
+                />
+                <button
+                  onClick={handleAddDiscIdea}
+                  disabled={discIdeaSaving || !newDiscSeed.trim()}
+                  className="btn-primary shrink-0 disabled:opacity-50"
+                >
+                  {discIdeaSaving ? "Drafting…" : "Generate"}
+                </button>
+              </div>
+
+              <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+                {discIdeas.length === 0 ? (
+                  <p className="text-[11px] text-text-secondary italic">No pending ideas yet — they&apos;ll appear here automatically, or add a title above.</p>
+                ) : (
+                  discIdeas.map((idea) =>
+                      editingDiscIdeaId === idea.id ? (
+                        <div key={idea.id} className="p-2.5 rounded-lg border border-primary-main space-y-2">
+                          <div className="flex gap-2">
+                            {(["DISCUSSION", "HOT TAKE"] as const).map((l) => (
+                              <label key={l} className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name={`disc-idea-label-${idea.id}`}
+                                  checked={editDiscLabel === l}
+                                  onChange={() => setEditDiscLabel(l)}
+                                  className="accent-primary-main"
+                                />
+                                <span className="text-xs text-text-primary">{l}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <input
+                            type="text"
+                            className="input w-full text-sm"
+                            value={editDiscQuestion}
+                            onChange={(e) => setEditDiscQuestion(e.target.value)}
+                            placeholder="Question / claim"
+                          />
+                          <input
+                            type="text"
+                            className="input w-full text-sm"
+                            value={editDiscSubject}
+                            onChange={(e) => setEditDiscSubject(e.target.value)}
+                            placeholder="Photo subject"
+                          />
+                          <textarea
+                            className="input w-full text-sm"
+                            rows={2}
+                            value={editDiscCaption}
+                            onChange={(e) => setEditDiscCaption(e.target.value)}
+                            placeholder="Facebook caption"
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={() => setEditingDiscIdeaId(null)} className="text-xs text-text-secondary px-2 py-1">
+                              Cancel
+                            </button>
+                            <button onClick={() => handleSaveDiscIdea(idea.id)} className="btn-primary text-xs px-3 py-1">
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={idea.id} className="flex items-start gap-3 p-2.5 rounded-lg border border-hairline">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[10px] font-semibold text-primary-main uppercase tracking-wide">{idea.label}</p>
+                            <p className="text-sm font-medium leading-tight text-text-primary truncate">{idea.question}</p>
+                            <p className="text-[11px] text-text-secondary line-clamp-2">{idea.caption}</p>
+                            <p className="text-[10px] text-text-secondary mt-0.5 uppercase tracking-wide">
+                              {idea.subject_name} · {idea.source_type}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => startEditDiscIdea(idea)}
+                              className="text-text-secondary hover:text-text-primary transition-colors"
+                              title="Edit"
+                            >
+                              <Icon icon="solar:pen-new-round-bold-duotone" width={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteDiscIdea(idea.id)}
+                              className="text-text-secondary hover:text-error-main transition-colors"
+                              title="Delete"
+                            >
+                              <Icon icon="solar:trash-bin-trash-bold-duotone" width={16} />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    )
+                )}
+              </div>
+              {discIdeasHasMore && (
+                <button
+                  onClick={handleLoadMoreDiscIdeas}
+                  disabled={discIdeasLoadingMore}
+                  className="text-xs text-primary-main hover:underline disabled:opacity-50"
+                >
+                  {discIdeasLoadingMore ? "Loading…" : "Load more"}
+                </button>
+              )}
             </div>
 
             <p className="text-[11px] text-text-secondary">

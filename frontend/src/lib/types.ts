@@ -75,6 +75,7 @@ export interface Fanpage {
   discussion_publish_mode: PublishMode;
   discussion_daily_count: number;
   discussion_topic_mode: string; // "news" | "evergreen" | "both"
+  discussion_label_mode: string; // "discussion" | "hot_take" | "both"
   default_discussion_template_id: number | null;
   // ── Mode 5: Pinterest content ──
   pinterest_enabled: boolean;
@@ -133,11 +134,24 @@ export interface PinterestContentIdeaRef {
   used_at: string | null;
 }
 
+export interface DiscussionContentIdeaRef {
+  id: number;
+  label: string; // "DISCUSSION" | "HOT TAKE"
+  question: string;
+  subject_name: string;
+  caption: string;
+  source_type: string; // "news" | "evergreen" | "general" | "manual"
+  status: string; // "pending" | "used"
+  created_at: string;
+  used_at: string | null;
+}
+
 export interface FanpageDetail extends Fanpage {
   ig_sources: IGSourceRef[];
   ig_source_usernames: string[];
   news_sources: NewsSourceRef[];
   discussion_topics: DiscussionTopicRef[];
+  discussion_content_ideas: DiscussionContentIdeaRef[];
   pinterest_sources: PinterestSourceRef[];
   pinterest_content_ideas: PinterestContentIdeaRef[];
 }

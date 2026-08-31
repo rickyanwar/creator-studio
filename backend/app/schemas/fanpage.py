@@ -60,6 +60,7 @@ class FanpageBase(BaseModel):
     discussion_publish_mode: PublishMode = PublishMode.manual_review
     discussion_daily_count: int = 2
     discussion_topic_mode: str = "both"  # "news" | "evergreen" | "both"
+    discussion_label_mode: str = "both"  # "discussion" | "hot_take" | "both"
     default_discussion_template_id: Optional[int] = None
 
     # ── Mode 5: Pinterest content ──
@@ -185,11 +186,39 @@ class PinterestContentIdeaUpdate(BaseModel):
     description: Optional[str] = None
 
 
+class DiscussionContentIdeaRef(BaseModel):
+    id: int
+    label: str
+    question: str
+    subject_name: str
+    caption: str
+    source_type: str
+    status: str
+    created_at: datetime
+    used_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class DiscussionContentIdeaUpdate(BaseModel):
+    label: Optional[str] = None
+    question: Optional[str] = None
+    subject_name: Optional[str] = None
+    caption: Optional[str] = None
+
+
+class DiscussionContentIdeaCreate(BaseModel):
+    seed_text: str
+    subject_hint: Optional[str] = None
+    label: Optional[str] = None  # "DISCUSSION" | "HOT TAKE" — override, else AI picks per discussion_label_mode
+
+
 class FanpageDetailOut(FanpageOut):
     ig_sources: list[IGSourceRef] = []
     ig_source_usernames: list[str] = []  # kept for backward compat
     news_sources: list[NewsSourceRef] = []
     discussion_topics: list[DiscussionTopicRef] = []
+    discussion_content_ideas: list[DiscussionContentIdeaRef] = []
     pinterest_sources: list[PinterestSourceRef] = []
     pinterest_content_ideas: list[PinterestContentIdeaRef] = []
 

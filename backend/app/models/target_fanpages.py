@@ -111,6 +111,9 @@ class TargetFanpage(Base):
     discussion_daily_count = Column(Integer, default=2, nullable=False, server_default="2")
     # "news" | "evergreen" | "both" — where the scheduler draws topics from.
     discussion_topic_mode = Column(String(16), default="both", nullable=False, server_default="both")
+    # "discussion" | "hot_take" | "both" — restricts which label style the AI
+    # is allowed to pick (see news_copywriter.py's discussion prompt builders).
+    discussion_label_mode = Column(String(16), default="both", nullable=False, server_default="both")
 
     # ── Mode 5: Pinterest content ──────────────────
     # A photo is the seed instead of text: candidates are pulled from
@@ -175,4 +178,5 @@ class TargetFanpage(Base):
     discussion_topics = relationship("DiscussionTopic", back_populates="fanpage", cascade="all, delete-orphan")
     pinterest_sources = relationship("PinterestSource", back_populates="fanpage", cascade="all, delete-orphan")
     pinterest_content_ideas = relationship("PinterestContentIdea", back_populates="fanpage", cascade="all, delete-orphan")
+    discussion_content_ideas = relationship("DiscussionContentIdea", back_populates="fanpage", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="fanpage")

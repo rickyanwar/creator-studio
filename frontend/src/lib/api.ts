@@ -226,6 +226,21 @@ export const updateDiscussionTopic = (
 ) => api.put(`/fanpages/${fanpageId}/discussion-topics/${topicId}`, data);
 export const deleteDiscussionTopic = (fanpageId: number, topicId: number) =>
   api.delete(`/fanpages/${fanpageId}/discussion-topics/${topicId}`);
+export const listDiscussionContentIdeas = (
+  fanpageId: number,
+  params: { status?: string; offset?: number } = {}
+) => api.get(`/fanpages/${fanpageId}/discussion-content-ideas`, { params });
+export const createDiscussionContentIdea = (
+  fanpageId: number,
+  data: { seed_text: string; subject_hint?: string; label?: string }
+) => api.post(`/fanpages/${fanpageId}/discussion-content-ideas`, data);
+export const updateDiscussionContentIdea = (
+  fanpageId: number,
+  ideaId: number,
+  data: { label?: string; question?: string; subject_name?: string; caption?: string }
+) => api.put(`/fanpages/${fanpageId}/discussion-content-ideas/${ideaId}`, data);
+export const deleteDiscussionContentIdea = (fanpageId: number, ideaId: number) =>
+  api.delete(`/fanpages/${fanpageId}/discussion-content-ideas/${ideaId}`);
 
 // ── Fanpage Mode 5 (Pinterest content) ───────────────────────────────────────
 export const addPinterestSource = (

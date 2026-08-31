@@ -14,6 +14,7 @@ from app.schemas.fanpage import (
     PreviewNewsCopyRequest, PreviewNewsCopyResponse,
     FanpageSourceRecreateUpdate,
     DiscussionTopicAdd, DiscussionTopicUpdate,
+    DiscussionContentIdeaUpdate, DiscussionContentIdeaCreate,
     PinterestSourceAdd, PinterestSourceUpdate, PinterestContentIdeaUpdate,
 )
 
@@ -82,6 +83,20 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
         .all()
     )
     out.discussion_topics = [DiscussionTopicRef.model_validate(t) for t in topics]
+
+    from app.models.discussion_content_ideas import DiscussionContentIdea
+    from app.schemas.fanpage import DiscussionContentIdeaRef
+    # First page only, same reasoning as pinterest_content_ideas below — the
+    # UI's Content Ideas Queue section pages through the rest via
+    # GET /discussion-content-ideas.
+    disc_ideas = (
+        db.query(DiscussionContentIdea)
+        .filter_by(fanpage_id=fanpage_id, status="pending")
+        .order_by(DiscussionContentIdea.created_at.asc())
+        .limit(_IDEAS_PAGE_SIZE)
+        .all()
+    )
+    out.discussion_content_ideas = [DiscussionContentIdeaRef.model_validate(i) for i in disc_ideas]
 
     from app.models.pinterest_sources import PinterestSource
     from app.models.pinterest_content_ideas import PinterestContentIdea
@@ -305,6 +320,113 @@ def delete_discussion_topic(fanpage_id: int, topic_id: int, db: DB, _: CurrentUs
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
     db.delete(topic)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/{fanpage_id}/discussion-content-ideas")
+def list_discussion_content_ideas(fanpage_id: int, db: DB, _: CurrentUser, status: str = "pending", offset: int = 0):
+    """Paginated queue listing (oldest-first, matching FIFO consumption
+    order) — same pattern as list_pinterest_content_ideas below."""
+    from app.models.discussion_content_ideas import DiscussionContentIdea
+    from app.schemas.fanpage import DiscussionContentIdeaRef
+
+    rows = (
+        db.query(DiscussionContentIdea)
+        .filter_by(fanpage_id=fanpage_id, status=status)
+        .order_by(DiscussionContentIdea.created_at.asc())
+        .offset(offset)
+        .limit(_IDEAS_PAGE_SIZE)
+        .all()
+    )
+    return {
+        "items": [DiscussionContentIdeaRef.model_validate(i) for i in rows],
+        "has_more": len(rows) == _IDEAS_PAGE_SIZE,
+    }
+
+
+@router.post("/{fanpage_id}/discussion-content-ideas", status_code=status.HTTP_201_CREATED)
+def create_discussion_content_idea(fanpage_id: int, body: DiscussionContentIdeaCreate, db: DB, _: CurrentUser):
+    """Manually seed the idea queue with a user-typed title/topic — AI drafts
+    the actual question/label/caption synchronously (the same
+    generate_discussion_copy call the evergreen tier uses), landing in the
+    queue for review like any other idea. No Mode 5 equivalent exists —
+    Pinterest ideas are always photo/AI-sourced, never manually typed."""
+    from app.models.target_fanpages import TargetFanpage
+    from app.models.discussion_content_ideas import DiscussionContentIdea
+    from app.schemas.fanpage import DiscussionContentIdeaRef
+    from app.services.news_copywriter import generate_discussion_copy
+
+    fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fanpage:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+
+    seed_text = body.seed_text.strip()
+    if not seed_text:
+        raise HTTPException(status_code=400, detail="seed_text is required")
+
+    try:
+        copy = generate_discussion_copy(fanpage, seed_text=seed_text, subject_hint=body.subject_hint)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI copywriting failed: {exc}")
+
+    # An explicit label override is a one-off request for THIS idea, not a
+    # fanpage-wide constraint — applied post-generation rather than steering
+    # the prompt, since any phrasing mismatch is easily fixed by the user
+    # editing the drafted question right here in the review queue.
+    label = copy.label
+    override = (body.label or "").strip().upper()
+    if override in ("DISCUSSION", "HOT TAKE"):
+        label = override
+
+    idea = DiscussionContentIdea(
+        fanpage_id=fanpage_id,
+        label=label,
+        question=copy.question,
+        subject_name=copy.subject_name,
+        caption=copy.caption,
+        source_type="manual",
+        status="pending",
+    )
+    db.add(idea)
+    db.commit()
+    db.refresh(idea)
+    return DiscussionContentIdeaRef.model_validate(idea)
+
+
+@router.put("/{fanpage_id}/discussion-content-ideas/{idea_id}")
+def update_discussion_content_idea(fanpage_id: int, idea_id: int, body: DiscussionContentIdeaUpdate, db: DB, _: CurrentUser):
+    """Edit a queued idea's label/question/subject/caption before it's
+    consumed into a job."""
+    from app.models.discussion_content_ideas import DiscussionContentIdea
+    from app.schemas.fanpage import DiscussionContentIdeaRef
+
+    idea = db.query(DiscussionContentIdea).filter_by(id=idea_id, fanpage_id=fanpage_id).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found")
+
+    data = body.model_dump(exclude_unset=True)
+    for field in ("question", "subject_name", "caption"):
+        if field in data and data[field] is not None:
+            data[field] = data[field].strip()
+    if "label" in data and data["label"] is not None:
+        label = data["label"].strip().upper()
+        data["label"] = label if label in ("DISCUSSION", "HOT TAKE") else idea.label
+    for field, value in data.items():
+        setattr(idea, field, value)
+    db.commit()
+    db.refresh(idea)
+    return DiscussionContentIdeaRef.model_validate(idea)
+
+
+@router.delete("/{fanpage_id}/discussion-content-ideas/{idea_id}")
+def delete_discussion_content_idea(fanpage_id: int, idea_id: int, db: DB, _: CurrentUser):
+    from app.models.discussion_content_ideas import DiscussionContentIdea
+
+    idea = db.query(DiscussionContentIdea).filter_by(id=idea_id, fanpage_id=fanpage_id).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    db.delete(idea)
     db.commit()
     return {"ok": True}
 

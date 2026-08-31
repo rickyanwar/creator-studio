@@ -15,6 +15,7 @@ from app.models.design_templates import DesignTemplate
 from app.models.discussion_topics import DiscussionTopic
 from app.models.pinterest_sources import PinterestSource
 from app.models.pinterest_content_ideas import PinterestContentIdea
+from app.models.discussion_content_ideas import DiscussionContentIdea
 from app.models.ai_copy_events import AICopyEvent
 
 __all__ = [
@@ -46,5 +47,6 @@ __all__ = [
     "DiscussionTopic",
     "PinterestSource",
     "PinterestContentIdea",
+    "DiscussionContentIdea",
     "AICopyEvent",
 ]

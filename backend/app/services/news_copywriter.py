@@ -238,12 +238,34 @@ def _discussion_caption_block(fanpage, source_name: str | None) -> str:
    - Additional notes: {custom_prompt if custom_prompt else "none"}"""
 
 
+def _discussion_label_point(fanpage, discussion_example: str, hot_take_example: str, both_line: str) -> str:
+    """Point-1 "label" instruction, gated by fanpage.discussion_label_mode.
+    "both" (default) keeps each prompt's own free-choice wording; "discussion"
+    /"hot_take" locks the label instead of leaving it to the model — done
+    prompt-side (not a post-generation override) so the phrasing rule in
+    point 2 ("if label is DISCUSSION: question... if HOT TAKE: declarative...")
+    still matches what actually gets picked. See memory
+    feature4-discussion-content for why this needed to be prompt-side."""
+    mode = (getattr(fanpage, "discussion_label_mode", None) or "both").lower()
+    if mode == "discussion":
+        return f'1. "label" MUST be "DISCUSSION" — {discussion_example}'
+    if mode == "hot_take":
+        return f'1. "label" MUST be "HOT TAKE" — {hot_take_example}'
+    return both_line
+
+
 def build_discussion_news_prompt(fanpage, article) -> str:
     """Prompt: turn a scraped article into a debate card grounded in its facts."""
     news_source = article.news_source if article else None
     source_name = news_source.name if news_source else "the original source"
     content = (article.scraped_content or "")[:_MAX_CONTENT_CHARS]
     language = fanpage.mode2_caption_language
+    label_point = _discussion_label_point(
+        fanpage,
+        discussion_example='an open question, e.g. "Is George the most hated driver on the grid?"',
+        hot_take_example='a bold, arguable claim stated as fact, e.g. "Lewis was fully robbed of the 2016 championship."',
+        both_line='1. "label" — either "DISCUSSION" (an open question, e.g. "Is George the most hated driver on the grid?") or "HOT TAKE" (a bold, arguable claim stated as fact, e.g. "Lewis was fully robbed of the 2016 championship"). Pick whichever is more provocative for this story.',
+    )
 
     return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" — the caliber of Bleacher Report or a big motorsport fan page. Your job: turn one news story into a DEBATE post that makes fans argue in the comments.
 
@@ -254,7 +276,7 @@ CONTENT:
 
 Produce ONE discussion card grounded in the facts of this article.
 
-1. "label" — either "DISCUSSION" (an open question, e.g. "Is George the most hated driver on the grid?") or "HOT TAKE" (a bold, arguable claim stated as fact, e.g. "Lewis was fully robbed of the 2016 championship"). Pick whichever is more provocative for this story.
+{label_point}
 2. "question" — the single big line printed on the image.
    - If label is "DISCUSSION": phrase it as a yes/no-style question ending in "?".
    - If label is "HOT TAKE": phrase it as a punchy declarative statement (no question mark), and you MAY wrap it in quotes only if it reads like a spoken take.
@@ -275,12 +297,18 @@ def build_discussion_evergreen_prompt(fanpage, seed_text: str, subject_hint: str
     """
     language = fanpage.mode2_caption_language
     hint_line = f'\nSUBJECT HINT: {subject_hint}' if subject_hint else ""
+    label_point = _discussion_label_point(
+        fanpage,
+        discussion_example="an open opinion question.",
+        hot_take_example="a bold, arguable opinion stated as a claim.",
+        both_line='1. "label" — "DISCUSSION" (an open opinion question) or "HOT TAKE" (a bold, arguable opinion stated as a claim). Prefer "DISCUSSION" for evergreen debates.',
+    )
 
     return f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}". Turn the debate seed below into a polished DISCUSSION post that makes fans argue in the comments.
 
 DEBATE SEED (the user's idea, may be rough): {seed_text}{hint_line}
 
-1. "label" — "DISCUSSION" (an open opinion question) or "HOT TAKE" (a bold, arguable opinion stated as a claim). Prefer "DISCUSSION" for evergreen debates.
+{label_point}
 2. "question" — the single big line printed on the image.
    - If label is "DISCUSSION": a yes/no-style opinion question ending in "?".
    - If label is "HOT TAKE": a punchy declarative opinion (no question mark).
@@ -331,6 +359,12 @@ def build_discussion_general_prompt(
     is a tighter bar than merely not repeating within the week."""
     language = fanpage.mode2_caption_language
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+    label_point = _discussion_label_point(
+        fanpage,
+        discussion_example="an open question.",
+        hot_take_example="a bold, arguable claim stated as fact.",
+        both_line='1. "label" — either "DISCUSSION" (an open question) or "HOT TAKE" (a bold, arguable claim stated as fact). Pick whichever is more provocative.',
+    )
     avoid_line = ""
     if avoid_subjects:
         avoid_line = f"\nAVOID these subjects — already covered recently, pick someone/something else: {', '.join(avoid_subjects)}"
@@ -362,7 +396,7 @@ Produce ONE discussion card about a genuinely contested, current-or-recent topic
 
 It must feel genuinely FRESH, not a reskin of something this page already ran with a different name slotted in. Before finalizing, judge which realistic candidate topic would actually drive the STRONGEST engagement (comments, shares, arguments) from this niche's fans RIGHT NOW — favor something genuinely divisive and current over a generic, safe, low-friction pick.
 
-1. "label" — either "DISCUSSION" (an open question) or "HOT TAKE" (a bold, arguable claim stated as fact). Pick whichever is more provocative.
+{label_point}
 2. "question" — the single big line printed on the image.
    - If label is "DISCUSSION": phrase as a yes/no-style question ending in "?".
    - If label is "HOT TAKE": phrase as a punchy declarative statement (no question mark).

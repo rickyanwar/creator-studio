@@ -1,10 +1,17 @@
 """Mode 4: AI discussion / hot-take content — quota-driven per fanpage.
 
-Unlike Mode 2 (one card per incoming article), Mode 4 is paced: the beat task
-`generate_discussion_content` ticks every 30 min and, for each fanpage with
-Mode 4 enabled, creates debate cards up to `discussion_daily_count` per WIB day,
-spread evenly across an active window (08:00–22:00 WIB) so they don't all post
-at once. Topics come from:
+Like Mode 5 (Pinterest), Mode 4 has a staging queue in between topic
+selection and posting (see app.models.discussion_content_ideas.
+DiscussionContentIdea): a topic becomes a fully AI-drafted, editable idea
+row, and only later — FIFO, paced by discussion_daily_count — gets
+converted into an actual PublishJob. The beat task
+`generate_discussion_content` ticks every 30 min, WIB 08:00-22:00, and per
+fanpage does two independent things:
+  1. top up the idea queue if it's running low (_topup_queue)
+  2. consume the oldest pending idea into a job, if under today's paced
+     quota (_consume_one)
+
+Topics come from:
   - "news": the freshest scraped article from the fanpage's subscribed news
     sources that hasn't already been turned into a job for this fanpage
     (fact-grounded — the article is passed to the copywriter).
@@ -17,10 +24,20 @@ at once. Topics come from:
     Y" style cards without needing a fresh article. Only falls back to news,
     then an evergreen seed, if the general candidate fails fact-check twice.
 
-Each card becomes a PublishJob(content_type=discussion, status=pending_design):
-  design_title=question, design_subtitle=label, design_caption=subject name.
-The renderer (design_renderer.render_discussion) sources the photo from the
-subject and draws the card; the publisher reuses the news single-image path.
+`discussion_label_mode` ("discussion" | "hot_take" | "both") restricts which
+label style the AI is allowed to pick — see news_copywriter's
+_discussion_label_point, threaded into all 3 prompt builders.
+
+A user can also type a title/seed directly via the Content Ideas Queue UI
+(POST /fanpages/{id}/discussion-content-ideas), which drafts the copy
+synchronously through the same generate_discussion_copy call the evergreen
+tier uses, landing in the same queue for review — see api/fanpages.py.
+
+Each consumed idea becomes a PublishJob(content_type=discussion,
+status=pending_design): design_title=question, design_subtitle=label,
+design_caption=subject name. The renderer (design_renderer.render_discussion)
+sources the photo from the subject and draws the card; the publisher reuses
+the news single-image path.
 """
 
 import logging
@@ -132,21 +149,30 @@ def _recent_discussion_subjects(db, fanpage) -> list[str]:
     line ("Alex Rins is the most underrated rider in MotoGP") got generated
     twice, 2 days apart, well inside the supposed 14-day avoid-window."""
     from app.models.publish_jobs import PublishJob, ContentType
+    from app.models.discussion_content_ideas import DiscussionContentIdea
 
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_RECENT_SUBJECTS_DAYS)
-    rows = (
-        db.query(PublishJob.design_caption)
+    job_rows = (
+        db.query(PublishJob.design_caption, PublishJob.created_at)
         .filter(
             PublishJob.fanpage_id == fanpage.id,
             PublishJob.content_type == ContentType.discussion,
             PublishJob.created_at >= cutoff,
             PublishJob.design_caption.isnot(None),
         )
-        .order_by(PublishJob.created_at.desc())
         .all()
     )
+    # Also count subjects already staged (pending) in the idea queue — a
+    # topic sitting unconsumed in the queue is just as "already covered" as
+    # a published job for repetition-avoidance purposes.
+    idea_rows = (
+        db.query(DiscussionContentIdea.subject_name, DiscussionContentIdea.created_at)
+        .filter(DiscussionContentIdea.fanpage_id == fanpage.id, DiscussionContentIdea.status == "pending")
+        .all()
+    )
+    combined = sorted(list(job_rows) + list(idea_rows), key=lambda r: r[1], reverse=True)
     seen, out = set(), []
-    for (subject,) in rows:
+    for subject, _created in combined:
         if subject and subject not in seen:
             seen.add(subject)
             out.append(subject)
@@ -168,21 +194,26 @@ def _recent_discussion_questions(db, fanpage) -> list[str]:
     from being reused on a DIFFERENT person, which subject-avoidance alone
     can't catch — see build_discussion_general_prompt's docstring."""
     from app.models.publish_jobs import PublishJob, ContentType
+    from app.models.discussion_content_ideas import DiscussionContentIdea
 
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_RECENT_QUESTIONS_DAYS)
-    rows = (
-        db.query(PublishJob.design_title)
+    job_rows = (
+        db.query(PublishJob.design_title, PublishJob.created_at)
         .filter(
             PublishJob.fanpage_id == fanpage.id,
             PublishJob.content_type == ContentType.discussion,
             PublishJob.created_at >= cutoff,
             PublishJob.design_title.isnot(None),
         )
-        .order_by(PublishJob.created_at.desc())
-        .limit(_RECENT_QUESTIONS_LIMIT)
         .all()
     )
-    return [q for (q,) in rows if q]
+    idea_rows = (
+        db.query(DiscussionContentIdea.question, DiscussionContentIdea.created_at)
+        .filter(DiscussionContentIdea.fanpage_id == fanpage.id, DiscussionContentIdea.status == "pending")
+        .all()
+    )
+    combined = sorted(list(job_rows) + list(idea_rows), key=lambda r: r[1], reverse=True)
+    return [q for q, _created in combined[:_RECENT_QUESTIONS_LIMIT] if q]
 
 
 def _todays_discussion_questions(db, fanpage) -> list[str]:
@@ -194,11 +225,12 @@ def _todays_discussion_questions(db, fanpage) -> list[str]:
     the week — a fanpage generating 6/day all needing to feel distinct from
     one another is a tighter bar than avoiding repeats over 7 days."""
     from app.models.publish_jobs import PublishJob, ContentType
+    from app.models.discussion_content_ideas import DiscussionContentIdea
 
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     day_start, day_end = _wib_day_bounds_utc(now_utc)
-    rows = (
-        db.query(PublishJob.design_title)
+    job_rows = (
+        db.query(PublishJob.design_title, PublishJob.created_at)
         .filter(
             PublishJob.fanpage_id == fanpage.id,
             PublishJob.content_type == ContentType.discussion,
@@ -206,10 +238,20 @@ def _todays_discussion_questions(db, fanpage) -> list[str]:
             PublishJob.created_at < day_end,
             PublishJob.design_title.isnot(None),
         )
-        .order_by(PublishJob.created_at.desc())
         .all()
     )
-    return [q for (q,) in rows if q]
+    idea_rows = (
+        db.query(DiscussionContentIdea.question, DiscussionContentIdea.created_at)
+        .filter(
+            DiscussionContentIdea.fanpage_id == fanpage.id,
+            DiscussionContentIdea.status == "pending",
+            DiscussionContentIdea.created_at >= day_start,
+            DiscussionContentIdea.created_at < day_end,
+        )
+        .all()
+    )
+    combined = sorted(list(job_rows) + list(idea_rows), key=lambda r: r[1], reverse=True)
+    return [q for q, _created in combined if q]
 
 
 _HEADLINES_CONTEXT_DAYS = 60
@@ -376,27 +418,47 @@ def _generate_general_topic(db, fanpage):
     return None
 
 
-def _create_one(db, fanpage) -> bool:
-    """Generate a single discussion card for the fanpage. Returns True if a job
-    was created. Picks the topic source per discussion_topic_mode. On 'both'
-    the AI's own general knowledge of the fanpage's niche (fact-checked, see
-    _generate_general_topic) is tried FIRST — hot takes don't need to ride an
-    article, and this is the source that actually produces the "does X
-    deserve Y" / "was X right to do Y" style cards the user wants as the
-    default, not a last resort. news/evergreen are kept as a fallback for
-    'both' only if the general candidate fails fact-check twice, so the daily
-    quota still gets filled. 'news' alone stays news-only by design; 'evergreen'
-    alone still falls back to general when its seed pool is empty (unchanged)."""
-    from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
-    from app.models.target_fanpages import PublishMode
+# Idea queue is topped up only when it's running low — each topup costs real
+# AI calls (up to ~5 for the general-knowledge tier's generate + 2-attempt
+# dual fact-check), unlike Mode 5's cheap-per-candidate topup, so this stays
+# small and single-shot per tick rather than batched.
+_MIN_QUEUE_SIZE = 3
+
+
+def _topup_queue(db, fanpage) -> bool:
+    """Pick a topic (per discussion_topic_mode — same 3-tier logic Mode 4
+    always used, see module docstring) and generate its full discussion
+    copy, staging it as a pending DiscussionContentIdea for review instead
+    of creating a PublishJob directly — mirrors app.tasks.pinterest's
+    _topup_queue. Returns True if an idea was added.
+
+    On 'both' the AI's own general knowledge of the fanpage's niche
+    (fact-checked, see _generate_general_topic) is tried FIRST — hot takes
+    don't need to ride an article, and this is the source that actually
+    produces the "does X deserve Y" / "was X right to do Y" style cards the
+    user wants as the default, not a last resort. news/evergreen are kept
+    as a fallback for 'both' only if the general candidate fails fact-check
+    twice, so the daily quota still gets filled. 'news' alone stays
+    news-only by design; 'evergreen' alone still falls back to general when
+    its seed pool is empty (unchanged)."""
+    from sqlalchemy import func
+    from app.models.discussion_content_ideas import DiscussionContentIdea
     from app.services.news_copywriter import generate_discussion_copy
-    from app.services.design_images import resolve_template
+
+    pending_count = (
+        db.query(func.count(DiscussionContentIdea.id))
+        .filter(DiscussionContentIdea.fanpage_id == fanpage.id, DiscussionContentIdea.status == "pending")
+        .scalar()
+    ) or 0
+    if pending_count >= _MIN_QUEUE_SIZE:
+        return False
 
     mode = (fanpage.discussion_topic_mode or "both").lower()
 
     article = None
     topic = None
     copy = None
+    source_type = "general"
 
     try:
         if mode == "both":
@@ -410,10 +472,12 @@ def _create_one(db, fanpage) -> bool:
 
             if article is not None:
                 copy = generate_discussion_copy(fanpage, article=article)
+                source_type = "news"
             elif topic is not None:
                 copy = generate_discussion_copy(
                     fanpage, seed_text=topic.seed_text, subject_hint=topic.subject_hint
                 )
+                source_type = "evergreen"
             elif mode == "evergreen":
                 copy = _generate_general_topic(db, fanpage)
     except Exception as exc:
@@ -422,6 +486,50 @@ def _create_one(db, fanpage) -> bool:
 
     if copy is None:
         logger.info("Discussion: fanpage %d has no available topic (mode=%s)", fanpage.id, mode)
+        return False
+
+    idea = DiscussionContentIdea(
+        fanpage_id=fanpage.id,
+        label=copy.label,
+        question=copy.question,
+        subject_name=copy.subject_name,
+        caption=copy.caption,
+        source_type=source_type,
+        source_article_id=article.id if article is not None else None,
+        status="pending",
+    )
+    db.add(idea)
+
+    if topic is not None:
+        topic.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        topic.times_used = (topic.times_used or 0) + 1
+
+    db.commit()
+
+    logger.info(
+        "Discussion: fanpage %d — new idea %d (%s) label=%s subject=%r",
+        fanpage.id, idea.id, source_type, copy.label, copy.subject_name,
+    )
+    return True
+
+
+def _consume_one(db, fanpage) -> bool:
+    """Pop the oldest pending DiscussionContentIdea into a PublishJob.
+    Returns True if one was created. No AI call here — the copy was already
+    drafted at topup time (or via the manual-add API endpoint) — mirrors
+    app.tasks.pinterest's _consume_one."""
+    from app.models.discussion_content_ideas import DiscussionContentIdea
+    from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
+    from app.models.target_fanpages import PublishMode
+    from app.services.design_images import resolve_template
+
+    idea = (
+        db.query(DiscussionContentIdea)
+        .filter(DiscussionContentIdea.fanpage_id == fanpage.id, DiscussionContentIdea.status == "pending")
+        .order_by(DiscussionContentIdea.created_at.asc())
+        .first()
+    )
+    if not idea:
         return False
 
     # Prefer a discussion-tagged template; fall back to the fanpage's News
@@ -433,32 +541,23 @@ def _create_one(db, fanpage) -> bool:
         fanpage_id=fanpage.id,
         post_id=None,
         content_type=ContentType.discussion,
-        source_article_id=article.id if article is not None else None,
-        design_title=copy.question,
-        design_subtitle=copy.label,          # badge text ("DISCUSSION"/"HOT TAKE")
-        design_caption=copy.subject_name,    # subject for photo sourcing (not rendered)
-        ai_generated_caption=copy.caption,
-        ai_provider_used=copy.provider,
+        source_article_id=idea.source_article_id,
+        design_title=idea.question,
+        design_subtitle=idea.label,          # badge text ("DISCUSSION"/"HOT TAKE")
+        design_caption=idea.subject_name,    # subject for photo sourcing (not rendered)
+        ai_generated_caption=idea.caption,
         design_template_id=template.id if template else None,
         status=PublishJobStatus.pending_design,
     )
     db.add(job)
 
-    if topic is not None:
-        topic.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        topic.times_used = (topic.times_used or 0) + 1
-
+    idea.status = "used"
+    idea.used_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
 
-    if article is not None:
-        source_desc = f"article:{article.id}"
-    elif topic is not None:
-        source_desc = f"topic:{topic.id}"
-    else:
-        source_desc = "general"
     logger.info(
-        "Discussion: fanpage %d created job %d (%s) label=%s subject=%r source=%s",
-        fanpage.id, job.id, mode, copy.label, copy.subject_name, source_desc,
+        "Discussion: fanpage %d created job %d from idea %d (%s) label=%s subject=%r",
+        fanpage.id, job.id, idea.id, idea.source_type, idea.label, idea.subject_name,
     )
 
     # Auto mode → render now (staggered slightly); review mode waits for designer.
@@ -471,9 +570,9 @@ def _create_one(db, fanpage) -> bool:
 
 @celery_app.task(name="app.tasks.discussion.generate_discussion_content")
 def generate_discussion_content():
-    """Beat tick: top up each Mode-4 fanpage toward its daily quota, paced across
-    the active window. Creates at most one card per fanpage per tick so the
-    output trickles rather than bursts."""
+    """Beat tick: top up each Mode-4 fanpage's idea queue if it's running
+    low, then consume one idea toward today's paced quota — same two-phase
+    shape as app.tasks.pinterest's generate_pinterest_content."""
     db = SessionLocal()
     try:
         from sqlalchemy import func
@@ -499,8 +598,12 @@ def generate_discussion_content():
             .all()
         )
 
+        topped_up = 0
         created = 0
         for fp in fanpages:
+            if _topup_queue(db, fp):
+                topped_up += 1
+
             quota = fp.discussion_daily_count or 0
             count_today = (
                 db.query(func.count(PublishJob.id))
@@ -519,10 +622,13 @@ def generate_discussion_content():
             if count_today >= _target_by_now(quota, now_hour):
                 continue  # ahead of pace — wait for a later slot
 
-            if _create_one(db, fp):
+            if _consume_one(db, fp):
                 created += 1
 
-        if created:
-            logger.info("Discussion sweep: created %d card(s) across %d fanpage(s)", created, len(fanpages))
+        if topped_up or created:
+            logger.info(
+                "Discussion sweep: +%d idea(s), %d job(s) across %d fanpage(s)",
+                topped_up, created, len(fanpages),
+            )
     finally:
         db.close()
