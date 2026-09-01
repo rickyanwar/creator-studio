@@ -1097,6 +1097,9 @@ def single_photo_face_fits(image_bytes: bytes, canvas_width: int, canvas_height:
     return best_case_bottom <= title_top + 0.03
 
 
+_PINTEREST_MIN_VERTICAL_SLACK = 0.08
+
+
 def photo_crops_well(image_bytes: bytes, canvas_width: int, canvas_height: int) -> bool:
     """Mode 5 (Pinterest) gate: can this photo go on the design template at
     all, or should it post directly with no template/crop?
@@ -1112,9 +1115,25 @@ def photo_crops_well(image_bytes: bytes, canvas_width: int, canvas_height: int) 
     template entirely for it and posts the (already-upscaled)
     photo as-is — this function is what tells it which path to take.
 
-    True: portrait/near-square source (real cover-fit slack exists), or a
+    True: portrait/near-square source with MEANINGFUL cover-fit slack, or a
     landscape source WITH a detected face (fix_unsafe_single_photo_face
-    handles it). False: landscape, no face — nothing left to safely fix it."""
+    handles it). False: negligible/zero vertical slack and no face —
+    nothing left to safely fix it.
+
+    2026-09-01: `img_ar <= slot_ar` alone used to be treated as always safe,
+    but that only tells you slack exists in SIGN, not magnitude — a source
+    whose own aspect ratio nearly matches the canvas's (common for
+    Pinterest pins, often already pre-cropped close to portrait) can pass
+    that check with almost no real room to reposition anything. Found via
+    job 5758 (a 1636x2048 Lotus 80 action shot on a 2160x2700 canvas): only
+    ~4px of real vertical slack — functionally the SAME zero-slack
+    situation as the img_ar > slot_ar branch, just reached from the other
+    side of the comparison, and no face was detected to let
+    fix_unsafe_single_photo_face save it either — the car (the actually
+    important part of the photo) sat right where the template's bottom
+    scrim always lands, with no way to pan it clear. Now measures the real
+    slack fraction and only short-circuits True when it's actually enough
+    to matter."""
     try:
         import io
         from PIL import Image
@@ -1127,7 +1146,12 @@ def photo_crops_well(image_bytes: bytes, canvas_width: int, canvas_height: int) 
     img_ar = iw / ih
     slot_ar = canvas_width / canvas_height
     if img_ar <= slot_ar:
-        return True
+        # This branch's cover-fit is always width-bound (scale =
+        # canvas_width/iw — see the module's split-zoom math for the same
+        # derivation pattern), so the real vertical slack is exactly this.
+        vertical_slack_frac = (ih * canvas_width / iw - canvas_height) / canvas_height
+        if vertical_slack_frac >= _PINTEREST_MIN_VERTICAL_SLACK:
+            return True
     return _dominant_face_bbox(image_bytes) is not None
 
 
