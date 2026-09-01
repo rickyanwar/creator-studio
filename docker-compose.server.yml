@@ -52,7 +52,25 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=100
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --queues=celery --max-tasks-per-child=100
+    env_file: .env
+    volumes:
+      - media_data:/opt/studio/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery Worker (gallery downloads — isolated so a slow/heavy
+  #    download_keyword run can never starve render/publish/crawl tasks
+  #    on the main worker, see task_routes in celery_app.py) ──────────
+  worker-gallery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --queues=gallery --max-tasks-per-child=50
     env_file: .env
     volumes:
       - media_data:/opt/studio/media

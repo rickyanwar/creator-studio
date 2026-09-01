@@ -43,6 +43,17 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
+    # gallery_downloader tasks download/classify 100+ photos per keyword and
+    # can run for tens of minutes — on the shared 'celery' queue they were
+    # starving render/publish/crawl tasks for as long as they ran (found
+    # 2026-09-02: two concurrent download_keyword calls pinned both of the
+    # main worker's concurrency=2 slots for 20-50+ min each, backing up the
+    # queue to 900+ and stalling publishing on multiple fanpages). Routed to
+    # their own queue, consumed by a separate `worker-gallery` service, so
+    # they can never again block the main worker.
+    task_routes={
+        "app.tasks.gallery_downloader.*": {"queue": "gallery"},
+    },
 )
 
 # ── Beat schedule ─────────────────────────────────────────────────────────────
