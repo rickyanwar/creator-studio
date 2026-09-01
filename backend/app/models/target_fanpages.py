@@ -75,6 +75,14 @@ class TargetFanpage(Base):
     mode2_caption_cta_text = Column(String(256), default="", nullable=False, server_default="")
     mode2_caption_custom_prompt = Column(Text, default="", nullable=False, server_default="")
     mode2_title_max_chars = Column(Integer, default=80, nullable=False, server_default="80")
+    # Small pill badge shown above the headline on News templates (e.g.
+    # "F1 NEWS") — see design_renderer.render_design. Empty/null falls back
+    # to "{first mode2_gallery_niches entry} NEWS" at render time (never
+    # stored here, so an admin editing niches later doesn't leave a stale
+    # baked-in string); an admin-set value here always wins over that
+    # fallback. Renderer hides the badge entirely (see inject.js's "label"
+    # handling) when there's neither an override nor a niche to fall back to.
+    mode2_badge_text = Column(String(64), nullable=True)
     mode2_source_attribution = Column(Boolean, default=True, nullable=False, server_default="true")
     # Opt-in editorial AI gate: before copywriting, 9Router web-search-fact-checks
     # the article and judges whether it's worth posting/likely engagement — a

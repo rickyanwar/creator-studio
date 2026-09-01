@@ -44,6 +44,10 @@ class FanpageBase(BaseModel):
     mode2_caption_cta_text: str = ""
     mode2_caption_custom_prompt: str = ""
     mode2_title_max_chars: int = 80
+    # Small pill badge above the headline (e.g. "F1 NEWS") — see
+    # design_renderer.render_design. None/empty falls back to
+    # "{mode2_gallery_niches[0]} NEWS" at render time.
+    mode2_badge_text: Optional[str] = None
     mode2_source_attribution: bool = True
     mode2_editorial_gate_enabled: bool = False
 

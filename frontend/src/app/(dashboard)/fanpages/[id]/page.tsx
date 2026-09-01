@@ -1196,6 +1196,23 @@ export default function FanpageEditPage() {
                   />
                 </div>
                 <div>
+                  <label className="label">News Badge Text</label>
+                  <input
+                    className="input-rect"
+                    value={(form.mode2_badge_text as string) ?? ""}
+                    onChange={(e) => set("mode2_badge_text", e.target.value || null)}
+                    placeholder={
+                      ((form.mode2_gallery_niches as string[]) ?? [])[0]
+                        ? `${((form.mode2_gallery_niches as string[]) ?? [])[0].toUpperCase()} NEWS (default from niche)`
+                        : "e.g. F1 NEWS"
+                    }
+                  />
+                  <p className="text-[11px] text-text-secondary mt-1">
+                    Small pill badge above the headline on News templates. Leave blank to use the fanpage&apos;s
+                    first Gallery Niche + &quot;NEWS&quot; automatically.
+                  </p>
+                </div>
+                <div>
                   <label className="label">Call-to-Action Text</label>
                   <input
                     className="input-rect"

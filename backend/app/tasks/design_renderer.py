@@ -334,6 +334,22 @@ def render_design(self, job_id: int):
         if is_split:
             focus_points = align_split_focus_points(focus_points)
 
+        # Small pill badge above the headline on News templates (e.g. "F1
+        # NEWS") — user's own explicit ask, scoped to "news" only (this
+        # function also renders "quote"-category ig_recreate jobs, which
+        # have no labelBadge/label objects to begin with, so this would be
+        # a harmless no-op there anyway — gated regardless, to keep the
+        # intent explicit rather than relying on that no-op). Admin-set
+        # fanpage.mode2_badge_text always wins; otherwise falls back to
+        # "{niche} NEWS" computed fresh here (not stored), so editing the
+        # fanpage's niches later doesn't leave a stale baked-in badge string.
+        news_badge_text = ""
+        if category == "news":
+            if fanpage.mode2_badge_text:
+                news_badge_text = fanpage.mode2_badge_text
+            elif fanpage.mode2_gallery_niches:
+                news_badge_text = f"{fanpage.mode2_gallery_niches[0]} NEWS"
+
         # ── Render via Puppeteer + Fabric.js service ──
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
@@ -344,6 +360,7 @@ def render_design(self, job_id: int):
                 "title": title,
                 "subtitle": job.design_subtitle or "",
                 "caption": job.design_caption or "",
+                "label": news_badge_text,
                 # No fallback to fanpage name/username — a fanpage that hasn't
                 # set an explicit watermark_text/watermark_image gets NO
                 # watermark on the design at all.
