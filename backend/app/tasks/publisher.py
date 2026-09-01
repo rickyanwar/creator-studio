@@ -40,6 +40,51 @@ _BREAKING_GAP_MODE_SECONDS = 420  # 7 min — most draws cluster here
 
 _DEFAULT_DAILY_LIMIT = 45
 
+# Event-day boost (2026-09-01): a race/practice/qualifying/fight day
+# genuinely has more newsworthy content AND more audience attention than a
+# quiet day between events — capping every day at the same reduced
+# post-count (see the publish-pacing volume cut this same session) would
+# throttle a fanpage right when it has the most legitimate reason to post
+# more. Reuses the SAME event-window detection gallery_downloader.py
+# already built for its own throttle (GalleryKeyword.next_event_date +
+# _in_event_window, niche-specific press/practice/race windows — e.g. F1
+# opens Friday, MotoGP/UFC open 3 days out) rather than a second, separate
+# event calendar — one source of truth for "is today an event day for this
+# niche."
+_EVENT_DAY_LIMIT_MULTIPLIER = 2
+
+
+def _event_boosted_daily_limit(db, fanpage, base_limit: int, day: "datetime.date") -> int:
+    """base_limit, doubled (see _EVENT_DAY_LIMIT_MULTIPLIER) if `day` falls
+    inside a detected event window for ANY of this fanpage's configured
+    niches (mode2_gallery_niches) — else base_limit unchanged.
+
+    Checks GalleryKeyword rows rather than a per-fanpage flag because the
+    event schedule is tracked per KEYWORD (rider/driver/fighter name), not
+    per niche as a whole — see gallery_downloader.py's own event-window
+    machinery, which this reuses via _in_event_window rather than
+    reimplementing the niche-specific window-length rules (F1 opens 2 days
+    out, MotoGP/UFC 3) a second time."""
+    niches = [n for n in (fanpage.mode2_gallery_niches or []) if n]
+    if not niches:
+        return base_limit
+    from app.models.gallery import GalleryKeyword
+    from app.tasks.gallery_downloader import _in_event_window
+    from sqlalchemy import func as sa_func
+
+    lowered = [n.lower() for n in niches]
+    keywords = (
+        db.query(GalleryKeyword)
+        .filter(
+            GalleryKeyword.next_event_date.isnot(None),
+            sa_func.lower(GalleryKeyword.niche).in_(lowered),
+        )
+        .all()
+    )
+    if any(_in_event_window(kw, day) for kw in keywords):
+        return base_limit * _EVENT_DAY_LIMIT_MULTIPLIER
+    return base_limit
+
 
 def _in_sleep_window(hour: int, start: int, end: int) -> bool:
     if start == end:
@@ -131,7 +176,7 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
     from sqlalchemy import func
     from app.models.publish_jobs import PublishJob
 
-    daily_limit = (fanpage.publish_daily_limit if fanpage else None) or _DEFAULT_DAILY_LIMIT
+    base_daily_limit = (fanpage.publish_daily_limit if fanpage else None) or _DEFAULT_DAILY_LIMIT
     day_wib = floor_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
 
     for _ in range(_MAX_DAY_HOPS):
@@ -139,6 +184,15 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
         day_end_wib = day_start_wib + timedelta(days=1)
         day_start_utc = day_start_wib.astimezone(timezone.utc).replace(tzinfo=None)
         day_end_utc = day_end_wib.astimezone(timezone.utc).replace(tzinfo=None)
+
+        # Recomputed per day (not once outside the loop): a multi-day
+        # backlog can hop from a quiet day into an event day or vice versa,
+        # and each day's own limit must reflect whether THAT day sits in a
+        # detected race/practice/fight window for this fanpage's niche.
+        daily_limit = (
+            _event_boosted_daily_limit(db, fanpage, base_daily_limit, day_start_wib.date())
+            if fanpage else base_daily_limit
+        )
 
         count_today, last_today = (
             db.query(func.count(PublishJob.id), func.max(PublishJob.scheduled_for))
