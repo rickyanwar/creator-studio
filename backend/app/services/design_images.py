@@ -1805,15 +1805,15 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
         return 0
 
 
-_FRAME_RANK = {"HEAD": 0, "HALF": 1, "FULL": 2, "VEHICLE": 10}
+_FRAME_RANK = {"HEAD": 0, "HALF": 1, "FULL": 2, "VEHICLE": 10, "NONE": 10}
 
 
 def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
     """One vision call: classify EVERY candidate's shot type up front, as its
     own separate step. `labeled` is a list of (label, datauri) — labels are
     the caller's own (e.g. "L1", "R2"). Returns {label: "HEAD"|"HALF"|"FULL"
-    |"VEHICLE"}; a label missing from the result (unparseable reply) is left
-    out, not guessed.
+    |"VEHICLE"|"NONE"}; a label missing from the result (unparseable reply)
+    is left out, not guessed.
 
     Split out from the pairing decision itself (2026-08-21) because asking
     one call to both classify AND pick let the model's final answer quietly
@@ -1841,6 +1841,19 @@ def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
     shot. The user's own framing: "face dengan face, mobil dengan mobil,
     motor dengan motor."
 
+    `NONE` added 2026-09-01 after a real published job (a Brad Binder vs
+    Miguel Oliveira discussion card) paired Binder's clear face portrait
+    against a blurry STADIUM CROWD photo with no identifiable person at
+    all for the "Oliveira" side — same root cause as VEHICLE: a candidate
+    that doesn't clearly show a person's body at ANY size doesn't fit
+    HEAD/HALF/FULL, and unlike VEHICLE (a car/bike being the dominant
+    subject) this is "there is no clear subject here at all" — a crowd,
+    an empty scene, a background-only shot. Distinct enough from VEHICLE
+    to warrant its own label (a reviewer clearly reading "NONE" in a log
+    is far more diagnosable than an ambiguous VEHICLE mislabel), but
+    isolated with the SAME rank (10) since the goal is identical: never
+    let it tier-match against a real person shot.
+
     Face-SIZE matching (as opposed to this framing bucket) is handled
     separately by `_face_width_fraction` — an OpenCV pixel measurement on the
     two already-chosen photos, not a vision guess. A first version asked
@@ -1861,8 +1874,11 @@ def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
             "subject of the frame and the rider/driver is small, unclear, "
             "turned away, or otherwise not the clear focus (e.g. a wide "
             "on-track action shot) — even if a person is technically visible "
-            "in it. Reply with exactly ONE line per photo, in the form "
-            "`LABEL:CATEGORY` (e.g. `L1:HALF`) — nothing else, no explanation."
+            "in it. NONE is for anything with no clearly identifiable person "
+            "as the subject at all — a crowd/stadium shot, an empty scene, "
+            "a background-only photo. Reply with exactly ONE line per photo, "
+            "in the form `LABEL:CATEGORY` (e.g. `L1:HALF`) — nothing else, "
+            "no explanation."
         ),
     }]
     for label, uri in labeled:
@@ -1871,7 +1887,7 @@ def _classify_split_frames(labeled: list[tuple[str, str]]) -> dict[str, str]:
     raw = _vision_chat(content, max_tokens=1500, context="vision_classify_split_frame")
     return {
         m.group(1).upper(): m.group(2).upper()
-        for m in re.finditer(r"\b([LR]\d+)\s*:\s*(HEAD|HALF|FULL|VEHICLE)\b", raw, re.IGNORECASE)
+        for m in re.finditer(r"\b([LR]\d+)\s*:\s*(HEAD|HALF|FULL|VEHICLE|NONE)\b", raw, re.IGNORECASE)
     }
 
 
@@ -1973,6 +1989,12 @@ def _pick_best_aesthetic_pair(left_candidates: list, right_candidates: list, pri
             "is the clear subject, the rider/driver small or unclear) while the "
             "other is a person-forward shot (a clear face/body) — face-with-face, "
             "vehicle-with-vehicle only, never mixed, no exceptions.\n"
+            "- HARD REJECT if either side has NO clearly identifiable person as "
+            "its subject at all — a crowd/stadium shot, an empty scene, a "
+            "background-only photo — while the other side clearly shows the "
+            "named person. This is a real mistake that shipped once already: "
+            "a genuine face photo of one subject paired against an unrelated "
+            "crowd photo with no visible subject for the other.\n"
             "- Full face visible with margin — each photo is CROPPED HARD "
             "into a narrow vertical strip, so reject anything too tight to "
             "survive that.\n"
