@@ -1948,13 +1948,18 @@ def vision_pick_split_pair(left_candidates: list, right_candidates: list, primar
     than no photo" principle already applied elsewhere in this file (see
     vision_verify_match/vision_verify_subject's fail-closed behavior) —
     previously this was the one place in the split pipeline that failed
-    OPEN instead. Falls back to (0, 0, 1.0, 1.0, True) if vision is
-    unavailable or either list is empty — a hard error, not a quality
-    judgment, so there's no "rejection" signal to honor; best-effort still
+    OPEN instead. Runs the full classify+gate flow even when each side has
+    exactly ONE candidate (2026-09-01 fix — an earlier version short-
+    circuited that case straight to accepted=True, which is exactly the
+    thin-pool scenario where a mismatch is most likely: a real production
+    render paired a VEHICLE-dominant photo against a face-forward photo
+    because each subject had only one verified candidate and the VEHICLE
+    isolation + hard-reject checks never ran). Falls back to (0, 0, 1.0,
+    1.0, True) if vision is unavailable or either list is empty — a hard
+    error, not a quality judgment, so there's no "rejection" signal to
+    honor; best-effort still
     beats crashing the whole render."""
     if not left_candidates or not right_candidates:
-        return 0, 0, 1.0, 1.0, True
-    if len(left_candidates) == 1 and len(right_candidates) == 1:
         return 0, 0, 1.0, 1.0, True
     try:
         left_labels = [f"L{i + 1}" for i in range(len(left_candidates))]
@@ -3248,7 +3253,16 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         if expand:
             main_datauri = _expand_main(main_datauri, tj)
         return tj, _with_inset(tj, [main_datauri])
-    uri, gi = find_gallery_datauri(db, subject, exclude_path=main_path, niche=niche)
+    # `image_type` (from pick_split_image_type above) must be passed through
+    # here too, not just to build_split_srcs — this call fires whenever the
+    # split itself got rejected, so the inset photo it picks instead still
+    # needs to match the MAIN photo's already-decided style. Omitting it
+    # (found 2026-09-01, job 5801: Marquez/Bagnaia) let this land on an
+    # unconstrained gallery pick — an action-shot main photo (Marquez on his
+    # bike) paired against a plain face-portrait inset of Bagnaia, the exact
+    # "motor dengan wajah" mismatch the split path's VEHICLE checks exist to
+    # prevent, just reached through the fallback path instead.
+    uri, gi = find_gallery_datauri(db, subject, exclude_path=main_path, image_type=image_type, niche=niche)
     if not uri:
         logger.info("Design: no gallery image for secondary subject %r — image widened to full width", subject)
         tj = _widen_to_full(template_json, canvas_width)
