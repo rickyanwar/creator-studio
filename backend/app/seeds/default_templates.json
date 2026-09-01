@@ -2748,6 +2748,36 @@
           "titlePreferMaxLines": 2,
           "titleFallbackMaxLines": 3,
           "titlePreferredMinFontSize": 55
+        },
+        {
+          "top": 1284,
+          "fill": "#5af905",
+          "left": 390,
+          "rx": 25,
+          "ry": 25,
+          "type": "rect",
+          "width": 300,
+          "height": 50,
+          "selectable": false,
+          "placeholderRole": "subtitleBadge",
+          "badgePadX": 90
+        },
+        {
+          "top": 1297,
+          "fill": "#ffffff",
+          "left": 90,
+          "text": "Name",
+          "type": "textbox",
+          "width": 900,
+          "height": 30,
+          "fontSize": 24,
+          "textAlign": "center",
+          "fontFamily": "Poppins",
+          "fontWeight": 800,
+          "lineHeight": 1.1,
+          "charSpacing": 40,
+          "placeholderRole": "subtitle",
+          "titleTextTransform": "uppercase"
         }
       ],
       "version": "5.3.0"
