@@ -150,6 +150,17 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.publisher.recover_stuck_auto_publishes",
         "schedule": 1800,  # every 30 minutes
     },
+    # Recovery: reset jobs orphaned in 'rendering' (a worker process killed
+    # mid-task — e.g. a deploy recreating the worker container — leaves no
+    # code running to release the claim the way a caught exception would)
+    # back to pending_design so the ordinary render sweep retries them. Real
+    # incident, 2026-09-01: 12 jobs found stuck this way, oldest a week old,
+    # with no prior recovery path at all — see
+    # design_renderer.recover_stuck_renders's docstring.
+    "recover-stuck-renders": {
+        "task": "app.tasks.design_renderer.recover_stuck_renders",
+        "schedule": 1800,  # every 30 minutes
+    },
     # Cleanup: every 2 hours
     "cleanup-media": {
         "task": "app.tasks.cleanup.cleanup_old_media",

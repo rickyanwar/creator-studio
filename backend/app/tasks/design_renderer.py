@@ -906,3 +906,60 @@ def render_pending_designs():
             )
     finally:
         db.close()
+
+
+# Generous relative to the actual render pipeline: a single /render HTTP
+# call times out at _RENDER_TIMEOUT=120s, but the FULL task (subject/photo
+# search, several vision-verification calls) has been observed taking up
+# to ~600s/10min for a genuinely slow one — long enough that this sweep
+# never touches a render that's actually still in progress, short enough
+# that a real orphan doesn't sit for days.
+_STALE_RENDERING_MINUTES = 30
+
+
+@celery_app.task(name="app.tasks.design_renderer.recover_stuck_renders")
+def recover_stuck_renders():
+    """Reset jobs stuck in 'rendering' for longer than any real render
+    could legitimately take, back to 'pending_design' so the ordinary
+    render_pending_designs sweep above picks them up again.
+
+    render_design/render_discussion/render_pinterest's own except blocks
+    already release a job back to pending_design when they catch a Python
+    exception (a bad candidate photo, a renderer HTTP error, etc.) — but
+    that cleanup code only runs if the TASK ITSELF gets a chance to run at
+    all. A worker process getting killed mid-task (the ordinary case: a
+    deploy's `docker compose up -d --remove-orphans` recreating the worker
+    container while it's mid-render) leaves nothing to ever run that
+    cleanup — the job is orphaned in 'rendering' forever, with no other
+    recovery path anywhere in the codebase before this.
+
+    Real incident, 2026-09-01: investigating a user report of unusually
+    few published posts on a normal day led to finding 12 jobs stuck this
+    way, the oldest from 2026-08-22 (over a week earlier) — this had
+    apparently been happening silently for a while, one job at a time,
+    with nothing to ever surface or fix it short of someone manually
+    querying `status='rendering'` and noticing. This sweep exists so that
+    investigation doesn't need to happen by hand again."""
+    db = SessionLocal()
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=_STALE_RENDERING_MINUTES)
+        stuck = (
+            db.query(PublishJob)
+            .filter(PublishJob.status == PublishJobStatus.rendering, PublishJob.updated_at < cutoff)
+            .all()
+        )
+        for job in stuck:
+            job.status = PublishJobStatus.pending_design
+            job.last_error = "Recovered from a stuck 'rendering' state (likely an interrupted worker) — retried automatically."
+        if stuck:
+            db.commit()
+            logger.info(
+                "Recovery: reset %d job(s) stuck in 'rendering' for >%dm back to pending_design",
+                len(stuck), _STALE_RENDERING_MINUTES,
+            )
+    finally:
+        db.close()
