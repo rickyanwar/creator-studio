@@ -1666,7 +1666,28 @@ def classify_and_gate_image(image_bytes: bytes, subject: str | None = None) -> t
     photos where the subject is tiny/blurry/mostly obstructed — not a strict
     editorial judgment call. Fails OPEN (label="other", usable=True) on any
     error: a flaky vision call should reduce to today's behavior (unlabeled,
-    unfiltered), never block a download outright."""
+    unfiltered), never block a download outright.
+
+    2026-09-01: added an explicit "dominant blurry foreground PERSON"
+    trigger, calibrated against a real bad photo the original prompt missed
+    (gallery_images.id=14868, Valtteri Bottas — an out-of-focus stranger's
+    head/shoulder filled most of the frame in front of the camera; Bottas
+    himself was sharp and technically "visible", so the old "tiny/blurry/
+    obstructed" framing didn't catch it since it only described the
+    SUBJECT's own state, not a competing element in front of it). Re-ran
+    against this exact photo with 9Router live: the OLD prompt returned
+    usable=True (not a flaky-call/fail-open case — a genuine prompt gap).
+    A first fix attempt ("large blurry foreground element") overcorrected —
+    rejected a second real GOOD photo (gallery_images.id=13842, Liam
+    Lawson) for a totally normal, minor out-of-focus hand/armrest confined
+    to a bottom corner, nowhere near the subject. Final wording explicitly
+    requires the blurry element to be a PERSON covering roughly half the
+    frame or more AND names the "someone walked in front of the camera"
+    shot as the target, while explicitly telling the model a minor corner/
+    edge blur is normal press photography — validated 5/5 against 1 bad +
+    4 known-good real photos before shipping (same practice as
+    vision_check_photo_quality's calibration). Don't loosen this back to a
+    bare "blurry foreground" ask without re-testing against both photos."""
     try:
         subject_line = f" The subject should be {subject}." if subject else ""
         content = [
@@ -1675,11 +1696,19 @@ def classify_and_gate_image(image_bytes: bytes, subject: str | None = None) -> t
                 f"{subject_line}\n"
                 '1) "label": ONE word — FACE (clear head/upper-body portrait), '
                 "ACTION (riding/driving/on track), or OTHER (anything else).\n"
-                '2) "usable": true/false — is this a real, reasonably sharp, '
-                "usable photo where the subject is clearly visible and not "
-                "mostly obstructed, cropped out? Reply false for a generic "
-                "crowd/stage/logo-only shot, a screenshot, a graphic with "
-                "text overlays, or a photo where the subject is tiny/blurry.\n"
+                '2) "usable": true/false — is the subject the clear, '
+                "unobstructed MAIN focal point of this photo? Reply false if:\n"
+                "   - it's a generic crowd/stage/logo-only shot, a screenshot, "
+                "or a graphic with text overlays\n"
+                "   - the subject is tiny, blurry, or mostly cropped out\n"
+                "   - a blurry, out-of-focus PERSON (someone else's head/"
+                "shoulder) fills roughly HALF the frame or more in the "
+                "foreground, competing with or blocking the subject — a "
+                "'someone walked in front of the camera' shot\n"
+                "   A MINOR foreground blur confined to a corner or edge (a "
+                "hand, an armrest, a microphone, a sleeve) that does NOT "
+                "overlap or compete with the subject is NORMAL press "
+                "photography — do NOT mark that unusable.\n"
                 'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", "usable": true|false}.'
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
