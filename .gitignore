@@ -63,4 +63,5 @@ session_*.json
 session.json
 test-renders/
 split-test-output/
+expand-test-output/
 local_media/

@@ -363,6 +363,140 @@ def reflect_extend(image_bytes: bytes, target_w: int, target_h: int,
         return None
 
 
+def fit_crop_top_solid(image_bytes: bytes, target_w: int, target_h: int,
+                        face_bbox: tuple[float, float, float, float],
+                        face_zoom: float = 50, pad: float = 0.78,
+                        top_bias: float = 0.04,
+                        fill_color: tuple[int, int, int] = (8, 8, 10),
+                        blur_bg: bool = False, blur: int = 40, darken: float = 0.78,
+                        feather: int = 220) -> bytes | None:
+    """Face-centered crop that fills the FULL WIDTH with real, sharp pixels —
+    never a blurred/extended margin on the sides — placed near the top
+    (top_bias), with whatever's left at the bottom either painted a flat
+    `fill_color` (default) or, with `blur_bg=True`, a blurred/darkened
+    cover-crop of the same photo feathered into the sharp foreground —
+    fit_with_blur_bg's OLD look, but only ever visible at the bottom, never
+    the sides, because the foreground here is already full-width by
+    construction (2026-09-01, user asked to compare both bottom treatments
+    against the same, already-approved crop/zoom — see the flat-fill
+    version's own note below for why the crop itself changed).
+
+    PRECONDITION (user's own correction, 2026-09-01): the flat bottom fill
+    only reads as intentional because every current caller composites this
+    onto a TEMPLATE whose own title/scrim overlay covers that exact region
+    — the fill is invisible in the final render, not actually "empty".
+    This function must never be reached on a path that could post the
+    photo without a template drawn over it (verified: every call goes
+    through smart_expand → prepare_design_images's `_expand_main`, which
+    only runs once a template has already been resolved; render_pinterest
+    specifically returns via its `photo_crops_well` no-template raw-post
+    branch BEFORE `expand` is ever applied — see that function). If a
+    future caller ever wants this look WITHOUT a guaranteed overlay, it
+    needs its own real background, not this flat guess.
+
+    Replaces fit_with_blur_bg for smart_expand's extreme-close-up case
+    (an already-large face, see smart_expand's docstring). That function
+    locks its face-centered crop window to the TARGET's own aspect ratio
+    before scaling it down uniformly by `pad` to open up vertical room for
+    top_bias — but shrinking a crop that's already target-shaped shrinks
+    its WIDTH too, leaving a blurred margin on the left/right that
+    top_bias can't do anything about (it only redistributes the vertical
+    slack). Real user feedback, 2026-09-01 (job 5781, a tight
+    face-and-shoulders portrait): that margin reads as "self-blurred", and
+    the user's own manual edit skipped it entirely — zoom in a bit, raise
+    the subject up, and leave the bottom plain, since the template's own
+    text overlay covers that area anyway and there's nothing to gain by
+    inventing content under it.
+
+    The difference here: width and height are decoupled. The crop's width
+    is chosen so it maps to exactly target_w at render scale (zero side
+    margin, always) — `pad` only controls how much of target_h the
+    resulting foreground fills (by choosing a proportionally WIDER crop
+    around the same face-zoom band, not by shrinking the whole thing after
+    the fact), so the vertical slack `top_bias` distributes comes from
+    genuinely cropping less of the photo's height, never from shrinking
+    already-full width. If the source doesn't have enough width to reach
+    that ideal crop_w (a narrow/portrait source), this degrades gracefully
+    to whatever width IS available, then centre-crops any height overflow
+    instead of reopening a side margin.
+
+    Returns JPEG bytes sized target_w×target_h, or None on failure."""
+    try:
+        import io
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        iw, ih = img.size
+        fx, fy, ffw, ffh = face_bbox
+        cx, cy = (fx + ffw / 2) * iw, (fy + ffh / 2) * ih
+
+        # Same "clamps to the whole photo height for an already-large face"
+        # behavior as fit_with_blur_bg's face_zoom=50 convention — see that
+        # function's docstring. `pad` then decides how wide a band around
+        # crop_h to take so the eventual width-locked scale leaves exactly
+        # (1-pad) of target_h as bottom slack (derivation: scale =
+        # target_w/crop_w, fh = crop_h*scale = pad*target_h when crop_w is
+        # exactly crop_h*(target_w/target_h)/pad).
+        crop_h = min(ih, max(1, (ffh * ih) * face_zoom))
+        crop_w = min(iw, crop_h * (target_w / target_h) / max(pad, 0.01))
+        crop_h = min(crop_h, ih)  # crop_w's own iw-clamp can't shrink crop_h back down
+        left = min(max(0, cx - crop_w / 2), iw - crop_w)
+        top_ = min(max(0, cy - crop_h / 2), ih - crop_h)
+        crop = img.crop((int(left), int(top_), int(left + crop_w), int(top_ + crop_h)))
+
+        scale = target_w / crop.width
+        fh = max(1, round(crop.height * scale))
+        fg = crop.resize((target_w, fh))
+        if fh > target_h:
+            # Source wasn't wide enough for the ideal crop_w, so the
+            # width-locked scale didn't shrink the height as much as `pad`
+            # wanted — crop the overflow instead of shrinking back down
+            # (shrinking would reopen the exact side-margin problem this
+            # function exists to avoid).
+            t = int((fh - target_h) * top_bias)
+            fg = fg.crop((0, t, target_w, t + target_h))
+            fh = target_h
+
+        y = int((target_h - fh) * top_bias)
+
+        if blur_bg:
+            import numpy as np
+            from PIL import ImageFilter, ImageEnhance
+
+            # Same recipe as fit_with_blur_bg's background: cover-crop the
+            # WHOLE original photo, blur, darken. Only ever shows through
+            # at the bottom (and a sliver at the top) because fg is already
+            # full-width — never the sides.
+            sbg = max(target_w / iw, target_h / ih)
+            bg = img.resize((max(1, int(iw * sbg)), max(1, int(ih * sbg))))
+            bl = (bg.width - target_w) // 2
+            bt = (bg.height - target_h) // 2
+            bg = bg.crop((bl, bt, bl + target_w, bt + target_h))
+            bg = bg.filter(ImageFilter.GaussianBlur(blur))
+            bg = ImageEnhance.Brightness(bg).enhance(darken)
+
+            bg_arr = np.asarray(bg).astype(np.float32)
+            fg_arr = np.asarray(fg).astype(np.float32)
+            f = min(feather, fh)
+            alpha = np.ones(fh, dtype=np.float32)
+            if f > 0:
+                alpha[-f:] = np.linspace(1, 0, f)
+            alpha3 = alpha[:, None, None]
+            region = bg_arr[y:y + fh, 0:target_w]
+            bg_arr[y:y + fh, 0:target_w] = fg_arr * alpha3 + region * (1 - alpha3)
+            canvas = Image.fromarray(np.clip(bg_arr, 0, 255).astype(np.uint8))
+        else:
+            canvas = Image.new("RGB", (target_w, target_h), fill_color)
+            canvas.paste(fg, (0, y))
+
+        out = io.BytesIO()
+        canvas.save(out, "JPEG", quality=92)
+        return out.getvalue()
+    except Exception as exc:
+        logger.warning("fit_crop_top_solid failed: %s", exc)
+        return None
+
+
 # YuNet (opencv_zoo, WIDER FACE-trained DNN) vs. the Haar cascade this file
 # used to call at 3 separate sites: Haar's bounding box shifts unpredictably
 # with pose/angle/occlusion (a cap covering the forehead, a slight head
@@ -1186,15 +1320,22 @@ def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | No
     face = _dominant_face_bbox(image_bytes)
 
     if face and (face[3] >= 0.32 or face[1] + face[3] >= 0.78):
-        # pad=0.98 (near-full-bleed) leaves almost no vertical slack for
-        # top_bias to redistribute, so the subject lands wherever it falls —
-        # often right in the bottom text zone. A smaller pad deliberately
-        # shrinks the fitted photo so there's real slack, and a low top_bias
-        # pushes nearly all of it to the BOTTOM (under the text), clearing
-        # the face/chin.
-        return fit_with_blur_bg(
+        # fit_crop_top_solid (not fit_with_blur_bg): a smaller pad opens up
+        # vertical slack for top_bias to push the subject up, clearing the
+        # face/chin from the bottom text zone — but fit_with_blur_bg's
+        # pad<1 shrinks the ALREADY target-shaped crop uniformly, leaving a
+        # blurred margin on the sides too, not just wherever top_bias put
+        # the slack. fit_crop_top_solid keeps the width always full-bleed
+        # and puts the slack (from `pad`) only into the height. `blur_bg=True`
+        # (user's own side-by-side pick, 2026-09-01, over the flat-color
+        # default): the leftover bottom gets fit_with_blur_bg's old blurred/
+        # darkened treatment, but — since the foreground is already
+        # full-width here — it only ever shows at the bottom, never the
+        # sides, which was the actual complaint (see this function's and
+        # fit_crop_top_solid's docstrings).
+        return fit_crop_top_solid(
             image_bytes, target_w, target_h, face_bbox=face, face_zoom=50,
-            pad=0.78, top_bias=0.04,
+            pad=0.78, top_bias=0.04, blur_bg=True,
         )
 
     if img_ar < slot_ar * 1.15:  # portrait / near-square → cover is fine
