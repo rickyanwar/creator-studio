@@ -4,7 +4,7 @@ import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { Icon } from "@iconify/react";
-import { formatDistanceToNowStrict } from "date-fns";
+import { formatDistanceToNowStrict, format, differenceInCalendarDays } from "date-fns";
 import {
   listGalleryKeywords,
   listGalleryNiches,
@@ -41,6 +41,7 @@ type Keyword = {
   last_downloaded_at: string | null;
   last_download_error: string | null;
   image_count: number;
+  next_event_date: string | null;
 };
 
 type GalleryImage = {
@@ -759,6 +760,7 @@ export default function GalleryPage() {
                     <th className="px-5 py-3 text-left text-ink-80 font-semibold">Min Size</th>
                     <th className="px-5 py-3 text-left text-ink-80 font-semibold">Pages</th>
                     <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Download</th>
+                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Next Event</th>
                     <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
                     <th className="px-5 py-3"></th>
                   </tr>
@@ -788,6 +790,21 @@ export default function GalleryPage() {
                   <td className="px-5 py-3 text-ink-80">{k.max_pages}</td>
                   <td className="px-5 py-3 text-ink-80">
                     {k.last_downloaded_at ? formatDistanceToNowStrict(new Date(k.last_downloaded_at), { addSuffix: true }) : "never"}
+                  </td>
+                  <td className="px-5 py-3 text-ink-80">
+                    {k.next_event_date ? (
+                      <span title="Detected automatically — see event_calendar / gallery_downloader">
+                        {format(new Date(`${k.next_event_date}T00:00:00`), "d MMM")}{" "}
+                        <span className="text-[11px] text-ink-48">
+                          ({(() => {
+                            const days = differenceInCalendarDays(new Date(`${k.next_event_date}T00:00:00`), new Date());
+                            return days === 0 ? "today" : days > 0 ? `in ${days}d` : `${-days}d ago`;
+                          })()})
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-ink-48">—</span>
+                    )}
                   </td>
                   <td className="px-5 py-3">
                     {!k.is_active ? (

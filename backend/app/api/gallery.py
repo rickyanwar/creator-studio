@@ -73,6 +73,13 @@ def _serialize_keyword(kw, image_count: int = 0):
         "last_downloaded_at": kw.last_downloaded_at.replace(tzinfo=timezone.utc).isoformat() if kw.last_downloaded_at else None,
         "last_download_error": kw.last_download_error,
         "image_count": image_count,
+        # Detected race/match/fight date — app.services.event_calendar via
+        # gallery_downloader.refresh_keyword_event_dates, never entered
+        # manually. Exposed here so Settings can show it read-only; the
+        # per-niche press/practice/race WINDOW length around this date
+        # (e.g. F1 opens 2 days before, MotoGP/UFC 3) lives in
+        # gallery_downloader._event_window_days_before, not duplicated here.
+        "next_event_date": kw.next_event_date.isoformat() if kw.next_event_date else None,
     }
 
 
