@@ -9,8 +9,11 @@ FIFO, paced by pinterest_daily_count — get converted into an actual
 PublishJob. The beat task `generate_pinterest_content` ticks every 30 min,
 WIB 08:00-22:00, and per fanpage does two independent things:
   1. top up the idea queue if it's running low (_topup_queue)
-  2. consume the oldest pending idea into a job, if under today's paced
-     quota (_consume_one)
+  2. consume the oldest pending idea(s) into jobs, if under today's paced
+     quota (_consume_one, called in a bounded catch-up loop — see
+     _MAX_CATCHUP_PER_TICK — so a tick that follows one or more empty/
+     under-target ticks can close the gap instead of losing that quota
+     slot forever)
 render_design/render_discussion's photo-sourcing steps have no equivalent
 here — the photo was already chosen (and vision-verified) when its idea was
 created, so render_pinterest (design_renderer.py) just loads it directly.
@@ -45,6 +48,23 @@ _WINDOW_END_HOUR = 22
 # same survival RATE more chances to clear the 1/tick consumption bar.
 _MIN_QUEUE_SIZE = 5
 _TOPUP_BATCH = 6
+
+# Even with the topup fix above, a single tick whose topup nets 0 survivors
+# (queue momentarily empty right when the sweep tries to consume) used to
+# cost that tick's quota slot PERMANENTLY — consume was capped at exactly 1
+# idea/tick with no way to make it up later, so a BURSTY-but-otherwise-
+# sufficient survival rate (a dry patch followed by a run of good ticks)
+# still landed under `pinterest_daily_count` even though enough ideas
+# existed across the day to hit it. 2026-09-01: real fanpage
+# (pinterest_daily_count=25) still only hit 16/day after the topup fix.
+# This catch-up loop fixes the BURSTINESS half of that gap — it does NOT
+# fix a genuinely too-low TOTAL daily survival rate (if topup nets fewer
+# than `pinterest_daily_count` surviving ideas across the whole window on
+# average, no amount of consume-side catch-up manufactures more supply;
+# `_TOPUP_BATCH`/`_MIN_QUEUE_SIZE` are the levers for that, separately).
+# Capped at `_MAX_CATCHUP_PER_TICK` so a queue that suddenly has a big
+# buffer doesn't dump the whole day's remaining quota into one post-burst.
+_MAX_CATCHUP_PER_TICK = 3
 
 
 def _wib_day_bounds_utc(now_utc: datetime) -> tuple[datetime, datetime]:
@@ -227,12 +247,13 @@ def generate_pinterest_content():
                 .scalar()
             ) or 0
 
-            if count_today >= quota:
-                continue
-            if count_today >= _target_by_now(quota, now_hour):
-                continue
-
-            if _consume_one(db, fp):
+            target_now = _target_by_now(quota, now_hour)
+            catchup_left = _MAX_CATCHUP_PER_TICK
+            while count_today < quota and count_today < target_now and catchup_left > 0:
+                if not _consume_one(db, fp):
+                    break
+                count_today += 1
+                catchup_left -= 1
                 created += 1
 
         if topped_up or created:
