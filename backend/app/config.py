@@ -50,8 +50,15 @@ class Settings(BaseSettings):
     # limit): "ag/claude-*" models silently ignore the image ("no photo
     # attached"); "ag/gemini-3.1-flash-image" hallucinates a description
     # instead of reading the actual photo; plain "ag/gemini-3-flash" replies
-    # empty. "ag/gemini-3.5-flash-low" reads photos correctly and consistently.
-    nine_router_vision_model: str = "ag/gemini-3.5-flash-low"
+    # empty. "ag/gemini-3.5-flash-low" used to be the reliable pick, but as of
+    # 2026-09-02 the provider retired it — every call now hangs ~49s before
+    # timing out instead of failing fast, which silently multiplied into
+    # multi-hour gallery-download/render stalls before being found (see
+    # design_images._VISION_MODEL_FALLBACKS for the other models confirmed
+    # broken the same way). "ag/gemini-3.7-flash-low" is the current
+    # equivalent-tier replacement, confirmed working directly against a real
+    # photo the same day (~2.5s).
+    nine_router_vision_model: str = "ag/gemini-3.7-flash-low"
 
     # ── AI Providers (fallback) ───────────────────
     gemini_api_key: str = ""

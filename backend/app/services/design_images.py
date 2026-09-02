@@ -72,14 +72,27 @@ def _vision_datauri(image_bytes: bytes, max_dim: int = 768, quality: int = 78) -
 # "ag/gemini-3.1-flash-image" hallucinates a description instead of reading
 # the photo. Everything below is either verified (the first four) or the same
 # Gemini-flash family/architecture as the verified ones.
+#
+# 2026-09-02: direct per-model testing against a real photo found 3 of these
+# now hang ~49-65s before an APITimeoutError instead of failing fast (the
+# provider is retiring the gemini-3.5/3-flash-agent generation) — with the
+# broken primary tried FIRST on every single call, that's ~49s wasted before
+# even reaching a working fallback, which is what silently turned into
+# multi-hour gallery-download/render_discussion stalls (100-300+ photos per
+# keyword × ~50s each). Reordered so every confirmed-fast model (2-4s each,
+# re-verified same day) is tried first; the 3 slow/broken ones are pushed to
+# the very end as a last-resort safety net rather than removed outright, in
+# case the provider brings them back or the others ever all fail together.
 _VISION_MODEL_FALLBACKS = [
-    "ag/gemini-3.5-flash-low",
+    "ag/gemini-3.7-flash-low",
+    "ag/gemini-3.7-flash-medium",
+    "ag/gemini-3.6-flash-low",
+    "ag/gemini-3.6-flash-medium",
     "ag/gemini-pro-agent",
     "ag/gemini-3.1-pro-low",
-    "ag/gemini-3-flash-agent",
-    "ag/gemini-3.6-flash-medium",
-    "ag/gemini-3.6-flash-low",
-    "ag/gemini-3.5-flash-extra-low",
+    "ag/gemini-3.5-flash-low",        # retired by provider 2026-09-02 — ~49s timeout, last resort only
+    "ag/gemini-3-flash-agent",        # broken 2026-09-02 — ~65s timeout, last resort only
+    "ag/gemini-3.5-flash-extra-low",  # broken 2026-09-02 — ~65s timeout, last resort only
 ]
 
 
