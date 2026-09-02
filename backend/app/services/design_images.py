@@ -1386,9 +1386,27 @@ def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | No
         # full-width here — it only ever shows at the bottom, never the
         # sides, which was the actual complaint (see this function's and
         # fit_crop_top_solid's docstrings).
+        # face_anchor_y=True (2026-09-02): top_bias=0.04 is only a safe proxy
+        # for "keep the face in frame" when crop_w/crop_h DON'T clamp to the
+        # full source — i.e. there's real room for the initial face-centred
+        # crop window to matter. A narrow/portrait source (like a 1632-wide
+        # paddock photo, target crop_w wants ~2500) clamps both dimensions
+        # to the whole photo regardless of face_zoom, making that initial
+        # centring step a no-op — ALL of the vertical framing then falls on
+        # top_bias alone, and its fixed "don't crop the top" assumption
+        # (right for a face that already fills the frame) instead preserves
+        # empty background and crops into the subject. face_anchor_y derives
+        # the trim from the face's real position so it's correct either way
+        # — verified this only changes anything when the crop was already
+        # clamped to the full source (confirmed no behavior change for a
+        # landscape source like job 5781's George Russell, which has real
+        # crop_w slack and never hits the overflow branch face_anchor_y
+        # touches); found via two production cards (Lando Norris, Esteban
+        # Ocon) still showing the exact "dead space kept, subject cropped"
+        # symptom despite meeting this branch's own extreme-face threshold.
         return fit_crop_top_solid(
             image_bytes, target_w, target_h, face_bbox=face, face_zoom=50,
-            pad=0.78, top_bias=0.04, blur_bg=True,
+            pad=0.78, top_bias=0.04, face_anchor_y=True, blur_bg=True,
         )
 
     if img_ar < slot_ar * 1.15:  # portrait / near-square
