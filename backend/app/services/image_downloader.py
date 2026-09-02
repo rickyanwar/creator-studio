@@ -33,6 +33,20 @@ logger = logging.getLogger(__name__)
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 _FETCH_TIMEOUT = 20.0
 
+# Hard wall-clock budget for one _fetch_and_store call (2026-09-02). Found
+# via a real production keyword ("franco colapinto") whose available photo
+# pool happened to skew almost entirely toward crowd/press-conference/parade
+# shots — every one correctly rejected by classify_and_gate_image, but at
+# ~5-10s per candidate (download + vision gate) that meant grinding through
+# up to `max_num * 2` URLs (up to a few hundred) with a near-0% hit rate,
+# tying up a worker slot for 45+ minutes on a single keyword. Nothing here
+# was actually broken — just unbounded — so this caps it: past this budget,
+# stop searching and return whatever was found so far (same code path as
+# normally running out of URLs early), rather than exhausting the full list.
+# The keyword's next scheduled run picks up wherever dedup (skip_urls)
+# leaves off, so a capped run never loses images, only defers them.
+_FETCH_LOOP_TIME_BUDGET_SECONDS = 900  # 15 minutes
+
 
 @dataclass
 class DownloadedImage:
@@ -357,6 +371,8 @@ def _fetch_and_store(
     subject: str | None = None,
     captured_dates: dict[str, date] | None = None,
 ) -> list[DownloadedImage]:
+    import time
+
     captured_dates = captured_dates or {}
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
@@ -364,8 +380,16 @@ def _fetch_and_store(
 
     saved: list[DownloadedImage] = []
     seen_keys: set[str] = set()
+    loop_start = time.monotonic()
     for url in urls:
         if len(saved) >= max_num:
+            break
+        if time.monotonic() - loop_start > _FETCH_LOOP_TIME_BUDGET_SECONDS:
+            logger.warning(
+                "Gallery: hit %ds time budget for %r after %d/%d candidates (%d saved) — "
+                "stopping early, remaining URLs deferred to the next scheduled run",
+                _FETCH_LOOP_TIME_BUDGET_SECONDS, subject, len(seen_keys), len(urls), len(saved),
+            )
             break
         # Dedup on the stable key (query stripped), but download via the full
         # signed URL — Getty rejects the bare URL with HTTP 400.
