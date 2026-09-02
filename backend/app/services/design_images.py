@@ -129,7 +129,14 @@ def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, 
         raise RuntimeError("9Router base URL not configured")
     # Explicit timeout — without it a hung (not erroring) model blocks on the
     # SDK's default for way too long, and that cost repeats per fallback model.
-    client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router", timeout=30.0)
+    # max_retries=0 (2026-09-02): the SDK's own default 2-retry-with-backoff
+    # was stacking on top of _vision_models()'s own model-to-model fallback
+    # loop below — a broken model got retried against ITSELF before this
+    # code ever moved to the next one, turning today's ~30s-per-model
+    # timeout into the ~49-65s actually observed. We already try up to 9
+    # different models on failure; retrying the same broken one first just
+    # delays reaching one that works — see _VISION_MODEL_FALLBACKS' history.
+    client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router", timeout=30.0, max_retries=0)
 
     t0 = time.monotonic()
     models_tried: list[str] = []
@@ -3255,11 +3262,18 @@ def analyze_subject_side(main_datauri: str) -> str:
         cfg = get_nine_router_config()
         if not cfg.base_url:
             return "center"
-        client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router")
+        # Explicit timeout + max_retries=0 (2026-09-02): this call had NEITHER
+        # before — a broken nine_router_vision_model would've hung on the
+        # SDK's own (much longer) default timeout, retried automatically on
+        # top of that, before finally hitting the except below. This function
+        # has no model-to-model fallback of its own, so failing fast just
+        # means reaching the "center" default sooner, never less reliably.
+        client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router", timeout=30.0, max_retries=0)
         c = client.chat.completions.create(
             model=get_settings().nine_router_vision_model,
             max_tokens=1500,
             temperature=0,
+            timeout=30.0,
             messages=[{"role": "user", "content": [
                 {"type": "text", "text": (
                     "Where is the main person/subject's head positioned in this "

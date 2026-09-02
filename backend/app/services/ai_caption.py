@@ -225,6 +225,15 @@ def _call_router(prompt: str, model: str | None = None) -> str:
         # routes (e.g. My-Combo -> gemini-pro-default) can take a while to
         # finish their hidden reasoning, so this is generous on purpose.
         timeout=75.0,
+        # 2026-09-02: the SDK's own retry-the-same-request behavior (default
+        # 2 retries w/ backoff) was silently stacking on top of
+        # ROUTER_MODEL_FALLBACKS' own model-to-model retry loop — a broken
+        # model got retried against ITSELF a couple times before this code
+        # ever moved on to the next model, turning a ~30s failure into 44s+.
+        # We already retry across up to 8 different models on any failure,
+        # so retrying the identical request against the identical (broken)
+        # model buys nothing and only delays reaching a model that works.
+        max_retries=0,
     )
     completion = client.chat.completions.create(
         model=model or cfg.model,

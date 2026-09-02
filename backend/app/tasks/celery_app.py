@@ -31,6 +31,7 @@ celery_app = Celery(
         "app.tasks.design_renderer",
         "app.tasks.discussion",
         "app.tasks.pinterest",
+        "app.tasks.ai_health_check",
     ],
 )
 
@@ -171,6 +172,17 @@ celery_app.conf.beat_schedule = {
     "recover-stuck-renders": {
         "task": "app.tasks.design_renderer.recover_stuck_renders",
         "schedule": 1800,  # every 30 minutes
+    },
+    # AI health check: calls the configured PRIMARY vision/text model
+    # directly (no fallback) every 2 hours so a dead/degraded primary shows
+    # up on the Logs dashboard within a couple hours instead of being
+    # silently masked by the fallback chain — see
+    # ai_health_check.check_primary_models's docstring for the 2026-09-02
+    # incident (a retired model went unnoticed 18+ hours) this exists to
+    # catch earlier next time.
+    "ai-health-check": {
+        "task": "app.tasks.ai_health_check.check_primary_models",
+        "schedule": crontab(minute=0, hour="*/2"),
     },
     # Cleanup: every 2 hours
     "cleanup-media": {

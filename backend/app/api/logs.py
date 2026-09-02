@@ -154,6 +154,13 @@ def get_logs(
             "vision_classify_closeup": {"label": "Gallery AI filter",   "is_text": False},
             "vision_pick_best":        {"label": "Best-photo picker",   "is_text": False},
             "vision_verify_match":     {"label": "Photo match check",   "is_text": False},
+            # ai_health_check.py — scheduled probe of the configured PRIMARY
+            # model only (no fallback), so a "failed" event here means the
+            # primary itself is down/slow, not that any real post was lost
+            # or degraded. is_text: False so it renders as a warning, not an
+            # "X lost" error (nothing was actually lost).
+            "health_check_vision":     {"label": "Vision health check",  "is_text": False},
+            "health_check_text":       {"label": "Text health check",   "is_text": False},
         }
 
         for ev in ai_events:
