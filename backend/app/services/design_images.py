@@ -737,17 +737,26 @@ def _is_low_quality_photo(image_bytes: bytes) -> bool:
 # the level the user settled on as looking right, not a theoretical ideal —
 # revisit if a differently-shaped template is added.
 _SPLIT_TARGET_FACE_FRAC = 0.62
-# Above this, content_aware_split_pair backs OFF and leaves that pair on the
-# existing cover-fit + zoom_l/zoom_r path instead of forcing it. A photo
-# whose face is already large relative to its own frame needs LESS zoom to
-# reach _SPLIT_TARGET_FACE_FRAC, which means MORE of the final canvas has to
-# be invented — real-world validation (2026-08-24, 5 test pairs) found the
-# two photos users flagged as looking wrong were the two with the least
-# zoom-in headroom (57%/54% synthetic fill) — but two OTHER photos at
-# similarly high ratios (55%/52%) were NOT flagged, so this is a risk
-# signal, not a precise predictor; 0.45 is a deliberately conservative
-# reading of that data, not a proven exact cutoff.
-_SPLIT_MAX_SYNTHETIC_FILL = 0.45
+# _resolve_zoom_and_fill's zoom_for_cap bound floors the zoom so the
+# resulting fill never exceeds this — i.e. it forces MORE zoom, not less,
+# to stay under the cap (despite this constant's original 0.45-era comment
+# describing a "back off to cover-fit instead of forcing it" behavior that
+# doesn't actually exist anywhere in this file — stale documentation from
+# an earlier version, corrected here 2026-09-02, not a real code path to
+# rely on). That's exactly what went wrong for a real published card (Yuki
+# Tsunoda vs Zhou Guanyu, 2026-09-02): Tsunoda's source already had a face
+# filling ~84% of the frame height, and forcing zoom up to keep fill under
+# the old 0.45 cap cropped it into an unusable eyes/nose/mouth close-up —
+# the cap did its job (low fill), just by making the crop worse instead.
+# 0.45 was calibrated (2026-08-24) against cv2 INPAINT_FSR_BEST's quality
+# ceiling specifically — inpainting looking soft/discoloured past ~50-55%
+# fill (see feature-smart-content-aware-fill's rejected-inpainting
+# history). Now that content_aware_split_extend's blur_bg=True path fills
+# with a blurred/darkened cover-crop instead (fit_crop_top_solid's already-
+# validated recipe) rather than inpainting, that quality ceiling doesn't
+# apply — raised to 0.65 so a source this mismatched needs far less forced
+# zoom before falling back to a large-but-clean blur fill.
+_SPLIT_MAX_SYNTHETIC_FILL = 0.65
 
 # Where each half's face TOP (hairline, not centre — see
 # content_aware_split_extend's `anchor="top"`) lands, as a fraction of the
@@ -857,7 +866,9 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
                                 feather: int = 24, downscale: int = 5,
                                 face_bbox: tuple[float, float, float, float] | None = None,
                                 target_cy: float = 0.34,
-                                anchor: str = "center") -> bytes | None:
+                                anchor: str = "center",
+                                blur_bg: bool = False, blur: int = 40,
+                                darken: float = 0.78) -> bytes | None:
     """Fit `image_bytes` to `target_w` (scaled further by `zoom`), then fill
     the remaining canvas with content-aware synthesis (cv2.xphoto
     INPAINT_FSR_BEST) instead of reflect_extend's mirror-flip — built
@@ -865,6 +876,26 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
     a general reflect_extend replacement (smart_expand's face path already
     has fit_with_blur_bg; this is for when a split slot's forced cover-fit
     scale would otherwise crop far too tight — see _SPLIT_TARGET_FACE_FRAC).
+
+    `blur_bg=True` (2026-09-02) skips the cv2 inpaint entirely and fills
+    with a blurred/darkened cover-crop of the SAME photo instead — the
+    fit_crop_top_solid recipe, already validated for the single-photo
+    extreme-close-up case. Found via a real published split card (Yuki
+    Tsunoda vs Zhou Guanyu): Tsunoda's source was a landscape photo whose
+    face already filled ~84% of the frame height, forced into this
+    template's narrow portrait split slot — content_aware_split_pair's
+    zoom_for_cap bound (see _resolve_zoom_and_fill) computed a 2.06x zoom
+    specifically to keep INPAINT fill under _SPLIT_MAX_SYNTHETIC_FILL,
+    which cropped an already-too-tight face into an unusable eyes/nose/
+    mouth close-up — the inpaint-avoidance was working exactly as
+    designed, it was just avoiding the wrong thing. Since blur-fill has a
+    much higher acceptable-quality ceiling than inpainting (inpainting was
+    separately tested and rejected for general use — see
+    feature-smart-content-aware-fill's history), _SPLIT_MAX_SYNTHETIC_FILL
+    was raised alongside this change, so a source this mismatched no
+    longer needs anywhere near as aggressive a forced zoom. The face_bbox/
+    anchor/target_cy mechanics documented below apply identically to the
+    blur_bg path — same placement math, only the fill technique differs.
 
     `face_bbox` (fx, fy, fw, fh — normalized fractions of the ORIGINAL
     image, from `_dominant_face_bbox`) drives BOTH crop axes when given:
@@ -903,6 +934,12 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
     73%-empty 480x1200 canvas vs ~12s at 1/5 scale) — then the result is
     upscaled with LANCZOS and blended against the sharp source at the seam.
     Returns None on failure (caller should fall back to the raw photo)."""
+    if blur_bg:
+        return _content_aware_split_extend_blur(
+            image_bytes, target_w, target_h, zoom=zoom, top_bias=top_bias,
+            face_bbox=face_bbox, target_cy=target_cy, anchor=anchor,
+            feather=feather, blur=blur, darken=darken,
+        )
     try:
         import io
 
@@ -980,6 +1017,90 @@ def content_aware_split_extend(image_bytes: bytes, target_w: int, target_h: int,
         return out.getvalue()
     except Exception as exc:
         logger.warning("content_aware_split_extend failed: %s", exc)
+        return None
+
+
+def _content_aware_split_extend_blur(image_bytes: bytes, target_w: int, target_h: int,
+                                      zoom: float, top_bias: float, feather: int,
+                                      face_bbox: tuple[float, float, float, float] | None,
+                                      target_cy: float, anchor: str,
+                                      blur: int, darken: float) -> bytes | None:
+    """content_aware_split_extend's blur_bg=True path — identical placement
+    math (sharp foreground positioned by face_bbox/target_cy/anchor, same
+    horizontal face-centred crop when the resize comes out wider than
+    target_w), but the gap is filled with a blurred/darkened cover-crop of
+    the SAME photo (fit_crop_top_solid's recipe) instead of cv2 inpainting.
+    See content_aware_split_extend's docstring for why. Not called
+    directly — dispatched to from content_aware_split_extend(blur_bg=True)."""
+    try:
+        import io
+
+        import numpy as np
+        from PIL import Image, ImageEnhance, ImageFilter
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        iw, ih = img.size
+        scale = (target_w / iw) * zoom
+        rw, rh = max(1, round(iw * scale)), max(1, round(ih * scale))
+        img_full = img.resize((rw, rh))
+        if rw > target_w:
+            if face_bbox:
+                face_cx_px = (face_bbox[0] + face_bbox[2] / 2) * rw
+                l = int(round(face_cx_px - target_w / 2))
+                l = max(0, min(rw - target_w, l))
+            else:
+                l = (rw - target_w) // 2
+            img_full = img_full.crop((l, 0, l + target_w, rh))
+        arr_full = np.asarray(img_full)
+        h_full = arr_full.shape[0]
+
+        def _anchor_px(h: int) -> float:
+            return face_bbox[1] * h if anchor == "top" else (face_bbox[1] + face_bbox[3] / 2) * h
+
+        def _placement(gap: int) -> int:
+            if face_bbox:
+                anchor_px = _anchor_px(h_full)
+                pt = int(round(target_h * target_cy - anchor_px))
+                return max(0, min(gap, pt))
+            return int(gap * top_bias)
+
+        if h_full >= target_h:
+            over = h_full - target_h
+            if face_bbox:
+                anchor_px = _anchor_px(h_full)
+                t = max(0, min(over, int(round(anchor_px - target_h * target_cy))))
+            else:
+                t = int(over * top_bias)
+            out = io.BytesIO()
+            Image.fromarray(arr_full[t:t + target_h]).save(out, "JPEG", quality=92)
+            return out.getvalue()
+
+        pt = _placement(target_h - h_full)
+
+        # Same recipe as fit_crop_top_solid's blur background: cover-crop
+        # the WHOLE original photo (not just the already-cropped sharp
+        # foreground) to the full target size, blur, darken.
+        sbg = max(target_w / iw, target_h / ih)
+        bg = img.resize((max(1, int(iw * sbg)), max(1, int(ih * sbg))))
+        bl = (bg.width - target_w) // 2
+        bt = (bg.height - target_h) // 2
+        bg = bg.crop((bl, bt, bl + target_w, bt + target_h))
+        bg = bg.filter(ImageFilter.GaussianBlur(blur))
+        bg = ImageEnhance.Brightness(bg).enhance(darken)
+
+        bg_arr = np.asarray(bg).astype(np.float32)
+        ys = np.arange(target_h)
+        rt = np.clip((ys - pt) / feather, 0, 1)
+        rb = np.clip((pt + h_full - 1 - ys) / feather, 0, 1)
+        alpha = np.minimum(rt, rb)[:, None, None]
+        sharp = np.zeros((target_h, target_w, 3), np.float32)
+        sharp[pt:pt + h_full] = arr_full
+        res = sharp * alpha + bg_arr * (1 - alpha)
+        out = io.BytesIO()
+        Image.fromarray(np.clip(res, 0, 255).astype(np.uint8)).save(out, "JPEG", quality=92)
+        return out.getvalue()
+    except Exception as exc:
+        logger.warning("_content_aware_split_extend_blur failed: %s", exc)
         return None
 
 
@@ -1071,8 +1192,8 @@ def content_aware_split_pair(left_bytes: bytes, right_bytes: bytes, slot_w: int,
     # centre-anchored default they'd already seen — back to that; SIZE
     # parity is what _SPLIT_TARGET_FACE_FRAC's shared width target above is
     # for, not vertical anchoring.
-    left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face)
-    right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face)
+    left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face, blur_bg=True)
+    right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face, blur_bg=True)
     if not left_filled or not right_filled:
         return None
 
