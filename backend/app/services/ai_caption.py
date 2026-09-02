@@ -177,28 +177,35 @@ def _router_enabled() -> bool:
 # budget on hidden thinking. Deliberately long and spans multiple underlying
 # families (Gemini, Claude, GPT-OSS), not just Gemini variants — a
 # family-wide 9Router outage shouldn't be able to exhaust the whole chain.
-# ag/gemini-pro-agent has reasoning disabled entirely, so it goes first as the
-# most reliable; the rest are ordered roughly by how much they cost/how slow
-# they tend to be. This list being long is deliberate (user preference,
-# 2026-08-16): these are background Celery tasks, not user-facing requests,
-# so trading worst-case latency for a much higher chance of landing a post is
-# the right tradeoff — see the 98.9%-failure incident this whole retry chain
-# exists to prevent. Gemini/Groq (outside 9Router entirely) is still the
-# final fallback after every model here is exhausted.
+# Ordered roughly by how much they cost/how slow they tend to be, with
+# ag/gemini-pro-agent (reasoning disabled entirely, so it never burns its
+# token budget on hidden thinking) still mid-chain as a reliable middle
+# option. This list being long is deliberate (user preference, 2026-08-16):
+# these are background Celery tasks, not user-facing requests, so trading
+# worst-case latency for a much higher chance of landing a post is the right
+# tradeoff — see the 98.9%-failure incident this whole retry chain exists to
+# prevent. Gemini/Groq (outside 9Router entirely) is still the final
+# fallback after every model here is exhausted.
 #
 # 2026-09-02: direct testing found "ag/gemini-3-flash-agent" now 500s after
 # ~44s (provider retiring that generation — same root cause that separately
 # broke design_images._VISION_MODEL_FALLBACKS's primary that day) and
 # "ag/gemini-3.5-flash-high" 404s outright (fails fast, so harmless but
-# useless). Both pushed to the end as last resort rather than removed.
+# useless). Both DROPPED (not just deprioritized) and replaced with
+# ag/gemini-3.7-flash-medium and ag/gemini-3.6-flash-high — every model in
+# this list re-verified responding for real that day before being added.
+# ag/claude-opus-4-6-thinking put first per user request the same day
+# (confirmed responding, ~2.9s) — spans a 3rd model family ahead of
+# Gemini/GPT-OSS in case of a family-wide outage on either of the others.
 ROUTER_MODEL_FALLBACKS = [
-    "ag/gemini-pro-agent",
-    "ag/gemini-3.1-pro-low",
-    "ag/claude-sonnet-4-6",
-    "ag/gemini-3.6-flash-medium",
-    "ag/gpt-oss-120b-medium",
-    "ag/gemini-3-flash-agent",        # broken 2026-09-02 — ~44s 500 error, last resort only
-    "ag/gemini-3.5-flash-high",       # retired 2026-09-02 — fails fast (404), last resort only
+    "ag/claude-opus-4-6-thinking",     # confirmed working 2026-09-02 (~2.9s)
+    "ag/claude-sonnet-4-6",            # confirmed working 2026-09-02 (~1.8s)
+    "ag/gpt-oss-120b-medium",          # confirmed working 2026-09-02 (~1.2s)
+    "ag/gemini-pro-agent",             # confirmed working 2026-09-02 (~3.5s)
+    "ag/gemini-3.1-pro-low",           # confirmed working 2026-09-02 (~3.5s)
+    "ag/gemini-3.6-flash-medium",      # confirmed working 2026-09-02 (~2.1s)
+    "ag/gemini-3.7-flash-medium",      # confirmed working 2026-09-02 (~3.1s)
+    "ag/gemini-3.6-flash-high",        # confirmed working 2026-09-02 (~2.3s)
 ]
 
 
