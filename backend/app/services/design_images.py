@@ -387,7 +387,7 @@ def reflect_extend(image_bytes: bytes, target_w: int, target_h: int,
 def fit_crop_top_solid(image_bytes: bytes, target_w: int, target_h: int,
                         face_bbox: tuple[float, float, float, float],
                         face_zoom: float = 50, pad: float = 0.78,
-                        top_bias: float = 0.04,
+                        top_bias: float = 0.04, face_anchor_y: bool = False,
                         fill_color: tuple[int, int, int] = (8, 8, 10),
                         blur_bg: bool = False, blur: int = 40, darken: float = 0.78,
                         feather: int = 220) -> bytes | None:
@@ -441,6 +441,24 @@ def fit_crop_top_solid(image_bytes: bytes, target_w: int, target_h: int,
     to whatever width IS available, then centre-crops any height overflow
     instead of reopening a side margin.
 
+    `face_anchor_y=True` (2026-09-02): for a portrait source whose width
+    can't reach the ideal crop_w, BOTH dimensions clamp to the full
+    original photo — meaning the initial face-centred crop window is a
+    no-op (there's nowhere to move it) and the overflow-trim below becomes
+    the ONLY thing that decides vertical framing. `top_bias`'s small fixed
+    default (0.04) is tuned for the extreme-close-up caller, where the
+    subject already fills most of the frame and the goal is "don't cut the
+    top off their head" — applied to a photo with real background above
+    the subject (a common garage/paddock composition, face nowhere near
+    the top), that same fixed bias keeps the dead space and crops into the
+    subject instead. `face_anchor_y=True` derives the overflow trim from
+    the face's own vertical centre instead of the fixed fraction, so the
+    crop centres on the actual subject regardless of where it happens to
+    sit in the source. Found + fixed via two real production discussion
+    cards (Lando Norris, Esteban Ocon — both 1632×2448 paddock photos)
+    whose faces sit mid-frame with real empty backdrop above; leaves the
+    original fixed-top_bias behavior for existing callers untouched.
+
     Returns JPEG bytes sized target_w×target_h, or None on failure."""
     try:
         import io
@@ -474,7 +492,21 @@ def fit_crop_top_solid(image_bytes: bytes, target_w: int, target_h: int,
             # wanted — crop the overflow instead of shrinking back down
             # (shrinking would reopen the exact side-margin problem this
             # function exists to avoid).
-            t = int((fh - target_h) * top_bias)
+            if face_anchor_y:
+                # cy is the face centre in ORIGINAL pixel coords; map through
+                # the same crop-offset + scale the foreground itself went
+                # through so it lands in `fg`'s coordinate space, then place
+                # it at 40% (not 50%) down the visible target_h-tall window
+                # — slightly above dead-centre, same convention as the
+                # renderer's own default focus point [0.5, 0.42] — leaving a
+                # bit more clearance below for the template's bottom
+                # title/scrim overlay than a plain centre-crop would
+                # (clamped to the available overflow — can't reveal pixels
+                # outside `fg`).
+                face_cy_fg = (cy - top_) * scale
+                t = int(max(0, min(fh - target_h, face_cy_fg - target_h * 0.40)))
+            else:
+                t = int((fh - target_h) * top_bias)
             fg = fg.crop((0, t, target_w, t + target_h))
             fh = target_h
 
@@ -1359,8 +1391,27 @@ def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | No
             pad=0.78, top_bias=0.04, blur_bg=True,
         )
 
-    if img_ar < slot_ar * 1.15:  # portrait / near-square → cover is fine
-        return None
+    if img_ar < slot_ar * 1.15:  # portrait / near-square
+        if face:
+            # 2026-09-02: this used to be a blind `return None` ("cover
+            # crops little, doesn't matter where") for ANY portrait/near-
+            # square source — true for most, but a real paddock/garage
+            # photo can have the subject's face sit mid-frame with a
+            # sizeable slab of empty background above it (found via two
+            # published discussion cards, Lando Norris + Esteban Ocon,
+            # both 1632x2448). A plain object-fit:cover with the renderer's
+            # generic focus point has no way to know that background is
+            # dead space, and can crop into the subject's chin instead of
+            # the empty area above it. Route through fit_crop_top_solid
+            # with face_anchor_y=True (not the fixed top_bias=0.04 tuned
+            # for the extreme-closeup branch above) so the crop follows
+            # THIS photo's actual face position instead of a composition
+            # assumption that doesn't hold for every portrait source.
+            return fit_crop_top_solid(
+                image_bytes, target_w, target_h, face_bbox=face, face_zoom=50,
+                pad=0.78, face_anchor_y=True, blur_bg=True,
+            )
+        return None  # no face at all — genuinely nothing to anchor on
     if face:
         return fit_with_blur_bg(image_bytes, target_w, target_h, face_bbox=face)
     return reflect_extend(image_bytes, target_w, target_h)
