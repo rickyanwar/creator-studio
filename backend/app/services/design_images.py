@@ -478,6 +478,19 @@ def fit_crop_top_solid(image_bytes: bytes, target_w: int, target_h: int,
         # exactly crop_h*(target_w/target_h)/pad).
         crop_h = min(ih, max(1, (ffh * ih) * face_zoom))
         crop_w = min(iw, crop_h * (target_w / target_h) / max(pad, 0.01))
+        # Floor crop_w at the face's own detected width (+15% margin) —
+        # found 2026-09-02 via a real split-fallback render (Yuki Tsunoda,
+        # target_w=1080 slot): at a narrow-enough target_w/target_h, the
+        # formula above can compute a crop_w SMALLER than the face itself
+        # (837px crop for a face ~1190px wide), cropping through both
+        # cheeks/ears instead of just zooming in — a distinct failure from
+        # the vertical-overflow one face_anchor_y already handles, and not
+        # fixed by it (this can happen with fh <= target_h too, which skips
+        # that branch entirely). Widening crop_w here means less zoom and
+        # more vertical fill, which is exactly the right trade — blur_bg
+        # fill is cheap and already validated to look clean even at high
+        # fill fractions (see content_aware_split_pair's same-day fix).
+        crop_w = max(crop_w, min(iw, ffw * iw * 1.15))
         crop_h = min(crop_h, ih)  # crop_w's own iw-clamp can't shrink crop_h back down
         left = min(max(0, cx - crop_w / 2), iw - crop_w)
         top_ = min(max(0, cy - crop_h / 2), ih - crop_h)
