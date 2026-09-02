@@ -185,14 +185,20 @@ def _router_enabled() -> bool:
 # the right tradeoff — see the 98.9%-failure incident this whole retry chain
 # exists to prevent. Gemini/Groq (outside 9Router entirely) is still the
 # final fallback after every model here is exhausted.
+#
+# 2026-09-02: direct testing found "ag/gemini-3-flash-agent" now 500s after
+# ~44s (provider retiring that generation — same root cause that separately
+# broke design_images._VISION_MODEL_FALLBACKS's primary that day) and
+# "ag/gemini-3.5-flash-high" 404s outright (fails fast, so harmless but
+# useless). Both pushed to the end as last resort rather than removed.
 ROUTER_MODEL_FALLBACKS = [
     "ag/gemini-pro-agent",
     "ag/gemini-3.1-pro-low",
     "ag/claude-sonnet-4-6",
     "ag/gemini-3.6-flash-medium",
     "ag/gpt-oss-120b-medium",
-    "ag/gemini-3-flash-agent",
-    "ag/gemini-3.5-flash-high",
+    "ag/gemini-3-flash-agent",        # broken 2026-09-02 — ~44s 500 error, last resort only
+    "ag/gemini-3.5-flash-high",       # retired 2026-09-02 — fails fast (404), last resort only
 ]
 
 
