@@ -1580,6 +1580,21 @@ def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | No
         return None  # no face at all — genuinely nothing to anchor on
     if face:
         return fit_with_blur_bg(image_bytes, target_w, target_h, face_bbox=face)
+
+    # reflect_extend mirrors the source to fill the gap — fine for a modest
+    # gap (e.g. cropping a 16:9 photo into a slightly taller slot) but for a
+    # wide landscape photo forced into a narrow/tall template slot, numpy's
+    # reflect padding has to wrap the same strip more than once, which reads
+    # as an obvious repeating/kaleidoscope pattern instead of a natural
+    # extension (real incident, 2026-09-06: job 6332, a wide F1 car photo
+    # forced into a 540x1350 slot needed 71% synthetic fill and turned a
+    # background arch into an abstract mirrored mess). fit_with_blur_bg's
+    # ordinary cover-crop blur has no repeat artifact regardless of how much
+    # fill is needed, so it's the safer fallback once the real photo would
+    # occupy less than half the frame.
+    projected_h = ih * (target_w / iw) * 1.08  # mirrors reflect_extend's own scale/zoom
+    if projected_h < target_h * 0.5:
+        return fit_with_blur_bg(image_bytes, target_w, target_h)
     return reflect_extend(image_bytes, target_w, target_h)
 
 
