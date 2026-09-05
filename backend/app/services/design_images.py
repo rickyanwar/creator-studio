@@ -1090,14 +1090,28 @@ def _content_aware_split_extend_blur(image_bytes: bytes, target_w: int, target_h
 
         pt = _placement(target_h - h_full)
 
-        # Same recipe as fit_crop_top_solid's blur background: cover-crop
-        # the WHOLE original photo (not just the already-cropped sharp
-        # foreground) to the full target size, blur, darken.
-        sbg = max(target_w / iw, target_h / ih)
-        bg = img.resize((max(1, int(iw * sbg)), max(1, int(ih * sbg))))
-        bl = (bg.width - target_w) // 2
-        bt = (bg.height - target_h) // 2
-        bg = bg.crop((bl, bt, bl + target_w, bt + target_h))
+        # Background: stretch the SAME sharp content (arr_full — already
+        # the correctly face-centred crop) to fill target_h, then blur —
+        # NOT an independent cover-crop of the whole original photo (that
+        # was this function's original recipe, copied from
+        # fit_crop_top_solid's blur background). Found live 2026-09-06 on
+        # 3 real published split cards: an independent whole-photo
+        # cover-crop has no relationship to WHERE the sharp foreground was
+        # cropped from, so on a photo with real content variety (a bright
+        # highlight, a stray shoulder, a light rig) it can select a
+        # completely different, visually mismatched region and place it
+        # right next to the sharp face — an obvious, ugly blur patch, not
+        # a natural extension. fit_crop_top_solid's single-photo blur
+        # background doesn't have this problem because that function's
+        # crop already IS the full source height most of the time (see
+        # its own docstring); this function's crop is deliberately
+        # narrower (a split half), so the mismatch is far more likely to
+        # bite here. Stretching the same already-shown content guarantees
+        # the blur is always a soft continuation of the sharp band above/
+        # below it — same colours, same general shapes, never an
+        # unrelated region — at the cost of the fill being a distorted
+        # (not fresh) version of that content, invisible once blurred.
+        bg = Image.fromarray(arr_full).resize((target_w, target_h))
         bg = bg.filter(ImageFilter.GaussianBlur(blur))
         bg = ImageEnhance.Brightness(bg).enhance(darken)
 
