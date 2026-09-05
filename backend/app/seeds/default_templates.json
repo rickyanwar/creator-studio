@@ -1381,7 +1381,7 @@
         {
           "type": "textbox",
           "placeholderRole": "label",
-          "left": 56,
+          "left": 76,
           "top": 522,
           "width": 700,
           "height": 36,
@@ -1556,7 +1556,7 @@
         {
           "type": "textbox",
           "placeholderRole": "label",
-          "left": 56,
+          "left": 76,
           "top": 522,
           "width": 700,
           "height": 36,
