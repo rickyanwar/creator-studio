@@ -747,6 +747,18 @@ def render_pinterest(self, job_id: int):
         # renderer/inject.js — each block is gated on `objectFound &&
         # value`), so sending all of them is safe regardless of which
         # roles this one dedicated Pinterest template happens to use.
+        #
+        # label intentionally omitted (2026-09-05, user request): Pinterest
+        # has no dedicated template of its own — it reuses the News/Quote
+        # pools (see classify_pinterest_content above), several of which
+        # carry a label/labelBadge pill meant to say "NEWS"/"DISCUSSION".
+        # This render used to hardcode "SPOTLIGHT" into that same slot
+        # since Mode 5 was first built; inject.js hides the label AND its
+        # badge together when no label value is sent (see its
+        # `if (labelObj && label) ... else labelObj.set({visible:false})`
+        # branch), so leaving this out cleanly removes the badge/pill from
+        # Pinterest cards instead of showing a label that was never
+        # actually about the reused template's own News/Discussion framing.
         payload = {
             "template_json": template_json,
             "width": template.canvas_width,
@@ -754,7 +766,6 @@ def render_pinterest(self, job_id: int):
             "title": job.design_title or "",
             "subtitle": "",
             "caption": job.design_caption or "",
-            "label": "SPOTLIGHT",
             "watermark": fanpage.watermark_text or "",
             "watermark_image": watermark_datauri(fanpage),
             "image_srcs": image_srcs,
