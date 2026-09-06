@@ -1219,8 +1219,16 @@ def content_aware_split_pair(left_bytes: bytes, right_bytes: bytes, slot_w: int,
     # centre-anchored default they'd already seen — back to that; SIZE
     # parity is what _SPLIT_TARGET_FACE_FRAC's shared width target above is
     # for, not vertical anchoring.
-    left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face, blur_bg=True)
-    right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face, blur_bg=True)
+    # feather=180 (not the 24 default, tuned for the OLD cv2-inpaint path's
+    # already-similar-toned output): the blur path composites real
+    # blurred/darkened pixels next to full-brightness sharp ones, a much
+    # bigger jump than inpaint's own blend — 24px reads as a visible hard
+    # seam at this canvas size (found 2026-09-06 rendering a real Norris/
+    # Verstappen pair through the actual template). 180 matches the same
+    # order of magnitude as fit_crop_top_solid's own blur_bg feather (220)
+    # for the equivalent single-photo case.
+    left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face, blur_bg=True, feather=180)
+    right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face, blur_bg=True, feather=180)
     if not left_filled or not right_filled:
         return None
 
