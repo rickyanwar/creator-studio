@@ -1090,28 +1090,14 @@ def _content_aware_split_extend_blur(image_bytes: bytes, target_w: int, target_h
 
         pt = _placement(target_h - h_full)
 
-        # Background: stretch the SAME sharp content (arr_full — already
-        # the correctly face-centred crop) to fill target_h, then blur —
-        # NOT an independent cover-crop of the whole original photo (that
-        # was this function's original recipe, copied from
-        # fit_crop_top_solid's blur background). Found live 2026-09-06 on
-        # 3 real published split cards: an independent whole-photo
-        # cover-crop has no relationship to WHERE the sharp foreground was
-        # cropped from, so on a photo with real content variety (a bright
-        # highlight, a stray shoulder, a light rig) it can select a
-        # completely different, visually mismatched region and place it
-        # right next to the sharp face — an obvious, ugly blur patch, not
-        # a natural extension. fit_crop_top_solid's single-photo blur
-        # background doesn't have this problem because that function's
-        # crop already IS the full source height most of the time (see
-        # its own docstring); this function's crop is deliberately
-        # narrower (a split half), so the mismatch is far more likely to
-        # bite here. Stretching the same already-shown content guarantees
-        # the blur is always a soft continuation of the sharp band above/
-        # below it — same colours, same general shapes, never an
-        # unrelated region — at the cost of the fill being a distorted
-        # (not fresh) version of that content, invisible once blurred.
-        bg = Image.fromarray(arr_full).resize((target_w, target_h))
+        # Same recipe as fit_crop_top_solid's blur background: cover-crop
+        # the WHOLE original photo (not just the already-cropped sharp
+        # foreground) to the full target size, blur, darken.
+        sbg = max(target_w / iw, target_h / ih)
+        bg = img.resize((max(1, int(iw * sbg)), max(1, int(ih * sbg))))
+        bl = (bg.width - target_w) // 2
+        bt = (bg.height - target_h) // 2
+        bg = bg.crop((bl, bt, bl + target_w, bt + target_h))
         bg = bg.filter(ImageFilter.GaussianBlur(blur))
         bg = ImageEnhance.Brightness(bg).enhance(darken)
 
@@ -1219,16 +1205,8 @@ def content_aware_split_pair(left_bytes: bytes, right_bytes: bytes, slot_w: int,
     # centre-anchored default they'd already seen — back to that; SIZE
     # parity is what _SPLIT_TARGET_FACE_FRAC's shared width target above is
     # for, not vertical anchoring.
-    # feather=180 (not the 24 default, tuned for the OLD cv2-inpaint path's
-    # already-similar-toned output): the blur path composites real
-    # blurred/darkened pixels next to full-brightness sharp ones, a much
-    # bigger jump than inpaint's own blend — 24px reads as a visible hard
-    # seam at this canvas size (found 2026-09-06 rendering a real Norris/
-    # Verstappen pair through the actual template). 180 matches the same
-    # order of magnitude as fit_crop_top_solid's own blur_bg feather (220)
-    # for the equivalent single-photo case.
-    left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face, blur_bg=True, feather=180)
-    right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face, blur_bg=True, feather=180)
+    left_filled = content_aware_split_extend(left_bytes, slot_w, slot_h, zoom=zoom_l, face_bbox=left_face, blur_bg=True)
+    right_filled = content_aware_split_extend(right_bytes, slot_w, slot_h, zoom=zoom_r, face_bbox=right_face, blur_bg=True)
     if not left_filled or not right_filled:
         return None
 
@@ -1588,21 +1566,6 @@ def smart_expand(image_bytes: bytes, target_w: int, target_h: int) -> bytes | No
         return None  # no face at all — genuinely nothing to anchor on
     if face:
         return fit_with_blur_bg(image_bytes, target_w, target_h, face_bbox=face)
-
-    # reflect_extend mirrors the source to fill the gap — fine for a modest
-    # gap (e.g. cropping a 16:9 photo into a slightly taller slot) but for a
-    # wide landscape photo forced into a narrow/tall template slot, numpy's
-    # reflect padding has to wrap the same strip more than once, which reads
-    # as an obvious repeating/kaleidoscope pattern instead of a natural
-    # extension (real incident, 2026-09-06: job 6332, a wide F1 car photo
-    # forced into a 540x1350 slot needed 71% synthetic fill and turned a
-    # background arch into an abstract mirrored mess). fit_with_blur_bg's
-    # ordinary cover-crop blur has no repeat artifact regardless of how much
-    # fill is needed, so it's the safer fallback once the real photo would
-    # occupy less than half the frame.
-    projected_h = ih * (target_w / iw) * 1.08  # mirrors reflect_extend's own scale/zoom
-    if projected_h < target_h * 0.5:
-        return fit_with_blur_bg(image_bytes, target_w, target_h)
     return reflect_extend(image_bytes, target_w, target_h)
 
 
