@@ -1388,6 +1388,20 @@ def single_photo_face_fits(image_bytes: bytes, canvas_width: int, canvas_height:
     if _is_low_quality_photo(image_bytes):
         return False
 
+    # Real incident, 2026-09-25: a Jon Jones discussion card shipped with a
+    # visibly soft/upscaled-looking photo (splotchy background, waxy skin)
+    # that _is_low_quality_photo's Laplacian-variance check did NOT catch —
+    # the exact same failure mode already found and fixed for Mode 5
+    # Pinterest (see vision_check_photo_quality's docstring: FSRCNN upscale
+    # sharpening inflates edge-variance without adding real detail, so a
+    # genuinely soft photo still reads "sharp" to that metric). That
+    # docstring assumed Mode 2/3's Getty/editorial sourcing didn't need this
+    # extra vision check — this incident proves that assumption wrong: every
+    # gallery photo goes through the same upscaler.upscale_image_bytes
+    # regardless of source engine, so a small Getty comp is just as exposed.
+    if not vision_check_photo_quality(image_bytes):
+        return False
+
     face = _dominant_face_bbox(image_bytes)
     if not face:
         return True
