@@ -75,6 +75,11 @@ class FanpageBase(BaseModel):
     pinterest_custom_prompt: str = ""
     pinterest_hashtag_count: int = 5
 
+    # ── Mode 6: Facebook photo recreate ──
+    facebook_photo_enabled: bool = False
+    facebook_photo_publish_mode: PublishMode = PublishMode.manual_review
+    facebook_photo_daily_count: int = 2
+
 
 class FanpageUpdate(FanpageBase):
     pass
@@ -217,6 +222,48 @@ class DiscussionContentIdeaCreate(BaseModel):
     label: Optional[str] = None  # "DISCUSSION" | "HOT TAKE" — override, else AI picks per discussion_label_mode
 
 
+class FacebookPhotoSourceRef(BaseModel):
+    id: int
+    page_url: str
+    label: Optional[str] = None
+    is_active: bool = True
+    times_used: int = 0
+    last_used_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class FacebookPhotoSourceAdd(BaseModel):
+    page_url: str
+    label: Optional[str] = None
+
+
+class FacebookPhotoSourceUpdate(BaseModel):
+    page_url: Optional[str] = None
+    label: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class FacebookPhotoIdeaRef(BaseModel):
+    id: int
+    gallery_image_id: int
+    category: str
+    design_title: str
+    design_subtitle: Optional[str] = None
+    design_caption: Optional[str] = None
+    status: str
+    created_at: datetime
+    used_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class FacebookPhotoIdeaUpdate(BaseModel):
+    design_title: Optional[str] = None
+    design_subtitle: Optional[str] = None
+    design_caption: Optional[str] = None
+
+
 class FanpageDetailOut(FanpageOut):
     ig_sources: list[IGSourceRef] = []
     ig_source_usernames: list[str] = []  # kept for backward compat
@@ -225,6 +272,8 @@ class FanpageDetailOut(FanpageOut):
     discussion_content_ideas: list[DiscussionContentIdeaRef] = []
     pinterest_sources: list[PinterestSourceRef] = []
     pinterest_content_ideas: list[PinterestContentIdeaRef] = []
+    facebook_photo_sources: list[FacebookPhotoSourceRef] = []
+    facebook_photo_ideas: list[FacebookPhotoIdeaRef] = []
 
 
 class FanpageNewsSourceAdd(BaseModel):

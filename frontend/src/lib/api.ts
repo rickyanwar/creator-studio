@@ -266,6 +266,30 @@ export const updatePinterestContentIdea = (
 export const deletePinterestContentIdea = (fanpageId: number, ideaId: number) =>
   api.delete(`/fanpages/${fanpageId}/pinterest-content-ideas/${ideaId}`);
 
+// ── Fanpage Mode 6 (Facebook photo recreate) ─────────────────────────────────
+export const addFacebookPhotoSource = (
+  fanpageId: number,
+  data: { page_url: string; label?: string }
+) => api.post(`/fanpages/${fanpageId}/facebook-photo-sources`, data);
+export const updateFacebookPhotoSource = (
+  fanpageId: number,
+  sourceId: number,
+  data: { page_url?: string; label?: string | null; is_active?: boolean }
+) => api.put(`/fanpages/${fanpageId}/facebook-photo-sources/${sourceId}`, data);
+export const deleteFacebookPhotoSource = (fanpageId: number, sourceId: number) =>
+  api.delete(`/fanpages/${fanpageId}/facebook-photo-sources/${sourceId}`);
+export const listFacebookPhotoIdeas = (
+  fanpageId: number,
+  params: { status?: string; offset?: number } = {}
+) => api.get(`/fanpages/${fanpageId}/facebook-photo-ideas`, { params });
+export const updateFacebookPhotoIdea = (
+  fanpageId: number,
+  ideaId: number,
+  data: { design_title?: string; design_subtitle?: string; design_caption?: string }
+) => api.put(`/fanpages/${fanpageId}/facebook-photo-ideas/${ideaId}`, data);
+export const deleteFacebookPhotoIdea = (fanpageId: number, ideaId: number) =>
+  api.delete(`/fanpages/${fanpageId}/facebook-photo-ideas/${ideaId}`);
+
 // ── Design Templates ─────────────────────────────────────────────────────────
 export const listTemplates = (fanpageId?: number) =>
   api.get("/templates", { params: fanpageId ? { fanpage_id: fanpageId } : {} });

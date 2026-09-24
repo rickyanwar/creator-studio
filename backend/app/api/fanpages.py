@@ -16,6 +16,7 @@ from app.schemas.fanpage import (
     DiscussionTopicAdd, DiscussionTopicUpdate,
     DiscussionContentIdeaUpdate, DiscussionContentIdeaCreate,
     PinterestSourceAdd, PinterestSourceUpdate, PinterestContentIdeaUpdate,
+    FacebookPhotoSourceAdd, FacebookPhotoSourceUpdate, FacebookPhotoIdeaUpdate,
 )
 
 router = APIRouter(prefix="/fanpages", tags=["fanpages"])
@@ -120,6 +121,28 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
         .all()
     )
     out.pinterest_content_ideas = [PinterestContentIdeaRef.model_validate(i) for i in ideas]
+
+    from app.models.facebook_photo_sources import FacebookPhotoSource
+    from app.models.facebook_photo_ideas import FacebookPhotoIdea
+    from app.schemas.fanpage import FacebookPhotoSourceRef, FacebookPhotoIdeaRef
+    fb_photo_sources = (
+        db.query(FacebookPhotoSource)
+        .filter_by(fanpage_id=fanpage_id)
+        .order_by(FacebookPhotoSource.id.asc())
+        .all()
+    )
+    out.facebook_photo_sources = [FacebookPhotoSourceRef.model_validate(s) for s in fb_photo_sources]
+    # First page only, same reasoning as pinterest_content_ideas above — the
+    # UI's Content Ideas Queue section pages through the rest via
+    # GET /facebook-photo-ideas.
+    fb_photo_ideas = (
+        db.query(FacebookPhotoIdea)
+        .filter_by(fanpage_id=fanpage_id, status="pending")
+        .order_by(FacebookPhotoIdea.created_at.asc())
+        .limit(_IDEAS_PAGE_SIZE)
+        .all()
+    )
+    out.facebook_photo_ideas = [FacebookPhotoIdeaRef.model_validate(i) for i in fb_photo_ideas]
     return out
 
 
@@ -636,5 +659,121 @@ def delete_watermark_image(fanpage_id: int, db: DB, _: CurrentUser):
     if not fp:
         raise HTTPException(status_code=404, detail="Fanpage not found")
     fp.watermark_image_url = None
+    db.commit()
+    return {"ok": True}
+
+
+# ── Mode 6: Facebook photo recreate (per fanpage) ──
+
+@router.post("/{fanpage_id}/facebook-photo-sources", status_code=status.HTTP_201_CREATED)
+def add_facebook_photo_source(fanpage_id: int, body: FacebookPhotoSourceAdd, db: DB, _: CurrentUser):
+    from app.models.target_fanpages import TargetFanpage
+    from app.models.facebook_photo_sources import FacebookPhotoSource
+
+    fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+    url = (body.page_url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="page_url is required")
+
+    source = FacebookPhotoSource(
+        fanpage_id=fanpage_id,
+        page_url=url,
+        label=(body.label or "").strip() or None,
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    from app.schemas.fanpage import FacebookPhotoSourceRef
+    return FacebookPhotoSourceRef.model_validate(source)
+
+
+@router.put("/{fanpage_id}/facebook-photo-sources/{source_id}")
+def update_facebook_photo_source(fanpage_id: int, source_id: int, body: FacebookPhotoSourceUpdate, db: DB, _: CurrentUser):
+    from app.models.facebook_photo_sources import FacebookPhotoSource
+
+    source = db.query(FacebookPhotoSource).filter_by(id=source_id, fanpage_id=fanpage_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "page_url" in data and data["page_url"] is not None:
+        data["page_url"] = data["page_url"].strip()
+    if "label" in data:
+        data["label"] = (data["label"] or "").strip() or None
+    for field, value in data.items():
+        setattr(source, field, value)
+    db.commit()
+    db.refresh(source)
+    from app.schemas.fanpage import FacebookPhotoSourceRef
+    return FacebookPhotoSourceRef.model_validate(source)
+
+
+@router.delete("/{fanpage_id}/facebook-photo-sources/{source_id}")
+def delete_facebook_photo_source(fanpage_id: int, source_id: int, db: DB, _: CurrentUser):
+    from app.models.facebook_photo_sources import FacebookPhotoSource
+
+    source = db.query(FacebookPhotoSource).filter_by(id=source_id, fanpage_id=fanpage_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    db.delete(source)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/{fanpage_id}/facebook-photo-ideas")
+def list_facebook_photo_ideas(fanpage_id: int, db: DB, _: CurrentUser, status: str = "pending", offset: int = 0):
+    """Paginated queue listing (oldest-first, matching FIFO consumption
+    order) — the UI's "Load more" button pages through this instead of the
+    fanpage-detail payload, which only hydrates the first page (see
+    _IDEAS_PAGE_SIZE)."""
+    from app.models.facebook_photo_ideas import FacebookPhotoIdea
+    from app.schemas.fanpage import FacebookPhotoIdeaRef
+
+    rows = (
+        db.query(FacebookPhotoIdea)
+        .filter_by(fanpage_id=fanpage_id, status=status)
+        .order_by(FacebookPhotoIdea.created_at.asc())
+        .offset(offset)
+        .limit(_IDEAS_PAGE_SIZE)
+        .all()
+    )
+    return {
+        "items": [FacebookPhotoIdeaRef.model_validate(i) for i in rows],
+        "has_more": len(rows) == _IDEAS_PAGE_SIZE,
+    }
+
+
+@router.put("/{fanpage_id}/facebook-photo-ideas/{idea_id}")
+def update_facebook_photo_idea(fanpage_id: int, idea_id: int, body: FacebookPhotoIdeaUpdate, db: DB, _: CurrentUser):
+    """Edit a queued idea's title/subtitle/caption before it's consumed into
+    a job — never re-picks the bound photo or re-classifies."""
+    from app.models.facebook_photo_ideas import FacebookPhotoIdea
+
+    idea = db.query(FacebookPhotoIdea).filter_by(id=idea_id, fanpage_id=fanpage_id).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found")
+
+    data = body.model_dump(exclude_unset=True)
+    for field in ("design_title", "design_subtitle", "design_caption"):
+        if field in data and data[field] is not None:
+            data[field] = data[field].strip()
+    for field, value in data.items():
+        setattr(idea, field, value)
+    db.commit()
+    db.refresh(idea)
+    from app.schemas.fanpage import FacebookPhotoIdeaRef
+    return FacebookPhotoIdeaRef.model_validate(idea)
+
+
+@router.delete("/{fanpage_id}/facebook-photo-ideas/{idea_id}")
+def delete_facebook_photo_idea(fanpage_id: int, idea_id: int, db: DB, _: CurrentUser):
+    from app.models.facebook_photo_ideas import FacebookPhotoIdea
+
+    idea = db.query(FacebookPhotoIdea).filter_by(id=idea_id, fanpage_id=fanpage_id).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    db.delete(idea)
     db.commit()
     return {"ok": True}

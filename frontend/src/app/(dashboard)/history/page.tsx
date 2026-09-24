@@ -52,7 +52,7 @@ function avatarColor(name: string) {
 }
 
 function resolveUrls(job: PublishJob): string[] {
-  if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content") {
+  if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") {
     return job.design_image_url ? [job.design_image_url] : [];
   }
   const pub = job.image_public_urls ?? [];

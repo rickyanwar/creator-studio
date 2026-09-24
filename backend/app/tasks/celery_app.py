@@ -31,6 +31,7 @@ celery_app = Celery(
         "app.tasks.design_renderer",
         "app.tasks.discussion",
         "app.tasks.pinterest",
+        "app.tasks.facebook_photo",
         "app.tasks.ai_health_check",
     ],
 )
@@ -132,6 +133,13 @@ celery_app.conf.beat_schedule = {
     # pinterest_daily_count.
     "generate-pinterest-content": {
         "task": "app.tasks.pinterest.generate_pinterest_content",
+        "schedule": 1800,
+        "options": {"expires": 1700},
+    },
+    # Mode 6 Facebook photo content: same cadence/window as Mode 5 — tops up
+    # the idea queue and consumes toward facebook_photo_daily_count.
+    "generate-facebook-photo-content": {
+        "task": "app.tasks.facebook_photo.generate_facebook_photo_content",
         "schedule": 1800,
         "options": {"expires": 1700},
     },

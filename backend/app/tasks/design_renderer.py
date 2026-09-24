@@ -817,6 +817,171 @@ def render_pinterest(self, job_id: int):
         db.close()
 
 
+@celery_app.task(name="app.tasks.design_renderer.render_facebook_photo", bind=True, max_retries=2)
+def render_facebook_photo(self, job_id: int):
+    """Render a Mode 6 Facebook-photo card: the exact photo a consumed
+    FacebookPhotoIdea was bound to (job.source_gallery_image_id) — no
+    article, no photo search, same "the source photo IS the design photo"
+    shape as render_pinterest. Unlike Pinterest, the category (news vs
+    discussion) was already decided by vision at topup time (see
+    services.facebook_content_classifier) and baked into job.design_template_id
+    at consume time — no second classify call needed here. job.design_subtitle
+    carries the discussion label ("DISCUSSION"/"HOT TAKE") when present,
+    same field render_discussion sends as `label`; news jobs leave it null,
+    which the renderer treats as "no label/badge" (inject.js hides both
+    together when the value is empty — see render_pinterest's own note on
+    this same no-op behavior)."""
+    db = SessionLocal()
+    try:
+        from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
+        from app.models.target_fanpages import TargetFanpage, PublishMode
+        from app.models.gallery import GalleryImage
+
+        claimed = (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.id == job_id,
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.facebook_recreate,
+            )
+            .update({"status": PublishJobStatus.rendering}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
+            return
+
+        job = db.query(PublishJob).filter_by(id=job_id).first()
+        fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+        gallery_image = (
+            db.query(GalleryImage).filter_by(id=job.source_gallery_image_id).first()
+            if job.source_gallery_image_id else None
+        )
+        if not fanpage or not gallery_image or not gallery_image.local_path or not os.path.exists(gallery_image.local_path):
+            job.status = PublishJobStatus.pending_design
+            job.last_error = "fanpage or source photo missing"
+            db.commit()
+            return
+
+        from app.services.design_images import (
+            resolve_template, prepare_design_images, focus_points_for, watermark_datauri,
+            _safe_face_cy_ceiling, fix_unsafe_single_photo_face, photo_crops_well,
+        )
+
+        image_bytes = Path(gallery_image.local_path).read_bytes()
+
+        # job.design_template_id already carries the topup-time classification
+        # result (see tasks.facebook_photo._consume_one) — "category" here is
+        # only a fallback path for the rare case that resolution failed then.
+        category = "discussion" if job.design_subtitle else "news"
+        template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
+        if not template or not template.template_json:
+            job.status = PublishJobStatus.pending_design
+            job.last_error = f"no {category} template configured — create one in Template Designer"
+            db.commit()
+            logger.warning("Facebook photo: job %d has no usable template", job_id)
+            return
+
+        # Same direct-post fallback as render_pinterest — a photo that
+        # doesn't crop well onto this template skips the template entirely
+        # and posts as-is rather than forcing a bad crop.
+        if not photo_crops_well(image_bytes, template.canvas_width, template.canvas_height):
+            job.design_image_path = gallery_image.local_path
+            job.design_image_url = gallery_image.public_url
+            job.design_template_id = None
+            job.last_image_marker = f"gallery:{gallery_image.id}"
+            job.status = PublishJobStatus.pending_publish
+            job.last_error = None
+            gallery_image.is_used = True
+            db.commit()
+            logger.info(
+                "Facebook photo: job %d posted directly (photo doesn't crop well onto template %d)",
+                job_id, template.id,
+            )
+            if fanpage.facebook_photo_publish_mode == PublishMode.auto:
+                from app.tasks.publisher import publish_job
+                publish_job.delay(job.id)
+            return
+
+        image_src = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
+        niche = fanpage.name
+
+        template_json, image_srcs = prepare_design_images(
+            db, template.template_json, template.canvas_width,
+            job.design_title or "", niche, image_src,
+            main_path=gallery_image.local_path, smart=False, expand=bool(fanpage.design_expand),
+        )
+
+        safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
+        if image_srcs and image_srcs[0]:
+            try:
+                main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
+                fixed = fix_unsafe_single_photo_face(
+                    main_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+                )
+                if fixed:
+                    image_srcs[0] = fixed
+            except Exception as exc:
+                logger.warning("Facebook photo: fix_unsafe_single_photo_face failed for job %d: %s", job_id, exc)
+        focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
+
+        payload = {
+            "template_json": template_json,
+            "width": template.canvas_width,
+            "height": template.canvas_height,
+            "title": job.design_title or "",
+            "label": job.design_subtitle or "",
+            "caption": job.design_caption or "",
+            "watermark": fanpage.watermark_text or "",
+            "watermark_image": watermark_datauri(fanpage),
+            "image_srcs": image_srcs,
+            "focus_points": focus_points,
+            "image_zooms": None,
+            "scale": settings.design_render_scale,
+        }
+
+        resp = httpx.post(f"{settings.renderer_url.rstrip('/')}/render", json=payload, timeout=_RENDER_TIMEOUT)
+        resp.raise_for_status()
+        png_bytes = resp.content
+
+        designs_dir = Path(settings.storage_base_path) / "designs"
+        designs_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"job_{job.id}_{uuid.uuid4().hex[:8]}.png"
+        (designs_dir / filename).write_bytes(png_bytes)
+
+        job.design_image_path = str(designs_dir / filename)
+        job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
+        job.design_template_id = template.id
+        job.last_image_marker = f"gallery:{gallery_image.id}"
+        job.status = PublishJobStatus.pending_publish
+        job.last_error = None
+        gallery_image.is_used = True
+        db.commit()
+
+        logger.info("Facebook photo: job %d rendered → %s (%d bytes)", job_id, filename, len(png_bytes))
+
+        if fanpage.facebook_photo_publish_mode == PublishMode.auto:
+            from app.tasks.publisher import publish_job
+            publish_job.delay(job.id)
+
+    except Exception as exc:
+        from celery.exceptions import Retry, MaxRetriesExceededError
+        if isinstance(exc, (Retry, MaxRetriesExceededError)):
+            raise
+        db.rollback()
+        logger.error("Facebook photo: job %d render failed: %s", job_id, exc, exc_info=True)
+        try:
+            from app.models.publish_jobs import PublishJob, PublishJobStatus
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            if job and job.status == PublishJobStatus.rendering:
+                job.status = PublishJobStatus.pending_design
+                db.commit()
+        except Exception:
+            db.rollback()
+        raise self.retry(exc=exc, countdown=180)
+    finally:
+        db.close()
+
+
 # How long a job that already failed with "needs manual image" sits out
 # before this sweep will retry it automatically again. Without this, a
 # subject with no findable photo (select_image_for_job /

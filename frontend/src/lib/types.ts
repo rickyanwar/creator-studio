@@ -12,7 +12,7 @@ export type PublishJobStatus =
   | "published"
   | "failed"
   | "skipped";
-export type ContentType = "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content";
+export type ContentType = "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content" | "facebook_recreate";
 export type AIProvider = "gemini" | "groq";
 export type MediaType = "image" | "album";
 export type PostStatus = "crawled" | "editing_image" | "stored" | "pending_fanout" | "done" | "cleaned";
@@ -85,6 +85,10 @@ export interface Fanpage {
   pinterest_source_mode: string; // "curated" | "ai_keyword" | "both"
   pinterest_custom_prompt: string;
   pinterest_hashtag_count: number;
+  // ── Mode 6: Facebook photo recreate ──
+  facebook_photo_enabled: boolean;
+  facebook_photo_publish_mode: PublishMode;
+  facebook_photo_daily_count: number;
 }
 
 export interface DiscussionTopicRef {
@@ -147,6 +151,27 @@ export interface DiscussionContentIdeaRef {
   used_at: string | null;
 }
 
+export interface FacebookPhotoSourceRef {
+  id: number;
+  page_url: string;
+  label: string | null;
+  is_active: boolean;
+  times_used: number;
+  last_used_at: string | null;
+}
+
+export interface FacebookPhotoIdeaRef {
+  id: number;
+  gallery_image_id: number;
+  category: string; // "news" | "discussion"
+  design_title: string;
+  design_subtitle: string | null;
+  design_caption: string | null;
+  status: string; // "pending" | "used"
+  created_at: string;
+  used_at: string | null;
+}
+
 export interface FanpageDetail extends Fanpage {
   ig_sources: IGSourceRef[];
   ig_source_usernames: string[];
@@ -155,6 +180,8 @@ export interface FanpageDetail extends Fanpage {
   discussion_content_ideas: DiscussionContentIdeaRef[];
   pinterest_sources: PinterestSourceRef[];
   pinterest_content_ideas: PinterestContentIdeaRef[];
+  facebook_photo_sources: FacebookPhotoSourceRef[];
+  facebook_photo_ideas: FacebookPhotoIdeaRef[];
 }
 
 export interface Burner {
@@ -177,7 +204,7 @@ export interface PublishJob {
   id: number;
   post_id: number | null;
   fanpage_id: number;
-  content_type: "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content";
+  content_type: ContentType;
   source_article_id: number | null;
   design_title: string | null;
   design_image_url: string | null;

@@ -24,6 +24,7 @@ class ContentType(str, enum.Enum):
     ig_recreate = "ig_recreate"  # IG post classified + rebuilt on a quote/news template
     discussion = "discussion"    # Mode 4: AI-generated debate/hot-take card (news- or evergreen-seeded)
     pinterest_content = "pinterest_content"  # Mode 5: photo-seeded card from a consumed PinterestContentIdea
+    facebook_recreate = "facebook_recreate"  # Mode 6: another FB page's photo classified + rebuilt on a news/discussion template
 
 
 class AIProvider(str, enum.Enum):

@@ -159,6 +159,18 @@ class TargetFanpage(Base):
     # no caption field of their own to bake them into.
     pinterest_hashtag_count = Column(Integer, default=5, nullable=False, server_default="5")
 
+    # ── Mode 6: Facebook photo recreate ────────────
+    # Clone another Facebook page's (not this fanpage's own) `/photos`
+    # gallery: new photos (dedup by fbid) are classified via vision into
+    # news/discussion/other (other = skipped) and rebuilt on the fanpage's
+    # news/discussion template pools using the SAME photo — no fresh search,
+    # unlike Mode 2. No like-count/growth gate in this version — "new to
+    # us" is the only filter (see app/tasks/facebook_photo.py). Reuses
+    # default_news_template_id / default_discussion_template_id above.
+    facebook_photo_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    facebook_photo_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
+    facebook_photo_daily_count = Column(Integer, default=2, nullable=False, server_default="2")
+
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
     caption_language = Column(String(8), default="en", nullable=False)
@@ -187,4 +199,6 @@ class TargetFanpage(Base):
     pinterest_sources = relationship("PinterestSource", back_populates="fanpage", cascade="all, delete-orphan")
     pinterest_content_ideas = relationship("PinterestContentIdea", back_populates="fanpage", cascade="all, delete-orphan")
     discussion_content_ideas = relationship("DiscussionContentIdea", back_populates="fanpage", cascade="all, delete-orphan")
+    facebook_photo_sources = relationship("FacebookPhotoSource", back_populates="fanpage", cascade="all, delete-orphan")
+    facebook_photo_ideas = relationship("FacebookPhotoIdea", back_populates="fanpage", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="fanpage")
