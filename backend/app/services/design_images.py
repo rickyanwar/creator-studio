@@ -2527,6 +2527,28 @@ def vision_verify_match(image_bytes: bytes, title: str, excerpt: str = "", niche
         return {"match": False, "confidence": 0.0}
 
 
+# Real incident, 2026-09-25: a candidate photo of Real Madrid footballer
+# Fede Valverde was accepted as "Ilia Topuria" (a UFC fighter, completely
+# different sport) and a photo of fighter Muhammad Naimov was accepted as
+# "Usman Nurmagomedov" — both published. In both cases vision_verify_subject
+# returned match=True (a genuine model false-positive, not a code-path gap —
+# the identity check WAS running), but every caller only ever checked
+# ["match"] and silently discarded the ["confidence"] score the prompt
+# itself asks the model to self-report. A confident hallucination isn't
+# caught by a threshold, but a model that's genuinely unsure often DOES
+# self-report lower confidence even while still answering "true" — this
+# floor gives that signal a chance to matter instead of being computed and
+# thrown away. Per this project's own standing preference (fail-closed on
+# ambiguous vision-match checks over fail-open for pipeline convenience —
+# see memory feedback-image-accuracy-over-availability), a match below this
+# floor is treated as no-match, same as a hard rejection.
+_SUBJECT_MATCH_MIN_CONFIDENCE = 0.7
+
+
+def _is_confident_subject_match(result: dict) -> bool:
+    return bool(result.get("match")) and float(result.get("confidence") or 0) >= _SUBJECT_MATCH_MIN_CONFIDENCE
+
+
 def vision_verify_subject(image_bytes: bytes, subject: str, niche: str = "") -> dict:
     """Ask 9Router vision whether a candidate photo is actually a picture of
     `subject` (as opposed to a same-named but different person, or a
@@ -2785,7 +2807,7 @@ def _filter_verified_subject(uris: list[str], subject: str, niche: str = "") -> 
             raw_bytes = base64.b64decode(uri.split(",", 1)[1])
         except Exception:
             continue
-        if vision_verify_subject(raw_bytes, subject, niche)["match"]:
+        if _is_confident_subject_match(vision_verify_subject(raw_bytes, subject, niche)):
             verified.append(uri)
     return verified
 
@@ -3193,7 +3215,7 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
     # only ranks clarity/quality, never identity.
     verified = [
         (gi, uri) for gi, uri in survivors
-        if vision_verify_subject(base64.b64decode(uri.split(",", 1)[1]), subject, niche)["match"]
+        if _is_confident_subject_match(vision_verify_subject(base64.b64decode(uri.split(",", 1)[1]), subject, niche))
     ]
     if not verified:
         logger.info("fetch_subject_datauri: no candidate verified as %r among %d stored", subject, len(survivors))
