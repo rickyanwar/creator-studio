@@ -1075,10 +1075,28 @@ def render_pending_designs():
         for (job_id,) in pjobs:
             render_pinterest.delay(job_id)
 
-        if jobs or djobs or pjobs:
+        # Mode 6 Facebook-photo cards: same "always auto-render" reasoning as
+        # Pinterest. _consume_one only dispatches the render itself when the
+        # fanpage is auto, so without this a manual_review fanpage's jobs
+        # would never get an image at all.
+        fjobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.facebook_recreate,
+                not_stuck_on_missing_image,
+            )
+            .limit(10)
+            .all()
+        )
+        for (job_id,) in fjobs:
+            render_facebook_photo.delay(job_id)
+
+        if jobs or djobs or pjobs or fjobs:
             logger.info(
-                "Design sweep: dispatched %d news + %d discussion + %d pinterest renders",
-                len(jobs), len(djobs), len(pjobs),
+                "Design sweep: dispatched %d news + %d discussion + %d pinterest + %d facebook-photo renders",
+                len(jobs), len(djobs), len(pjobs), len(fjobs),
             )
     finally:
         db.close()

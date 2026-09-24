@@ -258,10 +258,13 @@ def publish_job(self, job_id: int):
         job = db.query(PublishJob).filter_by(id=job_id).first()
 
         from app.models.publish_jobs import ContentType
-        # news_content, ig_recreate, discussion, and pinterest_content all
-        # publish a single rendered design PNG via the same path
-        # (design_image_url + ai_generated_caption).
-        if job.content_type in (ContentType.news_content, ContentType.ig_recreate, ContentType.discussion, ContentType.pinterest_content):
+        # news_content, ig_recreate, discussion, pinterest_content, and
+        # facebook_recreate all publish a single rendered design PNG via the
+        # same path (design_image_url + ai_generated_caption).
+        if job.content_type in (
+            ContentType.news_content, ContentType.ig_recreate, ContentType.discussion,
+            ContentType.pinterest_content, ContentType.facebook_recreate,
+        ):
             _publish_news_job(db, job)
             return
 
@@ -517,7 +520,20 @@ def recover_stuck_auto_publishes():
             )
             .all()
         )
-        job_ids = [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs] + [j for (j,) in pinterest_jobs]
+        facebook_photo_jobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.content_type == ContentType.facebook_recreate,
+                TargetFanpage.facebook_photo_publish_mode == PublishMode.auto,
+            )
+            .all()
+        )
+        job_ids = (
+            [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs]
+            + [j for (j,) in pinterest_jobs] + [j for (j,) in facebook_photo_jobs]
+        )
         for job_id in job_ids:
             publish_job.delay(job_id)
         if job_ids:
