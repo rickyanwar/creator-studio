@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { getSettings, updateSettings, testReplizCredentials, testProxies, testRelays } from "@/lib/api";
+import { YouTubeSettingsCard } from "@/components/settings/YouTubeSettingsCard";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -439,6 +440,8 @@ export default function SettingsPage() {
           <p className="text-xs text-text-secondary mt-1">Copy from the 9Router dashboard.</p>
         </div>
       </section>
+
+      <YouTubeSettingsCard settings={settings} onChanged={() => mutate()} />
 
       {/* Telegram */}
       <section className="card space-y-4">

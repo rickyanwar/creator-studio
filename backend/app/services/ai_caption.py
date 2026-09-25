@@ -215,7 +215,17 @@ ROUTER_MODEL_FALLBACKS = [
 ]
 
 
-def _call_router(prompt: str, model: str | None = None) -> str:
+_ROUTER_TIMEOUT_S = 75.0
+_ROUTER_TEMPERATURE = 0.7
+
+
+def _call_router(
+    prompt: str, model: str | None = None,
+    timeout: float = _ROUTER_TIMEOUT_S, temperature: float = _ROUTER_TEMPERATURE,
+) -> str:
+    """`timeout`/`temperature` default to what every text mode has always
+    used; Mode 7's highlight search overrides them (a 30k-120k-char
+    transcript needs minutes, and wants less randomness)."""
     from openai import OpenAI  # type: ignore
 
     from app.services.nine_router import get_nine_router_config
@@ -230,7 +240,7 @@ def _call_router(prompt: str, model: str | None = None) -> str:
         # in generate_caption() ever gets a chance to run. Reasoning-model
         # routes (e.g. My-Combo -> gemini-pro-default) can take a while to
         # finish their hidden reasoning, so this is generous on purpose.
-        timeout=75.0,
+        timeout=timeout,
         # 2026-09-02: the SDK's own retry-the-same-request behavior (default
         # 2 retries w/ backoff) was silently stacking on top of
         # ROUTER_MODEL_FALLBACKS' own model-to-model retry loop — a broken
@@ -251,17 +261,20 @@ def _call_router(prompt: str, model: str | None = None) -> str:
         # for both (see _generate_with_fallback in news_copywriter.py for the
         # second line of defense when this still isn't enough).
         max_tokens=8192,
-        temperature=0.7,
-        timeout=75.0,
+        temperature=temperature,
+        timeout=timeout,
     )
     return completion.choices[0].message.content.strip()
 
 
-def call_router_model(prompt: str, model: str) -> str:
+def call_router_model(
+    prompt: str, model: str,
+    timeout: float = _ROUTER_TIMEOUT_S, temperature: float = _ROUTER_TEMPERATURE,
+) -> str:
     """Call 9Router with an explicit model, bypassing the configured default.
     Used by news_copywriter._generate_with_fallback to try ROUTER_MODEL_FALLBACKS
     directly when the primary router model's output fails to parse."""
-    return _call_router(prompt, model=model)
+    return _call_router(prompt, model=model, timeout=timeout, temperature=temperature)
 
 
 def _call_gemini(prompt: str) -> str:

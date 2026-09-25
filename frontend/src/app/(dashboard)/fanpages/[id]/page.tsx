@@ -42,6 +42,7 @@ import {
 import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, DiscussionContentIdeaRef, PinterestSourceRef, PinterestContentIdeaRef, FacebookPhotoSourceRef, FacebookPhotoIdeaRef } from "@/lib/types";
 import { Icon } from "@iconify/react";
 import { CaptionCriteriaEditor, captionFromSource, captionToPayload, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
+import { YtClipSection } from "@/components/fanpages/YtClipSection";
 
 const fetcher = (id: number) => getFanpage(id).then((r) => r.data as FanpageDetail);
 
@@ -2307,6 +2308,17 @@ export default function FanpageEditPage() {
           </>
         )}
       </section>
+
+      {/* ── Section: Mode 7 — YouTube Clips ───────────── */}
+      <YtClipSection
+        fanpageId={fanpageId}
+        form={form}
+        set={set}
+        refreshSources={async () => {
+          const fresh = await mutate();
+          if (fresh) setForm((prev) => ({ ...prev, yt_clip_sources: fresh.yt_clip_sources }));
+        }}
+      />
 
       {/* ── Section: Image Framing (news + IG recreate) ── */}
       <section className="card space-y-4">

@@ -267,6 +267,9 @@ def publish_job(self, job_id: int):
         ):
             _publish_news_job(db, job)
             return
+        if job.content_type == ContentType.youtube_clip:
+            _publish_video_job(db, job)
+            return
 
         post = db.query(Post).filter_by(id=job.post_id).first()
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
@@ -443,6 +446,53 @@ def _publish_news_job(db, job):
     )
 
 
+# Repliz may fetch the MP4 at go-live rather than at scheduling time — the
+# file must outlive scheduled_for (yt_clip_render.cleanup_old_videos deletes
+# it 48h after go-live; cleanup_at here only records that intent).
+_VIDEO_KEEP_AFTER_GO_LIVE = timedelta(hours=48)
+
+
+def _publish_video_job(db, job):
+    """Publish a Mode 7 clip as a Reel: the rendered MP4 + thumbnail."""
+    from app.models.publish_jobs import PublishJobStatus
+    from app.models.target_fanpages import TargetFanpage
+    from app.services.repliz_client import format_schedule_at, get_repliz_client_from_db
+
+    fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+    if not job.video_url:
+        job.status = PublishJobStatus.failed
+        job.last_error = "No rendered clip"
+        db.commit()
+        logger.error("Job %d: youtube_clip job has no video_url", job.id)
+        return
+    if "localhost" in job.video_url or "127.0.0.1" in job.video_url:
+        job.status = PublishJobStatus.pending_publish
+        job.last_error = "clip URL is localhost — not reachable by Repliz. Serve media from a public URL to publish."
+        db.commit()
+        logger.warning("Job %d: holding clip publish — video_url is localhost", job.id)
+        return
+
+    scheduled_for = _next_schedule_at(db, job.fanpage_id)
+    response = get_repliz_client_from_db(db).create_video_schedule(
+        account_id=fanpage.repliz_account_id,
+        description=job.ai_generated_caption or "",
+        video_url=job.video_url,
+        thumbnail_url=job.video_thumbnail_url or "",
+        schedule_at=format_schedule_at(scheduled_for),
+    )
+    schedule_id = response.get("_id") or response.get("id") or response.get("scheduleId")
+    now = datetime.now(timezone.utc)
+    job.repliz_schedule_id = schedule_id
+    job.repliz_response_json = response
+    job.status = PublishJobStatus.published
+    job.published_at = now
+    job.scheduled_for = scheduled_for
+    job.cleanup_at = scheduled_for + _VIDEO_KEEP_AFTER_GO_LIVE  # both naive UTC
+    job.attempt_count = (job.attempt_count or 0) + 1
+    db.commit()
+    logger.info("Job %d (clip) published to fanpage '%s' via Repliz (schedule=%s)", job.id, fanpage.name, schedule_id)
+
+
 def _maybe_mark_post_done(db, post):
     """Mark post as done if all its publish_jobs are terminal states."""
     from app.models.publish_jobs import PublishJob, PublishJobStatus
@@ -530,9 +580,20 @@ def recover_stuck_auto_publishes():
             )
             .all()
         )
+        yt_clip_jobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.content_type == ContentType.youtube_clip,
+                TargetFanpage.yt_clip_publish_mode == PublishMode.auto,
+            )
+            .all()
+        )
         job_ids = (
             [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs]
             + [j for (j,) in pinterest_jobs] + [j for (j,) in facebook_photo_jobs]
+            + [j for (j,) in yt_clip_jobs]
         )
         for job_id in job_ids:
             publish_job.delay(job_id)

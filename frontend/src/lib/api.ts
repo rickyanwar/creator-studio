@@ -290,6 +290,36 @@ export const updateFacebookPhotoIdea = (
 export const deleteFacebookPhotoIdea = (fanpageId: number, ideaId: number) =>
   api.delete(`/fanpages/${fanpageId}/facebook-photo-ideas/${ideaId}`);
 
+// ── Fanpage Mode 7 (YouTube clips) ───────────────────────────────────────────
+export const addYtClipSource = (
+  fanpageId: number,
+  data: { url: string; label?: string; direction?: string }
+) => api.post(`/fanpages/${fanpageId}/yt-clip-sources`, data);
+export const updateYtClipSource = (
+  fanpageId: number,
+  sourceId: number,
+  data: { label?: string | null; direction?: string | null; is_active?: boolean }
+) => api.put(`/fanpages/${fanpageId}/yt-clip-sources/${sourceId}`, data);
+export const deleteYtClipSource = (fanpageId: number, sourceId: number) =>
+  api.delete(`/fanpages/${fanpageId}/yt-clip-sources/${sourceId}`);
+export const checkYtClipSource = (fanpageId: number, sourceId: number) =>
+  api.post(`/fanpages/${fanpageId}/yt-clip-sources/${sourceId}/check`);
+export const listYtClipIdeas = (
+  fanpageId: number,
+  params: { status?: string; offset?: number } = {}
+) => api.get(`/fanpages/${fanpageId}/yt-clip-ideas`, { params });
+export const updateYtClipIdea = (
+  fanpageId: number,
+  ideaId: number,
+  data: { title?: string; hook_text?: string }
+) => api.put(`/fanpages/${fanpageId}/yt-clip-ideas/${ideaId}`, data);
+export const deleteYtClipIdea = (fanpageId: number, ideaId: number) =>
+  api.delete(`/fanpages/${fanpageId}/yt-clip-ideas/${ideaId}`);
+export const listYtVideos = (fanpageId: number, params: { offset?: number } = {}) =>
+  api.get(`/fanpages/${fanpageId}/yt-videos`, { params });
+export const retryYtVideo = (fanpageId: number, rowId: number) =>
+  api.post(`/fanpages/${fanpageId}/yt-videos/${rowId}/retry`);
+
 // ── Design Templates ─────────────────────────────────────────────────────────
 export const listTemplates = (fanpageId?: number) =>
   api.get("/templates", { params: fanpageId ? { fanpage_id: fanpageId } : {} });
@@ -320,6 +350,8 @@ export const proxyImageUrl = async (url: string): Promise<string> => {
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get("/settings");
 export const updateSettings = (data: Record<string, unknown>) => api.put("/settings", data);
+export const testYouTubeAccess = () => api.post("/settings/youtube/test");
+export const clearYouTubeBlock = () => api.post("/settings/youtube/clear-block");
 export const testReplizCredentials = (accessKey: string, secretKey: string) =>
   api.post("/settings/repliz/test", { access_key: accessKey, secret_key: secretKey });
 export const testProxies = (proxies?: string) =>

@@ -80,6 +80,36 @@ services:
       redis:
         condition: service_healthy
 
+  # ── Celery Worker (Mode 7 video — YouTube analysis + clip renders) ──
+  #    One render at a time: an 83s captioned clip measured ~245s wall and
+  #    ~700MB peak RSS (python + ffmpeg decoder + encoder) on 2 CPUs
+  #    (2026-09-25). The box only has ~1.4GB free, so: a hard memory cap,
+  #    and a raised OOM score so under host pressure the kernel kills THIS
+  #    worker (its job is simply retried) rather than a production worker.
+  #    Isolated for the same reason as worker-gallery. The long stop grace
+  #    lets a deploy finish the in-flight render (acks_late re-queues it anyway).
+  worker-video:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1 --queues=video --max-tasks-per-child=5
+    env_file: .env
+    volumes:
+      - media_data:/opt/studio/media
+      # private: section downloads, subtitle cache, transient cookies.txt —
+      # never under media_data, which nginx serves publicly
+      - yt_private:/var/lib/studio-yt
+    cpus: 2
+    mem_limit: 1500m
+    oom_score_adj: 500
+    stop_grace_period: 5m
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # ── Celery Beat ───────────────────────────────
   beat:
     build:
@@ -134,3 +164,4 @@ volumes:
   postgres_data:
   redis_data:
   media_data:
+  yt_private:

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.models.target_fanpages import PublishMode, AttributionPosition
 
 
@@ -79,6 +79,18 @@ class FanpageBase(BaseModel):
     facebook_photo_enabled: bool = False
     facebook_photo_publish_mode: PublishMode = PublishMode.manual_review
     facebook_photo_daily_count: int = 2
+
+    # ── Mode 7: YouTube clips ──
+    yt_clip_enabled: bool = False
+    yt_clip_publish_mode: PublishMode = PublishMode.manual_review
+    yt_clip_daily_count: int = Field(2, ge=0, le=20)
+    yt_clip_min_s: int = Field(60, ge=15, le=170)
+    yt_clip_max_s: int = Field(120, ge=25, le=180)
+    yt_clip_per_video: int = Field(3, ge=1, le=10)
+    yt_clip_min_score: int = Field(6, ge=0, le=10)
+    yt_clip_max_video_age_days: int = Field(7, ge=1, le=365)
+    yt_clip_captions: bool = True
+    yt_clip_watermark: bool = True
 
 
 class FanpageUpdate(FanpageBase):
@@ -264,6 +276,74 @@ class FacebookPhotoIdeaUpdate(BaseModel):
     design_caption: Optional[str] = None
 
 
+class YtClipSourceRef(BaseModel):
+    id: int
+    url: str
+    kind: str
+    channel_id: Optional[str] = None
+    playlist_id: Optional[str] = None
+    video_id: Optional[str] = None
+    label: Optional[str] = None
+    direction: Optional[str] = None
+    is_active: bool = True
+    last_checked_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    videos_found: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class YtClipSourceAdd(BaseModel):
+    url: str = Field(min_length=1, max_length=500)
+    label: Optional[str] = Field(None, max_length=256)
+    direction: Optional[str] = Field(None, max_length=500)
+
+
+class YtClipSourceUpdate(BaseModel):
+    label: Optional[str] = Field(None, max_length=256)
+    direction: Optional[str] = Field(None, max_length=500)
+    is_active: Optional[bool] = None
+
+
+class YtClipIdeaRef(BaseModel):
+    id: int
+    yt_video_row_id: int
+    video_id: str
+    start_s: float
+    end_s: float
+    title: str
+    description: Optional[str] = None
+    hook_text: Optional[str] = None
+    virality_score: int
+    transcript_excerpt: Optional[str] = None
+    status: str
+    preview_url: str
+    video_title: Optional[str] = None
+    created_at: datetime
+    used_at: Optional[datetime] = None
+
+
+class YtClipIdeaUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    hook_text: Optional[str] = Field(None, max_length=300)
+
+
+class YtVideoRef(BaseModel):
+    id: int
+    video_id: str
+    title: Optional[str] = None
+    channel_name: Optional[str] = None
+    published_at: Optional[datetime] = None
+    duration_s: Optional[int] = None
+    status: str
+    skip_reason: Optional[str] = None
+    last_error: Optional[str] = None
+    ideas_created: int = 0
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class FanpageDetailOut(FanpageOut):
     ig_sources: list[IGSourceRef] = []
     ig_source_usernames: list[str] = []  # kept for backward compat
@@ -274,6 +354,7 @@ class FanpageDetailOut(FanpageOut):
     pinterest_content_ideas: list[PinterestContentIdeaRef] = []
     facebook_photo_sources: list[FacebookPhotoSourceRef] = []
     facebook_photo_ideas: list[FacebookPhotoIdeaRef] = []
+    yt_clip_sources: list[YtClipSourceRef] = []
 
 
 class FanpageNewsSourceAdd(BaseModel):

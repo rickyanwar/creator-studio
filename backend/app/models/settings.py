@@ -73,4 +73,17 @@ class Settings(Base):
     # to _DEFAULT_DISCUSSION_MODEL ("smart-combo").
     nine_router_discussion_model = Column(String(128), nullable=True)
 
+    # ── YouTube (Mode 7) ──────────────────────────────────────────────────────
+    # Optional: the VPS reached YouTube without either (verified 2026-09-25),
+    # these are the fallback if YouTube starts bot-walling it. Cookies are a
+    # burner Google account's Netscape cookies.txt, Fernet-encrypted (Text —
+    # far larger than the 512-char secret columns above). One sticky proxy,
+    # not a pool: an account's cookies hopping across IPs looks MORE suspect.
+    youtube_cookies_encrypted = Column(Text, nullable=True)
+    youtube_proxy = Column(String(512), nullable=True)
+    # Circuit breaker: set when YouTube bot-walls/403s us — every YouTube
+    # task pauses until this time instead of hammering it (yt_downloader).
+    youtube_blocked_until = Column(DateTime, nullable=True)
+    youtube_last_error = Column(Text, nullable=True)
+
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

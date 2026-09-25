@@ -1,0 +1,10 @@
+# Mode 7 (YouTube clips) — installed in its own late Docker layer (see
+# Dockerfile) so the frequent yt-dlp bumps YouTube forces don't invalidate
+# the main requirements/playwright layers.
+#
+# yt-dlp breaks whenever YouTube changes — bump this pin periodically. The
+# [default] extra pulls yt-dlp-ejs (YouTube's JS challenge solver), which
+# needs a JS runtime: the `deno` package ships the deno binary onto PATH.
+# Both verified from the VPS 2026-09-25 (subs + section downloads, no cookies).
+yt-dlp[default]==2026.8.19
+deno==2.9.7

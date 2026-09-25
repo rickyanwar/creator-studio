@@ -18,6 +18,9 @@ from app.models.pinterest_content_ideas import PinterestContentIdea
 from app.models.discussion_content_ideas import DiscussionContentIdea
 from app.models.facebook_photo_sources import FacebookPhotoSource
 from app.models.facebook_photo_ideas import FacebookPhotoIdea
+from app.models.yt_clip_sources import YtClipSource
+from app.models.yt_videos import YtVideo
+from app.models.yt_clip_ideas import YtClipIdea
 from app.models.ai_copy_events import AICopyEvent
 
 __all__ = [
@@ -52,5 +55,8 @@ __all__ = [
     "DiscussionContentIdea",
     "FacebookPhotoSource",
     "FacebookPhotoIdea",
+    "YtClipSource",
+    "YtVideo",
+    "YtClipIdea",
     "AICopyEvent",
 ]

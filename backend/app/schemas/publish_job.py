@@ -13,6 +13,14 @@ class PublishJobOut(BaseModel):
     design_title: Optional[str] = None
     design_image_url: Optional[str] = None
     design_template_id: Optional[int] = None
+    design_subtitle: Optional[str] = None
+    # Mode 7 (youtube_clip)
+    video_url: Optional[str] = None
+    video_thumbnail_url: Optional[str] = None
+    video_duration_s: Optional[float] = None
+    yt_video_id: Optional[str] = None
+    clip_start_s: Optional[float] = None
+    clip_end_s: Optional[float] = None
     ai_generated_caption: Optional[str] = None
     ai_provider_used: Optional[AIProvider] = None
     status: PublishJobStatus

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
 
@@ -26,6 +27,8 @@ class SettingsUpdate(BaseModel):
     nine_router_api_key: Optional[str] = None  # plain — will be encrypted before saving
     nine_router_model: Optional[str] = None
     nine_router_discussion_model: Optional[str] = None
+    youtube_cookies: Optional[str] = None   # Netscape cookies.txt text — encrypted before saving; "" clears
+    youtube_proxy: Optional[str] = None
 
 
 class SettingsOut(BaseModel):
@@ -54,6 +57,10 @@ class SettingsOut(BaseModel):
     nine_router_model: Optional[str] = None
     nine_router_discussion_model: Optional[str] = None
     has_nine_router_key: bool = False
+    has_youtube_cookies: bool = False
+    youtube_proxy: Optional[str] = None
+    youtube_blocked_until: Optional[datetime] = None
+    youtube_last_error: Optional[str] = None
 
     model_config = {"from_attributes": False}
 

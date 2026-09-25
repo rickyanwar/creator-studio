@@ -32,6 +32,8 @@ celery_app = Celery(
         "app.tasks.discussion",
         "app.tasks.pinterest",
         "app.tasks.facebook_photo",
+        "app.tasks.yt_clip",
+        "app.tasks.yt_clip_render",
         "app.tasks.ai_health_check",
     ],
 )
@@ -55,6 +57,11 @@ celery_app.conf.update(
     # they can never again block the main worker.
     task_routes={
         "app.tasks.gallery_downloader.*": {"queue": "gallery"},
+        # Mode 7: YouTube analysis + clip renders are minutes of CPU/network
+        # each — their own single-slot worker-video service, same reasoning
+        # as the gallery queue above.
+        "app.tasks.yt_clip.analyze_video": {"queue": "video"},
+        "app.tasks.yt_clip_render.render_youtube_clip": {"queue": "video"},
     },
 )
 
@@ -143,6 +150,19 @@ celery_app.conf.beat_schedule = {
         "schedule": 1800,
         "options": {"expires": 1700},
     },
+    # Mode 7 YouTube clips: discovery (RSS) + on-demand highlight analysis +
+    # render dispatch, any hour — see app.tasks.yt_clip's module docstring.
+    "yt-clip-cycle": {
+        "task": "app.tasks.yt_clip.yt_clip_cycle",
+        "schedule": 1800,
+        "options": {"expires": 1700},
+    },
+    # Mode 7 consume: same cadence/window/pacing as Modes 5/6.
+    "generate-yt-clip-content": {
+        "task": "app.tasks.yt_clip.generate_yt_clip_content",
+        "schedule": 1800,
+        "options": {"expires": 1700},
+    },
     # Status sync: every 5 minutes
     "sync-repliz-status": {
         "task": "app.tasks.status_sync.sync_pending_schedules",
@@ -202,6 +222,12 @@ celery_app.conf.beat_schedule = {
     "cleanup-old-designs": {
         "task": "app.tasks.cleanup.cleanup_old_designs",
         "schedule": crontab(hour=20, minute=0),
+    },
+    # Mode 7 clip MP4 retention: daily 03:30 WIB (20:30 UTC) — see
+    # yt_clip_render.cleanup_old_videos
+    "cleanup-old-videos": {
+        "task": "app.tasks.yt_clip_render.cleanup_old_videos",
+        "schedule": crontab(hour=20, minute=30),
     },
     # Fanpage sync: every 6 hours
     "sync-fanpages": {

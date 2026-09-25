@@ -12,7 +12,7 @@ export type PublishJobStatus =
   | "published"
   | "failed"
   | "skipped";
-export type ContentType = "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content" | "facebook_recreate";
+export type ContentType = "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content" | "facebook_recreate" | "youtube_clip";
 export type AIProvider = "gemini" | "groq";
 export type MediaType = "image" | "album";
 export type PostStatus = "crawled" | "editing_image" | "stored" | "pending_fanout" | "done" | "cleaned";
@@ -89,6 +89,17 @@ export interface Fanpage {
   facebook_photo_enabled: boolean;
   facebook_photo_publish_mode: PublishMode;
   facebook_photo_daily_count: number;
+  // Mode 7: YouTube clips
+  yt_clip_enabled: boolean;
+  yt_clip_publish_mode: PublishMode;
+  yt_clip_daily_count: number;
+  yt_clip_min_s: number;
+  yt_clip_max_s: number;
+  yt_clip_per_video: number;
+  yt_clip_min_score: number;
+  yt_clip_max_video_age_days: number;
+  yt_clip_captions: boolean;
+  yt_clip_watermark: boolean;
 }
 
 export interface DiscussionTopicRef {
@@ -172,6 +183,53 @@ export interface FacebookPhotoIdeaRef {
   used_at: string | null;
 }
 
+export interface YtClipSourceRef {
+  id: number;
+  url: string;
+  kind: "channel" | "playlist" | "video";
+  channel_id: string | null;
+  playlist_id: string | null;
+  video_id: string | null;
+  label: string | null;
+  direction: string | null;
+  is_active: boolean;
+  last_checked_at: string | null;
+  last_error: string | null;
+  videos_found: number;
+}
+
+export interface YtClipIdeaRef {
+  id: number;
+  yt_video_row_id: number;
+  video_id: string;
+  start_s: number;
+  end_s: number;
+  title: string;
+  description: string | null;
+  hook_text: string | null;
+  virality_score: number;
+  transcript_excerpt: string | null;
+  status: string; // "pending" | "used"
+  preview_url: string;
+  video_title: string | null;
+  created_at: string;
+  used_at: string | null;
+}
+
+export interface YtVideoRef {
+  id: number;
+  video_id: string;
+  title: string | null;
+  channel_name: string | null;
+  published_at: string | null;
+  duration_s: number | null;
+  status: "discovered" | "analyzing" | "analyzed" | "skipped" | "failed";
+  skip_reason: string | null;
+  last_error: string | null;
+  ideas_created: number;
+  created_at: string;
+}
+
 export interface FanpageDetail extends Fanpage {
   ig_sources: IGSourceRef[];
   ig_source_usernames: string[];
@@ -182,6 +240,7 @@ export interface FanpageDetail extends Fanpage {
   pinterest_content_ideas: PinterestContentIdeaRef[];
   facebook_photo_sources: FacebookPhotoSourceRef[];
   facebook_photo_ideas: FacebookPhotoIdeaRef[];
+  yt_clip_sources: YtClipSourceRef[];
 }
 
 export interface Burner {
@@ -209,6 +268,14 @@ export interface PublishJob {
   design_title: string | null;
   design_image_url: string | null;
   design_template_id: number | null;
+  design_subtitle?: string | null;
+  // Mode 7 (youtube_clip)
+  video_url?: string | null;
+  video_thumbnail_url?: string | null;
+  video_duration_s?: number | null;
+  yt_video_id?: string | null;
+  clip_start_s?: number | null;
+  clip_end_s?: number | null;
   ai_generated_caption: string | null;
   ai_provider_used: AIProvider | null;
   status: PublishJobStatus;
@@ -300,4 +367,8 @@ export interface AppSettings {
   nine_router_model: string | null;
   nine_router_discussion_model: string | null;
   has_nine_router_key: boolean;
+  has_youtube_cookies?: boolean;
+  youtube_proxy?: string | null;
+  youtube_blocked_until?: string | null;
+  youtube_last_error?: string | null;
 }

@@ -149,6 +149,9 @@ def get_logs(
         _AI_CONTEXT_META = {
             "news_copy":               {"label": "News post",           "is_text": True},
             "discussion_copy":         {"label": "Discussion card",     "is_text": True},
+            # Mode 7 — a failure means one video's clip ideas were lost
+            # (it's retried up to 3 times before being marked failed).
+            "yt_highlight":            {"label": "YouTube clip highlights", "is_text": True},
             "vision_focus_point":      {"label": "Photo crop focus",    "is_text": False},
             "vision_classify_type":    {"label": "Photo classification", "is_text": False},
             "vision_classify_closeup": {"label": "Gallery AI filter",   "is_text": False},

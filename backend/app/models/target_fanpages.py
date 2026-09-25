@@ -171,6 +171,21 @@ class TargetFanpage(Base):
     facebook_photo_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
     facebook_photo_daily_count = Column(Integer, default=2, nullable=False, server_default="2")
 
+    # ── Mode 7: YouTube clips ──────────────────────
+    # Long YouTube videos (channel / playlist / single link) → AI-picked
+    # highlights → 9:16 clips (per-shot face-track or blur-fit) → Reels. See
+    # app/tasks/yt_clip.py. Captions/watermark are per-fanpage toggles.
+    yt_clip_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    yt_clip_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
+    yt_clip_daily_count = Column(Integer, default=2, nullable=False, server_default="2")
+    yt_clip_min_s = Column(Integer, default=60, nullable=False, server_default="60")
+    yt_clip_max_s = Column(Integer, default=120, nullable=False, server_default="120")
+    yt_clip_per_video = Column(Integer, default=3, nullable=False, server_default="3")
+    yt_clip_min_score = Column(Integer, default=6, nullable=False, server_default="6")
+    yt_clip_max_video_age_days = Column(Integer, default=7, nullable=False, server_default="7")
+    yt_clip_captions = Column(Boolean, default=True, nullable=False, server_default="true")
+    yt_clip_watermark = Column(Boolean, default=True, nullable=False, server_default="true")
+
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
     caption_language = Column(String(8), default="en", nullable=False)
@@ -201,4 +216,7 @@ class TargetFanpage(Base):
     discussion_content_ideas = relationship("DiscussionContentIdea", back_populates="fanpage", cascade="all, delete-orphan")
     facebook_photo_sources = relationship("FacebookPhotoSource", back_populates="fanpage", cascade="all, delete-orphan")
     facebook_photo_ideas = relationship("FacebookPhotoIdea", back_populates="fanpage", cascade="all, delete-orphan")
+    yt_clip_sources = relationship("YtClipSource", back_populates="fanpage", cascade="all, delete-orphan")
+    yt_videos = relationship("YtVideo", back_populates="fanpage", cascade="all, delete-orphan")
+    yt_clip_ideas = relationship("YtClipIdea", back_populates="fanpage", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="fanpage")

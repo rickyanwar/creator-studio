@@ -16,7 +16,7 @@ const fetcher = async () => {
     listJobs({ status: "pending_publish", limit: 100 }),
   ]);
   const news = [...(design.data as PublishJob[]), ...(publish.data as PublishJob[])]
-    .filter((j) => j.content_type === "news_content" || j.content_type === "ig_recreate" || j.content_type === "discussion" || j.content_type === "pinterest_content" || j.content_type === "facebook_recreate");
+    .filter((j) => j.content_type === "news_content" || j.content_type === "ig_recreate" || j.content_type === "discussion" || j.content_type === "pinterest_content" || j.content_type === "facebook_recreate" || j.content_type === "youtube_clip");
   return [...(review.data as PublishJob[]), ...news].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
@@ -43,6 +43,9 @@ function timeAgo(iso: string) {
 
 /* Use source URL when public URL is localhost */
 function resolveUrls(job: PublishJob): string[] {
+  if (job.content_type === "youtube_clip") {
+    return job.video_thumbnail_url ? [job.video_thumbnail_url] : [];
+  }
   if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") {
     return job.design_image_url ? [job.design_image_url] : [];
   }
@@ -229,8 +232,11 @@ function QueueCard({
   const albumCount = urls.length;
   const caption = job.ai_generated_caption ?? "";
   const createdAt = (job as unknown as Record<string, string>).created_at;
-  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate" || job.content_type === "youtube_clip";
   const needsDesign = (job.content_type === "news_content" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") && job.status === "pending_design";
+  // Mode 7 clips render on the video worker — no Designer, no image lightbox.
+  const isClip = job.content_type === "youtube_clip";
+  const clipRendering = isClip && job.status === "pending_design";
 
   const mediaIcon =
     job.media_type === "album"
@@ -259,7 +265,7 @@ function QueueCard({
           <p className="text-sm font-semibold text-text-primary truncate">{fanpage}</p>
           <p className="text-xs text-text-secondary truncate">
             {createdAt ? timeAgo(createdAt) : ""}{createdAt ? " · " : ""}
-            {isNews ? (job.design_title ?? (job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : "News content")) : `@${job.ig_username}`}
+            {isNews ? (job.design_title ?? (job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : "News content")) : `@${job.ig_username}`}
           </p>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -282,11 +288,11 @@ function QueueCard({
           <>
             <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-info-main bg-[rgba(0,184,217,0.12)] px-2 py-0.5 rounded-full">
               <Icon icon="solar:document-text-bold-duotone" width={11} />
-              {job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook" : "News"}
+              {job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook" : isClip ? "Clip" : "News"}
             </span>
             <span className="flex items-center gap-1 text-xs text-text-secondary">
-              <Icon icon={needsDesign ? "solar:pen-2-bold-duotone" : "solar:check-circle-bold-duotone"} width={12} />
-              {needsDesign ? "needs design" : "design ready"}
+              <Icon icon={clipRendering ? "solar:videocamera-record-bold-duotone" : needsDesign ? "solar:pen-2-bold-duotone" : "solar:check-circle-bold-duotone"} width={12} />
+              {clipRendering ? "rendering clip…" : needsDesign ? "needs design" : isClip ? `clip ready${job.video_duration_s ? ` · ${Math.round(job.video_duration_s)}s` : ""}` : "design ready"}
             </span>
           </>
         ) : (
@@ -305,10 +311,18 @@ function QueueCard({
 
       {/* Thumbnail — click to open lightbox */}
       <div
-        className="relative mx-4 rounded-lg overflow-hidden bg-bg-paper-hover cursor-zoom-in"
-        onClick={() => onImageClick(0)}
+        className={`relative mx-4 rounded-lg overflow-hidden bg-bg-paper-hover ${isClip ? "" : "cursor-zoom-in"}`}
+        onClick={() => { if (!isClip) onImageClick(0); }}
       >
-        {thumb ? (
+        {isClip && job.video_url ? (
+          <video
+            src={job.video_url}
+            poster={thumb}
+            controls
+            preload="none"
+            className="w-full aspect-[9/16] max-h-[440px] bg-black object-contain"
+          />
+        ) : thumb ? (
           <img src={thumb} alt="Post preview" className="w-full aspect-[4/3] object-cover" />
         ) : (
           <div className="w-full aspect-[4/3] flex items-center justify-center">
@@ -381,6 +395,11 @@ function QueueCard({
               <Icon icon="solar:palette-bold-duotone" width={14} />
               Open in Designer
             </Link>
+          ) : clipRendering ? (
+            <span className="flex-1 btn-primary justify-center text-xs py-2 opacity-60 cursor-not-allowed" title={job.last_error ?? "The clip is being rendered"}>
+              <Icon icon="solar:videocamera-record-bold-duotone" width={14} />
+              Rendering…
+            </span>
           ) : (
             <>
               <button onClick={onPublish} disabled={loading}
@@ -388,7 +407,7 @@ function QueueCard({
                 <Icon icon="solar:verified-check-bold-duotone" width={14} />
                 {loading ? "Publishing…" : "Publish"}
               </button>
-              {isNews && (
+              {isNews && !isClip && (
                 <Link href={`/designer/${job.id}`} title="Open in Designer"
                   className="flex items-center gap-1 px-3 py-2 text-xs font-semibold text-primary-main bg-[rgba(0,167,111,0.08)] hover:bg-[rgba(0,167,111,0.16)] rounded-md transition-colors">
                   <Icon icon="solar:palette-bold-duotone" width={13} />
@@ -424,7 +443,7 @@ function Lightbox({
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const color = avatarColor(fanpage);
   const caption = job.ai_generated_caption ?? "";
-  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate" || job.content_type === "youtube_clip";
   const total = urls.length;
   const createdAt = (job as unknown as Record<string, string>).created_at;
 
@@ -501,12 +520,12 @@ function Lightbox({
               <div className="min-w-0">
                 <p className="text-white text-xs font-semibold leading-none">{fanpage}</p>
                 <p className="text-white/60 text-[10px] mt-0.5">
-                  {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : "News content")) : `@${job.ig_username}`}
+                  {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : "News content")) : `@${job.ig_username}`}
                   {createdAt ? ` · ${timeAgo(createdAt)}` : ""}
                 </p>
               </div>
               <span className="ml-auto text-[10px] font-semibold text-white/60 uppercase tracking-wide bg-white/10 px-2 py-0.5 rounded-full">
-                {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.content_type === "pinterest_content" ? "pinterest" : job.content_type === "facebook_recreate" ? "facebook" : job.media_type}
+                {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.content_type === "pinterest_content" ? "pinterest" : job.content_type === "facebook_recreate" ? "facebook" : job.content_type === "youtube_clip" ? "clip" : job.media_type}
               </span>
             </div>
 

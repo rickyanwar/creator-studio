@@ -49,6 +49,10 @@ def get_settings(db: DB, _: CurrentUser):
         nine_router_model=row.nine_router_model,
         nine_router_discussion_model=row.nine_router_discussion_model,
         has_nine_router_key=bool(row.nine_router_api_key_encrypted),
+        has_youtube_cookies=bool(row.youtube_cookies_encrypted),
+        youtube_proxy=row.youtube_proxy,
+        youtube_blocked_until=row.youtube_blocked_until,
+        youtube_last_error=row.youtube_last_error,
     )
 
 
@@ -74,6 +78,17 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         row.flashapi_api_key_encrypted = encrypt(data.pop("flashapi_api_key"))
     if "nine_router_api_key" in data:
         row.nine_router_api_key_encrypted = encrypt(data.pop("nine_router_api_key"))
+    if "youtube_cookies" in data:
+        from app.services.yt_downloader import validate_cookies_txt
+
+        cookies = (data.pop("youtube_cookies") or "").strip()
+        if cookies:
+            problem = validate_cookies_txt(cookies)
+            if problem:
+                raise HTTPException(status_code=400, detail=problem)
+        row.youtube_cookies_encrypted = encrypt(cookies) if cookies else None
+    if "youtube_proxy" in data:
+        data["youtube_proxy"] = (data["youtube_proxy"] or "").strip() or None
 
     for field, value in data.items():
         setattr(row, field, value)
@@ -189,3 +204,21 @@ def test_relays(body: RelayTestRequest, db: DB, _: CurrentUser):
         results = list(pool.map(_test_one, relays))
 
     return {"results": results, "alive": sum(1 for r in results if r["ok"]), "total": len(results)}
+
+
+@router.post("/youtube/test")
+def test_youtube_access(db: DB, _: CurrentUser):
+    """Mode 7: one YouTube metadata request with the saved cookies/proxy.
+    Success also lifts the circuit-breaker pause."""
+    from app.services.yt_downloader import probe_access
+
+    return probe_access(db)
+
+
+@router.post("/youtube/clear-block")
+def clear_youtube_block(db: DB, _: CurrentUser):
+    """Mode 7: lift the YouTube pause manually (e.g. after uploading new cookies)."""
+    from app.services.yt_downloader import clear_block
+
+    clear_block(db)
+    return {"ok": True}

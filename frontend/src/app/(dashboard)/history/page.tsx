@@ -52,6 +52,9 @@ function avatarColor(name: string) {
 }
 
 function resolveUrls(job: PublishJob): string[] {
+  if (job.content_type === "youtube_clip") {
+    return job.video_thumbnail_url ? [job.video_thumbnail_url] : [];
+  }
   if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") {
     return job.design_image_url ? [job.design_image_url] : [];
   }
@@ -64,6 +67,10 @@ function resolveUrls(job: PublishJob): string[] {
 // Link back to where the content originally came from — a scraped article for
 // news_content jobs, or the original Instagram post/profile for ig_repost/ig_recreate.
 function sourceLink(job: PublishJob): { url: string; label: string; icon: string } | null {
+  if (job.content_type === "youtube_clip" && job.yt_video_id) {
+    const t = Math.floor(job.clip_start_s ?? 0);
+    return { url: `https://youtu.be/${job.yt_video_id}?t=${t}`, label: "Source moment on YouTube", icon: "mdi:youtube" };
+  }
   if (job.article_url) {
     return {
       url: job.article_url,

@@ -143,6 +143,13 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
         .all()
     )
     out.facebook_photo_ideas = [FacebookPhotoIdeaRef.model_validate(i) for i in fb_photo_ideas]
+
+    # Mode 7 sources only — its clip-idea queue and video list are paged via
+    # api/yt_clips.py (GET /fanpages/{id}/yt-clip-ideas, /yt-videos).
+    from app.models.yt_clip_sources import YtClipSource
+    from app.schemas.fanpage import YtClipSourceRef
+    yt_sources = db.query(YtClipSource).filter_by(fanpage_id=fanpage_id).order_by(YtClipSource.id.asc()).all()
+    out.yt_clip_sources = [YtClipSourceRef.model_validate(s) for s in yt_sources]
     return out
 
 

@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey, JSON, func, UniqueConstraint, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey, JSON, func, UniqueConstraint, Boolean, Float
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -25,6 +25,7 @@ class ContentType(str, enum.Enum):
     discussion = "discussion"    # Mode 4: AI-generated debate/hot-take card (news- or evergreen-seeded)
     pinterest_content = "pinterest_content"  # Mode 5: photo-seeded card from a consumed PinterestContentIdea
     facebook_recreate = "facebook_recreate"  # Mode 6: another FB page's photo classified + rebuilt on a news/discussion template
+    youtube_clip = "youtube_clip"            # Mode 7: a 9:16 clip cut from a YouTube video (a Reel, not an image)
 
 
 class AIProvider(str, enum.Enum):
@@ -62,6 +63,19 @@ class PublishJob(Base):
     # queue — see publisher._next_schedule_at's `breaking` param. Only ever
     # set for content_type=news_content; false/unset means "schedule normally".
     is_breaking = Column(Boolean, default=False, nullable=False, server_default="false")
+
+    # ── Mode 7 (youtube_clip) ─────────────────────
+    # The job carries its own copy of the clip (YouTube id + range), so
+    # deleting the idea it came from never breaks a job mid-render.
+    yt_clip_idea_id = Column(Integer, ForeignKey("yt_clip_ideas.id", ondelete="SET NULL"), nullable=True, index=True)
+    yt_video_id = Column(String(16), nullable=True)
+    clip_start_s = Column(Float, nullable=True)
+    clip_end_s = Column(Float, nullable=True)
+    video_path = Column(String(512), nullable=True)            # rendered 1080x1920 MP4
+    video_url = Column(String(512), nullable=True)
+    video_thumbnail_path = Column(String(512), nullable=True)
+    video_thumbnail_url = Column(String(512), nullable=True)
+    video_duration_s = Column(Float, nullable=True)
 
     ai_generated_caption = Column(Text, nullable=True)
     ai_provider_used = Column(Enum(AIProvider), nullable=True)

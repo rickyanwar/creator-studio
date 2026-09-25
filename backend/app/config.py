@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # ── Storage ───────────────────────────────────
     storage_base_path: str = "/var/www/media"
     storage_base_url: str = "http://localhost/media"
+    # Mode 7 working files (video sections, subtitle cache, and — when YouTube
+    # cookies are configured — a transient cookies.txt). Deliberately NOT
+    # under storage_base_path: nginx serves that whole tree publicly at /media/.
+    yt_private_path: str = "/var/lib/studio-yt"
 
     # Design render output multiplier — 2 → 2160×2700 (~2K) crisp PNGs.
     design_render_scale: int = 2

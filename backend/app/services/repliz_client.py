@@ -109,6 +109,31 @@ class ReplizClient:
         resp.raise_for_status()
         return resp.json()
 
+    def create_video_schedule(
+        self,
+        account_id: str,
+        description: str,
+        video_url: str,
+        thumbnail_url: str = "",
+        title: str = "",
+        schedule_at: str | None = None,
+    ) -> dict:
+        """Schedule a video (Reel) post — Mode 7 clips. Same payload shape
+        jipraks/yt-short-clipper's repliz.py posts video with. Not flagged as
+        AI-generated: it's real footage, only cut and reframed."""
+        payload = {
+            "title": title,
+            "description": description,
+            "type": "video",
+            "medias": [{"type": "video", "thumbnail": thumbnail_url, "url": video_url}],
+            "accountId": account_id,
+            "scheduleAt": schedule_at or _schedule_at_now_plus(60),
+            "additionalInfo": {"isAiGenerated": False, "isDraft": False},
+        }
+        resp = self._client.post("/public/schedule", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
     def create_album_schedule(
         self,
         account_id: str,
