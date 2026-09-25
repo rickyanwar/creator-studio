@@ -1,20 +1,20 @@
 """Classify a scraped Facebook page photo via 9Router vision (Mode 6).
 
-Mirrors services/ig_content_classifier.py (Mode 3), swapping "quote" for
-"discussion" — competitor/inspiration Facebook pages (e.g. sports fan pages)
-lean heavily on debate-bait graphics ("WHO WOULD WIN...", "MOST X OF ALL
-TIME") rather than spoken quotes, so this categorizes into:
+The photo is only ever READ here — its text decides what kind of card gets
+recreated, and nothing from the image itself reaches the final design (see
+design_renderer.render_facebook_photo, which sources a clean photo of the
+subject instead). Categories, matching the existing template pools:
   - "news"       → a news/announcement graphic; extract the headline
+  - "quote"      → a person's spoken quote; extract the bare quote and the
+                    speaker (Mode 2 quote-card convention: design_title =
+                    quote, design_subtitle = speaker's name badge)
   - "discussion" → a debate/hot-take graphic; extract a question, a label
-                    ("DISCUSSION"/"HOT TAKE"), and the subject's name — this
-                    matches the Mode 4 discussion template's real render
-                    contract (design_title=question, design_subtitle=label,
-                    design_caption=subject_name), not a flat text field.
+                    ("DISCUSSION"/"HOT TAKE"), and the subject's name — the
+                    Mode 4 discussion template's render contract
+                    (design_title=question, design_subtitle=label,
+                    design_caption=subject_name)
   - "other"      → anything else (memes, plain photos, promos, schedules) →
                     the caller rejects the candidate entirely, no idea row.
-
-Vision runs through 9Router (see design_images._vision_chat/_vision_datauri)
-same as ig_content_classifier.
 """
 
 import json
@@ -24,12 +24,14 @@ from typing import Literal, TypedDict
 
 logger = logging.getLogger(__name__)
 
-ContentType = Literal["news", "discussion", "other"]
+ContentType = Literal["news", "quote", "discussion", "other"]
 
 
 class Classification(TypedDict):
     type: ContentType
     headline: str          # "news" only, else ""
+    quote: str             # "quote" only: the quote alone, no name, no quote marks
+    speaker: str           # "quote" only: the person who said it
     question: str          # "discussion" only, else ""
     label: str              # "discussion" only: "DISCUSSION" | "HOT TAKE", else ""
     subject_name: str       # "discussion" only, else ""
@@ -37,10 +39,15 @@ class Classification(TypedDict):
 
 _PROMPT = (
     "You are classifying a photo from a {niche} Facebook page's public photo gallery.\n"
-    "These pages post a mix of news graphics and debate/hot-take graphics (often with text baked "
-    "directly into the image, e.g. \"WHO WOULD WIN A KART RACE OF ALL 22 F1 DRIVERS?\" or "
-    "\"MOST F1 SPRINT WINS OF ALL TIME\"). Decide which ONE category this photo is:\n\n"
-    '- "news": a news headline / announcement graphic. Extract the single main headline into `headline`.\n'
+    "These pages post news graphics, quote graphics and debate/hot-take graphics, usually with "
+    "text baked directly into the image. Decide which ONE category this photo is:\n\n"
+    '- "news": a news headline / announcement graphic. Extract the single main headline into '
+    "`headline`.\n"
+    '- "quote": the main text is something a specific person SAID (usually shown in quotation '
+    "marks next to their name or photo). Extract:\n"
+    "  - `quote`: only the spoken words — no speaker name, no surrounding quotation marks.\n"
+    "  - `speaker`: the full name of the person who said it.\n"
+    "  A nickname in quotes inside a name (e.g. Jon \"Bones\" Jones) is NOT a quote.\n"
     '- "discussion": a debate/hot-take/ranking graphic meant to spark disagreement or opinions — '
     "usually phrased as a question or a bold ranking claim. Extract:\n"
     '  - `question`: the debate framed as a punchy question (rewrite a bold claim into a question '
@@ -51,10 +58,10 @@ _PROMPT = (
     '  - `subject_name`: the driver/team/person/entity this is actually about, if identifiable from '
     "the image, else empty string.\n"
     '- "other": memes, plain photos, promos, schedules, merchandise, or anything without a clear '
-    "headline or debate angle. All extracted fields empty.\n\n"
-    'Respond with ONLY a JSON object: {{"type": "news|discussion|other", "headline": "...", '
-    '"question": "...", "label": "...", "subject_name": "..."}} — no markdown, no explanation. '
-    "Keep extracted text in its original language."
+    "headline, quote or debate angle. All extracted fields empty.\n\n"
+    'Respond with ONLY a JSON object: {{"type": "news|quote|discussion|other", "headline": "...", '
+    '"quote": "...", "speaker": "...", "question": "...", "label": "...", "subject_name": "..."}} '
+    "— no markdown, no explanation. Keep extracted text in its original language."
 )
 
 
@@ -65,14 +72,17 @@ def _parse(raw: str) -> Classification:
         raise ValueError(f"no JSON in vision output: {raw[:200]!r}")
     data = json.loads(match.group(0))
     t = str(data.get("type", "")).lower().strip()
-    if t not in ("news", "discussion", "other"):
+    if t not in ("news", "quote", "discussion", "other"):
         t = "other"
     label = str(data.get("label") or "").strip().upper()
     if label not in ("DISCUSSION", "HOT TAKE"):
         label = "DISCUSSION" if t == "discussion" else ""
+    quote = str(data.get("quote") or "").strip().strip('"“”').strip()
     return {
         "type": t,
         "headline": str(data.get("headline") or "").strip(),
+        "quote": quote,
+        "speaker": str(data.get("speaker") or "").strip(),
         "question": str(data.get("question") or "").strip(),
         "label": label,
         "subject_name": str(data.get("subject_name") or "").strip(),
@@ -80,8 +90,8 @@ def _parse(raw: str) -> Classification:
 
 
 def classify_facebook_photo(image_bytes: bytes, niche: str = "general") -> Classification:
-    """Classify a Facebook page photo into news/discussion/other and extract
-    its rendering fields.
+    """Classify a Facebook page photo into news/quote/discussion/other and
+    extract its text fields.
 
     Raises on transport/API/parse error — the caller owns retry/skip policy.
     """

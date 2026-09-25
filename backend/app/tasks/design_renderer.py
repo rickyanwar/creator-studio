@@ -343,12 +343,7 @@ def render_design(self, job_id: int):
         # fanpage.mode2_badge_text always wins; otherwise falls back to
         # "{niche} NEWS" computed fresh here (not stored), so editing the
         # fanpage's niches later doesn't leave a stale baked-in badge string.
-        news_badge_text = ""
-        if category == "news":
-            if fanpage.mode2_badge_text:
-                news_badge_text = fanpage.mode2_badge_text
-            elif fanpage.mode2_gallery_niches:
-                news_badge_text = f"{fanpage.mode2_gallery_niches[0]} NEWS"
+        news_badge_text = _news_badge_text(fanpage) if category == "news" else ""
 
         # ── Render via Puppeteer + Fabric.js service ──
         resp = httpx.post(
@@ -817,25 +812,118 @@ def render_pinterest(self, job_id: int):
         db.close()
 
 
+_FB_DISCUSSION_LABELS = ("DISCUSSION", "HOT TAKE")
+
+
+def _news_badge_text(fanpage) -> str:
+    """The small pill badge above a News template's headline (e.g. "F1
+    NEWS") — see render_design's note on why it's computed fresh, not
+    stored."""
+    if fanpage.mode2_badge_text:
+        return fanpage.mode2_badge_text
+    if fanpage.mode2_gallery_niches:
+        return f"{fanpage.mode2_gallery_niches[0]} NEWS"
+    return ""
+
+
+def _facebook_photo_category(db, job) -> str:
+    """news | quote | discussion — the category _consume_one pinned via
+    job.design_template_id, else inferred from the fields it filled (a
+    discussion's subtitle is its label, a quote's is the speaker)."""
+    from app.models.design_templates import DesignTemplate
+
+    if job.design_template_id:
+        tpl = db.query(DesignTemplate).filter_by(id=job.design_template_id).first()
+        if tpl and tpl.category in ("news", "quote", "discussion"):
+            return tpl.category
+    if (job.design_subtitle or "").upper() in _FB_DISCUSSION_LABELS:
+        return "discussion"
+    return "quote" if job.design_subtitle else "news"
+
+
+def _facebook_photo_grounding(category: str, job) -> str:
+    """Card text with the subject's name spliced in, for photo sourcing: a
+    quote's title is the bare quote (the name lives in the speaker badge),
+    a discussion's subject lives in design_caption — without the name the
+    subject extraction guesses (see render_design's subject_title note)."""
+    title = job.design_title or ""
+    name = job.design_subtitle if category == "quote" else job.design_caption if category == "discussion" else None
+    return f"{name.strip()}: {title}" if name and name.strip() else title
+
+
+def _select_facebook_photo_image(db, job, category: str, niche: str, exclude_marker: str | None):
+    """A clean photo for a recreated Mode 6 card — never the source page's
+    graphic. Subject photo first (fresh gallery → fresh Getty → stale
+    gallery, see source_news_main); news/discussion then fall back to a
+    vision-verified topic search. A quote card must show its speaker, so it
+    gets no topic fallback. Returns (datauri, GalleryImage|None, marker) or
+    (None, None, None)."""
+    from app.models.gallery import GalleryImage
+    from app.services.design_images import source_news_main, fetch_topic_datauri
+
+    excluded_path = None
+    if exclude_marker and exclude_marker.startswith("gallery:"):
+        excluded_path = (
+            db.query(GalleryImage.local_path).filter_by(id=int(exclude_marker.split(":", 1)[1])).scalar()
+        )
+
+    grounding = _facebook_photo_grounding(category, job)
+    try:
+        src, path = source_news_main(db, grounding, niche, exclude_path=excluded_path)
+        if src:
+            gi = db.query(GalleryImage).filter_by(local_path=path).first() if path else None
+            return src, gi, (f"gallery:{gi.id}" if gi else "search")
+    except Exception as exc:
+        logger.warning("Facebook photo: subject-photo lookup failed for job %d: %s", job.id, exc)
+
+    if category == "quote":
+        return None, None, None
+    try:
+        uri = fetch_topic_datauri(grounding, niche)
+        if uri:
+            return uri, None, "search"
+    except Exception as exc:
+        logger.warning("Facebook photo: topic-photo search failed for job %d: %s", job.id, exc)
+    return None, None, None
+
+
+def _pick_fitting_facebook_photo(db, job, template, category: str, niche: str):
+    """Up to 3 candidates through the same face-fits + quality gate
+    render_design uses, each retry excluding the last rejected photo."""
+    from app.services.design_images import _safe_face_cy_ceiling, single_photo_face_fits
+
+    safe_cy_ceiling = _safe_face_cy_ceiling(template.template_json, template.canvas_height)
+    exclude_marker = job.last_image_marker
+    for _attempt in range(3):
+        src, gi, marker = _select_facebook_photo_image(db, job, category, niche, exclude_marker)
+        if not src:
+            return None, None, None
+        try:
+            fits = single_photo_face_fits(
+                base64.b64decode(src.split(",", 1)[1]),
+                template.canvas_width, template.canvas_height, safe_cy_ceiling,
+            )
+        except Exception:
+            fits = True  # can't decode to check — don't block over a hiccup
+        if fits:
+            return src, gi, marker
+        logger.info("Facebook photo: job %d rejected candidate %s — failed the face-fit/quality gate", job.id, marker)
+        exclude_marker = marker
+    return None, None, None
+
+
 @celery_app.task(name="app.tasks.design_renderer.render_facebook_photo", bind=True, max_retries=2)
 def render_facebook_photo(self, job_id: int):
-    """Render a Mode 6 Facebook-photo card: the exact photo a consumed
-    FacebookPhotoIdea was bound to (job.source_gallery_image_id) — no
-    article, no photo search, same "the source photo IS the design photo"
-    shape as render_pinterest. Unlike Pinterest, the category (news vs
-    discussion) was already decided by vision at topup time (see
-    services.facebook_content_classifier) and baked into job.design_template_id
-    at consume time — no second classify call needed here. job.design_subtitle
-    carries the discussion label ("DISCUSSION"/"HOT TAKE") when present,
-    same field render_discussion sends as `label`; news jobs leave it null,
-    which the renderer treats as "no label/badge" (inject.js hides both
-    together when the value is empty — see render_pinterest's own note on
-    this same no-op behavior)."""
+    """Render a Mode 6 card, recreated like IG recreate: the text _consume_one
+    already rewrote (news headline / quote + speaker / discussion question +
+    label) on the fanpage's own news/quote/discussion template, around a
+    clean photo of the subject. The source page's photo was only read for
+    its text and is never used here — no photo found means the job waits
+    for a manual image rather than falling back to it."""
     db = SessionLocal()
     try:
         from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
         from app.models.target_fanpages import TargetFanpage, PublishMode
-        from app.models.gallery import GalleryImage
 
         claimed = (
             db.query(PublishJob)
@@ -852,67 +940,57 @@ def render_facebook_photo(self, job_id: int):
 
         job = db.query(PublishJob).filter_by(id=job_id).first()
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
-        gallery_image = (
-            db.query(GalleryImage).filter_by(id=job.source_gallery_image_id).first()
-            if job.source_gallery_image_id else None
-        )
-        if not fanpage or not gallery_image or not gallery_image.local_path or not os.path.exists(gallery_image.local_path):
+        if not fanpage:
             job.status = PublishJobStatus.pending_design
-            job.last_error = "fanpage or source photo missing"
+            job.last_error = "fanpage missing"
             db.commit()
             return
 
         from app.services.design_images import (
             resolve_template, prepare_design_images, focus_points_for, watermark_datauri,
-            _safe_face_cy_ceiling, fix_unsafe_single_photo_face, photo_crops_well,
+            align_split_focus_points, find_role_object, _safe_face_cy_ceiling,
+            fix_unsafe_single_photo_face,
         )
 
-        image_bytes = Path(gallery_image.local_path).read_bytes()
-
-        # job.design_template_id already carries the topup-time classification
-        # result (see tasks.facebook_photo._consume_one) — "category" here is
-        # only a fallback path for the rare case that resolution failed then.
-        category = "discussion" if job.design_subtitle else "news"
+        category = _facebook_photo_category(db, job)
         template = resolve_template(db, category, fanpage=fanpage, job_template_id=job.design_template_id)
+        if (not template or not template.template_json) and category != "news":
+            # Same graceful fallback as render_discussion: no quote/discussion
+            # template anywhere → the card still goes out on the News layout.
+            template = resolve_template(db, "news", fanpage=fanpage)
         if not template or not template.template_json:
             job.status = PublishJobStatus.pending_design
-            job.last_error = f"no {category} template configured — create one in Template Designer"
+            job.last_error = f"no {category} or news template configured — create one in Template Designer"
             db.commit()
             logger.warning("Facebook photo: job %d has no usable template", job_id)
             return
 
-        # Same direct-post fallback as render_pinterest — a photo that
-        # doesn't crop well onto this template skips the template entirely
-        # and posts as-is rather than forcing a bad crop.
-        if not photo_crops_well(image_bytes, template.canvas_width, template.canvas_height):
-            job.design_image_path = gallery_image.local_path
-            job.design_image_url = gallery_image.public_url
-            job.design_template_id = None
-            job.last_image_marker = f"gallery:{gallery_image.id}"
-            job.status = PublishJobStatus.pending_publish
-            job.last_error = None
-            gallery_image.is_used = True
+        niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+        image_src, gallery_image, image_marker = _pick_fitting_facebook_photo(db, job, template, category, niche)
+        if not image_src:
+            job.status = PublishJobStatus.pending_design
+            job.last_error = f"needs manual image — no clean {category} photo found for this card"
             db.commit()
-            logger.info(
-                "Facebook photo: job %d posted directly (photo doesn't crop well onto template %d)",
-                job_id, template.id,
-            )
-            if fanpage.facebook_photo_publish_mode == PublishMode.auto:
-                from app.tasks.publisher import publish_job
-                publish_job.delay(job.id)
+            logger.warning("Facebook photo: job %d needs a manual image", job_id)
             return
-
-        image_src = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
-        niche = fanpage.name
 
         template_json, image_srcs = prepare_design_images(
             db, template.template_json, template.canvas_width,
-            job.design_title or "", niche, image_src,
-            main_path=gallery_image.local_path, smart=False, expand=bool(fanpage.design_expand),
+            _facebook_photo_grounding(category, job), niche, image_src,
+            main_path=gallery_image.local_path if gallery_image else None,
+            expand=bool(fanpage.design_expand),
         )
+        image_zooms = template_json.pop("_splitImageZooms", None)
 
+        image_2_slot = find_role_object(template_json, "image_2")
+        is_split = (
+            image_2_slot is not None and image_2_slot.get("type") == "rect"
+            and len(image_srcs) >= 2 and image_srcs[0] and image_srcs[1]
+        )
         safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
-        if image_srcs and image_srcs[0]:
+        # See render_design's identical block (zero cover-fit vertical slack
+        # on a landscape photo — the ceiling alone can't be honored).
+        if not is_split and image_srcs and image_srcs[0]:
             try:
                 main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
                 fixed = fix_unsafe_single_photo_face(
@@ -923,23 +1001,39 @@ def render_facebook_photo(self, job_id: int):
             except Exception as exc:
                 logger.warning("Facebook photo: fix_unsafe_single_photo_face failed for job %d: %s", job_id, exc)
         focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
+        if is_split:
+            focus_points = align_split_focus_points(focus_points)
 
-        payload = {
-            "template_json": template_json,
-            "width": template.canvas_width,
-            "height": template.canvas_height,
-            "title": job.design_title or "",
-            "label": job.design_subtitle or "",
-            "caption": job.design_caption or "",
-            "watermark": fanpage.watermark_text or "",
-            "watermark_image": watermark_datauri(fanpage),
-            "image_srcs": image_srcs,
-            "focus_points": focus_points,
-            "image_zooms": None,
-            "scale": settings.design_render_scale,
-        }
+        # Field contract per category: a quote's speaker is the subtitle
+        # (name badge); a discussion's subtitle is its label and its caption
+        # is the subject (used for the photo only, never rendered); the News
+        # pill badge only on news cards.
+        if category == "discussion":
+            subtitle, label = "", job.design_subtitle or "DISCUSSION"
+        elif category == "quote":
+            subtitle, label = job.design_subtitle or "", ""
+        else:
+            subtitle, label = "", _news_badge_text(fanpage)
 
-        resp = httpx.post(f"{settings.renderer_url.rstrip('/')}/render", json=payload, timeout=_RENDER_TIMEOUT)
+        resp = httpx.post(
+            f"{settings.renderer_url.rstrip('/')}/render",
+            json={
+                "template_json": template_json,
+                "width": template.canvas_width,
+                "height": template.canvas_height,
+                "title": job.design_title or "",
+                "subtitle": subtitle,
+                "caption": "",
+                "label": label,
+                "watermark": fanpage.watermark_text or "",
+                "watermark_image": watermark_datauri(fanpage),
+                "image_srcs": image_srcs,
+                "focus_points": focus_points,
+                "image_zooms": image_zooms,
+                "scale": settings.design_render_scale,
+            },
+            timeout=_RENDER_TIMEOUT,
+        )
         resp.raise_for_status()
         png_bytes = resp.content
 
@@ -951,13 +1045,16 @@ def render_facebook_photo(self, job_id: int):
         job.design_image_path = str(designs_dir / filename)
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
         job.design_template_id = template.id
-        job.last_image_marker = f"gallery:{gallery_image.id}"
+        job.last_image_marker = image_marker
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
-        gallery_image.is_used = True
+        if gallery_image:
+            gallery_image.is_used = True
         db.commit()
 
-        logger.info("Facebook photo: job %d rendered → %s (%d bytes)", job_id, filename, len(png_bytes))
+        logger.info(
+            "Facebook photo: job %d (%s) rendered → %s (%d bytes)", job_id, category, filename, len(png_bytes),
+        )
 
         if fanpage.facebook_photo_publish_mode == PublishMode.auto:
             from app.tasks.publisher import publish_job

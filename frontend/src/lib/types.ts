@@ -162,8 +162,8 @@ export interface FacebookPhotoSourceRef {
 
 export interface FacebookPhotoIdeaRef {
   id: number;
-  gallery_image_id: number;
-  category: string; // "news" | "discussion"
+  gallery_image_id: number; // dedup marker for the evaluated source photo, not a design photo
+  category: string; // "news" | "quote" | "discussion"
   design_title: string;
   design_subtitle: string | null;
   design_caption: string | null;

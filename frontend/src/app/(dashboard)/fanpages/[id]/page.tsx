@@ -2067,9 +2067,11 @@ export default function FanpageEditPage() {
           <div>
             <h2 className="text-base font-semibold text-text-primary">Mode 6: Facebook Photo Recreate</h2>
             <p className="text-xs text-text-secondary mt-0.5">
-              Clone another Facebook page&apos;s photos (competitor/inspiration pages, not this fanpage&apos;s
-              own) — new photos are classified news/discussion/other, redesigned on this fanpage&apos;s
-              own template using the SAME photo, then posted on this fanpage&apos;s own pacing.
+              Recreate posts from other Facebook pages (competitor/inspiration pages, not this fanpage&apos;s
+              own), like IG Recreate — each new photo is only read for its text (news / quote /
+              discussion; anything else is skipped), rewritten in this fanpage&apos;s language, and rebuilt
+              on this fanpage&apos;s own template with a fresh photo of the subject. The source page&apos;s
+              image is never posted.
             </p>
           </div>
           <button
@@ -2122,8 +2124,9 @@ export default function FanpageEditPage() {
               </div>
             </div>
             <p className="text-[11px] text-text-secondary">
-              Renders on the News/Discussion Templates set above (Design Templates section) — no separate
-              template setting for Mode 6. No like-count/growth check in this version — a photo not seen
+              Renders on the News/Quote/Discussion Templates set above (Design Templates section) — no
+              separate template setting for Mode 6. Captions use the Mode 1 caption settings, without the
+              &quot;via @source&quot; attribution line. No like-count/growth check in this version — a photo not seen
               before on the source page&apos;s public gallery is the only filter.
             </p>
 
@@ -2201,8 +2204,9 @@ export default function FanpageEditPage() {
               <div>
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Content Ideas Queue</p>
                 <p className="text-[11px] text-text-secondary mt-0.5">
-                  Auto-populated, oldest-first — each idea is already classified (news/discussion) with a
-                  photo attached. Edit the text before it posts, or delete ideas you don&apos;t want used.
+                  Auto-populated, oldest-first — each idea is the final card text (news / quote / discussion),
+                  already in this fanpage&apos;s language. Edit it before it posts, or delete ideas you
+                  don&apos;t want used. The photo is picked when the card is rendered.
                 </p>
               </div>
 
@@ -2218,8 +2222,17 @@ export default function FanpageEditPage() {
                             className="input w-full text-sm"
                             value={editFbIdeaTitle}
                             onChange={(e) => setEditFbIdeaTitle(e.target.value)}
-                            placeholder={idea.category === "discussion" ? "Question" : "Headline"}
+                            placeholder={idea.category === "discussion" ? "Question" : idea.category === "quote" ? "Quote (no quotation marks)" : "Headline"}
                           />
+                          {idea.category === "quote" && (
+                            <input
+                              type="text"
+                              className="input w-full text-sm"
+                              value={editFbIdeaSubtitle}
+                              onChange={(e) => setEditFbIdeaSubtitle(e.target.value)}
+                              placeholder="Speaker name"
+                            />
+                          )}
                           {idea.category === "discussion" && (
                             <>
                               <input

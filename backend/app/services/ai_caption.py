@@ -104,6 +104,7 @@ def _eff(source, fanpage, field: str):
 
 def build_caption_prompt(
     fanpage, source_username: str, original_caption: str, source=None, quote_text: str | None = None,
+    with_attribution: bool = True,
 ) -> str:
     """Build the AI prompt from fanpage criteria + source context. When `source`
     (an IGSource) has its own caption criteria set, those override the fanpage's.
@@ -113,9 +114,14 @@ def build_caption_prompt(
     Passing it forces the caption to literally repeat that same quote instead
     of independently paraphrasing the source text — otherwise the AI is free
     to summarize/rephrase and the caption ends up saying something different
-    from what the image shows, which reads as a mismatch between the two."""
+    from what the image shows, which reads as a mismatch between the two.
+
+    `with_attribution=False` drops the fanpage's "via @{source_username}"
+    line regardless of use_attribution — for callers with no source account
+    to credit (Mode 6 recreates the whole card, and its only name to hand
+    was the fanpage's own, which rendered as "via @<this fanpage>")."""
     attribution_line = ""
-    if fanpage.use_attribution:
+    if fanpage.use_attribution and with_attribution:
         attribution_line = (
             f'- Attribution: add line "{fanpage.caption_attribution_template.format(source_username=source_username)}" '
             f"at the {fanpage.attribution_position}"

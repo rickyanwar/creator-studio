@@ -747,8 +747,9 @@ def list_facebook_photo_ideas(fanpage_id: int, db: DB, _: CurrentUser, status: s
 
 @router.put("/{fanpage_id}/facebook-photo-ideas/{idea_id}")
 def update_facebook_photo_idea(fanpage_id: int, idea_id: int, body: FacebookPhotoIdeaUpdate, db: DB, _: CurrentUser):
-    """Edit a queued idea's title/subtitle/caption before it's consumed into
-    a job — never re-picks the bound photo or re-classifies."""
+    """Edit a queued idea's text before it's consumed into a job — the edit
+    is final (the text was already rewritten at topup; nothing re-rewrites
+    or re-classifies it)."""
     from app.models.facebook_photo_ideas import FacebookPhotoIdea
 
     idea = db.query(FacebookPhotoIdea).filter_by(id=idea_id, fanpage_id=fanpage_id).first()

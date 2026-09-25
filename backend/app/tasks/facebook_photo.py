@@ -1,17 +1,24 @@
-"""Mode 6: Facebook photo content — clone another Facebook page's photos
-(competitor/inspiration pages, not the fanpage's own) as news/discussion
-content.
+"""Mode 6: Facebook photo content — watch other Facebook pages' photo grids
+(competitor/inspiration pages, not the fanpage's own) and RECREATE each
+post as this fanpage's own news/quote/discussion card.
 
 Same two-stage shape as Mode 5 Pinterest (see app.tasks.pinterest's module
 docstring): candidates pulled from a curated FacebookPhotoSource's `/photos`
-grid become staged FacebookPhotoIdea rows (already classified news/discussion
-at topup time — see services.facebook_photo_source.build_idea_from_candidate),
-consumed FIFO, paced by facebook_photo_daily_count, into a real PublishJob
-that renders the SAME Facebook photo onto the resolved news/discussion
-template (see design_renderer.render_facebook_photo).
+grid become staged FacebookPhotoIdea rows (vision reads each photo's text
+and type at topup time — see services.facebook_photo_source.
+build_idea_from_candidate), consumed FIFO, paced by
+facebook_photo_daily_count, into a real PublishJob.
+
+Works like Mode 1 IG recreate: the source photo is only READ. At topup
+time its text is rewritten into the fanpage's caption_language (news →
+punchier headline, quote → faithful translation, discussion → the same
+debate, localized — so the queue shows, and a hand edit changes, the final
+on-card text), and design_renderer.render_facebook_photo builds the card
+around a clean photo of the subject — the other page's graphic never
+reaches the design.
 
 v1 has NO like-count/growth-verification gate — "new to us" (fbid not
-already downloaded) is the only filter. Deferred to a later phase, see
+already evaluated) is the only filter. Deferred to a later phase, see
 memory feature-facebook-trending-source.
 """
 
@@ -70,7 +77,9 @@ def _topup_queue(db, fanpage) -> int:
     from sqlalchemy import func
     from app.models.facebook_photo_ideas import FacebookPhotoIdea
     from app.models.facebook_photo_sources import FacebookPhotoSource
-    from app.services.facebook_photo_source import fetch_photo_candidates, build_idea_from_candidate
+    from app.services.facebook_photo_source import (
+        fetch_photo_candidates, build_idea_from_candidate, _existing_facebook_photo_urls,
+    )
 
     pending_count = (
         db.query(func.count(FacebookPhotoIdea.id))
@@ -90,7 +99,9 @@ def _topup_queue(db, fanpage) -> int:
         return 0
 
     try:
-        candidates = fetch_photo_candidates(source.page_url, limit=_TOPUP_BATCH)
+        candidates = fetch_photo_candidates(
+            source.page_url, limit=_TOPUP_BATCH, skip_keys=_existing_facebook_photo_urls(db),
+        )
     except Exception as exc:
         logger.error("Facebook photo: candidate fetch failed for source %d (%s): %s", source.id, source.page_url, exc)
         return 0
@@ -109,13 +120,35 @@ def _topup_queue(db, fanpage) -> int:
     return created
 
 
+def _caption_inputs(idea, title: str) -> tuple[str, str | None]:
+    """(caption context, verbatim quote) for build_caption_prompt. A quote's
+    caption must repeat the exact quote rendered on the card (same reason
+    as ig_recreate); a discussion's must invite readers to take a side."""
+    if idea.category == "quote":
+        speaker = (idea.design_subtitle or "").strip()
+        quoted = f'{speaker}: "{title}"' if speaker else f'"{title}"'
+        return quoted, quoted
+    if idea.category == "discussion":
+        subject = (idea.design_caption or "").strip()
+        about = f" (about {subject})" if subject else ""
+        return (
+            f'A fan-debate post asking: "{title}"{about}. The caption must invite readers '
+            f"to take a side and comment their opinion.",
+            None,
+        )
+    return title, None
+
+
 def _consume_one(db, fanpage) -> bool:
     """Pop the oldest pending idea into a PublishJob. Returns True if one
-    was created."""
+    was created. The idea's text is already final (rewritten into the
+    fanpage's language at topup, then possibly hand-edited in the queue),
+    so only the FB caption is written here. An AI failure leaves the idea
+    pending for a later tick."""
     from app.models.facebook_photo_ideas import FacebookPhotoIdea
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType, AIProvider
     from app.models.target_fanpages import PublishMode
-    from app.services.ai_caption import build_caption_prompt, generate_caption, GroqRateLimitError
+    from app.services.ai_caption import build_caption_prompt, generate_caption
     from app.services.design_images import resolve_template
 
     idea = (
@@ -127,24 +160,28 @@ def _consume_one(db, fanpage) -> bool:
     if not idea:
         return False
 
-    template = resolve_template(db, idea.category, fanpage=fanpage)
-
-    caption_context = idea.design_title
+    title = idea.design_title
     try:
+        context, quote_text = _caption_inputs(idea, title)
         caption, provider = generate_caption(
-            build_caption_prompt(fanpage, fanpage.name, caption_context, source=None),
+            build_caption_prompt(
+                fanpage, fanpage.name, context, source=None,
+                quote_text=quote_text, with_attribution=False,
+            ),
         )
-    except GroqRateLimitError:
-        # Leave the idea pending — a later tick retries it, same recovery
-        # shape as ig_recreate's own GroqRateLimitError handling.
+    except Exception as exc:
+        logger.warning("Facebook photo: copy for idea %d (fanpage %d) failed: %s", idea.id, fanpage.id, exc)
         return False
+
+    # render_facebook_photo re-resolves (and falls back from) this; pinning
+    # it here keeps the category visible on the job for the Queue/History.
+    template = resolve_template(db, idea.category, fanpage=fanpage)
 
     job = PublishJob(
         fanpage_id=fanpage.id,
         post_id=None,
         content_type=ContentType.facebook_recreate,
-        source_gallery_image_id=idea.gallery_image_id,
-        design_title=idea.design_title,
+        design_title=title,
         design_subtitle=idea.design_subtitle,
         design_caption=idea.design_caption,
         ai_generated_caption=caption,
