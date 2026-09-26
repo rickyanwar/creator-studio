@@ -13,9 +13,17 @@ when a face genuinely dominates it:
             follows the dominant face (sticky to the one being followed),
             smoothed (dead-zone + EMA), jumping straight to the new subject
             on a cut.
-    FIT   — no dominant face, or two big faces too far apart for one crop:
-            the whole frame, centred on a blurred, darkened copy of itself.
-            Nothing is lost.
+    CROP  — no dominant face (race footage, onboard/cockpit POV, crowds,
+            game cutscenes), with action_mode "smart" (the default): a full-
+            height 9:16 crop that follows where the MOTION is, pulled toward
+            the middle. Static overlays (a game HUD, leaderboards, a webcam
+            box) don't move, so they don't attract the crop; a cockpit POV
+            stays centred on the halo/wheel/road. Smoothed like TRACK.
+    FIT   — two big faces too far apart for one crop (or action_mode "fit",
+            a per-fanpage choice): the whole frame, centred on a blurred,
+            darkened copy of itself. Nothing is lost, but the footage only
+            fills ~1/3 of the height — the user rejected that as the default
+            for racing footage (2026-09-26).
   Shots under 1 s inherit the previous shot's mode (no flicker).
 
   Pass 2 — render: decode at 30 fps full-res (ffmpeg decodes, so variable
@@ -49,6 +57,19 @@ _CUT_THRESHOLD = 0.45
 _TRACK_MIN_FRACTION = 0.6
 _DEAD_ZONE = 0.03
 _EMA_ALPHA = 0.35
+_MOTION_W, _MOTION_H = 160, 90
+_ENERGY_BINS = 64
+_MOTION_MIN = 4.0 * _MOTION_H   # a column must change by ~4 grey levels/pixel to count as motion
+_CENTER_SIGMA = 0.3             # centre prior width, as a fraction of the frame width
+_CENTER_WEIGHT = 0.35           # pull toward the middle (all of it when nothing moves)
+_ENERGY_EMA = 0.3
+# Motion spread over more than this share of the frame's columns is CAMERA
+# motion (a cockpit/onboard POV moving forward, a pan), not a subject: follow
+# nothing, stay centred. Found on real F1 game footage (2026-09-26): following
+# raw motion in a cockpit POV drifted the crop onto the nearest wall, because
+# the closest scenery moves fastest.
+_ACTIVE_LEVEL = 0.35
+_CAMERA_MOTION_SPREAD = 0.5
 _WATERMARK_W = 130           # ~12 % of the width
 _WATERMARK_MARGIN = 42
 # Memory (measured on the VPS, 2026-09-25 — ~1.4 GB free there): the encoder
@@ -70,6 +91,7 @@ class ClipSpec:
     fonts_dir: Path | None = None
     watermark_png: Path | None = None
     watermark_text: str | None = None
+    action_mode: str = "smart"   # no-face shots: "smart" (motion-following crop) | "fit" (blur-fill)
 
 
 @dataclass(frozen=True)
@@ -109,15 +131,16 @@ def _decode(spec: ClipSpec, w: int, h: int, vf: str):
 
 # ── pass 1: analysis ─────────────────────────────────────────────────────────
 
-def _analyse(spec: ClipSpec, src_w: int, src_h: int) -> tuple[list[np.ndarray], list[list[tuple]]]:
+def _analyse(spec: ClipSpec, src_w: int, src_h: int) -> tuple[list[np.ndarray], list[list[tuple]], list[np.ndarray]]:
     from app.services.design_images import _get_yunet_detector
 
     detector = _get_yunet_detector()
     aw, ah = _ANALYSIS_W, int(round(src_h * _ANALYSIS_W / src_w / 2) * 2)
     if detector is not None:
         detector.setInputSize((aw, ah))
-    hists, faces = [], []
+    hists, faces, grays = [], [], []
     for frame in _decode(spec, aw, ah, f"fps={_SAMPLE_FPS},scale={aw}:{ah}"):
+        grays.append(cv2.cvtColor(cv2.resize(frame, (_MOTION_W, _MOTION_H), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY))
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         hist = cv2.calcHist([hsv], [0, 1], None, [32, 32], [0, 180, 0, 256])
         hists.append(cv2.normalize(hist, hist).flatten())
@@ -129,7 +152,7 @@ def _analyse(spec: ClipSpec, src_w: int, src_h: int) -> tuple[list[np.ndarray], 
                 if score >= _FACE_MIN_SCORE and fh / ah >= _FACE_MIN_H:
                     found.append(((x + fw / 2) / aw, (y + fh / 2) / ah, fw / aw, fh / ah))
         faces.append(found)
-    return hists, faces
+    return hists, faces, grays
 
 
 def _shots(hists: list[np.ndarray]) -> list[tuple[int, int]]:
@@ -150,7 +173,7 @@ def _persistent(faces: list[list[tuple]], i: int) -> list[tuple]:
     ]
 
 
-def _shot_modes(shots: list[tuple[int, int]], faces: list[list[tuple]], crop_frac: float) -> list[str]:
+def _shot_modes(shots: list[tuple[int, int]], faces: list[list[tuple]], crop_frac: float, action_mode: str) -> list[str]:
     modes = []
     for a, b in shots:
         with_face = two_far = 0
@@ -162,8 +185,13 @@ def _shot_modes(shots: list[tuple[int, int]], faces: list[list[tuple]], crop_fra
             big = sorted((f for f in pf if f[3] >= _BIG_FACE_H), key=lambda f: -f[3])[:2]
             if len(big) == 2 and abs(big[0][0] - big[1][0]) > crop_frac * 0.8:
                 two_far += 1
-        track = with_face / (b - a) >= _TRACK_MIN_FRACTION and two_far / max(1, with_face) < 0.5
-        modes.append("TRACK" if track else "FIT")
+        far_apart = with_face > 0 and two_far / with_face >= 0.5
+        if with_face / (b - a) >= _TRACK_MIN_FRACTION and not far_apart:
+            modes.append("TRACK")
+        elif action_mode == "smart" and not far_apart:
+            modes.append("CROP")
+        else:
+            modes.append("FIT")
     for k, (a, b) in enumerate(shots):
         if k and b - a < _SAMPLE_FPS:
             modes[k] = modes[k - 1]
@@ -184,6 +212,47 @@ def _track_centres(shots, modes, faces) -> list[float]:
                 cur = last_target
             elif abs(last_target - cur) > _DEAD_ZONE:
                 cur += (last_target - cur) * _EMA_ALPHA
+            centre[i] = cur
+    return centre
+
+
+def _column_energy(prev: np.ndarray, cur: np.ndarray) -> np.ndarray:
+    """How much each vertical strip of the frame changed between two samples."""
+    diff = cv2.GaussianBlur(cv2.absdiff(prev, cur), (0, 0), 1.5).astype(np.float32)
+    cols = diff.sum(axis=0, keepdims=True)
+    return cv2.resize(cols, (_ENERGY_BINS, 1), interpolation=cv2.INTER_AREA).ravel()
+
+
+def _crop_centres(shots, modes, grays, crop_frac: float, centre: list[float]) -> list[float]:
+    """Horizontal crop centre per sample for CROP shots: the 9:16-wide window
+    holding the most motion (a column-energy profile of sample-to-sample
+    differences, never across a cut), blended with a centre prior so an idle
+    or ambiguous shot sits in the middle. Motion spread across most of the
+    frame is the camera moving, not a subject, and is ignored (centre). The
+    per-sample score is smoothed over time, then the centre gets the same
+    dead-zone + EMA as TRACK."""
+    x = (np.arange(_ENERGY_BINS) + 0.5) / _ENERGY_BINS
+    prior = np.exp(-0.5 * ((x - 0.5) / _CENTER_SIGMA) ** 2).astype(np.float32)
+    win = max(1, round(crop_frac * _ENERGY_BINS))
+    kernel = np.ones(win, np.float32)
+    for (a, b), mode in zip(shots, modes):
+        if mode != "CROP":
+            continue
+        smooth, cur = None, None
+        for i in range(a, b):
+            j = i if i > a else min(a + 1, b - 1)   # a shot's first sample looks forward
+            energy = _column_energy(grays[j - 1], grays[j]) if j > a else np.zeros(_ENERGY_BINS, np.float32)
+            peak = float(energy.max())
+            motion = energy / peak if peak > _MOTION_MIN else np.zeros_like(energy)
+            if float((motion > _ACTIVE_LEVEL).mean()) > _CAMERA_MOTION_SPREAD:
+                motion = np.zeros_like(motion)   # camera motion → centre
+            score = (1 - _CENTER_WEIGHT) * motion + _CENTER_WEIGHT * prior
+            smooth = score if smooth is None else smooth + (score - smooth) * _ENERGY_EMA
+            target = (int(np.argmax(np.convolve(smooth, kernel, mode="valid"))) + win / 2) / _ENERGY_BINS
+            if cur is None:
+                cur = target
+            elif abs(target - cur) > _DEAD_ZONE:
+                cur += (target - cur) * _EMA_ALPHA
             centre[i] = cur
     return centre
 
@@ -256,9 +325,9 @@ def _render_frames(spec: ClipSpec, src_w: int, src_h: int, sample_modes: list[st
         for n, frame in enumerate(_decode(spec, src_w, src_h, f"fps={FPS}")):
             pos = n * _SAMPLE_FPS / FPS
             s = min(last, int(pos))
-            if sample_modes[s] == "TRACK":
+            if sample_modes[s] in ("TRACK", "CROP"):
                 nxt = min(last, s + 1)
-                c = centres[s] + (centres[nxt] - centres[s]) * (pos - s) if sample_modes[nxt] == "TRACK" else centres[s]
+                c = centres[s] + (centres[nxt] - centres[s]) * (pos - s) if sample_modes[nxt] == sample_modes[s] else centres[s]
                 out = _compose_track(frame, c)
             else:
                 out = _compose_fit(frame)
@@ -288,12 +357,13 @@ def render_clip(spec: ClipSpec) -> RenderResult:
     """Analyse, reframe and encode one clip. Raises RuntimeError if the
     output fails its sanity check (duration, audio, resolution)."""
     src_w, src_h = _probe_size(spec.src)
-    hists, faces = _analyse(spec, src_w, src_h)
+    hists, faces, grays = _analyse(spec, src_w, src_h)
     if not hists:
         raise RuntimeError("no frames decoded from the source clip")
     shots = _shots(hists)
-    modes = _shot_modes(shots, faces, (src_h * OUT_W / OUT_H) / src_w)
-    centres = _track_centres(shots, modes, faces)
+    crop_frac = (src_h * OUT_W / OUT_H) / src_w
+    modes = _shot_modes(shots, faces, crop_frac, spec.action_mode)
+    centres = _crop_centres(shots, modes, grays, crop_frac, _track_centres(shots, modes, faces))
     sample_modes = [""] * len(hists)
     for (a, b), m in zip(shots, modes):
         sample_modes[a:b] = [m] * (b - a)

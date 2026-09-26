@@ -101,6 +101,7 @@ export interface Fanpage {
   yt_clip_max_video_age_days: number;
   yt_clip_captions: boolean;
   yt_clip_watermark: boolean;
+  yt_clip_action_crop: "smart" | "fit";
 }
 
 export interface DiscussionTopicRef {

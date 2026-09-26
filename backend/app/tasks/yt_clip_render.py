@@ -120,6 +120,7 @@ def _render(db, job, fanpage, workdir: Path) -> None:
         src=section.path, seek_s=start - section.offset_s, duration_s=end - start, out=out,
         ass_path=ass_path if has_captions else None, fonts_dir=FONTS_DIR,
         watermark_png=wm_png, watermark_text=wm_text,
+        action_mode=fanpage.yt_clip_action_crop or "smart",
     ))
     base_url = s.storage_base_url.rstrip("/")
     job.video_path, job.video_url = str(out), f"{base_url}/videos/{out.name}"

@@ -92,6 +92,7 @@ class FanpageBase(BaseModel):
     yt_clip_max_video_age_days: int = Field(7, ge=1, le=365)
     yt_clip_captions: bool = True
     yt_clip_watermark: bool = True
+    yt_clip_action_crop: str = Field("smart", pattern="^(smart|fit)$")
 
 
 class FanpageUpdate(FanpageBase):

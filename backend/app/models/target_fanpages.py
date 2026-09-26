@@ -190,6 +190,9 @@ class TargetFanpage(Base):
     yt_clip_max_video_age_days = Column(Integer, default=7, nullable=False, server_default="7")
     yt_clip_captions = Column(Boolean, default=True, nullable=False, server_default="true")
     yt_clip_watermark = Column(Boolean, default=True, nullable=False, server_default="true")
+    # Shots without a dominant face: "smart" = 9:16 crop following the action
+    # (centred for a cockpit POV), "fit" = whole frame over a blurred copy.
+    yt_clip_action_crop = Column(String(8), default="smart", nullable=False, server_default="smart")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

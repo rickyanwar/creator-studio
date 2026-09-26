@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { listJobs, publishJob, skipJob, updateJobCaption, regenerateCaption } from "@/lib/api";
+import { listJobs, publishJob, skipJob, updateJobCaption, regenerateCaption, renderJobNow } from "@/lib/api";
 import type { PublishJob } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -110,6 +110,14 @@ export default function QueuePage() {
     mutate();
   }
 
+  /* Mode 7: render a clip again (e.g. after changing the fanpage's crop mode). */
+  async function handleRerender(jobId: number) {
+    setLoadingId(jobId);
+    try { await renderJobNow(jobId); mutate(); }
+    catch { alert("Couldn't start the re-render. Please try again."); }
+    finally { setLoadingId(null); }
+  }
+
   async function handleRegenerate(jobId: number) {
     setLoadingId(jobId);
     try { await regenerateCaption(jobId); mutate(); }
@@ -188,6 +196,7 @@ export default function QueuePage() {
                 onSaveEdit={() => handleSaveCaption(job.id)}
                 onEditTextChange={setEditText}
                 onRegenerate={() => handleRegenerate(job.id)}
+                onRerender={() => handleRerender(job.id)}
                 onToggleExpand={() => setExpanded((p) => { const n = new Set(p); n.has(job.id) ? n.delete(job.id) : n.add(job.id); return n; })}
                 onImageClick={(idx) => openLightbox(job, idx)}
               />
@@ -216,13 +225,13 @@ export default function QueuePage() {
 function QueueCard({
   job, loading, isEditing, editText, isExpanded,
   onPublish, onSkip, onStartEdit, onCancelEdit, onSaveEdit,
-  onEditTextChange, onRegenerate, onToggleExpand, onImageClick,
+  onEditTextChange, onRegenerate, onRerender, onToggleExpand, onImageClick,
 }: {
   job: PublishJob; loading: boolean; isEditing: boolean;
   editText: string; isExpanded: boolean;
   onPublish: () => void; onSkip: () => void;
   onStartEdit: () => void; onCancelEdit: () => void; onSaveEdit: () => void;
-  onEditTextChange: (t: string) => void; onRegenerate: () => void;
+  onEditTextChange: (t: string) => void; onRegenerate: () => void; onRerender: () => void;
   onToggleExpand: () => void; onImageClick: (idx: number) => void;
 }) {
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
@@ -407,6 +416,13 @@ function QueueCard({
                 <Icon icon="solar:verified-check-bold-duotone" width={14} />
                 {loading ? "Publishing…" : "Publish"}
               </button>
+              {isClip && (
+                <button onClick={onRerender} disabled={loading} title="Render this clip again with the fanpage's current settings"
+                  className="flex items-center gap-1 px-3 py-2 text-xs font-semibold text-primary-main bg-[rgba(0,167,111,0.08)] hover:bg-[rgba(0,167,111,0.16)] rounded-md transition-colors">
+                  <Icon icon="solar:restart-bold-duotone" width={13} />
+                  Re-render
+                </button>
+              )}
               {isNews && !isClip && (
                 <Link href={`/designer/${job.id}`} title="Open in Designer"
                   className="flex items-center gap-1 px-3 py-2 text-xs font-semibold text-primary-main bg-[rgba(0,167,111,0.08)] hover:bg-[rgba(0,167,111,0.16)] rounded-md transition-colors">

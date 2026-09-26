@@ -288,17 +288,43 @@ async def upload_design_image(job_id: int, db: DB, _: CurrentUser, file: UploadF
 
 @router.post("/{job_id}/render-now", response_model=PublishJobOut)
 def render_now(job_id: int, db: DB, _: CurrentUser):
-    """Manually trigger the headless auto-render for a pending_design job."""
+    """Manually trigger the headless auto-render for a pending_design job.
+    For a Mode 7 clip this is a RE-render: the old MP4 is discarded and the
+    clip is rendered again with the fanpage's current settings (crop mode,
+    captions, watermark) — the job keeps its own clip range."""
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
     from app.tasks.design_renderer import render_design
 
     job = db.query(PublishJob).filter_by(id=job_id).first()
+    if job and job.content_type == ContentType.youtube_clip:
+        return _rerender_clip(job, db)
     if not job or job.content_type != ContentType.news_content:
         raise HTTPException(status_code=404, detail="News job not found")
     if job.status != PublishJobStatus.pending_design:
         raise HTTPException(status_code=400, detail=f"Cannot render job in status: {job.status.value}")
 
     render_design.delay(job_id)
+    db.refresh(job)
+    return _enrich_job(job, db)
+
+
+def _rerender_clip(job, db):
+    from pathlib import Path
+    from app.models.publish_jobs import PublishJobStatus
+    from app.tasks.yt_clip_render import render_youtube_clip
+
+    if job.status not in (PublishJobStatus.pending_publish, PublishJobStatus.pending_design, PublishJobStatus.failed):
+        raise HTTPException(status_code=400, detail=f"Can't re-render a clip that is {job.status.value}")
+    for path in (job.video_path, job.video_thumbnail_path):
+        if path:
+            Path(path).unlink(missing_ok=True)
+    job.video_path = job.video_url = job.video_thumbnail_path = job.video_thumbnail_url = None
+    job.video_duration_s = None
+    job.status = PublishJobStatus.pending_design
+    job.last_error = None
+    job.attempt_count = 0
+    db.commit()
+    render_youtube_clip.delay(job.id)
     db.refresh(job)
     return _enrich_job(job, db)
 

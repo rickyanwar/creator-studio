@@ -98,6 +98,27 @@ function YtClipSettings({ form, set }: Pick<Props, "form" | "set">) {
           </div>
         </div>
         <div>
+          <label className="label">Shots without a face (racing, onboard, crowds)</label>
+          <div className="flex gap-4 pt-2">
+            {([["smart", "Smart zoom — fill 9:16"], ["fit", "Fit whole frame (blur)"]] as const).map(([value, text]) => (
+              <label key={value} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="yt-clip-action-crop"
+                  checked={(form.yt_clip_action_crop ?? "smart") === value}
+                  onChange={() => set("yt_clip_action_crop", value)}
+                  className="accent-primary-main"
+                />
+                <span className="text-sm text-text-primary">{text}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-[11px] text-text-secondary mt-1">
+            Smart zoom follows the action and keeps a cockpit/onboard view centred; Fit keeps the whole frame
+            with a blurred background above and below. Faces are always followed.
+          </p>
+        </div>
+        <div>
           <label className="label">Overlays</label>
           <div className="flex gap-5 pt-2">
             <Toggle on={form.yt_clip_captions ?? true} onClick={() => set("yt_clip_captions", !(form.yt_clip_captions ?? true))} label="Captions" />
