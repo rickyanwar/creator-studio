@@ -35,6 +35,7 @@ class Classification(TypedDict):
     question: str          # "discussion" only, else ""
     label: str              # "discussion" only: "DISCUSSION" | "HOT TAKE", else ""
     subject_name: str       # "discussion" only, else ""
+    on_topic: bool          # always True unless a topic filter was given (see _TOPIC_FILTER)
 
 
 _PROMPT = (
@@ -65,7 +66,21 @@ _PROMPT = (
 )
 
 
-def _parse(raw: str) -> Classification:
+# Appended (not .format()-ed — the admin's text may contain braces) when the
+# fanpage has facebook_photo_topic_filter set. A source page can mix niches
+# (found 2026-09-26: debate.opus put Trump, a UK prime minister, Musk and
+# Arsenal onto an F1 page), so the filter judges what the post is actually
+# ABOUT, not whether a name from the niche appears somewhere in it.
+_TOPIC_FILTER = (
+    "\n\nTOPIC FILTER — this fanpage only posts about: {topic}\n"
+    "Also return `on_topic`: true ONLY if what this post is actually about clearly belongs to "
+    "that topic. A post about football, politics, business or anything else is NOT on topic "
+    "just because it mentions someone from the topic in passing. If unsure, false. "
+    'Add it to the JSON object: {{..., "on_topic": true|false}}.'
+)
+
+
+def _parse(raw: str, strict_topic: bool = False) -> Classification:
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
     match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
     if not match:
@@ -86,12 +101,16 @@ def _parse(raw: str) -> Classification:
         "question": str(data.get("question") or "").strip(),
         "label": label,
         "subject_name": str(data.get("subject_name") or "").strip(),
+        # With a filter, only an explicit true counts (fail-closed — a
+        # missing/garbled answer must not let off-topic content through).
+        "on_topic": data.get("on_topic") is True if strict_topic else True,
     }
 
 
-def classify_facebook_photo(image_bytes: bytes, niche: str = "general") -> Classification:
+def classify_facebook_photo(image_bytes: bytes, niche: str = "general", topic_filter: str | None = None) -> Classification:
     """Classify a Facebook page photo into news/quote/discussion/other and
-    extract its text fields.
+    extract its text fields. With `topic_filter` (the fanpage's allowed
+    topic, free text), also judge `on_topic` in the same vision call.
 
     Raises on transport/API/parse error — the caller owns retry/skip policy.
     """
@@ -104,11 +123,15 @@ def classify_facebook_photo(image_bytes: bytes, niche: str = "general") -> Class
     from app.services.design_images import _vision_datauri, _vision_chat
 
     datauri = _vision_datauri(image_bytes, max_dim=1024)
+    topic = " ".join((topic_filter or "").split())[:300]
+    prompt = _PROMPT.format(niche=niche or "general")
+    if topic:
+        prompt += _TOPIC_FILTER.replace("{topic}", topic).replace("{{", "{").replace("}}", "}")
     content = [
-        {"type": "text", "text": _PROMPT.format(niche=niche or "general")},
+        {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": datauri}},
     ]
     raw = _vision_chat(content, max_tokens=1500)
-    result = _parse(raw)
-    logger.info("Facebook photo classify → %s (niche=%r)", result["type"], niche)
+    result = _parse(raw, strict_topic=bool(topic))
+    logger.info("Facebook photo classify → %s (niche=%r, on_topic=%s)", result["type"], niche, result["on_topic"])
     return result

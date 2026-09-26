@@ -170,6 +170,11 @@ class TargetFanpage(Base):
     facebook_photo_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     facebook_photo_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
     facebook_photo_daily_count = Column(Integer, default=2, nullable=False, server_default="2")
+    # Optional: only take source posts actually ABOUT this topic (free text,
+    # e.g. "Formula 1 and motorsport only") — judged in the same vision call
+    # that reads each photo. Empty = any topic (for fanpages with no single
+    # niche). Off-topic photos are recorded as seen, never re-checked.
+    facebook_photo_topic_filter = Column(Text, nullable=True)
 
     # ── Mode 7: YouTube clips ──────────────────────
     # Long YouTube videos (channel / playlist / single link) → AI-picked

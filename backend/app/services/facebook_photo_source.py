@@ -374,13 +374,13 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
     Path(item.local_path).unlink(missing_ok=True)
 
     try:
-        cls = classify_facebook_photo(image_bytes, niche=niche)
+        cls = classify_facebook_photo(image_bytes, niche=niche, topic_filter=fanpage.facebook_photo_topic_filter)
     except Exception as exc:
         logger.warning("Facebook photo: classify failed fbid=%s fanpage %d: %s", candidate.fbid, fanpage.id, exc)
         return None
 
     ctype = cls["type"]
-    fields = _idea_fields(ctype, cls)
+    fields = _idea_fields(ctype, cls) if cls["on_topic"] else None
     if fields:
         try:
             fields = {**fields, "design_title": _localize_title(ctype, fields["design_title"], fanpage)}
@@ -395,7 +395,10 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
     if gi is None:
         return None
     if not fields:
-        logger.info("Facebook photo: fbid=%s classified %r — skipped", candidate.fbid, ctype)
+        logger.info(
+            "Facebook photo: fbid=%s classified %r%s — skipped",
+            candidate.fbid, ctype, "" if cls["on_topic"] else " but off-topic for this fanpage",
+        )
         return None
 
     idea = FacebookPhotoIdea(

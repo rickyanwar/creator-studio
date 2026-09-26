@@ -2124,6 +2124,22 @@ export default function FanpageEditPage() {
                 </div>
               </div>
             </div>
+            <div>
+              <label className="label">Topic filter (optional)</label>
+              <input
+                type="text"
+                maxLength={300}
+                className="input w-full"
+                placeholder="e.g. Formula 1 and motorsport only"
+                value={(form.facebook_photo_topic_filter as string | null | undefined) ?? ""}
+                onChange={(e) => set("facebook_photo_topic_filter", e.target.value)}
+              />
+              <p className="text-[11px] text-text-secondary mt-1">
+                Only posts actually about this topic are taken — a source page that also posts politics or
+                other sports won&apos;t leak those onto this fanpage. Leave empty to accept any topic. Applies to
+                newly fetched photos; delete off-topic ideas already in the queue below.
+              </p>
+            </div>
             <p className="text-[11px] text-text-secondary">
               Renders on the News/Quote/Discussion Templates set above (Design Templates section) — no
               separate template setting for Mode 6. Captions use the Mode 1 caption settings, without the

@@ -89,6 +89,7 @@ export interface Fanpage {
   facebook_photo_enabled: boolean;
   facebook_photo_publish_mode: PublishMode;
   facebook_photo_daily_count: number;
+  facebook_photo_topic_filter: string | null;
   // Mode 7: YouTube clips
   yt_clip_enabled: boolean;
   yt_clip_publish_mode: PublishMode;

@@ -79,6 +79,7 @@ class FanpageBase(BaseModel):
     facebook_photo_enabled: bool = False
     facebook_photo_publish_mode: PublishMode = PublishMode.manual_review
     facebook_photo_daily_count: int = 2
+    facebook_photo_topic_filter: Optional[str] = Field(None, max_length=300)
 
     # ── Mode 7: YouTube clips ──
     yt_clip_enabled: bool = False
