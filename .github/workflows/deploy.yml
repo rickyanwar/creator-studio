@@ -9,7 +9,9 @@ jobs:
   deploy:
     name: SSH Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Frontend + backend rebuilds on the VPS can exceed 10 min (and 15 min for
+    # the job) — two deploys were cut off mid-way on 2026-09-25/26.
+    timeout-minutes: 35
 
     steps:
       - name: Checkout code
@@ -22,6 +24,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
+          command_timeout: 30m
           script: |
             set -e
 
