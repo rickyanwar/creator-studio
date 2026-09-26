@@ -132,13 +132,20 @@ def _photos_url(page_url_or_username: str) -> str:
     return f"https://www.facebook.com/{username}/photos"
 
 
-def _existing_facebook_photo_urls(db) -> set[str]:
+_MARKER_PREFIX = "facebook_photo:"
+
+
+def _seen_fbids(db) -> set[str]:
+    """fbids already evaluated (accepted or rejected). Keyed on the fbid —
+    parsed from each grid entry's permalink — NOT the image URL: Facebook
+    serves the same photo from a different CDN host depending on where the
+    fetch lands (scontent.fcrk1-5 / .fbog11-1 / .fcai19-2 …). Found
+    2026-09-26: URL-keyed dedup re-imported the same Sport Opus photos up to
+    3× (30 markers for 19 distinct photos), producing duplicate posts."""
     from app.models.gallery import GalleryImage
 
-    return {
-        u for (u,) in
-        db.query(GalleryImage.source_image_url).filter(GalleryImage.source_engine == "facebook_photo").all()
-    }
+    rows = db.query(GalleryImage.keyword).filter(GalleryImage.source_engine == "facebook_photo").all()
+    return {k[len(_MARKER_PREFIX):] for (k,) in rows if k and k.startswith(_MARKER_PREFIX)}
 
 
 _FETCH_ATTEMPTS = 3
@@ -165,15 +172,14 @@ def _fetch_grid_markdown(page_url: str) -> str:
 
 
 def fetch_photo_candidates(
-    page_url: str, limit: int = _CANDIDATES_PER_TICK, skip_keys: set[str] | None = None,
+    page_url: str, limit: int = _CANDIDATES_PER_TICK, skip_fbids: set[str] | None = None,
 ) -> list[FacebookPhotoCandidate]:
     """Fetch the page's `/photos` grid via 9Router jina-reader and parse out
-    up to `limit` photo entries (fbid + CDN image URL + alt text) not already
-    in `skip_keys` (image URLs with the query string stripped — the same key
-    _existing_facebook_photo_urls returns). Filtering BEFORE the limit
-    matters: otherwise the first `limit` grid entries, once all seen, would
-    hide every newer-to-us photo further down the grid forever."""
-    skip_keys = skip_keys or set()
+    up to `limit` photo entries (fbid + CDN image URL + alt text) whose fbid
+    isn't already in `skip_fbids` (see _seen_fbids). Filtering BEFORE the
+    limit matters: otherwise the first `limit` grid entries, once all seen,
+    would hide every newer-to-us photo further down the grid forever."""
+    skip_fbids = skip_fbids or set()
     text = _fetch_grid_markdown(page_url)
 
     seen_fbids: set[str] = set()
@@ -184,12 +190,10 @@ def fetch_photo_candidates(
         if not fbid_match:
             continue
         fbid = fbid_match.group(1)
-        if fbid in seen_fbids:
+        if fbid in seen_fbids or fbid in skip_fbids:
             continue
         seen_fbids.add(fbid)
         image_url = _upgrade_image_url(image_url)
-        if image_url.split("?", 1)[0] in skip_keys:
-            continue
         out.append(FacebookPhotoCandidate(fbid=fbid, image_url=image_url, alt_text=alt_text.strip()))
         if len(out) >= limit:
             break
@@ -310,7 +314,7 @@ def _record_seen(db, candidate: FacebookPhotoCandidate, item: "_DownloadedPhoto"
     Returns the GalleryImage, or None if a concurrent tick already recorded
     it.
 
-    Kept ONLY as a marker: _existing_facebook_photo_urls reads every
+    Kept ONLY as a marker: _seen_fbids reads the fbid off every
     facebook_photo row regardless of is_deleted, while is_deleted keeps every
     gallery lookup (they all filter is_deleted=False) from ever offering it
     as a design photo, and the keyword can't substring-match a subject."""
@@ -358,8 +362,7 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     dest_dir = Path(s.storage_base_path) / "gallery" / "facebook_photo"
 
-    key = candidate.image_url.split("?", 1)[0]
-    if key in _existing_facebook_photo_urls(db):
+    if candidate.fbid in _seen_fbids(db):
         return None
 
     # No photo-quality gate: only the photo's TEXT is used, and a slightly

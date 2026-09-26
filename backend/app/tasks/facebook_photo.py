@@ -78,7 +78,7 @@ def _topup_queue(db, fanpage) -> int:
     from app.models.facebook_photo_ideas import FacebookPhotoIdea
     from app.models.facebook_photo_sources import FacebookPhotoSource
     from app.services.facebook_photo_source import (
-        fetch_photo_candidates, build_idea_from_candidate, _existing_facebook_photo_urls,
+        fetch_photo_candidates, build_idea_from_candidate, _seen_fbids,
     )
 
     pending_count = (
@@ -100,7 +100,7 @@ def _topup_queue(db, fanpage) -> int:
 
     try:
         candidates = fetch_photo_candidates(
-            source.page_url, limit=_TOPUP_BATCH, skip_keys=_existing_facebook_photo_urls(db),
+            source.page_url, limit=_TOPUP_BATCH, skip_fbids=_seen_fbids(db),
         )
     except Exception as exc:
         logger.error("Facebook photo: candidate fetch failed for source %d (%s): %s", source.id, source.page_url, exc)
