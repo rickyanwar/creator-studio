@@ -20,6 +20,15 @@ _MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "sr_models", "FSRCNN
 # reach it; overshoot is downscaled back to the target.
 _TARGET_EDGE = int(os.getenv("GALLERY_UPSCALE_TARGET", "2048"))
 _MAX_PASSES = 2
+# OpenCV's FSRCNN allocates full-resolution float feature maps, so memory
+# grows with the image AREA: measured 2026-09-26, a 720x927 photo needed
+# +0.86 GB for pass 1 and +2.7 GB for pass 2 (1440x1854 → 2880x3708) — the
+# Celery processes the VPS kept OOM-killing (2.1-2.7 GB), taking Mode 7
+# renders down with them. Upsampling in tiles bounds that to one tile's worth.
+# The overlap (per side) is wider than FSRCNN's receptive field, so each
+# tile's core is identical to an untiled pass and no seams appear.
+_TILE = 256
+_TILE_OVERLAP = 16
 _sr = None
 _sr_failed = False
 
@@ -44,6 +53,29 @@ def _get_sr():
     return _sr
 
 
+def _upsample_tiled(sr, img):
+    """One FSRCNN x2 pass, tile by tile (see _TILE). Returns a 2x image."""
+    import cv2
+    import numpy as np
+
+    h, w = img.shape[:2]
+    if h * w <= _TILE * _TILE:
+        return sr.upsample(img)
+    out = np.empty((h * 2, w * 2, img.shape[2]), dtype=img.dtype)
+    for y0 in range(0, h, _TILE):
+        for x0 in range(0, w, _TILE):
+            y1, x1 = min(y0 + _TILE, h), min(x0 + _TILE, w)
+            py0, px0 = max(0, y0 - _TILE_OVERLAP), max(0, x0 - _TILE_OVERLAP)
+            py1, px1 = min(h, y1 + _TILE_OVERLAP), min(w, x1 + _TILE_OVERLAP)
+            up = sr.upsample(np.ascontiguousarray(img[py0:py1, px0:px1]))
+            want_h, want_w = (py1 - py0) * 2, (px1 - px0) * 2
+            if up.shape[:2] != (want_h, want_w):
+                up = cv2.resize(up, (want_w, want_h), interpolation=cv2.INTER_CUBIC)
+            cy, cx = (y0 - py0) * 2, (x0 - px0) * 2
+            out[y0 * 2:y1 * 2, x0 * 2:x1 * 2] = up[cy:cy + (y1 - y0) * 2, cx:cx + (x1 - x0) * 2]
+    return out
+
+
 def upscale_image_bytes(data: bytes, target_edge: int | None = None) -> bytes:
     """Return an upscaled + sharpened JPEG whose long edge is ~`target_edge`
     (default ~2K), or the original bytes on any issue (or when it is already big
@@ -66,7 +98,7 @@ def upscale_image_bytes(data: bytes, target_edge: int | None = None) -> bytes:
         up = img
         passes = 0
         while max(up.shape[:2]) < target and passes < _MAX_PASSES:
-            up = sr.upsample(up)
+            up = _upsample_tiled(sr, up)
             passes += 1
         if passes == 0:
             return data
