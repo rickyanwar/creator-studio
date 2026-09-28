@@ -346,6 +346,33 @@ def _record_seen(db, candidate: FacebookPhotoCandidate, item: "_DownloadedPhoto"
     return gi
 
 
+def is_incomplete_quote(text: str) -> bool:
+    """Return True if the quote ends abruptly (e.g. on a connector word, or trailing comma/dash)."""
+    if not text:
+        return True
+    
+    text = text.strip()
+    
+    # 1. Ends with trailing comma/dash/colon/semicolon
+    if text.endswith((",", "-", ":", ";", "—", "–")):
+        return True
+    
+    # 2. Get the last word (strip trailing punctuation, quotes, asterisks)
+    cleaned = re.sub(r'[\W_]+$', '', text).lower()
+    
+    connectors = {
+        "but", "and", "or", "so", "because", "what", "that", "if", "when",
+        "the", "a", "to", "of", "with",
+        "tapi", "dan", "atau", "karena", "yang", "untuk"
+    }
+    
+    if not cleaned:
+        return True
+        
+    last_word = cleaned.split()[-1]
+    return last_word in connectors
+
+
 def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
     """Download one candidate photo, classify its text via vision, rewrite
     that text into the fanpage's language, and stage a pending
@@ -381,9 +408,25 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
 
     ctype = cls["type"]
     fields = _idea_fields(ctype, cls) if cls["on_topic"] else None
+    
+    # S8: Quote truncation detector (H2 fix: teaser graphics end abruptly)
+    if fields and ctype == "quote":
+        raw_quote = cls["quote"]
+        if is_incomplete_quote(raw_quote):
+            gi = _record_seen(db, candidate, item)
+            if gi is not None:
+                logger.info("Facebook photo: quote incomplete, skipped (raw)")
+            return None
+
     if fields:
         try:
-            fields = {**fields, "design_title": _localize_title(ctype, fields["design_title"], fanpage)}
+            localized_title = _localize_title(ctype, fields["design_title"], fanpage)
+            if ctype == "quote" and is_incomplete_quote(localized_title):
+                gi = _record_seen(db, candidate, item)
+                if gi is not None:
+                    logger.info("Facebook photo: quote incomplete, skipped (localized)")
+                return None
+            fields = {**fields, "design_title": localized_title}
         except Exception as exc:
             logger.warning(
                 "Facebook photo: rewrite failed fbid=%s fanpage %d: %s — left unseen, retried next tick",
