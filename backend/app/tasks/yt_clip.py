@@ -408,7 +408,17 @@ Caption rules:
 - Tone: {fanpage.mode2_caption_tone}
 - Maximum length: {fanpage.mode2_caption_max_length} characters
 - Short paragraphs; open with a hook, give the context, stay faithful to what is actually said.
-- End with EXACTLY {fanpage.mode2_caption_hashtag_count} specific, relevant hashtags on their own line.
+- End with EXACTLY {fanpage.mode2_caption_hashtag_count} hashtags on their own final line.
+  Allowed sources for hashtags (pick ONLY from these three):
+    (a) the page niche — "{(fanpage.mode2_gallery_niches or [None])[0] or fanpage.name}";
+    (b) the person or driver featured in the clip;
+    (c) the race / event name from the clip or video title.
+  FORBIDDEN hashtags (never include any of these):
+    game or platform titles: #F126 #F125 #F124 #F1Game #EASportsF1 #Gaming #Gameplay
+    #SimRacing #Esports #PS5 #Xbox #PC #PlayStation
+    any tag containing "game", "gaming", "gameplay", "esport", or "simracing";
+    the YouTube channel name or creator handle;
+    generic engagement tags: #fyp #viral #reels #foryou #trending #explore #tiktok.
 - Call-to-action: {fanpage.mode2_caption_cta_text or "invite viewers to comment"}
 - No source, credit, channel name or 'via' line anywhere — this is a clip, not an article.
 - Additional notes: {fanpage.mode2_caption_custom_prompt or "none"}
@@ -420,7 +430,7 @@ def _consume_one(db, fanpage) -> bool:
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType, AIProvider
     from app.models.target_fanpages import PublishMode
     from app.services.ai_caption import generate_caption
-    from app.services.yt_clip_title import strip_source_lines
+    from app.services.yt_clip_title import clean_clip_hashtags, strip_source_lines
 
     idea = _next_idea(db, fanpage.id)
     if not idea:
@@ -434,6 +444,9 @@ def _consume_one(db, fanpage) -> bool:
 
     # S2f: strip any source/credit lines the model may have added despite the prompt rule.
     cleaned_caption = strip_source_lines(caption.strip(), channel_name=video.channel_name)
+    # S7: remove forbidden hashtags and ensure the niche tag is present.
+    niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+    cleaned_caption = clean_clip_hashtags(cleaned_caption, niche=niche, channel_name=video.channel_name)
 
     # idea.title is already cleaned by _save_ideas (S2f applied at idea-creation time).
     job = PublishJob(

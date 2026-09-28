@@ -193,6 +193,7 @@ class TestConsumeOneNeverDropsForPeople:
         fanpage.mode2_caption_hashtag_count = 3
         fanpage.mode2_caption_cta_text = "Komen dong!"
         fanpage.mode2_caption_custom_prompt = ""
+        fanpage.mode2_gallery_niches = ["F1"]
         fanpage.yt_clip_publish_mode = "manual_review"
 
         mock_db = MagicMock()

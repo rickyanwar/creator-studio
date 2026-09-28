@@ -212,6 +212,151 @@ def clean_clip_title(
     return title
 
 
+# ── clean_clip_hashtags ───────────────────────────────────────────────────────
+
+# Explicit denylist of forbidden tag stems (without '#', lower-cased).
+_FORBIDDEN_TAG_STEMS: frozenset[str] = frozenset({
+    # Game / platform titles
+    "f126", "f125", "f124", "f123", "f122", "f121", "f120",
+    "f1game", "easportsf1", "gaming", "gameplay", "simracing",
+    "esports", "esport", "ps5", "ps4", "xbox", "pc", "playstation",
+    # Generic engagement
+    "fyp", "viral", "reels", "foryou", "trending", "explore", "tiktok",
+    "follow", "like", "share", "subscribe",
+})
+
+# Regex: #F1_?NN style game-year tags (e.g. #F126, #F1_26, #F125)
+_GAME_YEAR_RE = re.compile(r"^f1_?\d{2,}$", re.IGNORECASE)
+
+# Substrings that, if present anywhere in a tag stem, mark it as forbidden.
+_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
+    "game", "gaming", "gameplay", "esport", "simracing",
+)
+
+# Regex to find all hashtag tokens anywhere in a string.
+# Matches '#' followed by one or more word characters.
+_HASHTAG_RE = re.compile(r"#(\w+)")
+
+# A "hashtag line" is a line whose non-space content is entirely hashtags.
+_HASHTAG_LINE_RE = re.compile(r"^\s*(#\w+(\s+#\w+)*)\s*$")
+
+
+def _is_forbidden_tag(stem: str) -> bool:
+    """Return True if the tag stem (without '#', any case) should be removed."""
+    low = stem.lower()
+    if low in _FORBIDDEN_TAG_STEMS:
+        return True
+    if _GAME_YEAR_RE.match(low):
+        return True
+    for sub in _FORBIDDEN_SUBSTRINGS:
+        if sub in low:
+            return True
+    return False
+
+
+def _squash(text: str) -> str:
+    """Lower-case and remove all spaces/punctuation → canonical form for comparison."""
+    return re.sub(r"[\s\W]+", "", text).lower()
+
+
+def _niche_to_hashtag(niche: str) -> str:
+    """Convert a niche label to a #Hashtag (strip spaces/punct, title-case first char)."""
+    stem = re.sub(r"[\s\W]+", "", niche)
+    return "#" + stem if stem else ""
+
+
+def clean_clip_hashtags(
+    caption: str,
+    niche: str | None,
+    channel_name: str | None,
+) -> str:
+    """Remove forbidden hashtags from *caption* and ensure the niche tag is present.
+
+    Rules (S7):
+    • Case-insensitive removal of all forbidden tags (denylist + game-year regex
+      + any stem containing game/gaming/gameplay/esport/simracing).
+    • The YouTube channel name (squashed, no spaces) is also forbidden.
+    • Deduplicate surviving tags (case-insensitive, keep first occurrence).
+    • If no tag equal to the niche tag remains, append it on the hashtag line.
+    • All hashtags are kept on ONE final line; the rest of the body is untouched.
+    • '#' characters that appear inside normal sentences (no word-boundary after
+      '#') are NOT touched — only tokens matching #word are processed.
+
+    Returns the cleaned caption.
+    """
+    if not caption:
+        return caption
+
+    # Compute forbidden squashed forms for channel name.
+    forbidden_squashed: set[str] = set()
+    if channel_name:
+        forbidden_squashed.add(_squash(channel_name))
+
+    # --- Split caption body from trailing hashtag line(s) ---
+    # We look for lines that are entirely hashtags (possibly multiple such lines)
+    # at the end of the caption and treat them as the "tag block".
+    lines = caption.splitlines()
+
+    body_lines: list[str] = []
+    tag_block_lines: list[str] = []
+    # Walk backwards collecting pure-hashtag lines.
+    i = len(lines) - 1
+    while i >= 0:
+        stripped = lines[i].strip()
+        if stripped == "":
+            i -= 1
+            continue
+        if _HASHTAG_LINE_RE.match(lines[i]):
+            tag_block_lines.insert(0, lines[i])
+            i -= 1
+        else:
+            break
+    body_lines = lines[: i + 1]
+
+    # Collect all hashtags from the tag block.
+    raw_tags: list[str] = []
+    for tl in tag_block_lines:
+        raw_tags.extend(_HASHTAG_RE.findall(tl))  # stems only
+
+    # Filter forbidden tags; deduplicate case-insensitively.
+    seen_lower: set[str] = set()
+    kept_stems: list[str] = []
+    for stem in raw_tags:
+        if _is_forbidden_tag(stem):
+            continue
+        low = stem.lower()
+        sq = _squash(stem)
+        if sq in forbidden_squashed:
+            continue
+        if low in seen_lower:
+            continue
+        seen_lower.add(low)
+        kept_stems.append(stem)
+
+    # Ensure niche tag is present.
+    niche_tag_stem = ""
+    if niche:
+        niche_tag = _niche_to_hashtag(niche)
+        niche_tag_stem = niche_tag.lstrip("#")
+        niche_sq = _squash(niche_tag_stem)
+        if niche_tag_stem and niche_sq not in {_squash(s) for s in kept_stems}:
+            kept_stems.append(niche_tag_stem)
+
+    # Rebuild: body + blank line (if body non-empty) + single hashtag line.
+    hashtag_line = " ".join(f"#{s}" for s in kept_stems)
+
+    result_lines = [l for l in body_lines]
+    # Remove trailing blank lines from body before appending tag line.
+    while result_lines and result_lines[-1].strip() == "":
+        result_lines.pop()
+
+    if hashtag_line:
+        result_lines.append("")  # blank separator
+        result_lines.append(hashtag_line)
+
+    return "\n".join(result_lines)
+
+
 def strip_source_lines(caption: str, channel_name: str | None = None) -> str:
     """Remove source/credit lines from a Mode 7 caption.
 

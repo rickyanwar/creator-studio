@@ -1,10 +1,10 @@
-"""Unit tests for S2f — yt_clip_title.py (clean_clip_title + strip_source_lines).
+"""Unit tests for S2f — yt_clip_title.py (clean_clip_title + strip_source_lines + clean_clip_hashtags).
 
 pytest -q backend/tests/test_yt_clip_title.py
 """
 
 import pytest
-from app.services.yt_clip_title import clean_clip_title, strip_source_lines
+from app.services.yt_clip_title import clean_clip_title, clean_clip_hashtags, strip_source_lines
 
 
 # ── clean_clip_title ──────────────────────────────────────────────────────────
@@ -232,3 +232,200 @@ class TestStripSourceLines:
         result = strip_source_lines(caption, channel_name="F1 Official")
         assert "Source" not in result
         assert "#f1" in result
+
+
+# ── clean_clip_hashtags ───────────────────────────────────────────────────────
+
+class TestCleanClipHashtags:
+    """S7: forbidden hashtags removed, niche tag preserved/appended."""
+
+    # ── forbidden game/platform tags removed ─────────────────────────────────
+
+    def test_f126_removed(self):
+        caption = "Great race!\n\n#MaxVerstappen #F1 #F126"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#F126" not in result
+        assert "#MaxVerstappen" in result
+        assert "#F1" in result
+
+    def test_f125_removed(self):
+        caption = "Incredible lap!\n\n#Leclerc #F125 #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#F125" not in result
+        assert "#Leclerc" in result
+
+    def test_gaming_removed(self):
+        caption = "Body text.\n\n#Hamilton #Gaming #F1"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#Gaming" not in result
+        assert "#Hamilton" in result
+
+    def test_gameplay_removed(self):
+        caption = "Body text.\n\n#Verstappen #Gameplay #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#Gameplay" not in result
+
+    def test_fyp_removed(self):
+        caption = "Body text.\n\n#F1 #fyp #MaxVerstappen"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#fyp" not in result
+        assert "#F1" in result
+
+    def test_viral_removed(self):
+        caption = "Body.\n\n#Leclerc #viral #F1"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#viral" not in result
+
+    def test_reels_removed(self):
+        caption = "Body.\n\n#Hamilton #reels #F1"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#reels" not in result
+
+    def test_esports_removed(self):
+        caption = "Body.\n\n#Verstappen #Esports #F1"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#Esports" not in result
+
+    def test_simracing_removed(self):
+        caption = "Body.\n\n#Hamilton #SimRacing #BritishGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#SimRacing" not in result
+
+    # ── game-year regex pattern ───────────────────────────────────────────────
+
+    def test_f1_game_year_regex_f126(self):
+        """#F126 matches the game-year regex (#F1NN)."""
+        caption = "Body.\n\n#F126 #F1 #Hamilton"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#F126" not in result
+        assert "#F1" in result
+
+    def test_f1_game_year_regex_f1_25(self):
+        """#F1_25 (with underscore) also matches."""
+        caption = "Body.\n\n#F1_25 #Verstappen"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#F1_25" not in result
+
+    # ── channel name removed ──────────────────────────────────────────────────
+
+    def test_channel_name_tag_removed(self):
+        """A hashtag equal to the squashed channel name is removed."""
+        caption = "Body.\n\n#F1 #MaxVerstappen #OfficialF1"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name="Official F1")
+        assert "#OfficialF1" not in result
+        assert "#F1" in result
+
+    def test_channel_name_case_insensitive(self):
+        caption = "Body.\n\n#F1 #officialF1 #Hamilton"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name="Official F1")
+        assert "#officialF1" not in result
+
+    # ── allowed tags kept ─────────────────────────────────────────────────────
+
+    def test_f1_kept(self):
+        caption = "Body.\n\n#MaxVerstappen #F1 #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#F1" in result
+
+    def test_driver_name_kept(self):
+        caption = "Body.\n\n#MaxVerstappen #F1 #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#MaxVerstappen" in result
+
+    def test_event_tag_kept(self):
+        caption = "Body.\n\n#MaxVerstappen #F1 #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#AzerbaijanGP" in result
+
+    # ── niche appended when missing ───────────────────────────────────────────
+
+    def test_niche_appended_when_absent(self):
+        """When no tag matching the niche survives, the niche tag is appended."""
+        caption = "Body.\n\n#MaxVerstappen #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#F1" in result
+
+    def test_niche_not_duplicated_when_already_present(self):
+        """If #F1 already survives, it is NOT added again."""
+        caption = "Body.\n\n#MaxVerstappen #F1 #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1
+
+    def test_niche_case_insensitive_dedup(self):
+        """#f1 (lowercase) counts as the niche — no extra #F1 appended."""
+        caption = "Body.\n\n#f1 #Verstappen #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1
+
+    def test_niche_with_space_becomes_hashtag(self):
+        """'Formula 1' niche → #Formula1 appended."""
+        caption = "Body.\n\n#Verstappen #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="Formula 1", channel_name=None)
+        assert "#Formula1" in result
+
+    def test_niche_none_does_not_append(self):
+        """niche=None → no niche tag is appended."""
+        caption = "Body.\n\n#Verstappen #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche=None, channel_name=None)
+        # Should not add anything extra beyond what was there
+        assert "#Verstappen" in result
+        assert "#AzerbaijanGP" in result
+
+    # ── deduplication ─────────────────────────────────────────────────────────
+
+    def test_duplicate_tags_removed(self):
+        caption = "Body.\n\n#F1 #F1 #MaxVerstappen #F1"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1
+
+    # ── body text untouched ───────────────────────────────────────────────────
+
+    def test_body_text_untouched(self):
+        """Hash characters inside sentences (not #word tokens) are left alone."""
+        caption = "Item #1 is important.\n\n#F1 #Verstappen"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "Item #1 is important." in result
+
+    def test_hashtag_free_caption_gets_niche_tag(self):
+        """Caption with no hashtags at all → only the niche tag is appended."""
+        caption = "Great race moment with no tags here."
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#F1" in result
+        assert "Great race moment" in result
+
+    def test_all_forbidden_only_niche_remains(self):
+        """If every original tag was forbidden, only the niche survives."""
+        caption = "Body.\n\n#F126 #Gaming #fyp #viral"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        tags = [t for t in result.split() if t.startswith("#")]
+        assert tags == ["#F1"]
+
+    def test_hashtags_on_single_final_line(self):
+        """All hashtags end up on one single line at the end."""
+        caption = "Para one.\n\nPara two.\n\n#F126 #F1 #MaxVerstappen #fyp"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        lines = [l for l in result.splitlines() if l.strip().startswith("#")]
+        assert len(lines) == 1
+
+    def test_empty_caption_unchanged(self):
+        assert clean_clip_hashtags("", niche="F1", channel_name=None) == ""
+
+    def test_multiple_forbidden_mixed_with_allowed(self):
+        """Real-world S6 caption: #F126, #Gaming kept out; #F1, #MaxVerstappen, #AzerbaijanGP kept."""
+        caption = (
+            "Verstappen's strategy call with the team.\n\n"
+            "#MaxVerstappen #F1 #AzerbaijanGP #F126 #Gaming #fyp"
+        )
+        result = clean_clip_hashtags(caption, niche="F1", channel_name="F1 Game Channel")
+        assert "#F126" not in result
+        assert "#Gaming" not in result
+        assert "#fyp" not in result
+        assert "#MaxVerstappen" in result
+        assert "#F1" in result
+        assert "#AzerbaijanGP" in result
