@@ -43,6 +43,10 @@ class PublishJobOut(BaseModel):
     ig_post_url: Optional[str] = None
     article_url: Optional[str] = None
     article_source_name: Optional[str] = None
+    # S9: Mode-6 (facebook_recreate) — URL of the source FB photo used as
+    # inspiration for this card (null when no source was recorded or the
+    # gallery_image row was deleted).
+    source_photo_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

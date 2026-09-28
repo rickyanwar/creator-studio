@@ -181,6 +181,10 @@ def _consume_one(db, fanpage) -> bool:
         fanpage_id=fanpage.id,
         post_id=None,
         content_type=ContentType.facebook_recreate,
+        # S9: record which gallery_image (= the dedup marker for the source FB
+        # photo) this idea came from, so _enrich_job can build a "Source photo
+        # on Facebook" link for the History page.
+        source_gallery_image_id=idea.gallery_image_id,
         design_title=title,
         design_subtitle=idea.design_subtitle,
         design_caption=idea.design_caption,

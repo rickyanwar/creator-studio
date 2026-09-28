@@ -72,6 +72,10 @@ function sourceLink(job: PublishJob): { url: string; label: string; icon: string
     const t = Math.floor(job.clip_start_s ?? 0);
     return { url: `https://youtu.be/${job.yt_video_id}?t=${t}`, label: "Source moment on YouTube", icon: "mdi:youtube" };
   }
+  // S9: Mode-6 (facebook_recreate) — link back to the original FB photo.
+  if (job.content_type === "facebook_recreate" && job.source_photo_url) {
+    return { url: job.source_photo_url, label: "Source photo on Facebook", icon: "mdi:facebook" };
+  }
   if (job.article_url) {
     return {
       url: job.article_url,

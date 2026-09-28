@@ -298,6 +298,9 @@ export interface PublishJob {
   ig_post_url: string | null;
   article_url: string | null;
   article_source_name: string | null;
+  /** S9: Mode-6 (facebook_recreate) — URL of the source FB photo used to
+   *  inspire this card, or null when not recorded / gallery row deleted. */
+  source_photo_url?: string | null;
 }
 
 export interface DashboardStats {

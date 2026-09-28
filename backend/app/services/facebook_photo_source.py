@@ -134,6 +134,17 @@ def _photos_url(page_url_or_username: str) -> str:
 
 _MARKER_PREFIX = "facebook_photo:"
 
+# ── S9: helper to build the canonical Facebook photo URL from an fbid ────────
+
+def fbid_to_url(fbid: str | None) -> str | None:
+    """Return ``https://www.facebook.com/photo/?fbid=<fbid>`` or None when
+    *fbid* is falsy (None / empty string).  Used by _enrich_job to surface a
+    source link for Mode-6 (facebook_recreate) jobs in History.
+    """
+    if not fbid:
+        return None
+    return f"https://www.facebook.com/photo/?fbid={fbid}"
+
 
 def _seen_fbids(db) -> set[str]:
     """fbids already evaluated (accepted or rejected). Keyed on the fbid —

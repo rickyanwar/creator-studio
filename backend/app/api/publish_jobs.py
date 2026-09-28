@@ -30,6 +30,17 @@ def _enrich_job(job, db) -> PublishJobOut:
     out.ig_post_url = post.ig_post_url if post else None
     out.article_url = article.article_url if article else None
     out.article_source_name = news_source.name if news_source else None
+
+    # S9: Mode-6 source photo link — resolve gallery_image keyword → fbid → URL.
+    from app.models.publish_jobs import ContentType as CT
+    if job.content_type == CT.facebook_recreate and job.source_gallery_image_id:
+        from app.models.gallery import GalleryImage
+        from app.services.facebook_photo_source import _MARKER_PREFIX, fbid_to_url
+        gi = db.query(GalleryImage).filter_by(id=job.source_gallery_image_id).first()
+        if gi and gi.keyword and gi.keyword.startswith(_MARKER_PREFIX):
+            fbid = gi.keyword[len(_MARKER_PREFIX):]
+            out.source_photo_url = fbid_to_url(fbid)
+
     return out
 
 
