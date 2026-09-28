@@ -46,7 +46,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-OUT_W, OUT_H = 1080, 1920
+OUT_W, OUT_H = 1080, 1920   # kept for imports that reference these constants; render uses per-clip dims
 FPS = 30
 _SAMPLE_FPS = 5
 _ANALYSIS_W = 640
@@ -70,15 +70,25 @@ _ENERGY_EMA = 0.3
 # the closest scenery moves fastest.
 _ACTIVE_LEVEL = 0.35
 _CAMERA_MOTION_SPREAD = 0.5
-_WATERMARK_W = 130           # ~12 % of the width
-_WATERMARK_MARGIN = 42
+# Watermark dimensions are proportional to OUT_W (1080) — scale to actual out_w at render time.
+_WATERMARK_W_BASE = 130      # at 1080px wide
+_WATERMARK_MARGIN_BASE = 42  # at 1080px wide
 # Memory (measured on the VPS, 2026-09-25 — ~1.4 GB free there): the encoder
 # first peaked at ~1.25 GB and the host OOM-killed it. Cause: -shortest (see
 # _encoder_cmd). Also kept lean: frames piped as yuv420p (3 MB vs 6 MB bgr24),
 # short input queues, 2 threads for x264 and the decoders (the worker is
 # capped at 2 CPUs anyway).
 _THREADS = "2"
-_X264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p", "-threads", _THREADS]
+# S2g: quality-based x264 (CRF 22, medium preset) — drops from ~9 Mbps to
+# ~3-5 Mbps for similar perceptual quality. profile/level for Reels compat.
+_X264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "22",
+         "-profile:v", "high", "-level:v", "4.1",
+         "-pix_fmt", "yuv420p", "-threads", _THREADS]
+
+# Reels minimum vertical resolution: 960px height (540×960 in 9:16).
+_OUT_H_MIN = 960
+# Maximum output height: 1920px — never upscale past the source.
+_OUT_H_MAX = 1920
 
 
 @dataclass(frozen=True)
@@ -92,6 +102,10 @@ class ClipSpec:
     watermark_png: Path | None = None
     watermark_text: str | None = None
     action_mode: str = "smart"   # no-face shots: "smart" (motion-following crop) | "fit" (blur-fill)
+    # Per-clip output dimensions (S2g). Defaults to the global constants so
+    # existing callers that don't set these still work unchanged.
+    out_w: int = OUT_W
+    out_h: int = OUT_H
 
 
 @dataclass(frozen=True)
@@ -108,6 +122,30 @@ def _probe_size(path: Path) -> tuple[int, int]:
     ).stdout
     s = json.loads(out)["streams"][0]
     return int(s["width"]), int(s["height"])
+
+
+def output_size(src_h: int) -> tuple[int, int]:
+    """Compute the 9:16 output dimensions for a given source height.
+
+    Rules (S2g):
+    - out_h = even(min(1920, max(960, src_h))) — no upscaling past the source
+      except at the 960px Reels minimum.
+    - out_w = even(round(out_h * 9 / 16))
+
+    Examples:
+      src_h=2160 → out_h=1920, out_w=1080
+      src_h=1440 → out_h=1440, out_w=810
+      src_h=1080 → out_h=1080, out_w=608   (round(1080*9/16)=607.5 → 608)
+      src_h=720  → out_h=960,  out_w=540   (minimum Reels height)
+      src_h=480  → out_h=960,  out_w=540   (minimum Reels height)
+    """
+    raw_h = max(_OUT_H_MIN, min(_OUT_H_MAX, src_h))
+    # Snap to even number (required by x264 yuv420p)
+    even_h = raw_h if raw_h % 2 == 0 else raw_h + 1
+    even_w = round(even_h * 9 / 16)
+    if even_w % 2 != 0:
+        even_w += 1
+    return even_w, even_h
 
 
 def _decode(spec: ClipSpec, w: int, h: int, vf: str):
@@ -259,25 +297,25 @@ def _crop_centres(shots, modes, grays, crop_frac: float, centre: list[float]) ->
 
 # ── pass 2: compose + encode ─────────────────────────────────────────────────
 
-def _compose_fit(frame: np.ndarray) -> np.ndarray:
+def _compose_fit(frame: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
     h, w = frame.shape[:2]
-    fg_h = int(round(OUT_W * h / w / 2) * 2)
-    fg = cv2.resize(frame, (OUT_W, fg_h), interpolation=cv2.INTER_AREA)
-    crop_w = int(h * OUT_W / OUT_H)
+    fg_h = int(round(out_w * h / w / 2) * 2)
+    fg = cv2.resize(frame, (out_w, fg_h), interpolation=cv2.INTER_AREA)
+    crop_w = int(h * out_w / out_h)
     x0 = (w - crop_w) // 2
-    bg = cv2.resize(frame[:, x0:x0 + crop_w], (OUT_W // 8, OUT_H // 8), interpolation=cv2.INTER_AREA)
+    bg = cv2.resize(frame[:, x0:x0 + crop_w], (out_w // 8, out_h // 8), interpolation=cv2.INTER_AREA)
     bg = cv2.GaussianBlur(bg, (0, 0), 6)
-    bg = cv2.resize((bg * 0.55).astype(np.uint8), (OUT_W, OUT_H), interpolation=cv2.INTER_LINEAR)
-    y0 = (OUT_H - fg_h) // 2
+    bg = cv2.resize((bg * 0.55).astype(np.uint8), (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+    y0 = (out_h - fg_h) // 2
     bg[y0:y0 + fg_h] = fg
     return bg
 
 
-def _compose_track(frame: np.ndarray, centre: float) -> np.ndarray:
+def _compose_track(frame: np.ndarray, centre: float, out_w: int, out_h: int) -> np.ndarray:
     h, w = frame.shape[:2]
-    crop_w = int(h * OUT_W / OUT_H)
+    crop_w = int(h * out_w / out_h)
     x0 = max(0, min(w - crop_w, int(round(centre * w - crop_w / 2))))
-    return cv2.resize(frame[:, x0:x0 + crop_w], (OUT_W, OUT_H), interpolation=cv2.INTER_CUBIC)
+    return cv2.resize(frame[:, x0:x0 + crop_w], (out_w, out_h), interpolation=cv2.INTER_CUBIC)
 
 
 def _filter_path(p: Path) -> str:
@@ -285,8 +323,15 @@ def _filter_path(p: Path) -> str:
 
 
 def _encoder_cmd(spec: ClipSpec) -> list[str]:
+    ow, oh = spec.out_w, spec.out_h
+    # Watermark dimensions proportional to output width (base = 1080px).
+    wm_w = max(1, round(_WATERMARK_W_BASE * ow / OUT_W))
+    wm_margin = max(1, round(_WATERMARK_MARGIN_BASE * ow / OUT_W))
+    # Drawtext fontsize scales proportionally too.
+    fontsize = max(16, round(34 * ow / OUT_W))
+
     cmd = ["ffmpeg", "-v", "error", "-y", "-filter_threads", "1",
-           "-thread_queue_size", "4", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{OUT_W}x{OUT_H}",
+           "-thread_queue_size", "4", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{ow}x{oh}",
            "-r", str(FPS), "-i", "-",
            "-thread_queue_size", "64", "-ss", f"{spec.seek_s:.3f}", "-t", f"{spec.duration_s:.3f}", "-i", str(spec.src)]
     chain, label = [], "0:v"
@@ -296,15 +341,15 @@ def _encoder_cmd(spec: ClipSpec) -> list[str]:
         label = "vc"
     if spec.watermark_png:
         cmd += ["-i", str(spec.watermark_png)]
-        chain.append(f"[2:v]scale={_WATERMARK_W}:-1,format=rgba,colorchannelmixer=aa=0.9[wm]")
-        chain.append(f"[{label}][wm]overlay=W-w-{_WATERMARK_MARGIN}:{_WATERMARK_MARGIN + 40}[vw]")
+        chain.append(f"[2:v]scale={wm_w}:-1,format=rgba,colorchannelmixer=aa=0.9[wm]")
+        chain.append(f"[{label}][wm]overlay=W-w-{wm_margin}:{wm_margin + 40}[vw]")
         label = "vw"
     elif spec.watermark_text and spec.fonts_dir:
         text = spec.watermark_text.replace("\\", "").replace("'", "").replace(":", "\\:")[:40]
         font = spec.fonts_dir / "Poppins-Black.ttf"
         chain.append(
-            f"[{label}]drawtext=fontfile={_filter_path(font)}:text='{text}':fontsize=34:fontcolor=white@0.85"
-            f":shadowcolor=black@0.6:shadowx=2:shadowy=2:x=w-tw-{_WATERMARK_MARGIN}:y={_WATERMARK_MARGIN + 40}[vw]"
+            f"[{label}]drawtext=fontfile={_filter_path(font)}:text='{text}':fontsize={fontsize}:fontcolor=white@0.85"
+            f":shadowcolor=black@0.6:shadowx=2:shadowy=2:x=w-tw-{wm_margin}:y={wm_margin + 40}[vw]"
         )
         label = "vw"
     if chain:
@@ -314,11 +359,13 @@ def _encoder_cmd(spec: ClipSpec) -> list[str]:
     # Bounded with -t, NOT -shortest: in ffmpeg 7.1, -shortest with the seeked
     # audio input made the encoder buffer ~900 MB extra (measured: 1.25 GB vs
     # 379 MB for the same encode with -t).
-    return cmd + ["-map", "1:a?", *_X264, "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+    # S2g: 128k audio (down from 160k), +faststart for streaming.
+    return cmd + ["-map", "1:a?", *_X264, "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
                   "-t", f"{spec.duration_s:.3f}", "-movflags", "+faststart", str(spec.out)]
 
 
 def _render_frames(spec: ClipSpec, src_w: int, src_h: int, sample_modes: list[str], centres: list[float]) -> None:
+    ow, oh = spec.out_w, spec.out_h
     enc = subprocess.Popen(_encoder_cmd(spec), stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     last = len(sample_modes) - 1
     try:
@@ -328,9 +375,9 @@ def _render_frames(spec: ClipSpec, src_w: int, src_h: int, sample_modes: list[st
             if sample_modes[s] in ("TRACK", "CROP"):
                 nxt = min(last, s + 1)
                 c = centres[s] + (centres[nxt] - centres[s]) * (pos - s) if sample_modes[nxt] == sample_modes[s] else centres[s]
-                out = _compose_track(frame, c)
+                out = _compose_track(frame, c, ow, oh)
             else:
-                out = _compose_fit(frame)
+                out = _compose_fit(frame, ow, oh)
             enc.stdin.write(cv2.cvtColor(out, cv2.COLOR_BGR2YUV_I420).tobytes())
     except BrokenPipeError:
         pass
@@ -357,11 +404,18 @@ def render_clip(spec: ClipSpec) -> RenderResult:
     """Analyse, reframe and encode one clip. Raises RuntimeError if the
     output fails its sanity check (duration, audio, resolution)."""
     src_w, src_h = _probe_size(spec.src)
+    # S2g: compute per-clip output dimensions from the source height; no upscaling
+    # past the source (except for the 960px Reels minimum).
+    clip_out_w, clip_out_h = output_size(src_h)
+    # Rebuild spec with the computed dimensions (frozen dataclass → replace).
+    import dataclasses
+    spec = dataclasses.replace(spec, out_w=clip_out_w, out_h=clip_out_h)
+
     hists, faces, grays = _analyse(spec, src_w, src_h)
     if not hists:
         raise RuntimeError("no frames decoded from the source clip")
     shots = _shots(hists)
-    crop_frac = (src_h * OUT_W / OUT_H) / src_w
+    crop_frac = (src_h * clip_out_w / clip_out_h) / src_w
     modes = _shot_modes(shots, faces, crop_frac, spec.action_mode)
     centres = _crop_centres(shots, modes, grays, crop_frac, _track_centres(shots, modes, faces))
     sample_modes = [""] * len(hists)
@@ -370,10 +424,10 @@ def render_clip(spec: ClipSpec) -> RenderResult:
     _render_frames(spec, src_w, src_h, sample_modes, centres)
 
     duration, has_audio, size = _probe_output(spec.out)
-    if abs(duration - spec.duration_s) > 1.5 or size != (OUT_W, OUT_H) or not has_audio:
+    if abs(duration - spec.duration_s) > 1.5 or size != (clip_out_w, clip_out_h) or not has_audio:
         raise RuntimeError(
             f"clip failed its sanity check: {duration:.1f}s (want {spec.duration_s:.1f}s), "
-            f"{size[0]}x{size[1]}, audio={has_audio}"
+            f"{size[0]}x{size[1]} (want {clip_out_w}x{clip_out_h}), audio={has_audio}"
         )
     thumb = spec.out.with_suffix(".jpg")
     subprocess.run(
@@ -382,6 +436,6 @@ def render_clip(spec: ClipSpec) -> RenderResult:
         check=True, timeout=60,
     )
     shot_list = [(a / _SAMPLE_FPS, b / _SAMPLE_FPS, m) for (a, b), m in zip(shots, modes)]
-    logger.info("video_reframe: %s — %d shots (%s), %.1fs", spec.out.name, len(shots),
-                ", ".join(f"{m}" for *_, m in shot_list[:12]), duration)
+    logger.info("video_reframe: %s — %d shots (%s), %.1fs, %dx%d", spec.out.name, len(shots),
+                ", ".join(f"{m}" for *_, m in shot_list[:12]), duration, clip_out_w, clip_out_h)
     return RenderResult(duration_s=duration, thumbnail=thumb, shots=shot_list)

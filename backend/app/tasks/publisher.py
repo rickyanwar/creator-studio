@@ -478,6 +478,7 @@ def _publish_video_job(db, job):
         description=job.ai_generated_caption or "",
         video_url=job.video_url,
         thumbnail_url=job.video_thumbnail_url or "",
+        title=job.design_title or "",
         schedule_at=format_schedule_at(scheduled_for),
     )
     schedule_id = response.get("_id") or response.get("id") or response.get("scheduleId")

@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { listJobs, publishJob, skipJob, updateJobCaption, regenerateCaption, renderJobNow } from "@/lib/api";
 import type { PublishJob } from "@/lib/types";
 import { Icon } from "@iconify/react";
+import ClipPlayer from "@/components/ClipPlayer";
 
 /* Review queue = Mode 1 jobs awaiting caption approval + Mode 2 news jobs
    awaiting design (pending_design) or publish approval (pending_publish). */
@@ -318,18 +319,16 @@ function QueueCard({
         )}
       </div>
 
-      {/* Thumbnail — click to open lightbox */}
+      {/* Thumbnail — click to open lightbox (not for clips) */}
       <div
         className={`relative mx-4 rounded-lg overflow-hidden bg-bg-paper-hover ${isClip ? "" : "cursor-zoom-in"}`}
         onClick={() => { if (!isClip) onImageClick(0); }}
       >
-        {isClip && job.video_url ? (
-          <video
+        {isClip ? (
+          <ClipPlayer
             src={job.video_url}
             poster={thumb}
-            controls
-            preload="none"
-            className="w-full aspect-[9/16] max-h-[440px] bg-black object-contain"
+            className="aspect-[9/16] max-h-[440px] object-contain"
           />
         ) : thumb ? (
           <img src={thumb} alt="Post preview" className="w-full aspect-[4/3] object-cover" />
@@ -339,20 +338,22 @@ function QueueCard({
           </div>
         )}
 
-        {/* Album badge */}
+        {/* Album badge — pointer-events-none so it never blocks the video controls */}
         {albumCount > 1 && (
-          <div className="absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-white/90 backdrop-blur-sm text-[#1C252E] text-xs font-bold px-2.5 py-1 rounded-full">
+          <div className="pointer-events-none absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-white/90 backdrop-blur-sm text-[#1C252E] text-xs font-bold px-2.5 py-1 rounded-full">
             <Icon icon="solar:gallery-bold-duotone" width={11} />
             {albumCount}
           </div>
         )}
 
-        {/* Expand hint overlay on hover */}
-        <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
-          <div className="bg-black/60 rounded-full p-2">
-            <Icon icon="solar:maximize-bold-duotone" width={18} className="text-white" />
+        {/* Expand hint overlay on hover — pointer-events-none so the video control bar stays clickable */}
+        {!isClip && (
+          <div className="pointer-events-none absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
+            <div className="bg-black/60 rounded-full p-2">
+              <Icon icon="solar:maximize-bold-duotone" width={18} className="text-white" />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Caption */}
@@ -460,6 +461,7 @@ function Lightbox({
   const color = avatarColor(fanpage);
   const caption = job.ai_generated_caption ?? "";
   const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate" || job.content_type === "youtube_clip";
+  const isClip = job.content_type === "youtube_clip";
   const total = urls.length;
   const createdAt = (job as unknown as Record<string, string>).created_at;
 
@@ -474,84 +476,95 @@ function Lightbox({
         className="relative w-full max-w-2xl rounded-2xl overflow-hidden shadow-dropdown"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Image — fixed 4:3 */}
-        <div className="relative bg-black aspect-[4/3]">
-          <img
-            src={urls[idx]}
-            alt={`Image ${idx + 1}`}
-            className="absolute inset-0 w-full h-full object-contain"
-          />
+        {/* Media — 9:16 for clips, 4:3 for images */}
+        <div className={`relative bg-black ${isClip ? "aspect-[9/16]" : "aspect-[4/3]"}`}>
+          {isClip ? (
+            /* ClipPlayer fills the full modal media area */
+            <ClipPlayer
+              src={job.video_url}
+              poster={urls[0]}
+              className="absolute inset-0 w-full h-full object-contain"
+            />
+          ) : (
+            <img
+              src={urls[idx]}
+              alt={`Image ${idx + 1}`}
+              className="absolute inset-0 w-full h-full object-contain"
+            />
+          )}
 
-          {/* Close button */}
+          {/* Close button — always on top (pointer-events-auto) */}
           <button
             onClick={onClose}
-            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
           >
             <Icon icon="solar:close-bold" width={16} />
           </button>
 
-          {/* Prev / Next arrows */}
-          {total > 1 && idx > 0 && (
+          {/* Prev / Next arrows — only for image albums (not clips) */}
+          {!isClip && total > 1 && idx > 0 && (
             <button
               onClick={onPrev}
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
             >
               <Icon icon="solar:alt-arrow-left-bold-duotone" width={18} />
             </button>
           )}
-          {total > 1 && idx < total - 1 && (
+          {!isClip && total > 1 && idx < total - 1 && (
             <button
               onClick={onNext}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
             >
               <Icon icon="solar:alt-arrow-right-bold-duotone" width={18} />
             </button>
           )}
 
           {/* Image counter */}
-          {total > 1 && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full">
+          {!isClip && total > 1 && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full z-10">
               {idx + 1} / {total}
             </div>
           )}
 
-          {/* Bottom gradient + caption overlay */}
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-16 pb-4 px-5">
-            {/* Fanpage row */}
-            <div className="flex items-center gap-2.5 mb-2">
-              {job.fanpage_picture_url ? (
-                <img
-                  src={job.fanpage_picture_url}
-                  alt={fanpage}
-                  className="w-7 h-7 rounded-full object-cover flex-shrink-0"
-                />
-              ) : (
-                <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
-                  style={{ background: color }}
-                >
-                  {fanpage[0]?.toUpperCase()}
+          {/* Bottom gradient + caption overlay — pointer-events-none so clip controls are always accessible */}
+          {!isClip && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-16 pb-4 px-5">
+              {/* Fanpage row */}
+              <div className="flex items-center gap-2.5 mb-2">
+                {job.fanpage_picture_url ? (
+                  <img
+                    src={job.fanpage_picture_url}
+                    alt={fanpage}
+                    className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+                  />
+                ) : (
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
+                    style={{ background: color }}
+                  >
+                    {fanpage[0]?.toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-white text-xs font-semibold leading-none">{fanpage}</p>
+                  <p className="text-white/60 text-[10px] mt-0.5">
+                    {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : "News content")) : `@${job.ig_username}`}
+                    {createdAt ? ` · ${timeAgo(createdAt)}` : ""}
+                  </p>
                 </div>
-              )}
-              <div className="min-w-0">
-                <p className="text-white text-xs font-semibold leading-none">{fanpage}</p>
-                <p className="text-white/60 text-[10px] mt-0.5">
-                  {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : "News content")) : `@${job.ig_username}`}
-                  {createdAt ? ` · ${timeAgo(createdAt)}` : ""}
-                </p>
+                <span className="ml-auto text-[10px] font-semibold text-white/60 uppercase tracking-wide bg-white/10 px-2 py-0.5 rounded-full">
+                  {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.content_type === "pinterest_content" ? "pinterest" : job.content_type === "facebook_recreate" ? "facebook" : job.content_type === "youtube_clip" ? "clip" : job.media_type}
+                </span>
               </div>
-              <span className="ml-auto text-[10px] font-semibold text-white/60 uppercase tracking-wide bg-white/10 px-2 py-0.5 rounded-full">
-                {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.content_type === "pinterest_content" ? "pinterest" : job.content_type === "facebook_recreate" ? "facebook" : job.content_type === "youtube_clip" ? "clip" : job.media_type}
-              </span>
-            </div>
 
-            {/* Caption */}
-            {caption ? (
-              <p className="text-white/90 text-xs leading-relaxed line-clamp-4 whitespace-pre-line">{caption}</p>
-            ) : (
-              <p className="text-white/40 text-xs italic">No caption generated yet</p>
-            )}
-          </div>
+              {/* Caption */}
+              {caption ? (
+                <p className="text-white/90 text-xs leading-relaxed line-clamp-4 whitespace-pre-line">{caption}</p>
+              ) : (
+                <p className="text-white/40 text-xs italic">No caption generated yet</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Dot indicators for album */}

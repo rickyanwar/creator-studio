@@ -8,6 +8,7 @@ import type { PublishJob, PublishJobStatus } from "@/lib/types";
 import { format } from "date-fns";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Toast, { type ToastData } from "@/components/ui/Toast";
+import ClipPlayer from "@/components/ClipPlayer";
 
 const parseUtc = (s: string) =>
   new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
@@ -464,6 +465,7 @@ function HistoryCard({
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
   const src = sourceLink(job);
   const canReedit = job.content_type === "news_content" && job.status === "published";
+  const isClip = job.content_type === "youtube_clip";
 
   const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
 
@@ -570,12 +572,22 @@ function HistoryCard({
         </div>
       </div>
 
-      {/* Thumbnail */}
+      {/* Thumbnail / clip player */}
       <div
-        className="relative mx-4 rounded-lg overflow-hidden bg-bg-paper-hover cursor-zoom-in group"
-        onClick={() => onImageClick(0)}
+        className={`relative mx-4 rounded-lg overflow-hidden bg-bg-paper-hover ${isClip && job.video_url ? "" : "cursor-zoom-in group"}`}
+        onClick={() => { if (!(isClip && job.video_url)) onImageClick(0); }}
       >
-        {thumb ? (
+        {isClip && job.video_url ? (
+          /* MP4 is still available — show a playable ClipPlayer.
+             preload="none" avoids a network spike when many history cards
+             are mounted at once. */
+          <ClipPlayer
+            src={job.video_url}
+            poster={thumb}
+            preload="none"
+            className={`aspect-[9/16] max-h-[440px] object-contain ${blurred ? blurImg : ""}`}
+          />
+        ) : thumb ? (
           <img src={thumb} alt="Post" className={`w-full aspect-[4/3] object-cover ${blurred ? blurImg : ""}`} />
         ) : (
           <div className="w-full aspect-[4/3] flex items-center justify-center">
@@ -584,7 +596,7 @@ function HistoryCard({
         )}
 
         {albumCount > 1 && (
-          <div className="absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-white/90 backdrop-blur-sm text-[#1C252E] text-xs font-bold px-2.5 py-1 rounded-full">
+          <div className="pointer-events-none absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-white/90 backdrop-blur-sm text-[#1C252E] text-xs font-bold px-2.5 py-1 rounded-full">
             <Icon icon="solar:gallery-bold-duotone" width={11} />
             {albumCount}
           </div>
@@ -592,16 +604,16 @@ function HistoryCard({
 
         {/* Status overlay tint for failed */}
         {job.status === "failed" && (
-          <div className="absolute inset-0 bg-error-main/10 flex items-center justify-center">
+          <div className="pointer-events-none absolute inset-0 bg-error-main/10 flex items-center justify-center">
             <div className="bg-black/60 rounded-full p-2">
               <Icon icon="solar:close-circle-bold-duotone" width={24} className="text-error-light" />
             </div>
           </div>
         )}
 
-        {/* Hover zoom hint */}
-        {job.status !== "failed" && thumb && (
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+        {/* Hover zoom hint — only for non-clip or clips without video_url */}
+        {job.status !== "failed" && thumb && !(isClip && job.video_url) && (
+          <div className="pointer-events-none absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
             <div className="bg-black/60 rounded-full p-2">
               <Icon icon="solar:maximize-bold-duotone" width={18} className="text-white" />
             </div>
@@ -655,6 +667,7 @@ function HistoryLightbox({
   const src = sourceLink(job);
   const showScheduled = job.status === "published" && isPendingLive;
   const canReedit = job.content_type === "news_content" && job.status === "published";
+  const isClip = job.content_type === "youtube_clip";
 
   const [expanded, setExpanded] = useState(true);
 
@@ -670,9 +683,16 @@ function HistoryLightbox({
         className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden shadow-dropdown bg-bg-paper"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Image — pure photo, no text overlaid on it (floating controls only) */}
-        <div className="relative bg-black aspect-[4/3] flex-shrink-0">
-          {total > 0 ? (
+        {/* Media — 9:16 for clips with video_url, 4:3 for images */}
+        <div className={`relative bg-black ${isClip && job.video_url ? "aspect-[9/16]" : "aspect-[4/3]"} flex-shrink-0`}>
+          {isClip && job.video_url ? (
+            /* MP4 available — full-height ClipPlayer; controls stay accessible */
+            <ClipPlayer
+              src={job.video_url}
+              poster={urls[0]}
+              className={`absolute inset-0 w-full h-full object-contain ${blurred ? blurImg : ""}`}
+            />
+          ) : total > 0 ? (
             <img
               src={urls[idx]}
               alt={`Image ${idx + 1}`}
@@ -686,7 +706,7 @@ function HistoryLightbox({
           )}
 
           {/* Post position — ← → browses the whole loaded history, not just this post's album */}
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full">
+          <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full z-10">
             <Icon icon="solar:alt-arrow-left-linear" width={12} className="opacity-60" />
             {postPosition.index + 1} / {postPosition.total}{postPosition.hasMore ? "+" : ""}
             <Icon icon="solar:alt-arrow-right-linear" width={12} className="opacity-60" />
@@ -695,27 +715,27 @@ function HistoryLightbox({
           {/* Close */}
           <button
             onClick={onClose}
-            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
           >
             <Icon icon="solar:close-bold" width={16} />
           </button>
 
-          {/* Prev / Next (this post's own photo album, e.g. an IG carousel) */}
-          {total > 1 && idx > 0 && (
+          {/* Prev / Next (this post's own photo album, e.g. an IG carousel) — not for clips */}
+          {!isClip && total > 1 && idx > 0 && (
             <button onClick={onPrev}
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors">
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10">
               <Icon icon="solar:alt-arrow-left-bold-duotone" width={18} />
             </button>
           )}
-          {total > 1 && idx < total - 1 && (
+          {!isClip && total > 1 && idx < total - 1 && (
             <button onClick={onNext}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors">
+              className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10">
               <Icon icon="solar:alt-arrow-right-bold-duotone" width={18} />
             </button>
           )}
 
           {/* Album counter + dots */}
-          {total > 1 && (
+          {!isClip && total > 1 && (
             <>
               <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full">
                 {idx + 1} / {total}

@@ -60,6 +60,12 @@ class Highlight:
     hook_text: str
     score: int
     excerpt: str
+    people: list[str] = None  # type: ignore[assignment]  # post-init coerced below
+
+    def __post_init__(self):
+        # frozen dataclass: use object.__setattr__ to coerce None → []
+        if self.people is None:
+            object.__setattr__(self, "people", [])
 
 
 @dataclass(frozen=True)
@@ -123,15 +129,16 @@ DURATION (CRITICAL)
 * Copy timestamps from the transcript's own time markers. Do not invent times that never appear in it.
 
 ==================================================
-REQUIRED FIELDS (EXACTLY 6)
+REQUIRED FIELDS (EXACTLY 7)
 ===========================
 
 1. "start_time"     (string)  -> "HH:MM:SS,mmm"
 2. "end_time"       (string)  -> "HH:MM:SS,mmm"
-3. "title"          (string)  -> max 60 characters, {language}, click-worthy
+3. "title"          (string)  -> max 60 characters, {language}, click-worthy; MUST name the main person (surname is enough); NO two-part "X — Y" / "X - Y" / "X: Y" pattern; NO source, credit, channel name, URL or "@handle"
 4. "description"    (string)  -> max 150 characters, {language}, why it travels
 5. "virality_score" (integer) -> 1-10, a bare number
 6. "hook_text"      (string)  -> max 15 words, {language}, names the person speaking; a quote or sharp statement, never a summary; no emoji
+7. "people"         (array)   -> full names of real people actually spoken about OR speaking in THIS clip, taken only from the transcript or the video title — never invented; empty array [] if none
 
 No extra fields, no prose outside the JSON.
 
@@ -150,7 +157,7 @@ OUTPUT FORMAT (STRICT)
 
 Return ONLY a JSON array. Never use a double quote (") inside a field value — quote people with single quotes ('). One stray double quote breaks the ENTIRE response. No line breaks inside values.
 
-[{{"start_time":"HH:MM:SS,mmm","end_time":"HH:MM:SS,mmm","title":"...","description":"...","virality_score":8,"hook_text":"..."}}]
+[{{"start_time":"HH:MM:SS,mmm","end_time":"HH:MM:SS,mmm","title":"...","description":"...","virality_score":8,"hook_text":"...","people":["Full Name"]}}]
 
 ==================================================
 SOURCE
@@ -165,7 +172,7 @@ Transcript:
 FINAL CHECK
 ===========
 
-1. Exactly {num_clips} objects. 2. Every clip runs {min_s}-{max_s} seconds by its own timestamps. 3. No overlaps, spread across the video. 4. title/description/hook_text in {language}. 5. Exactly the 6 fields, virality_score a bare integer. 6. No double quote inside any value.
+1. Exactly {num_clips} objects. 2. Every clip runs {min_s}-{max_s} seconds by its own timestamps. 3. No overlaps, spread across the video. 4. title/description/hook_text in {language}. 5. Exactly the 7 fields, virality_score a bare integer. 6. No double quote inside any value. 7. title max 60 chars, names the main person, no two-part pattern, no source/credit/URL.
 
 Answer with the JSON array and nothing else."""
 
@@ -261,12 +268,18 @@ def validate(raw_clips: list[dict], words: list[Word], video_s: float, rules: Cl
         title = " ".join(str(c.get("title") or "").split())[:120]
         if not span or not title:
             continue
+        # Parse the optional "people" field — tolerate it being missing or malformed.
+        raw_people = c.get("people") or []
+        people: list[str] = [
+            str(p).strip() for p in raw_people if isinstance(p, str) and str(p).strip()
+        ] if isinstance(raw_people, list) else []
         fitted.append(Highlight(
             start=round(span[0], 2), end=round(span[1], 2), title=title,
             description=" ".join(str(c.get("description") or "").split())[:300],
             hook_text=" ".join(str(c.get("hook_text") or "").split())[:200],
             score=max(1, min(10, score)),
             excerpt=text_between(words, span[0], span[1])[:1500],
+            people=people,
         ))
     accepted: list[Highlight] = []
     for h in sorted(fitted, key=lambda h: -h.score):

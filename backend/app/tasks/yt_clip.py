@@ -216,20 +216,41 @@ def _highlight_prompt(fanpage, video, meta, srt: str, direction: str | None):
 
 
 def _save_ideas(db, fanpage, video, highlights) -> int:
-    from app.models.yt_clip_ideas import YtClipIdea
+    """Store validated highlights as YtClipIdea rows.
 
+    S2f: clean_clip_title is applied HERE, where h.people (from the AI
+    response) is available. Highlights whose title cannot be cleaned
+    are skipped — they never reach the DB, so _consume_one never sees them.
+    video.ideas_created counts only the ideas actually added.
+    """
+    from app.models.yt_clip_ideas import YtClipIdea
+    from app.services.yt_clip_title import clean_clip_title
+
+    added = 0
     for h in highlights:
+        cleaned_title = clean_clip_title(
+            h.title,
+            people=h.people,
+            forbidden_channel=video.channel_name,
+        )
+        if cleaned_title is None:
+            logger.warning(
+                "yt_clip: highlight dropped at idea-creation — title failed S2f rules: %r (people=%r)",
+                h.title, h.people,
+            )
+            continue
         db.add(YtClipIdea(
             fanpage_id=fanpage.id, yt_video_row_id=video.id, video_id=video.video_id,
-            start_s=h.start, end_s=h.end, title=h.title, description=h.description,
+            start_s=h.start, end_s=h.end, title=cleaned_title, description=h.description,
             hook_text=h.hook_text, virality_score=h.score, transcript_excerpt=h.excerpt,
         ))
+        added += 1
     video.status = "analyzed"
-    video.ideas_created = len(highlights)
+    video.ideas_created = added
     video.analyzed_at = _now()
     video.last_error = None
     db.commit()
-    return len(highlights)
+    return added
 
 
 def _claim_video(db, video_row_id: int) -> bool:
@@ -367,10 +388,12 @@ def _next_idea(db, fanpage_id: int):
 
 
 def _clip_caption_prompt(fanpage, idea, video) -> str:
-    """The Facebook post text, on the fanpage's Mode 2 caption settings."""
-    attribution = ""
-    if fanpage.mode2_source_attribution and video.channel_name:
-        attribution = f'\n- End with a source line: "Source: {video.channel_name} (YouTube)"'
+    """The Facebook post text, on the fanpage's Mode 2 caption settings.
+
+    Mode 7 clips must NOT include any source/credit/channel attribution — the
+    caption will be stripped of such lines post-generation anyway, so we don't
+    even prompt for them.
+    """
     return f"""You are the social media editor of the Facebook page "{fanpage.name}". Write the caption for a short video clip (a Reel) cut from a YouTube video.
 
 CLIP TITLE: {idea.title}
@@ -386,7 +409,8 @@ Caption rules:
 - Maximum length: {fanpage.mode2_caption_max_length} characters
 - Short paragraphs; open with a hook, give the context, stay faithful to what is actually said.
 - End with EXACTLY {fanpage.mode2_caption_hashtag_count} specific, relevant hashtags on their own line.
-- Call-to-action: {fanpage.mode2_caption_cta_text or "invite viewers to comment"}{attribution}
+- Call-to-action: {fanpage.mode2_caption_cta_text or "invite viewers to comment"}
+- No source, credit, channel name or 'via' line anywhere — this is a clip, not an article.
 - Additional notes: {fanpage.mode2_caption_custom_prompt or "none"}
 
 OUTPUT: only the final caption, no explanation."""
@@ -396,6 +420,7 @@ def _consume_one(db, fanpage) -> bool:
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType, AIProvider
     from app.models.target_fanpages import PublishMode
     from app.services.ai_caption import generate_caption
+    from app.services.yt_clip_title import strip_source_lines
 
     idea = _next_idea(db, fanpage.id)
     if not idea:
@@ -406,12 +431,17 @@ def _consume_one(db, fanpage) -> bool:
     except Exception as exc:
         logger.warning("yt_clip: caption for idea %d failed: %s", idea.id, exc)
         return False
+
+    # S2f: strip any source/credit lines the model may have added despite the prompt rule.
+    cleaned_caption = strip_source_lines(caption.strip(), channel_name=video.channel_name)
+
+    # idea.title is already cleaned by _save_ideas (S2f applied at idea-creation time).
     job = PublishJob(
         fanpage_id=fanpage.id, post_id=None, content_type=ContentType.youtube_clip,
         design_title=idea.title, design_subtitle=idea.hook_text,
         yt_clip_idea_id=idea.id, yt_video_id=idea.video_id,
         clip_start_s=idea.start_s, clip_end_s=idea.end_s,
-        ai_generated_caption=caption.strip(), ai_provider_used=AIProvider(provider),
+        ai_generated_caption=cleaned_caption, ai_provider_used=AIProvider(provider),
         status=PublishJobStatus.pending_design,
     )
     db.add(job)
