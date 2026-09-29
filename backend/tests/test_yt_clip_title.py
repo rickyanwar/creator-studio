@@ -623,3 +623,166 @@ class TestOneLineCaption:
         result = one_line_caption(caption, max_body=80)
         body = " ".join(t for t in result.split() if not t.startswith("#"))
         assert len(body) <= 80
+
+
+# ── S13: inline one-line hashtag dedup fix ────────────────────────────────────
+#
+# Regression: clean_clip_hashtags was treating one-line captions (body + inline
+# hashtags on the same line) as having NO hashtag block, causing it to think
+# the niche tag was absent and appending it a second time.
+#
+# Real captions from the --apply run (fanpages 5 & 7).  Names / event tags
+# anonymised where needed; hashtag structure is authentic.
+
+_REAL_ONE_LINERS = [
+    # job 9307 — fanpage 5
+    (
+        "Kimi Antonelli hits P4 in Baku — would you have told him to stay out? "
+        "#F1 #KimiAntonelli #AzerbaijanGP",
+        "F1",
+        None,
+    ),
+    # job 9337 — fanpage 5
+    (
+        "Charles Leclerc snatches pole in qualifying — could he hold on for the win? "
+        "#F1 #Leclerc #AzerbaijanGP",
+        "F1",
+        None,
+    ),
+    # job 9694 — fanpage 7
+    (
+        "Max Verstappen defends the lead into Turn 1 — would you have backed off? "
+        "#F1 #MaxVerstappen #AzerbaijanGP",
+        "F1",
+        "Formula 1 Official",
+    ),
+    # job 9712 — fanpage 7  (includes a forbidden tag the AI added)
+    (
+        "George Russell's fastest lap sets the grid — what a drive! "
+        "#F1 #GeorgeRussell #AzerbaijanGP #F126",
+        "F1",
+        "Formula 1 Official",
+    ),
+]
+
+
+class TestCleanClipHashtagsInlineOneLiner:
+    """S13: inline hashtag run on a single line must not cause niche-tag duplication."""
+
+    # ── Core dedup: niche tag appears exactly once ────────────────────────────
+
+    def test_job9307_f1_appears_once(self):
+        caption, niche, channel = _REAL_ONE_LINERS[0]
+        result = clean_clip_hashtags(caption, niche=niche, channel_name=channel)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1, f"#F1 appeared {len(f1_tags)} times: {result!r}"
+
+    def test_job9337_f1_appears_once(self):
+        caption, niche, channel = _REAL_ONE_LINERS[1]
+        result = clean_clip_hashtags(caption, niche=niche, channel_name=channel)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1, f"#F1 appeared {len(f1_tags)} times: {result!r}"
+
+    def test_job9694_f1_appears_once(self):
+        caption, niche, channel = _REAL_ONE_LINERS[2]
+        result = clean_clip_hashtags(caption, niche=niche, channel_name=channel)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1, f"#F1 appeared {len(f1_tags)} times: {result!r}"
+
+    def test_job9712_f1_appears_once(self):
+        caption, niche, channel = _REAL_ONE_LINERS[3]
+        result = clean_clip_hashtags(caption, niche=niche, channel_name=channel)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1, f"#F1 appeared {len(f1_tags)} times: {result!r}"
+
+    # ── Forbidden tag in inline run is removed ────────────────────────────────
+
+    def test_job9712_f126_removed(self):
+        """#F126 in the inline hashtag run must be filtered out."""
+        caption, niche, channel = _REAL_ONE_LINERS[3]
+        result = clean_clip_hashtags(caption, niche=niche, channel_name=channel)
+        assert "#F126" not in result, f"#F126 survived: {result!r}"
+
+    def test_inline_forbidden_gaming_removed(self):
+        """#Gaming inline must be removed even when no standalone hashtag line exists."""
+        caption = "Verstappen defends into Turn 1 — would you have done the same? #F1 #Verstappen #Gaming"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#Gaming" not in result
+
+    # ── Niche appended exactly once when absent from inline run ──────────────
+
+    def test_niche_appended_once_when_absent_inline(self):
+        """When the inline run has no niche tag, it must be appended exactly once."""
+        caption = "Leclerc hits pole — can he convert? #Leclerc #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1, f"#F1 count wrong: {result!r}"
+
+    # ── Body text not mangled ─────────────────────────────────────────────────
+
+    def test_body_text_preserved(self):
+        """The sentence before the inline hashtag run must survive intact."""
+        caption = "Kimi Antonelli hits P4 in Baku — would you have told him to stay out? #F1 #KimiAntonelli #AzerbaijanGP"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "Kimi Antonelli hits P4 in Baku" in result
+
+    def test_hash_number_in_body_kept(self):
+        """'#1' inside the body sentence ('the #1 fan') must not be treated as a hashtag."""
+        caption = "He is the #1 fan of this team — agree? #F1 #Verstappen"
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        assert "#1 fan" in result or "the #1" in result
+
+    # ── Multi-line captions still work ───────────────────────────────────────
+
+    def test_multiline_caption_still_deduped(self):
+        """The existing multi-line path must still deduplicate correctly."""
+        caption = (
+            "Great race moment.\n\n"
+            "#F1 #MaxVerstappen #AzerbaijanGP"
+        )
+        result = clean_clip_hashtags(caption, niche="F1", channel_name=None)
+        tags = [t for t in result.split() if t.startswith("#")]
+        f1_tags = [t for t in tags if t.lower() == "#f1"]
+        assert len(f1_tags) == 1
+
+    # ── Full pipeline: strip → clean → one_line on a one-liner ───────────────
+
+    def test_full_chain_one_liner_each_tag_once(self):
+        """Full chain strip_source_lines → clean_clip_hashtags → one_line_caption
+        on a one-line AI caption must produce each tag exactly once."""
+        raw = (
+            "Kimi Antonelli hits P4 in Baku — would you have told him to stay out? "
+            "#F1 #KimiAntonelli #AzerbaijanGP"
+        )
+        step1 = strip_source_lines(raw, channel_name="F1 Official")
+        step2 = clean_clip_hashtags(step1, niche="F1", channel_name="F1 Official")
+        step3 = one_line_caption(step2)
+
+        assert "\n" not in step3, f"newline in result: {step3!r}"
+        all_tags = [t for t in step3.split() if t.startswith("#")]
+        tag_lower = [t.lower() for t in all_tags]
+        # Each tag must appear exactly once
+        assert tag_lower.count("#f1") == 1, f"#F1 count: {step3!r}"
+        assert tag_lower.count("#kimiantonelli") == 1, f"#KimiAntonelli count: {step3!r}"
+        assert tag_lower.count("#azerbaijangp") == 1, f"#AzerbaijanGP count: {step3!r}"
+
+    def test_full_chain_forbidden_inline_removed(self):
+        """Full chain must strip #F126 from an inline run and not double #F1."""
+        raw = (
+            "Russell sets fastest lap — what a drive! "
+            "#F1 #GeorgeRussell #AzerbaijanGP #F126"
+        )
+        step1 = strip_source_lines(raw, channel_name=None)
+        step2 = clean_clip_hashtags(step1, niche="F1", channel_name=None)
+        step3 = one_line_caption(step2)
+
+        assert "#F126" not in step3
+        f1_count = step3.split().count("#F1") + step3.split().count("#f1")
+        # Allow for case variation — count via lower
+        f1_count = sum(1 for t in step3.split() if t.lower() == "#f1")
+        assert f1_count == 1, f"#F1 count wrong: {step3!r}"

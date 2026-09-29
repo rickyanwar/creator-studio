@@ -287,6 +287,32 @@ def _niche_to_hashtag(niche: str) -> str:
     return "#" + stem if stem else ""
 
 
+def _split_inline_tags(line: str) -> tuple[str, list[str]]:
+    """Split a line into (body_part, trailing_hashtag_stems).
+
+    A "trailing hashtag run" is the contiguous sequence of whitespace-separated
+    tokens at the END of the line where every token matches ``#word``.  Tokens
+    that look like ``#1`` (digit-only stem, length 1) inside a sentence such as
+    "the #1 fan" are still captured here because they form part of the trailing
+    run — the caller is responsible for not treating them as hashtag tokens when
+    they are *not* at the end.
+
+    If the whole line is a pure-hashtag line the body_part is empty string.
+    If there are no trailing hashtag tokens the body_part is the full line and
+    the list is empty.
+    """
+    tokens = line.split()
+    split_idx = len(tokens)
+    for i in range(len(tokens) - 1, -1, -1):
+        if _TRAILING_HASHTAG_TOKEN_RE.match(tokens[i]):
+            split_idx = i
+        else:
+            break
+    tag_stems = [t.lstrip("#") for t in tokens[split_idx:]]
+    body_part = " ".join(tokens[:split_idx])
+    return body_part, tag_stems
+
+
 def clean_clip_hashtags(
     caption: str,
     niche: str | None,
@@ -304,6 +330,14 @@ def clean_clip_hashtags(
     • '#' characters that appear inside normal sentences (no word-boundary after
       '#') are NOT touched — only tokens matching #word are processed.
 
+    One-line caption support (S12 fix):
+    • When the last non-empty line contains body text followed by hashtag tokens
+      (e.g. "Kimi hits P4 — stay out? #F1 #KimiAntonelli #AzerbaijanGP"), the
+      trailing hashtag run is extracted from that line and treated exactly like a
+      standalone hashtag block.  The body portion of that line is kept as-is.
+      This prevents the niche tag from being double-appended when the AI already
+      wrote a correct one-liner.
+
     Returns the cleaned caption.
     """
     if not caption:
@@ -315,13 +349,16 @@ def clean_clip_hashtags(
         forbidden_squashed.add(_squash(channel_name))
 
     # --- Split caption body from trailing hashtag line(s) ---
-    # We look for lines that are entirely hashtags (possibly multiple such lines)
-    # at the end of the caption and treat them as the "tag block".
+    # Walk backwards:
+    #   • Skip blank lines.
+    #   • Collect pure-hashtag lines into the tag block.
+    #   • On the first non-blank, non-pure-hashtag line: check whether its
+    #     *trailing tokens* form a hashtag run.  If so, split that line —
+    #     the trailing run joins the tag block, the remainder stays as body.
     lines = caption.splitlines()
 
     body_lines: list[str] = []
-    tag_block_lines: list[str] = []
-    # Walk backwards collecting pure-hashtag lines.
+    tag_block_stems: list[str] = []   # stems (without '#') in order
     i = len(lines) - 1
     while i >= 0:
         stripped = lines[i].strip()
@@ -329,21 +366,30 @@ def clean_clip_hashtags(
             i -= 1
             continue
         if _HASHTAG_LINE_RE.match(lines[i]):
-            tag_block_lines.insert(0, lines[i])
+            # Pure-hashtag line — collect its stems and keep scanning back.
+            stems = _HASHTAG_RE.findall(lines[i])
+            tag_block_stems[:0] = stems   # prepend (preserve order)
             i -= 1
         else:
+            # Mixed or plain body line — check for an inline trailing hashtag run.
+            body_part, inline_stems = _split_inline_tags(stripped)
+            if inline_stems:
+                # Replace the line with just the body part; collect the inline tags.
+                tag_block_stems[:0] = inline_stems
+                # Replace this line in-place: use the body part (may be empty).
+                if body_part:
+                    lines[i] = body_part
+                else:
+                    # Whole line was hashtags — treat as pure-hashtag line and drop.
+                    lines[i] = ""
+            # Stop scanning; everything above this line is body.
             break
     body_lines = lines[: i + 1]
-
-    # Collect all hashtags from the tag block.
-    raw_tags: list[str] = []
-    for tl in tag_block_lines:
-        raw_tags.extend(_HASHTAG_RE.findall(tl))  # stems only
 
     # Filter forbidden tags; deduplicate case-insensitively.
     seen_lower: set[str] = set()
     kept_stems: list[str] = []
-    for stem in raw_tags:
+    for stem in tag_block_stems:
         if _is_forbidden_tag(stem):
             continue
         low = stem.lower()
