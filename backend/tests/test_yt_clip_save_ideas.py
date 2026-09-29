@@ -246,3 +246,123 @@ class TestConsumeOneNeverDropsForPeople:
         assert result is True
         added = mock_db.add.call_args[0][0]
         assert added.design_title == "Leclerc Pole"
+
+
+# ── S12: _consume_one result must have no newline ─────────────────────────────
+
+_CAPTION_MULTI = (
+    '"Kimi, we cannot risk a DNF — we need to start saving fuel now."\n\n'
+    "During the Azerbaijan GP, Kimi Antonelli receives a brutal reality check "
+    "over the team radio. The data shows they are about a lap short on fuel "
+    "with the finish in sight.\n\n"
+    "How would you handle these mixed instructions behind the wheel? Share your "
+    "thoughts on this strategy call in the comments!\n\n"
+    "#F1 #KimiAntonelli #AzerbaijanGP"
+)
+
+
+class TestConsumeOneS12:
+    """S12: _consume_one must store a caption with NO newlines."""
+
+    def _run_consume_with_caption(self, raw_caption: str):
+        """Run _consume_one with a specific raw AI caption and return the stored caption."""
+        from app.tasks.yt_clip import _consume_one
+
+        idea = MagicMock()
+        idea.id = 9683
+        idea.title = "Kimi Told to Save Fuel or Risk a DNF"
+        idea.hook_text = "hook"
+        idea.video_id = "abc123"
+        idea.start_s = 10.0
+        idea.end_s = 75.0
+        idea.transcript_excerpt = "some text"
+        idea.status = "pending"
+        idea.used_at = None
+        idea.description = "desc"
+
+        video = MagicMock()
+        video.channel_name = "F1 Official"
+        video.title = "Azerbaijan GP Highlights"
+        idea.yt_video = video
+
+        fanpage = MagicMock()
+        fanpage.id = 5
+        fanpage.name = "Intan F1"
+        fanpage.mode2_caption_language = "Indonesian"
+        fanpage.mode2_caption_tone = "casual"
+        fanpage.mode2_caption_max_length = 300
+        fanpage.mode2_caption_hashtag_count = 3
+        fanpage.mode2_caption_cta_text = "Komen dong!"
+        fanpage.mode2_caption_custom_prompt = ""
+        fanpage.mode2_gallery_niches = ["F1"]
+        fanpage.yt_clip_publish_mode = "manual_review"
+
+        mock_db = MagicMock()
+        call_count = [0]
+
+        def next_idea_side(db, fanpage_id):
+            if call_count[0] == 0:
+                call_count[0] += 1
+                return idea
+            return None
+
+        with (
+            patch("app.tasks.yt_clip._next_idea", side_effect=next_idea_side),
+            patch("app.services.ai_caption.generate_caption", return_value=(raw_caption, "router")),
+        ):
+            result = _consume_one(mock_db, fanpage)
+
+        assert result is True
+        added = mock_db.add.call_args[0][0]
+        return added.ai_generated_caption
+
+    def test_consume_one_result_no_newline(self):
+        """After _consume_one, the stored caption must contain no newline."""
+        stored = self._run_consume_with_caption(_CAPTION_MULTI)
+        assert "\n" not in stored, f"newline in stored caption: {stored!r}"
+
+
+# ── S12: _clip_caption_prompt must contain one-line rule, not 'Short paragraphs' ─
+
+class TestClipCaptionPromptS12:
+    """S12: _clip_caption_prompt output rules check."""
+
+    def _get_prompt(self):
+        from app.tasks.yt_clip import _clip_caption_prompt
+
+        fanpage = MagicMock()
+        fanpage.name = "Intan F1"
+        fanpage.mode2_caption_language = "Indonesian"
+        fanpage.mode2_caption_tone = "casual"
+        fanpage.mode2_caption_max_length = 300
+        fanpage.mode2_caption_hashtag_count = 3
+        fanpage.mode2_caption_cta_text = "Komen dong!"
+        fanpage.mode2_caption_custom_prompt = ""
+        fanpage.mode2_gallery_niches = ["F1"]
+
+        idea = MagicMock()
+        idea.title = "Kimi Told to Save Fuel or Risk a DNF"
+        idea.description = "desc"
+        idea.hook_text = "hook"
+        idea.transcript_excerpt = "some text"
+
+        video = MagicMock()
+        video.title = "Azerbaijan GP Highlights"
+        video.channel_name = "F1 Official"
+
+        return _clip_caption_prompt(fanpage, idea, video)
+
+    def test_prompt_contains_one_line_rule(self):
+        """Prompt must mention the one-line / single-sentence output rule."""
+        prompt = self._get_prompt()
+        lower = prompt.lower()
+        assert "one line" in lower or "single" in lower or "one sentence" in lower, (
+            f"one-line rule not found in prompt: {prompt[:300]!r}"
+        )
+
+    def test_prompt_does_not_contain_short_paragraphs(self):
+        """Prompt must NOT contain 'Short paragraphs' (old multi-paragraph instruction)."""
+        prompt = self._get_prompt()
+        assert "short paragraph" not in prompt.lower(), (
+            f"'Short paragraphs' still in prompt: {prompt[:300]!r}"
+        )

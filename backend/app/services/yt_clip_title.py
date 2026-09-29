@@ -1,4 +1,4 @@
-"""Title and caption validators for Mode 7 (YouTube clips) — S2f.
+"""Title and caption validators for Mode 7 (YouTube clips) — S2f / S12.
 
 These are pure functions with no I/O, intentionally framework-free so they
 are easy to unit-test and to call from both yt_clip.py and yt_highlights.py.
@@ -10,6 +10,11 @@ are easy to unit-test and to call from both yt_clip.py and yt_highlights.py.
   strip_source_lines(caption, channel_name) -> str
       Remove "Source: …" / "Sumber: …" / "via …" / "@handle" / URLs / channel
       name lines from a generated caption (Mode 7 only).
+
+  one_line_caption(caption, max_body) -> str   [S12]
+      Collapse any whitespace/newlines to a single line, separate body text
+      from trailing hashtags, trim the body to max_body if needed, and return
+      "body tags" (or just "body" when there are no tags).
 """
 
 from __future__ import annotations
@@ -413,3 +418,78 @@ def strip_source_lines(caption: str, channel_name: str | None = None) -> str:
         out_lines.append(line)
 
     return "\n".join(out_lines).rstrip()
+
+
+# ── one_line_caption (S12) ────────────────────────────────────────────────────
+
+# Matches a '#' followed by word characters that appears as a token at the END
+# of a whitespace-delimited sequence.  We collect trailing hashtag tokens after
+# splitting the flat text.
+_TRAILING_HASHTAG_TOKEN_RE = re.compile(r"^#\w+$")
+
+
+def one_line_caption(caption: str, max_body: int = 180) -> str:
+    """Collapse a multi-paragraph caption to a single line (S12).
+
+    Algorithm:
+    1. Collapse all whitespace / newlines → single spaces, strip edges.
+    2. Separate trailing hashtag tokens (tokens starting with '#' at the END
+       of the token sequence, contiguous from the right) from body tokens.
+       A '#' that is embedded inside a word (e.g. "#1" in "the #1 fan of …")
+       is only a "hashtag token" when the whole whitespace-separated token
+       starts with '#' and the token is in the trailing hashtag run.
+    3. If body exceeds max_body:
+       a. Try to cut at the last sentence-end punctuation ('.', '!', '?') that
+          keeps ≥ 60 % of max_body.
+       b. Otherwise cut at the last word boundary and append '…'.
+    4. Return f"{body} {tags}".strip().  If there are no tags, return body
+       only (no trailing space).
+
+    Does NOT add or remove hashtags — use clean_clip_hashtags for that.
+    """
+    if not caption:
+        return caption
+
+    # Step 1: flatten all whitespace.
+    flat = _normalise_ws(caption)
+
+    # Step 2: find the trailing hashtag token run.
+    tokens = flat.split(" ")
+    split_idx = len(tokens)  # index of first hashtag token in trailing run
+    for i in range(len(tokens) - 1, -1, -1):
+        if _TRAILING_HASHTAG_TOKEN_RE.match(tokens[i]):
+            split_idx = i
+        else:
+            break
+
+    body_tokens = tokens[:split_idx]
+    tag_tokens = tokens[split_idx:]
+
+    body = " ".join(body_tokens)
+    tags = " ".join(tag_tokens)
+
+    # Step 3: trim body if it exceeds max_body.
+    if len(body) > max_body:
+        threshold = int(max_body * 0.6)
+        # (a) Last sentence-end punctuation within [threshold, max_body].
+        cut_pos = -1
+        for i in range(max_body - 1, threshold - 1, -1):
+            if i < len(body) and body[i] in ".!?":
+                cut_pos = i + 1  # include the punctuation
+                break
+        if cut_pos != -1:
+            body = body[:cut_pos].rstrip()
+        else:
+            # (b) Cut at the last word boundary within max_body - 1
+            #     (leaving room for the ellipsis character).
+            candidate = body[: max_body - 1]  # '…' is one character
+            last_space = candidate.rfind(" ")
+            if last_space > 0:
+                body = body[:last_space].rstrip() + "…"
+            else:
+                body = candidate + "…"
+
+    # Step 4: assemble.
+    if tags:
+        return body + " " + tags
+    return body

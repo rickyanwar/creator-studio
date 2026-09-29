@@ -1,10 +1,11 @@
-"""Unit tests for S2f — yt_clip_title.py (clean_clip_title + strip_source_lines + clean_clip_hashtags).
+"""Unit tests for S2f/S12 — yt_clip_title.py (clean_clip_title + strip_source_lines +
+clean_clip_hashtags + one_line_caption).
 
 pytest -q backend/tests/test_yt_clip_title.py
 """
 
 import pytest
-from app.services.yt_clip_title import clean_clip_title, clean_clip_hashtags, strip_source_lines
+from app.services.yt_clip_title import clean_clip_title, clean_clip_hashtags, strip_source_lines, one_line_caption
 
 
 # ── clean_clip_title ──────────────────────────────────────────────────────────
@@ -517,3 +518,108 @@ class TestContainsNameFirstNameToken:
         # Result should be prefixed with 'Antonelli' or None (too long).
         if result is not None:
             assert result.startswith("Antonelli") or "Kimi" in result
+
+
+# ── S12: one_line_caption ─────────────────────────────────────────────────────
+
+# Real job-9683 caption (abridged, as specified in the task):
+_CAPTION_9683 = (
+    '"Kimi, we cannot risk a DNF — we need to start saving fuel now."\n\n'
+    "During the Azerbaijan GP, Kimi Antonelli receives a brutal reality check "
+    "over the team radio. The data shows they are about a lap short on fuel "
+    "with the finish in sight.\n\n"
+    "How would you handle these mixed instructions behind the wheel? Share your "
+    "thoughts on this strategy call in the comments!\n\n"
+    "#F1 #KimiAntonelli #AzerbaijanGP"
+)
+
+
+class TestOneLineCaption:
+    """S12: one_line_caption collapses multi-paragraph captions to a single line."""
+
+    # ── multi-paragraph → one line ────────────────────────────────────────────
+
+    def test_real_9683_becomes_one_line(self):
+        """Real job-9683 text must collapse to exactly one line."""
+        result = one_line_caption(_CAPTION_9683)
+        assert "\n" not in result, f"newline found in result: {result!r}"
+
+    def test_real_9683_body_le_180_chars(self):
+        """Body (before hashtags) must be ≤ 180 chars."""
+        result = one_line_caption(_CAPTION_9683)
+        # Split off trailing hashtag tokens
+        tokens = result.split()
+        body_tokens = []
+        for t in tokens:
+            if t.startswith("#"):
+                break
+            body_tokens.append(t)
+        body = " ".join(body_tokens)
+        assert len(body) <= 180, f"body too long ({len(body)}): {body!r}"
+
+    def test_real_9683_tags_kept_in_order(self):
+        """Tags #F1 #KimiAntonelli #AzerbaijanGP must appear and stay in order."""
+        result = one_line_caption(_CAPTION_9683)
+        tags = [t for t in result.split() if t.startswith("#")]
+        assert tags == ["#F1", "#KimiAntonelli", "#AzerbaijanGP"], (
+            f"unexpected tags: {tags}"
+        )
+
+    def test_real_9683_no_newline(self):
+        """Explicit newline check — same as one_line but kept as its own assertion."""
+        assert "\n" not in one_line_caption(_CAPTION_9683)
+
+    # ── already one-line caption unchanged ───────────────────────────────────
+
+    def test_already_one_line_unchanged(self):
+        """A caption that is already a single line must not be altered."""
+        caption = "Kimi told to save fuel or risk a DNF in Baku — would you have pushed? #F1 #KimiAntonelli #AzerbaijanGP"
+        result = one_line_caption(caption)
+        assert result == caption
+
+    # ── long single sentence cut at word boundary with '…' ───────────────────
+
+    def test_long_single_sentence_cut_at_word_boundary(self):
+        """A single very long sentence (> 180 chars, no sentence-end punctuation
+        within 60% of the limit) must be cut at a word boundary and appended with '…'."""
+        long_body = "A" * 50 + " " + "B" * 50 + " " + "C" * 50 + " " + "D" * 50
+        # 4 × 50 chars + 3 spaces = 203 chars, no sentence-end punctuation
+        caption = long_body + " #F1"
+        result = one_line_caption(caption)
+        assert "\n" not in result
+        body = " ".join(t for t in result.split() if not t.startswith("#"))
+        assert len(body) <= 180
+        assert body.endswith("…"), f"expected ellipsis, got: {body!r}"
+
+    # ── caption without hashtags ──────────────────────────────────────────────
+
+    def test_no_hashtags_returns_body_only(self):
+        """When there are no hashtags, the result must be body text only (no trailing space)."""
+        caption = "Kimi receives a brutal reality check during the Azerbaijan GP."
+        result = one_line_caption(caption)
+        assert result == caption
+        assert not result.endswith(" ")
+
+    # ── '#1 fan' inside body must stay ───────────────────────────────────────
+
+    def test_hash_inside_body_sentence_kept(self):
+        """'#1 fan' inside a sentence is NOT a hashtag token — it must not be moved."""
+        caption = "He is the #1 fan of this team. #F1 #KimiAntonelli"
+        result = one_line_caption(caption)
+        assert "#1 fan" in result or "#1" in result.split(" ")[1]
+        # The result must still be a single line
+        assert "\n" not in result
+        # Hashtag tokens must still appear
+        assert "#F1" in result
+        assert "#KimiAntonelli" in result
+
+    # ── max_body parameter ────────────────────────────────────────────────────
+
+    def test_custom_max_body(self):
+        """max_body parameter is respected."""
+        # Create a body of ~100 chars
+        body_text = "Word " * 25  # 125 chars (25 × 5)
+        caption = body_text.strip() + " #F1"
+        result = one_line_caption(caption, max_body=80)
+        body = " ".join(t for t in result.split() if not t.startswith("#"))
+        assert len(body) <= 80
