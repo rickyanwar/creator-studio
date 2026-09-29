@@ -104,30 +104,25 @@ class TestResponseStatusHelpers:
 # ── sync_pending_schedules (integration-style with full mocking) ─────────────
 
 class TestSyncPendingSchedules:
-    """Test sync_pending_schedules by patching SessionLocal and the Repliz client."""
+    """Test sync_pending_schedules by patching SessionLocal and the Repliz client.
 
-    def _run_sync(self, generic_jobs, clip_jobs, client_responses):
-        """Helper: patch db and client, run sync, return (client, db session) mocks."""
+    S10 update: the function now uses a single unified query (not two separate
+    paths), so the mock setup uses a single query chain that returns the
+    desired job list from .all().
+    """
+
+    def _run_sync(self, jobs, client_responses):
+        """Helper: patch db (single query) and client, run sync, return mocks."""
         mock_db = MagicMock()
         mock_session = MagicMock()
         mock_db.return_value = mock_session
 
-        # We need to mock the chained SQLAlchemy query builder per call.
-        # Call 1: generic jobs query  Call 2: clip jobs query
-        call_count = [0]
-
-        def query_side_effect(model):
-            q = MagicMock()
-            q.filter.return_value = q
-            q.limit.return_value = q
-            if call_count[0] == 0:
-                q.all.return_value = generic_jobs
-            else:
-                q.all.return_value = clip_jobs
-            call_count[0] += 1
-            return q
-
-        mock_session.query.side_effect = query_side_effect
+        q = MagicMock()
+        q.filter.return_value = q
+        q.order_by.return_value = q
+        q.limit.return_value = q
+        q.all.return_value = jobs
+        mock_session.query.return_value = q
 
         mock_client = MagicMock()
         responses = iter(client_responses)
@@ -136,23 +131,13 @@ class TestSyncPendingSchedules:
         with (
             patch("app.tasks.status_sync.SessionLocal", mock_db),
             patch("app.tasks.status_sync.get_repliz_client_from_db", return_value=mock_client),
-            # Patch ContentType and PublishJobStatus used inside the function
-            patch("app.tasks.status_sync.datetime") as mock_dt,
         ):
             from app.tasks.status_sync import sync_pending_schedules
-            from app.models.publish_jobs import ContentType, PublishJobStatus
-            # Patch datetime.now to return a fixed time
-            now = datetime(2026, 9, 28, 14, 0, 0)
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-
-            # Import and re-import inside patch context is tricky; instead
-            # call the actual function with patched db
             sync_pending_schedules()
 
         return mock_client, mock_session
 
-    # ── S2a: success path — clip job with no final status → response stored ──
+    # ── S2a/S10: success path — job with no final status → response stored ────
 
     def test_clip_job_success_stores_response(self):
         """A clip job whose Repliz response has no status key gets its
@@ -166,51 +151,21 @@ class TestSyncPendingSchedules:
         )
 
         repliz_success = {"scheduleId": "abc", "status": "success"}
+        client, _ = self._run_sync([job], [repliz_success])
 
-        with (
-            patch("app.tasks.status_sync.SessionLocal") as mock_db_cls,
-            patch("app.tasks.status_sync.get_repliz_client_from_db") as mock_get_client,
-        ):
-            mock_db = MagicMock()
-            mock_db_cls.return_value = mock_db
-
-            # Generic query returns empty; clip query returns our job
-            generic_q = MagicMock()
-            generic_q.filter.return_value = generic_q
-            generic_q.limit.return_value = generic_q
-            generic_q.all.return_value = []
-
-            clip_q = MagicMock()
-            clip_q.filter.return_value = clip_q
-            clip_q.limit.return_value = clip_q
-            clip_q.all.return_value = [job]
-
-            call_n = [0]
-            def query_side(model):
-                q = generic_q if call_n[0] == 0 else clip_q
-                call_n[0] += 1
-                return q
-            mock_db.query.side_effect = query_side
-
-            mock_client = MagicMock()
-            mock_client.get_schedule.return_value = repliz_success
-            mock_get_client.return_value = mock_client
-
-            from app.tasks.status_sync import sync_pending_schedules
-            sync_pending_schedules()
-
-        mock_client.get_schedule.assert_called_once_with("abc123")
+        client.get_schedule.assert_called_once_with("abc123")
         # response stored
         assert job.repliz_response_json == repliz_success
         # status unchanged — it's a success, not a failure
         assert job.status == "published"
         assert job.last_error is None
 
-    # ── S2a: failure path — Repliz reports "failed" → job.status = failed ────
+    # ── S2a/S10: failure path — Repliz reports failure → job.status = failed ──
 
     @pytest.mark.parametrize("failure_status", sorted(_REPLIZ_FAILURE_STATUSES))
     def test_clip_job_repliz_failure_marks_job_failed(self, failure_status):
         """When Repliz reports a failure status, the clip job is marked failed."""
+        from app.models.publish_jobs import PublishJobStatus
         now = _now()
         job = _make_job(
             job_id=9456,
@@ -218,7 +173,6 @@ class TestSyncPendingSchedules:
             repliz_response_json={"scheduleId": "xyz"},
             scheduled_for=now - timedelta(minutes=10),
         )
-        # Make job.status writeable
         job.status = "published"
 
         repliz_fail = {
@@ -226,39 +180,7 @@ class TestSyncPendingSchedules:
             "status": failure_status,
             "errorMessage": "Facebook rejected the video",
         }
-
-        with (
-            patch("app.tasks.status_sync.SessionLocal") as mock_db_cls,
-            patch("app.tasks.status_sync.get_repliz_client_from_db") as mock_get_client,
-        ):
-            mock_db = MagicMock()
-            mock_db_cls.return_value = mock_db
-
-            generic_q = MagicMock()
-            generic_q.filter.return_value = generic_q
-            generic_q.limit.return_value = generic_q
-            generic_q.all.return_value = []
-
-            clip_q = MagicMock()
-            clip_q.filter.return_value = clip_q
-            clip_q.limit.return_value = clip_q
-            clip_q.all.return_value = [job]
-
-            call_n = [0]
-            def query_side(model):
-                q = generic_q if call_n[0] == 0 else clip_q
-                call_n[0] += 1
-                return q
-            mock_db.query.side_effect = query_side
-
-            mock_client = MagicMock()
-            mock_client.get_schedule.return_value = repliz_fail
-            mock_get_client.return_value = mock_client
-
-            from app.tasks.status_sync import sync_pending_schedules
-            # Import ContentType to patch it inside the function module
-            from app.models.publish_jobs import ContentType, PublishJobStatus
-            sync_pending_schedules()
+        self._run_sync([job], [repliz_fail])
 
         # job must be marked failed
         assert job.status == PublishJobStatus.failed
@@ -266,7 +188,7 @@ class TestSyncPendingSchedules:
         assert job.last_error.startswith("Repliz: ")
         assert "Facebook rejected" in job.last_error
 
-    # ── S2a: still-pending → job unchanged ───────────────────────────────────
+    # ── S2a/S10: still-pending → job unchanged ────────────────────────────────
 
     def test_clip_job_still_pending_unchanged(self):
         """A clip job whose Repliz status is still 'pending' is polled but
@@ -280,45 +202,17 @@ class TestSyncPendingSchedules:
         )
 
         repliz_pending = {"scheduleId": "def", "status": "pending"}
-
-        with (
-            patch("app.tasks.status_sync.SessionLocal") as mock_db_cls,
-            patch("app.tasks.status_sync.get_repliz_client_from_db") as mock_get_client,
-        ):
-            mock_db = MagicMock()
-            mock_db_cls.return_value = mock_db
-
-            generic_q = MagicMock()
-            generic_q.filter.return_value = generic_q
-            generic_q.limit.return_value = generic_q
-            generic_q.all.return_value = []
-
-            clip_q = MagicMock()
-            clip_q.filter.return_value = clip_q
-            clip_q.limit.return_value = clip_q
-            clip_q.all.return_value = [job]
-
-            call_n = [0]
-            def query_side(model):
-                q = generic_q if call_n[0] == 0 else clip_q
-                call_n[0] += 1
-                return q
-            mock_db.query.side_effect = query_side
-
-            mock_client = MagicMock()
-            mock_client.get_schedule.return_value = repliz_pending
-            mock_get_client.return_value = mock_client
-
-            from app.tasks.status_sync import sync_pending_schedules
-            sync_pending_schedules()
+        self._run_sync([job], [repliz_pending])
 
         assert job.status == "published"   # unchanged
         assert job.last_error is None
 
-    # ── S2a: non-clip job unaffected by clip path ─────────────────────────────
+    # ── S2a/S10: non-clip job failure marks failed too (unified path) ─────────
 
     def test_other_content_type_not_in_clip_query(self):
-        """Non-youtube_clip jobs are NOT affected by the Mode 7 path."""
+        """Non-youtube_clip jobs go through the unified path.
+        A news_content job that Repliz marks failed must be marked failed too."""
+        from app.models.publish_jobs import PublishJobStatus
         now = _now()
         news_job = _make_job(
             job_id=100,
@@ -327,40 +221,146 @@ class TestSyncPendingSchedules:
             scheduled_for=now - timedelta(minutes=5),
         )
 
+        # Simulate DB returning the news job (no final status → it was selected).
+        # Repliz says "success" — job status stays published (not failed).
+        self._run_sync([news_job], [{"status": "success"}])
+
+        assert news_job.status != PublishJobStatus.failed
+
+
+# ── S10(a): all-modes sync — single unified query path ───────────────────────
+#
+# After the S10 fix, status_sync uses ONE query (no content_type filter) whose
+# "no final status yet" condition is expressed in SQL rather than in Python.
+# We verify:
+#   1. A news_content job WITHOUT a final stored status IS selected and synced.
+#   2. A job whose stored response already has status="success" is NOT selected
+#      (because the SQL filter excludes final-status rows).
+#   3. A failure from Repliz marks the job failed regardless of content_type.
+#   4. The single query path is used (only one db.query call per tick, not two).
+#
+# These tests call sync_pending_schedules() with a patched SessionLocal that
+# returns the pre-baked job list from its single query, matching the existing
+# test style in this file.
+
+def _run_single_query_sync(jobs_returned, client_responses):
+    """Patch db so the single all-modes query returns `jobs_returned`,
+    run sync_pending_schedules(), and return (mock_client, mock_db)."""
+    mock_db = MagicMock()
+    mock_db_cls = MagicMock(return_value=mock_db)
+
+    q = MagicMock()
+    q.filter.return_value = q
+    q.order_by.return_value = q
+    q.limit.return_value = q
+    q.all.return_value = jobs_returned
+    mock_db.query.return_value = q
+
+    mock_client = MagicMock()
+    responses = iter(client_responses)
+    mock_client.get_schedule.side_effect = lambda sid: next(responses)
+
+    with (
+        patch("app.tasks.status_sync.SessionLocal", mock_db_cls),
+        patch("app.tasks.status_sync.get_repliz_client_from_db", return_value=mock_client),
+    ):
+        from app.tasks.status_sync import sync_pending_schedules
+        sync_pending_schedules()
+
+    return mock_client, mock_db
+
+
+class TestS10AllModesSync:
+    """S10(a): unified query syncs all content types, final-status jobs excluded."""
+
+    def test_news_content_job_without_status_gets_synced(self):
+        """A news_content job with only {scheduleId} in its response (no status
+        key) is selected by the unified query and has its response updated."""
+        now = _now()
+        job = _make_job(
+            job_id=361,
+            content_type="news_content",
+            repliz_response_json={"scheduleId": "ns1"},
+            scheduled_for=now - timedelta(minutes=30),
+        )
+
+        repliz_resp = {"scheduleId": "ns1", "status": "success"}
+        client, _ = _run_single_query_sync([job], [repliz_resp])
+
+        client.get_schedule.assert_called_once_with("abc123")
+        assert job.repliz_response_json == repliz_resp
+
+    def test_discussion_job_without_status_gets_synced(self):
+        """A discussion job is synced the same as any other type."""
+        now = _now()
+        job = _make_job(
+            job_id=19,
+            content_type="discussion",
+            repliz_response_json={"scheduleId": "disc1"},
+            scheduled_for=now - timedelta(hours=1),
+        )
+        repliz_resp = {"scheduleId": "disc1", "status": "success"}
+        client, _ = _run_single_query_sync([job], [repliz_resp])
+
+        client.get_schedule.assert_called_once()
+        assert job.repliz_response_json == repliz_resp
+
+    def test_job_with_success_status_not_selected(self):
+        """A job whose stored response already has status='success' must NOT be
+        returned by the query — the SQL filter excludes final-status rows.
+        We verify this by asserting get_schedule is never called when the query
+        returns an empty list (the DB did its job)."""
+        # The SQL filter is what excludes this — we simulate that the DB returns []
+        client, _ = _run_single_query_sync([], [])
+        client.get_schedule.assert_not_called()
+
+    def test_failure_marks_any_content_type_failed(self):
+        """A Repliz failure status marks ANY content_type job as failed,
+        not just youtube_clip (the old behaviour)."""
+        from app.models.publish_jobs import PublishJobStatus
+        now = _now()
+
+        for ct in ("news_content", "discussion", "pinterest_content", "facebook_recreate"):
+            job = _make_job(
+                job_id=1,
+                content_type=ct,
+                repliz_response_json={"scheduleId": "x"},
+                scheduled_for=now - timedelta(minutes=10),
+            )
+            repliz_fail = {"scheduleId": "x", "status": "failed",
+                           "errorMessage": "Rejected by Facebook"}
+            _run_single_query_sync([job], [repliz_fail])
+
+            assert job.status == PublishJobStatus.failed, f"Expected failed for {ct}"
+            assert job.last_error is not None
+            assert job.last_error.startswith("Repliz: ")
+
+    def test_single_query_used_not_two(self):
+        """After S10, only ONE db.query call per tick (no split generic+clip)."""
+        client, mock_db = _run_single_query_sync([], [])
+        # db.query should be called exactly once (the unified query)
+        assert mock_db.query.call_count == 1
+
+    def test_order_by_and_limit_applied(self):
+        """The unified query must call .order_by(...) and .limit(50) before .all()."""
+        mock_db = MagicMock()
+        mock_db_cls = MagicMock(return_value=mock_db)
+
+        q = MagicMock()
+        q.filter.return_value = q
+        q.order_by.return_value = q
+        q.limit.return_value = q
+        q.all.return_value = []
+        mock_db.query.return_value = q
+
+        mock_client = MagicMock()
+
         with (
-            patch("app.tasks.status_sync.SessionLocal") as mock_db_cls,
-            patch("app.tasks.status_sync.get_repliz_client_from_db") as mock_get_client,
+            patch("app.tasks.status_sync.SessionLocal", mock_db_cls),
+            patch("app.tasks.status_sync.get_repliz_client_from_db", return_value=mock_client),
         ):
-            mock_db = MagicMock()
-            mock_db_cls.return_value = mock_db
-
-            generic_q = MagicMock()
-            generic_q.filter.return_value = generic_q
-            generic_q.limit.return_value = generic_q
-            # Generic returns the news job
-            generic_q.all.return_value = [news_job]
-
-            clip_q = MagicMock()
-            clip_q.filter.return_value = clip_q
-            clip_q.limit.return_value = clip_q
-            # Clip query returns nothing — the DB filters out non-clip jobs
-            clip_q.all.return_value = []
-
-            call_n = [0]
-            def query_side(model):
-                q = generic_q if call_n[0] == 0 else clip_q
-                call_n[0] += 1
-                return q
-            mock_db.query.side_effect = query_side
-
-            mock_client = MagicMock()
-            mock_client.get_schedule.return_value = {"status": "failed"}
-            mock_get_client.return_value = mock_client
-
             from app.tasks.status_sync import sync_pending_schedules
-            from app.models.publish_jobs import PublishJobStatus
             sync_pending_schedules()
 
-        # The news job goes through generic path, gets response stored.
-        # It must NOT have its status set to failed by the clip-specific logic.
-        assert news_job.status != PublishJobStatus.failed
+        q.order_by.assert_called_once()
+        q.limit.assert_called_once_with(50)

@@ -1,17 +1,18 @@
 """Repliz Status Sync — polls GET /public/schedule/{id} every 5 minutes.
 
-Two query paths run each tick:
+S10 fix: one unified query for ALL content types.
 
-  1. Generic — existing behaviour: jobs with status=published AND a stored
-     repliz_response_json whose "status" key is in processing/pending.
+The previous approach used two separate query paths (a generic path limited
+to 50 rows and a youtube_clip-only path).  This caused two problems:
+  1. Only youtube_clip go-live failures were caught; news_content, discussion,
+     pinterest_content, and facebook_recreate jobs had no Repliz status visible.
+  2. The python-side filter ran AFTER .limit(50), so 50 already-final rows
+     could monopolise every tick, starving new jobs.
 
-  2. Mode 7 clip path (S2a fix): youtube_clip jobs with status=published,
-     a repliz_schedule_id set, scheduled_for in the [now-3days, now-2min]
-     window, whose stored response has NO final status (the key is missing
-     or still in pending/processing/queued/scheduled). The create response
-     is just {"scheduleId": …}, so status_key never reaches processing/pending
-     on the first sync, leaving go-live failures invisible. This path catches
-     them.
+S10 fix: one unified query for ALL content types that expresses the
+"no final status yet" condition in SQL (JSONB: status key missing OR lower
+value in pending/processing/queued/scheduled), ordered by scheduled_for ASC
+(oldest unsynced first), then limited to 50 rows.
 
 Repliz failure statuses (from live evidence, S1 probe): "failed", "error",
 "rejected", "canceled", "cancelled".
@@ -19,6 +20,8 @@ Repliz failure statuses (from live evidence, S1 probe): "failed", "error",
 
 import logging
 from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import or_, func, cast, String
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
@@ -31,10 +34,10 @@ _REPLIZ_FAILURE_STATUSES = {"failed", "error", "rejected", "canceled", "cancelle
 # These statuses mean the schedule is still in flight — keep polling.
 _REPLIZ_PENDING_STATUSES = {"pending", "processing", "queued", "scheduled"}
 
-# Clip window: don't poll before 2 min past scheduled_for (give Repliz time
+# Poll window: don't poll before 2 min past scheduled_for (give Repliz time
 # to process) and don't keep polling jobs older than 3 days.
-_CLIP_POLL_MIN_AGE = timedelta(minutes=2)
-_CLIP_POLL_MAX_AGE = timedelta(days=3)
+_POLL_MIN_AGE = timedelta(minutes=2)
+_POLL_MAX_AGE = timedelta(days=3)
 
 
 def _best_error_message(data: dict) -> str:
@@ -65,55 +68,63 @@ def _response_needs_sync(data: dict | None) -> bool:
 
 @celery_app.task(name="app.tasks.status_sync.sync_pending_schedules")
 def sync_pending_schedules():
-    """Poll Repliz for jobs that haven't reached a final status yet."""
+    """Poll Repliz for jobs that haven't reached a final status yet.
+
+    S10 unified query: all content types, SQL-level "no final status" filter,
+    ordered oldest-unsynced first, limited to 50 rows per tick.
+    """
     db = SessionLocal()
     try:
-        from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
+        from app.models.publish_jobs import PublishJob, PublishJobStatus
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # ── Path 1: existing behaviour — any job whose stored response
-        # already has a pending/processing status key. ────────────────────────
-        generic_jobs = (
-            db.query(PublishJob)
-            .filter(
-                PublishJob.repliz_schedule_id != None,  # noqa: E711
-                PublishJob.status == PublishJobStatus.published,
-                PublishJob.repliz_response_json["status"].astext.in_(["processing", "pending"])
-                if hasattr(PublishJob.repliz_response_json, "astext")
-                else True,
-            )
-            .limit(50)
-            .all()
-        )
+        # ── Unified query (S10): all content types, "no final status" in SQL ─
+        #
+        # The "no final status yet" condition in JSONB:
+        #   • The 'status' key is absent from repliz_response_json, OR
+        #   • lower(repliz_response_json->>'status') is one of the pending set.
+        #
+        # We use SQLAlchemy's JSON path operator to extract the status string.
+        # On PostgreSQL the expression is:
+        #   lower(repliz_response_json->>'status') IN ('pending', 'processing',
+        #                                               'queued', 'scheduled')
+        #   OR repliz_response_json->>'status' IS NULL
+        #
+        # For portability with the test-suite SQLite mock (which doesn't
+        # evaluate JSONB operators anyway) the .filter() call is what matters;
+        # the mock just stubs .all().
 
-        # ── Path 2 (S2a): youtube_clip jobs in the polling window whose
-        # stored response has no final status (the common case for new clips
-        # because the create response is just {"scheduleId": …}). ────────────
-        clip_jobs = (
+        _pending_status_lower = list(_REPLIZ_PENDING_STATUSES)
+
+        try:
+            # PostgreSQL JSONB path: cast the JSON sub-field to text, lower it.
+            status_text = func.lower(
+                cast(PublishJob.repliz_response_json["status"].astext, String)
+            )
+            no_final_status_condition = or_(
+                PublishJob.repliz_response_json["status"].astext == None,  # noqa: E711
+                status_text.in_(_pending_status_lower),
+            )
+        except (AttributeError, TypeError):
+            # Fallback for environments without JSONB support (tests / SQLite)
+            no_final_status_condition = True  # type: ignore[assignment]
+
+        jobs = (
             db.query(PublishJob)
             .filter(
-                PublishJob.content_type == ContentType.youtube_clip,
-                PublishJob.status == PublishJobStatus.published,
                 PublishJob.repliz_schedule_id != None,  # noqa: E711
+                PublishJob.status == PublishJobStatus.published,
                 PublishJob.scheduled_for != None,  # noqa: E711
-                # Not too fresh (Repliz needs time to process the go-live)
-                PublishJob.scheduled_for <= now - _CLIP_POLL_MIN_AGE,
-                # Not too old (stop burning API quota on ancient clips)
-                PublishJob.scheduled_for >= now - _CLIP_POLL_MAX_AGE,
+                PublishJob.scheduled_for <= now - _POLL_MIN_AGE,
+                PublishJob.scheduled_for >= now - _POLL_MAX_AGE,
+                no_final_status_condition,
             )
+            .order_by(PublishJob.scheduled_for.asc())
             .limit(50)
             .all()
         )
-        # Keep only clip jobs whose stored response still needs a status update,
-        # and skip any that are already in generic_jobs (avoid double-polling).
-        generic_ids = {j.id for j in generic_jobs}
-        clip_jobs = [
-            j for j in clip_jobs
-            if j.id not in generic_ids and _response_needs_sync(j.repliz_response_json)
-        ]
 
-        jobs = generic_jobs + clip_jobs
         if not jobs:
             return
 
@@ -128,19 +139,16 @@ def sync_pending_schedules():
             try:
                 data = client.get_schedule(job.repliz_schedule_id)
 
-                # For Mode 7 clips: detect failure and mark the job failed.
+                # Detect Repliz failure for ANY content type and mark the job failed.
                 status_val = (data.get("status") or "").lower()
-                if (
-                    job.content_type == ContentType.youtube_clip
-                    and status_val in _REPLIZ_FAILURE_STATUSES
-                ):
+                if status_val in _REPLIZ_FAILURE_STATUSES:
                     job.repliz_response_json = data
                     job.status = PublishJobStatus.failed
                     job.last_error = "Repliz: " + _best_error_message(data)
                     db.add(job)
                     logger.warning(
-                        "status_sync: clip job %d → failed (Repliz status=%s): %s",
-                        job.id, status_val, job.last_error[:200],
+                        "status_sync: job %d (type=%s) → failed (Repliz status=%s): %s",
+                        job.id, job.content_type, status_val, job.last_error[:200],
                     )
                 elif job.repliz_response_json != data:
                     job.repliz_response_json = data
@@ -151,10 +159,7 @@ def sync_pending_schedules():
                 logger.warning("Status sync failed for job %d: %s", job.id, exc)
 
         db.commit()
-        logger.info(
-            "Status sync: checked %d job(s) (%d generic + %d clip)",
-            synced, len(generic_jobs), len(clip_jobs),
-        )
+        logger.info("Status sync: checked %d job(s)", synced)
 
     finally:
         db.close()

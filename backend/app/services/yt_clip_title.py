@@ -66,19 +66,36 @@ def _normalise_ws(text: str) -> str:
 
 
 def _contains_name(title_lower: str, people: list[str]) -> bool:
-    """Return True if the title (lower-cased) contains at least one full name
-    or surname from `people` (case-insensitive)."""
+    """Return True if the title (lower-cased) contains at least one full name,
+    surname, or name token of length >= 3 from `people` (case-insensitive,
+    whole-word match).
+
+    S10(b): extend matching to include any name token (first name, nickname-like
+    tokens) of length >= 3, whole-word, case-insensitive.  Only when NONE of
+    these match should the caller prefix the surname.
+
+    Prod example: people=["Kimi Antonelli"], title "Kimi Told to Save Fuel or
+    Risk a DNF" — "Kimi" is a name token of length 4 >= 3, so the title is
+    accepted without prefixing.
+    """
     for person in people:
         parts = person.strip().split()
         if not parts:
             continue
-        # Full name match
+        # Full name match (whole-string, case-insensitive already handled by caller)
         if person.lower() in title_lower:
             return True
-        # Surname-only match (last word of the full name)
+        # Surname-only whole-word match (last word of the full name)
         surname = parts[-1].lower()
-        if surname and surname in title_lower:
+        if surname and re.search(r"\b" + re.escape(surname) + r"\b", title_lower):
             return True
+        # Any name token of length >= 3 — whole-word match
+        for token in parts:
+            token_lower = token.lower()
+            if len(token_lower) >= 3 and re.search(
+                r"\b" + re.escape(token_lower) + r"\b", title_lower
+            ):
+                return True
     return False
 
 
