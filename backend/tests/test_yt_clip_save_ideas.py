@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock, patch, call
 import pytest
 
+# S11: _save_ideas now calls _taken_ranges(db, video_id) internally.
+# All tests in this module use distinct, non-overlapping time ranges per
+# highlight so the intra-batch de-dup does not interfere with pre-S11 tests.
+_PATCH_TAKEN = patch("app.tasks.yt_clip._taken_ranges", return_value=[])
+
 
 # ── Minimal Highlight stand-in (matches the real frozen dataclass shape) ──────
 
@@ -60,14 +65,19 @@ def _h(title, people, start=0.0, end=65.0):
 class TestSaveIdeas:
 
     def _run(self, highlights, channel_name="F1 Official"):
-        """Run _save_ideas with a mock DB and return (added_count, db_add_calls)."""
+        """Run _save_ideas with a mock DB and return (added_count, db_add_calls).
+
+        Patches _taken_ranges → [] so the pre-S11 title-cleaning tests are not
+        affected by the intra-batch or cross-fanpage similarity filter.
+        """
         from app.tasks.yt_clip import _save_ideas
 
         mock_db = MagicMock()
         fanpage = _make_fanpage()
         video = _make_video(channel_name)
 
-        n = _save_ideas(mock_db, fanpage, video, highlights)
+        with _PATCH_TAKEN:
+            n = _save_ideas(mock_db, fanpage, video, highlights)
         return n, mock_db.add.call_count, video
 
     def test_valid_highlight_with_name_is_stored(self):
@@ -91,7 +101,8 @@ class TestSaveIdeas:
         from app.models.yt_clip_ideas import YtClipIdea
         fanpage = _make_fanpage()
         video2 = _make_video()
-        _save_ideas(mock_db, fanpage, video2, [h])
+        with _PATCH_TAKEN:
+            _save_ideas(mock_db, fanpage, video2, [h])
         # Grab what was passed to db.add
         added_idea = mock_db.add.call_args[0][0]
         assert "Leclerc" in added_idea.title
@@ -113,11 +124,11 @@ class TestSaveIdeas:
         assert video.ideas_created == 0
 
     def test_mixed_highlights_count_correctly(self):
-        """3 highlights: 2 valid, 1 with empty people → ideas_created=2."""
+        """3 highlights: 2 valid (non-overlapping), 1 with empty people → ideas_created=2."""
         highlights = [
-            _h("Leclerc Pole Lap", people=["Charles Leclerc"]),
-            _h("Hamilton Win", people=["Lewis Hamilton"]),
-            _h("No Name Here", people=[]),
+            _h("Leclerc Pole Lap", people=["Charles Leclerc"], start=0.0, end=65.0),
+            _h("Hamilton Win", people=["Lewis Hamilton"], start=200.0, end=265.0),
+            _h("No Name Here", people=[], start=400.0, end=465.0),
         ]
         n, adds, video = self._run(highlights)
         assert n == 2
@@ -132,7 +143,8 @@ class TestSaveIdeas:
         from app.tasks.yt_clip import _save_ideas
         fanpage = _make_fanpage()
         video = _make_video(channel_name="F1 Official")
-        n = _save_ideas(mock_db, fanpage, video, [h])
+        with _PATCH_TAKEN:
+            n = _save_ideas(mock_db, fanpage, video, [h])
         if n == 1:
             added = mock_db.add.call_args[0][0]
             assert "F1 Official" not in added.title
@@ -143,7 +155,8 @@ class TestSaveIdeas:
         mock_db = MagicMock()
         from app.tasks.yt_clip import _save_ideas
         video = _make_video()
-        _save_ideas(mock_db, _make_fanpage(), video, highlights)
+        with _PATCH_TAKEN:
+            _save_ideas(mock_db, _make_fanpage(), video, highlights)
         assert video.status == "analyzed"
 
     def test_zero_highlights_still_marks_analyzed(self):
@@ -151,7 +164,8 @@ class TestSaveIdeas:
         mock_db = MagicMock()
         from app.tasks.yt_clip import _save_ideas
         video = _make_video()
-        _save_ideas(mock_db, _make_fanpage(), video, [])
+        with _PATCH_TAKEN:
+            _save_ideas(mock_db, _make_fanpage(), video, [])
         assert video.status == "analyzed"
         assert video.ideas_created == 0
 

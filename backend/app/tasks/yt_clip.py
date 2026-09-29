@@ -194,7 +194,8 @@ def _skip_reason(meta, video, fanpage) -> str | None:
     return None
 
 
-def _highlight_prompt(fanpage, video, meta, srt: str, direction: str | None):
+def _highlight_prompt(fanpage, video, meta, srt: str, direction: str | None,
+                      taken: list[tuple[float, float]] | None = None):
     from app.services.yt_highlights import ClipRules, build_prompt, language_name
 
     rules = ClipRules(
@@ -211,8 +212,42 @@ def _highlight_prompt(fanpage, video, meta, srt: str, direction: str | None):
     prompt = build_prompt(
         page=fanpage.name, niche=niche, language=language_name(fanpage.caption_language),
         context=context, transcript=srt, rules=rules, direction=direction,
+        taken=taken or [],
     )
     return prompt, rules
+
+
+def _taken_ranges(db, video_id: str) -> list[tuple[float, float]]:
+    """Return all (start_s, end_s) pairs already taken for *video_id* across ALL fanpages.
+
+    Sources:
+      • YtClipIdea rows with status in ('pending', 'used') for this video_id.
+      • PublishJob rows: content_type=youtube_clip, yt_video_id=video_id,
+        is_deleted=False, status NOT IN ('skipped', 'failed').
+    """
+    from app.models.yt_clip_ideas import YtClipIdea
+    from app.models.publish_jobs import PublishJob, ContentType, PublishJobStatus
+
+    ideas = db.query(YtClipIdea).filter(
+        YtClipIdea.video_id == video_id,
+        YtClipIdea.status.in_(("pending", "used")),
+    ).all()
+
+    jobs = db.query(PublishJob).filter(
+        PublishJob.content_type == ContentType.youtube_clip,
+        PublishJob.yt_video_id == video_id,
+        PublishJob.is_deleted == False,  # noqa: E712
+        PublishJob.status.notin_((PublishJobStatus.skipped, PublishJobStatus.failed)),
+    ).all()
+
+    ranges: list[tuple[float, float]] = [
+        (idea.start_s, idea.end_s) for idea in ideas
+    ] + [
+        (job.clip_start_s, job.clip_end_s)
+        for job in jobs
+        if job.clip_start_s is not None and job.clip_end_s is not None
+    ]
+    return ranges
 
 
 def _save_ideas(db, fanpage, video, highlights) -> int:
@@ -222,12 +257,31 @@ def _save_ideas(db, fanpage, video, highlights) -> int:
     response) is available. Highlights whose title cannot be cleaned
     are skipped — they never reach the DB, so _consume_one never sees them.
     video.ideas_created counts only the ideas actually added.
+
+    S11: highlights that overlap (≥ 30% of the shorter clip) with any
+    already-taken range for this video (across ALL fanpages) are dropped.
+    The same check is applied within the current batch so that a run on
+    the second fanpage cannot re-create a moment the first fanpage just
+    picked in the same tick.
     """
     from app.models.yt_clip_ideas import YtClipIdea
     from app.services.yt_clip_title import clean_clip_title
+    from app.services.yt_highlights import is_similar
+
+    # Collect taken ranges from DB (cross-fanpage) once, then extend with
+    # highlights accepted in this batch (intra-batch safety net).
+    taken: list[tuple[float, float]] = _taken_ranges(db, video.video_id)
+    batch_taken: list[tuple[float, float]] = []
 
     added = 0
     for h in highlights:
+        clip_range = (h.start, h.end)
+        if is_similar(clip_range, taken) or is_similar(clip_range, batch_taken):
+            logger.info(
+                "yt_clip: highlight dropped — similar to an existing clip (video %s, %.0f-%.0fs)",
+                video.video_id, h.start, h.end,
+            )
+            continue
         cleaned_title = clean_clip_title(
             h.title,
             people=h.people,
@@ -244,6 +298,7 @@ def _save_ideas(db, fanpage, video, highlights) -> int:
             start_s=h.start, end_s=h.end, title=cleaned_title, description=h.description,
             hook_text=h.hook_text, virality_score=h.score, transcript_excerpt=h.excerpt,
         ))
+        batch_taken.append(clip_range)
         added += 1
     video.status = "analyzed"
     video.ideas_created = added
@@ -302,7 +357,8 @@ def analyze_video(video_row_id: int):
         video.words_path = str(words_path)
         db.commit()
         direction = video.source.direction if video.source else None
-        prompt, rules = _highlight_prompt(fanpage, video, meta, to_srt(lines), direction)
+        taken = _taken_ranges(db, video.video_id)
+        prompt, rules = _highlight_prompt(fanpage, video, meta, to_srt(lines), direction, taken=taken)
         highlights = find_highlights(prompt, words, float(meta.duration_s), rules, fanpage_id=fanpage.id)
         n = _save_ideas(db, fanpage, video, highlights)
         logger.info("yt_clip: %s analysed for fanpage %d → %d idea(s)", video.video_id, fanpage.id, n)

@@ -27,7 +27,7 @@ import logging
 import time
 from dataclasses import dataclass
 
-from app.services.yt_transcript import Word, nearest_pause, parse_timestamp, pause_points, text_between
+from app.services.yt_transcript import Word, nearest_pause, parse_timestamp, pause_points, text_between, _ts
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,25 @@ _TOTAL_BUDGET_S = 720.0   # stop trying new models after this — the video work
 _TEMPERATURE = 0.4
 _EXTRA_CANDIDATES = 3     # over-request, since fitting/overlap can drop some
 _MIN_GAP_S = 2.0          # between two accepted clips from the same video
+_SIMILAR_OVERLAP = 0.3   # overlap / shorter-clip ≥ this → clips are "similar"
+
+
+def overlap_fraction(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Fraction of the SHORTER clip that is covered by the overlap between a and b.
+
+    Returns a value in [0, 1]:  0 when disjoint, 1 when one contains the other.
+    """
+    overlap = max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
+    shorter = min(a[1] - a[0], b[1] - b[0])
+    if shorter <= 0:
+        return 0.0
+    return overlap / shorter
+
+
+def is_similar(clip: tuple[float, float], taken: list[tuple[float, float]]) -> bool:
+    """True when *clip* overlaps any entry in *taken* by ≥ _SIMILAR_OVERLAP."""
+    return any(overlap_fraction(clip, t) >= _SIMILAR_OVERLAP for t in taken)
+
 
 LANGUAGE_NAMES = {
     "en": "English", "id": "Indonesian", "ms": "Malay", "es": "Spanish", "pt": "Portuguese",
@@ -186,17 +205,38 @@ DIRECTION FOR THIS SOURCE (HIGHEST PRIORITY)
 Follow it as closely as the transcript allows when choosing MOMENTS. It does not change the clip count, the duration rule or the output format.
 """
 
+_TAKEN_SECTION = """
+==================================================
+ALREADY USED MOMENTS — pick DIFFERENT moments that do not overlap these:
+========================================================================
+
+{ranges}
+"""
+
+
+def _fmt_range(start: float, end: float) -> str:
+    """Format a (start, end) pair as HH:MM:SS–HH:MM:SS using the existing _ts helper."""
+    # _ts returns "HH:MM:SS,mmm"; we want just "HH:MM:SS"
+    def hms(s: float) -> str:
+        return _ts(s).split(",")[0]
+    return f"{hms(start)}–{hms(end)}"
+
 
 def build_prompt(*, page: str, niche: str, language: str, context: str, transcript: str,
-                 rules: ClipRules, direction: str | None) -> str:
+                 rules: ClipRules, direction: str | None,
+                 taken: list[tuple[float, float]] | None = None) -> str:
     direction_text = " ".join((direction or "").split())[:500]
+    taken_block = ""
+    if taken:
+        lines = "\n".join(f"  {_fmt_range(s, e)}" for s, e in taken)
+        taken_block = _TAKEN_SECTION.format(ranges=lines)
     return _PROMPT.format(
         page=page, niche=niche, language=language, context=context,
         transcript=transcript,
         num_clips=rules.count + _EXTRA_CANDIDATES,
         min_s=rules.min_s, max_s=rules.max_s, aim_s=(rules.min_s + rules.max_s) // 2,
         direction=_DIRECTION_BLOCK.format(text=direction_text) if direction_text else "",
-    )
+    ) + taken_block
 
 
 def parse_highlights_json(raw: str) -> list[dict]:
