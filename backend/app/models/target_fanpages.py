@@ -158,6 +158,7 @@ class TargetFanpage(Base):
     # (news_copywriter.generate_pinterest_hashtags) since Mode 5 ideas carry
     # no caption field of their own to bake them into.
     pinterest_hashtag_count = Column(Integer, default=5, nullable=False, server_default="5")
+    pinterest_allow_low_quality = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # ── Mode 6: Facebook photo recreate ────────────
     # Clone another Facebook page's (not this fanpage's own) `/photos`

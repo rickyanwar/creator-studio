@@ -370,6 +370,7 @@ def _fetch_and_store(
     engine: str,
     subject: str | None = None,
     captured_dates: dict[str, date] | None = None,
+    allow_low_quality: bool = False,
 ) -> list[DownloadedImage]:
     import time
 
@@ -408,7 +409,7 @@ def _fetch_and_store(
             continue
 
         # Min-size filter applies to the ORIGINAL (pre-upscale) resolution
-        if img.width < min_w or img.height < min_h:
+        if not allow_low_quality and (img.width < min_w or img.height < min_h):
             logger.debug("Gallery: skipping %s — %dx%d below min %dx%d", url, img.width, img.height, min_w, min_h)
             continue
 
@@ -441,11 +442,20 @@ def _fetch_and_store(
         # graphics with text overlays, tiny/blurry/mostly-obstructed subjects.
         # Fails open (usable=True) on any vision error — never let a flaky
         # call block a download outright.
-        try:
-            from app.services.design_images import classify_and_gate_image
-            label, usable = classify_and_gate_image(final_bytes, subject=subject)
-        except Exception:
-            label, usable = None, True
+        if allow_low_quality:
+            try:
+                from app.services.design_images import classify_and_gate_image
+                label, usable = classify_and_gate_image(
+                    final_bytes, subject=subject, allow_low_quality=True,
+                )
+            except Exception:
+                label, usable = None, True
+        else:
+            try:
+                from app.services.design_images import classify_and_gate_image
+                label, usable = classify_and_gate_image(final_bytes, subject=subject)
+            except Exception:
+                label, usable = None, True
 
         if not usable:
             logger.info("Gallery: rejecting %s — vision quality gate says not usable for design", url)

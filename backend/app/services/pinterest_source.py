@@ -180,44 +180,30 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     dest_dir = Path(s.storage_base_path) / "gallery" / "pinterest"
 
+    allow_low_quality = getattr(fanpage, "pinterest_allow_low_quality", False)
     saved = _fetch_and_store(
         [candidate.image_url], dest_dir, 1, _MIN_SIZE, _existing_pinterest_urls(db), "pinterest",
+        allow_low_quality=allow_low_quality,
     )
     if not saved:
+        logger.warning(f"[Pinterest] candidate {candidate.image_url} failed download/dedup")
         return None
     item = saved[0]
     image_bytes = Path(item.local_path).read_bytes()
 
-    # Free (no AI call) — catches genuine blur/undersized photos before
-    # spending any vision-call budget. Real incident, 2026-08-31: this
-    # alone is NOT sufficient (see vision_check_photo_quality's docstring —
-    # a real flagged-bad photo scored a HIGH sharpness variance despite
-    # looking soft/upscaled to the eye), which is why the vision check below
-    # exists too — this is just the cheap first pass for the clear-cut cases.
-    if _is_low_quality_photo(image_bytes):
+    def _reject(reason: str):
+        logger.info("Pinterest: candidate %s dropped: %s", candidate.image_url, reason)
         Path(item.local_path).unlink(missing_ok=True)
         return None
 
-    # Checked before the description/identify vision calls so a rejected
-    # pin doesn't spend extra vision-call budget on it (see
-    # vision_has_watermark's docstring — real batch testing this session
-    # found agency watermarks surviving straight through to the published
-    # post on the no-crop direct-post fallback).
+    if not allow_low_quality and _is_low_quality_photo(image_bytes):
+        return _reject("low quality pixel math")
+
     if vision_has_watermark(image_bytes):
-        Path(item.local_path).unlink(missing_ok=True)
-        return None
+        return _reject("watermark detected")
 
-    # Pinterest has no equivalent of Getty's editorial-quality floor — pins
-    # are user-uploaded/reposted and vary wildly, and unlike Mode 2/3 (see
-    # single_photo_face_fits in design_images.py), nothing here previously
-    # judged photo quality at all beyond the cheap check above. Real
-    # incident, 2026-08-31: user flagged two Fight Today posts (Jon Jones vs
-    # Dominick Reyes, Conor McGregor) as too blurry/low-detail to publish —
-    # see vision_check_photo_quality's docstring for why a vision call,
-    # not more pixel math, was the fix.
-    if not vision_check_photo_quality(image_bytes):
-        Path(item.local_path).unlink(missing_ok=True)
-        return None
+    if not allow_low_quality and not vision_check_photo_quality(image_bytes):
+        return _reject("vision quality failed")
 
     custom_prompt = fanpage.pinterest_custom_prompt or ""
     if candidate.description:
@@ -228,8 +214,7 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
         ok, title, description = result["identified"], result["title"], result["description"]
 
     if not ok or not title or not description:
-        Path(item.local_path).unlink(missing_ok=True)
-        return None
+        return _reject(f"description/identify failed (ok={ok})")
 
     gi = GalleryImage(
         keyword=title.lower()[:128],
@@ -241,27 +226,28 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
         source_engine="pinterest",
         label=item.label,
     )
-    db.add(gi)
     try:
+        db.add(gi)
+        db.flush()  # Assign gi.id before binding the idea, without committing.
+        idea = PinterestContentIdea(
+            fanpage_id=fanpage.id,
+            gallery_image_id=gi.id,
+            title=title,
+            description=description,
+            source_type=source_type,
+            status="pending",
+        )
+        db.add(idea)
         db.commit()
     except IntegrityError:
-        # a concurrent tick claimed this exact pin between our dedup read
-        # and this insert — same race handled the same way as
-        # design_images.fetch_subject_datauri.
+        # Concurrent tick claimed this URL; unique source_image_url keeps dedupe.
         db.rollback()
         Path(item.local_path).unlink(missing_ok=True)
         return None
-
-    idea = PinterestContentIdea(
-        fanpage_id=fanpage.id,
-        gallery_image_id=gi.id,
-        title=title,
-        description=description,
-        source_type=source_type,
-        status="pending",
-    )
-    db.add(idea)
-    db.commit()
+    except Exception:
+        db.rollback()
+        Path(item.local_path).unlink(missing_ok=True)
+        raise
     logger.info(
         "Pinterest: fanpage %d — new idea %d (%s) title=%r",
         fanpage.id, idea.id, source_type, title,

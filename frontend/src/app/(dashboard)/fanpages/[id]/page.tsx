@@ -1904,6 +1904,21 @@ export default function FanpageEditPage() {
               </div>
             </div>
 
+            <label className="flex items-start gap-3 rounded-lg border border-hairline p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 w-4 h-4 rounded accent-primary-main"
+                checked={Boolean(form.pinterest_allow_low_quality)}
+                onChange={(e) => set("pinterest_allow_low_quality", e.target.checked)}
+              />
+              <span>
+                <span className="block text-sm font-medium text-text-primary">Allow low-quality photos</span>
+                <span className="block text-[11px] text-text-secondary mt-0.5">
+                  Accept photos rejected by resolution and visual-quality checks. Watermark and content checks still apply.
+                </span>
+              </span>
+            </label>
+
             {/* Curated reference links */}
             <div className="border-t border-hairline pt-4 space-y-3">
               <div>

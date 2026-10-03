@@ -1879,7 +1879,11 @@ def classify_image_type(image_bytes: bytes) -> str:
     return "other"
 
 
-def classify_and_gate_image(image_bytes: bytes, subject: str | None = None) -> tuple[str, bool]:
+def classify_and_gate_image(
+    image_bytes: bytes,
+    subject: str | None = None,
+    allow_low_quality: bool = False,
+) -> tuple[str, bool]:
     """Download-time vision call: label the photo (face/action/other) AND
     judge whether it's actually usable as a design background — one vision
     call doing both jobs (replaces classify_image_type on the download path)
@@ -1914,39 +1918,58 @@ def classify_and_gate_image(image_bytes: bytes, subject: str | None = None) -> t
     bare "blurry foreground" ask without re-testing against both photos."""
     try:
         subject_line = f" The subject should be {subject}." if subject else ""
+        quality_rules = (
+            "   - the subject is tiny, blurry, or mostly cropped out\n"
+            "   - a blurry, out-of-focus PERSON (someone else's head/"
+            "shoulder) fills roughly HALF the frame or more in the "
+            "foreground, competing with or blocking the subject — a "
+            "'someone walked in front of the camera' shot\n"
+            "   A MINOR foreground blur confined to a corner or edge (a "
+            "hand, an armrest, a microphone, a sleeve) that does NOT "
+            "overlap or compete with the subject is NORMAL press "
+            "photography — do NOT mark that unusable.\n"
+        )
+        gate_rules = (
+            '2) "content_acceptable": true/false — is the subject the MAIN focal point '
+            'of a photo? Reply false for generic crowd/stage/logo-only shots, '
+            'screenshots, or graphics with text overlays. Ignore resolution, blur, '
+            'and cropping for this field.\n'
+            '3) "quality_usable": true/false — is the photo sharp, sufficiently '
+            'detailed, and unobstructed? Reply false if:\n'
+            f'{quality_rules}'
+            'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", '
+            '"content_acceptable": true|false, "quality_usable": true|false}.'
+        ) if allow_low_quality else (
+            '2) "usable": true/false — is the subject the clear, '
+            "unobstructed MAIN focal point of this photo? Reply false if:\n"
+            "   - it's a generic crowd/stage/logo-only shot, a screenshot, "
+            "or a graphic with text overlays\n"
+            f"{quality_rules}"
+            'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", "usable": true|false}.'
+        )
         content = [
             {"type": "text", "text": (
                 "This photo is a candidate for a sports/news graphic background."
                 f"{subject_line}\n"
                 '1) "label": ONE word — FACE (clear head/upper-body portrait), '
                 "ACTION (riding/driving/on track), or OTHER (anything else).\n"
-                '2) "usable": true/false — is the subject the clear, '
-                "unobstructed MAIN focal point of this photo? Reply false if:\n"
-                "   - it's a generic crowd/stage/logo-only shot, a screenshot, "
-                "or a graphic with text overlays\n"
-                "   - the subject is tiny, blurry, or mostly cropped out\n"
-                "   - a blurry, out-of-focus PERSON (someone else's head/"
-                "shoulder) fills roughly HALF the frame or more in the "
-                "foreground, competing with or blocking the subject — a "
-                "'someone walked in front of the camera' shot\n"
-                "   A MINOR foreground blur confined to a corner or edge (a "
-                "hand, an armrest, a microphone, a sleeve) that does NOT "
-                "overlap or compete with the subject is NORMAL press "
-                "photography — do NOT mark that unusable.\n"
-                'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", "usable": true|false}.'
+                f"{gate_rules}"
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
         ]
         raw = _vision_chat(content, max_tokens=1500, context="vision_download_gate")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
-            return "other", True
+            return "other", not allow_low_quality
         import json as _json
-        d = _json.loads(m.group(0))
+        try:
+            d = _json.loads(m.group(0))
+        except _json.JSONDecodeError:
+            return "other", not allow_low_quality
         label = str(d.get("label") or "OTHER").strip().upper()
         if label not in ("FACE", "ACTION", "OTHER"):
             label = "OTHER"
-        usable = bool(d.get("usable", True))
+        usable = d.get("content_acceptable") is True if allow_low_quality else bool(d.get("usable", True))
         return label.lower(), usable
     except Exception as exc:
         logger.warning("classify_and_gate_image failed: %s", exc)

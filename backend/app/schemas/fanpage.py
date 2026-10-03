@@ -74,6 +74,7 @@ class FanpageBase(BaseModel):
     pinterest_source_mode: str = "both"  # "curated" | "ai_keyword" | "both"
     pinterest_custom_prompt: str = ""
     pinterest_hashtag_count: int = 5
+    pinterest_allow_low_quality: bool = False
 
     # ── Mode 6: Facebook photo recreate ──
     facebook_photo_enabled: bool = False

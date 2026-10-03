@@ -103,19 +103,28 @@ def _topup_queue(db, fanpage) -> int:
         return 0
 
     mode = (fanpage.pinterest_source_mode or "both").lower()
-    try:
-        candidates = collect_new_candidates(db, fanpage, mode, limit=_TOPUP_BATCH)
-    except Exception as exc:
-        logger.error("Pinterest: candidate collection failed for fanpage %d: %s", fanpage.id, exc)
-        return 0
-
     created = 0
-    for candidate, source_type, _source_ref in candidates:
+    attempts = 0
+    while created < 1 and attempts < 3:
         try:
-            if build_idea_from_candidate(db, fanpage, candidate, source_type):
-                created += 1
+            candidates = collect_new_candidates(db, fanpage, mode, limit=_TOPUP_BATCH)
         except Exception as exc:
-            logger.error("Pinterest: idea build failed for fanpage %d: %s", fanpage.id, exc)
+            logger.error("Pinterest: candidate collection failed for fanpage %d: %s", fanpage.id, exc)
+            break
+
+        if not candidates:
+            break
+
+        for candidate, source_type, _source_ref in candidates:
+            try:
+                if build_idea_from_candidate(db, fanpage, candidate, source_type):
+                    created += 1
+            except Exception as exc:
+                db.rollback()
+                logger.error("Pinterest: idea build failed for fanpage %d: %s", fanpage.id, exc)
+
+        attempts += 1
+
     return created
 
 
@@ -134,6 +143,7 @@ def _consume_one(db, fanpage) -> bool:
         db.query(PinterestContentIdea)
         .filter(PinterestContentIdea.fanpage_id == fanpage.id, PinterestContentIdea.status == "pending")
         .order_by(PinterestContentIdea.created_at.asc())
+        .with_for_update(skip_locked=True)
         .first()
     )
     if not idea:

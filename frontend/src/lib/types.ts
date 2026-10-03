@@ -85,6 +85,7 @@ export interface Fanpage {
   pinterest_source_mode: string; // "curated" | "ai_keyword" | "both"
   pinterest_custom_prompt: string;
   pinterest_hashtag_count: number;
+  pinterest_allow_low_quality: boolean;
   // ── Mode 6: Facebook photo recreate ──
   facebook_photo_enabled: boolean;
   facebook_photo_publish_mode: PublishMode;
