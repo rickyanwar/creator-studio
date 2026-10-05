@@ -33,9 +33,9 @@ const viewerTiers = [
 
 const tierStyles = {
   healthy: { badge: "badge-green", icon: "solar:check-circle-bold-duotone", text: "OK" },
-  degraded: { badge: "badge-yellow", icon: "solar:danger-circle-bold-duotone", text: "Gagal" },
-  unhealthy: { badge: "badge-red", icon: "solar:danger-triangle-bold-duotone", text: "Bermasalah" },
-  unknown: { badge: "badge-gray", icon: "solar:question-circle-bold-duotone", text: "Belum ada data" },
+  degraded: { badge: "badge-yellow", icon: "solar:danger-circle-bold-duotone", text: "Failing" },
+  unhealthy: { badge: "badge-red", icon: "solar:danger-triangle-bold-duotone", text: "Broken" },
+  unknown: { badge: "badge-gray", icon: "solar:question-circle-bold-duotone", text: "No data yet" },
 } as const;
 
 export default function SourcesPage() {
@@ -136,12 +136,12 @@ export default function SourcesPage() {
       {scraperHealth?.scraper_mode === "viewer" ? (
         <div className="rounded-xl border border-info-main/30 bg-info-lighter p-4 flex items-start gap-3 text-info-darker">
           <Icon icon="solar:info-circle-bold-duotone" className="mt-0.5 shrink-0" width={18} />
-          <p className="text-sm">Mode Web Viewer aktif — burner tidak diperlukan.</p>
+          <p className="text-sm">Web Viewer mode is on — burner accounts are not needed.</p>
         </div>
       ) : activeBurners.length === 0 && !isLoading && scraperHealth?.scraper_mode === "auto" ? (
         <div className="rounded-xl border border-info-main/30 bg-info-lighter p-4 flex items-start gap-3 text-info-darker">
           <Icon icon="solar:info-circle-bold-duotone" className="mt-0.5 shrink-0" width={18} />
-          <p className="text-sm">Tidak ada burner aktif — crawler otomatis memakai Web Viewer (GramSnap → AnonyIG → IGStoryViewer).</p>
+          <p className="text-sm">No active burner accounts — the crawler uses the Web Viewer automatically (GramSnap → AnonyIG → IGStoryViewer).</p>
         </div>
       ) : activeBurners.length === 0 && !isLoading && scraperHealth?.scraper_mode === "instagrapi" ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-warning-main/30 dark:bg-warning-lighter p-4 flex items-start gap-3">
@@ -157,10 +157,10 @@ export default function SourcesPage() {
       <section className="card-sm space-y-3" aria-labelledby="scraper-health-heading">
         <div className="flex flex-wrap items-baseline gap-2">
           <h2 id="scraper-health-heading" className="font-semibold text-ink">Scraper health</h2>
-          <span className="text-xs text-ink-48">Mode: {scraperHealth?.scraper_mode === "viewer" ? "Web Viewer" : scraperHealth?.scraper_mode === "instagrapi" ? "Instagrapi" : scraperHealth?.scraper_mode === "auto" ? "Otomatis" : "—"}</span>
+          <span className="text-xs text-ink-48">Mode: {scraperHealth?.scraper_mode === "viewer" ? "Web Viewer" : scraperHealth?.scraper_mode === "instagrapi" ? "Instagrapi" : scraperHealth?.scraper_mode === "auto" ? "Auto" : "—"}</span>
         </div>
         {scraperHealthError || scraperHealth?.available === false ? (
-          <p className="text-caption text-ink-48">Data kesehatan scraper belum tersedia.</p>
+          <p className="text-caption text-ink-48">Scraper health data is not available yet.</p>
         ) : scraperHealth?.available ? (
           <div className="divide-y divide-hairline">
             {viewerTiers.map(([key, name]) => {
@@ -172,12 +172,12 @@ export default function SourcesPage() {
                   <span className="w-28 font-medium text-ink">{name}</span>
                   <span className={`${style.badge} gap-1`}>
                     <Icon icon={style.icon} width={14} aria-hidden="true" />
-                    {tier.status === "degraded" ? `Gagal ${tier.consecutive_failures}×` : style.text}
+                    {tier.status === "degraded" ? `Failing ${tier.consecutive_failures}×` : style.text}
                   </span>
-                  <span className="text-ink-48">Sukses terakhir: {tier.last_success_at ? formatDistanceToNowStrict(new Date(tier.last_success_at), { addSuffix: true }) : "—"}</span>
+                  <span className="text-ink-48">Last success: {tier.last_success_at ? formatDistanceToNowStrict(new Date(tier.last_success_at), { addSuffix: true }) : "—"}</span>
                   {tier.consecutive_failures > 0 && (
                     <>
-                      <span className="text-ink-48">Gagal beruntun: {tier.consecutive_failures} ({tier.distinct_users} akun)</span>
+                      <span className="text-ink-48">{tier.consecutive_failures} failures in a row ({tier.distinct_users} accounts)</span>
                       <span className="max-w-[220px] truncate text-ink-48" title={`${tier.last_error_kind}: ${tier.last_error}`}>
                         {tier.last_error_kind}{tier.last_error ? `: ${tier.last_error}` : ""}
                       </span>
@@ -188,7 +188,7 @@ export default function SourcesPage() {
             })}
           </div>
         ) : (
-          <p className="text-caption text-ink-48">Memuat data kesehatan scraper…</p>
+          <p className="text-caption text-ink-48">Loading scraper health…</p>
         )}
       </section>
 

@@ -275,6 +275,7 @@ export default function FanpageEditPage() {
 
   const [form, setForm] = useState<Partial<FanpageDetail>>({});
   const [saving, setSaving] = useState(false);
+  const [mode1Saving, setMode1Saving] = useState(false);
   // Tracks whether the admin has touched any field THIS visit — not "has the
   // form ever been initialized". Bug (2026-08-20): the old flag stayed true
   // forever after the first sync, so once revalidateOnFocus was disabled the
@@ -672,6 +673,23 @@ export default function FanpageEditPage() {
     }
   }
 
+  async function handleMode1Toggle(value: boolean) {
+    // Optimistic update
+    setForm((prev) => ({ ...prev, mode1_ig_repost_enabled: value }));
+    setMode1Saving(true);
+    try {
+      await updateFanpage(fanpageId, { mode1_ig_repost_enabled: value });
+      const fresh = await mutate();
+      if (fresh) setForm((prev) => ({ ...prev, mode1_ig_repost_enabled: fresh.mode1_ig_repost_enabled }));
+    } catch {
+      // Revert optimistic update
+      setForm((prev) => ({ ...prev, mode1_ig_repost_enabled: !value }));
+      alert("Failed to update Mode 1. Please try again.");
+    } finally {
+      setMode1Saving(false);
+    }
+  }
+
   async function handleAddSource() {
     if (!newSource.trim()) return;
     await addIGSource(fanpageId, newSource.trim());
@@ -732,7 +750,43 @@ export default function FanpageEditPage() {
 
       {/* ── Section 1: IG Sources ──────────────────────── */}
       <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Instagram Sources</h2>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-text-primary">Instagram Sources</h2>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Automatically repost new posts from the Instagram accounts below.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs text-text-secondary whitespace-nowrap">Mode 1 — IG Repost</span>
+            <button
+              onClick={() => !mode1Saving && handleMode1Toggle(!form.mode1_ig_repost_enabled)}
+              disabled={mode1Saving}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                form.mode1_ig_repost_enabled ? "bg-primary-main" : "bg-hairline"
+              } ${mode1Saving ? "opacity-50 cursor-not-allowed" : ""}`}
+              aria-label="Toggle Mode 1 — IG Repost"
+            >
+              {mode1Saving ? (
+                <span className="absolute inset-0 flex items-center justify-center">
+                  <Icon icon="svg-spinners:ring-resize" width={14} className="text-white" />
+                </span>
+              ) : (
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                    form.mode1_ig_repost_enabled ? "translate-x-5" : ""
+                  }`}
+                />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {!form.mode1_ig_repost_enabled && (
+          <p className="text-xs text-text-secondary italic">
+            Mode 1 is off — these accounts are not crawled or reposted for this fanpage.
+          </p>
+        )}
 
         {(fp.ig_sources ?? []).length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1114,30 +1168,6 @@ export default function FanpageEditPage() {
               onChange={(e) => set("publish_daily_limit", Math.max(1, Number(e.target.value) || 1))}
             />
           </div>
-        </div>
-      </section>
-
-      {/* ── Section: Mode 1 — IG Repost ─────────────────── */}
-      <section className="card space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">Mode 1 — IG Repost</h2>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Repost otomatis dari IG Sources yang terhubung ke fanpage ini.
-            </p>
-          </div>
-          <button
-            onClick={() => set("mode1_ig_repost_enabled", !form.mode1_ig_repost_enabled)}
-            className={`relative w-11 h-6 rounded-full transition-colors ${
-              form.mode1_ig_repost_enabled ? "bg-primary-main" : "bg-hairline"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                form.mode1_ig_repost_enabled ? "translate-x-5" : ""
-              }`}
-            />
-          </button>
         </div>
       </section>
 
