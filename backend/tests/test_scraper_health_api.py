@@ -23,11 +23,14 @@ class FakeDB:
 def test_scraper_health_statuses_and_sanitization(monkeypatch):
     states = [
         {"last_success_at": "2026-10-01T00:00:00+00:00", "last_failure_at": "", "consecutive_failures": 0,
-         "distinct_users": 0, "last_error_kind": "", "last_error": "", "unhealthy": False},
+         "distinct_users": 0, "last_error_kind": "", "last_error": "", "unhealthy": False,
+         "last_failure_username": "", "events": []},
         {"last_success_at": "", "last_failure_at": "2026-10-02T00:00:00+00:00", "consecutive_failures": 2,
-         "distinct_users": 1, "last_error_kind": "blocked", "last_error": "Bearer sk-secret", "unhealthy": False},
+         "distinct_users": 1, "last_error_kind": "blocked", "last_error": "Bearer sk-secret", "unhealthy": False,
+         "last_failure_username": "testuser", "events": [{"at": "2026-10-02T00:00:00+00:00", "username": "testuser", "ok": False, "kind": "blocked", "reason": "Cloudflare check was not passed", "detail": "Bearer sk-secret"}]},
         {"last_success_at": "", "last_failure_at": "2026-10-03T00:00:00+00:00", "consecutive_failures": 5,
-         "distinct_users": 2, "last_error_kind": "script", "last_error": "broken", "unhealthy": True},
+         "distinct_users": 2, "last_error_kind": "script", "last_error": "broken", "unhealthy": True,
+         "last_failure_username": "otheruser", "events": []},
     ]
 
     def snapshot(*, strict):

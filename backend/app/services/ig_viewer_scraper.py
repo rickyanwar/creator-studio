@@ -848,9 +848,10 @@ _LOCK_TIMEOUT = max(300, len(_TIERS) * _TIER_TIMEOUT
 
 
 def _record_result(tier: str, username: str, ok: bool,
-                   error_kind: Optional[str] = None, error: Optional[str] = None) -> None:
+                   error_kind: Optional[str] = None, error: Optional[str] = None,
+                   posts: Optional[int] = None) -> None:
     try:
-        record_tier_result(tier, username, ok, error_kind=error_kind, error=error)
+        record_tier_result(tier, username, ok, error_kind=error_kind, error=error, posts=posts)
     except Exception as exc:
         logger.warning("Tier %s health recording failed: %s", tier, exc)
 
@@ -915,7 +916,7 @@ def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Option
                 if raw_nodes and video_count == len(raw_nodes):
                     logger.info("Tier %s returned %d nodes, all video — success with []",
                                 tier_name, len(raw_nodes))
-                    _record_result(tier_name, ig_username, True)
+                    _record_result(tier_name, ig_username, True, posts=0)
                     return []
 
                 if medias:
@@ -924,7 +925,7 @@ def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Option
                     medias = medias[:amount]
                     logger.info("Tier %s won for @%s: %d posts",
                                 tier_name, ig_username, len(medias))
-                    _record_result(tier_name, ig_username, True)
+                    _record_result(tier_name, ig_username, True, posts=len(medias))
                     return medias
 
                 # 0 usable medias: check if non-video nodes failed to parse

@@ -356,11 +356,20 @@ export interface ScraperHealth {
     status: "healthy" | "degraded" | "unhealthy" | "unknown";
     last_success_at: string;
     last_failure_at: string;
+    last_failure_username: string;
     consecutive_failures: number;
     distinct_users: number;
     last_error_kind: string;
     last_error: string;
     unhealthy: boolean;
+    events: Array<{
+      at: string;
+      username: string;
+      ok: boolean;
+      kind: string | null;
+      reason: string;
+      detail: string | null;
+    }>;
   }>>;
 }
 

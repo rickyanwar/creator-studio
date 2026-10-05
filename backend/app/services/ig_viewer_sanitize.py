@@ -30,3 +30,30 @@ def sanitize_error(text: str, limit: int = 300) -> str:
     text = _URL.sub(clean_url, text)
     text = _BEARER.sub("Bearer [REDACTED]", text)
     return _TOKEN.sub("[REDACTED]", text)[:limit]
+
+
+def describe_failure(kind: str | None, error: str | None) -> str:
+    error_lower = str(error).lower() if error else ""
+    if kind == "script":
+        if "posts clicked=false" in error_lower:
+            return "Posts tab did not appear on the viewer page"
+        if "no posts captured" in error_lower:
+            return "Page loaded but no posts were returned (account may be private, renamed, deleted or have no posts)"
+        if "not found or private" in error_lower:
+            return "Viewer says the account was not found or is private"
+        if "parse failed" in error_lower:
+            return "Viewer returned data in an unexpected format (our parser may need an update)"
+        return "The viewer page changed format or did not load completely"
+    if kind == "blocked":
+        return "Cloudflare check was not passed"
+    if kind == "site_down":
+        if "timeout" in error_lower:
+            return "The viewer site did not respond in time (site slow or server busy)"
+        return "The viewer site is unreachable (HTTP 5xx / network)"
+    return "An unknown error occurred"
+
+
+def describe_success(posts: int | None) -> str:
+    if posts is None:
+        return "OK"
+    return f"OK — {posts} posts"

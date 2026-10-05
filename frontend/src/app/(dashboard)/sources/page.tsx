@@ -164,25 +164,52 @@ export default function SourcesPage() {
         ) : scraperHealth?.available ? (
           <div className="divide-y divide-hairline">
             {viewerTiers.map(([key, name]) => {
-              const tier = scraperHealth.tiers[key];
+              const tier = scraperHealth.tiers[key as keyof typeof scraperHealth.tiers];
               if (!tier) return null;
               const style = tierStyles[tier.status];
+              const lastFailure = tier.events?.find(e => !e.ok);
+              const fallbackReason = tier.last_error_kind + (tier.last_error ? `: ${tier.last_error}` : "");
               return (
-                <div key={key} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-caption">
-                  <span className="w-28 font-medium text-ink">{name}</span>
-                  <span className={`${style.badge} gap-1`}>
-                    <Icon icon={style.icon} width={14} aria-hidden="true" />
-                    {tier.status === "degraded" ? `Failing ${tier.consecutive_failures}×` : style.text}
-                  </span>
-                  <span className="text-ink-48">Last success: {tier.last_success_at ? formatDistanceToNowStrict(new Date(tier.last_success_at), { addSuffix: true }) : "—"}</span>
-                  {tier.consecutive_failures > 0 && (
-                    <>
-                      <span className="text-ink-48">{tier.consecutive_failures} failures in a row ({tier.distinct_users} accounts)</span>
-                      <span className="max-w-[220px] truncate text-ink-48" title={`${tier.last_error_kind}: ${tier.last_error}`}>
-                        {tier.last_error_kind}{tier.last_error ? `: ${tier.last_error}` : ""}
-                      </span>
-                    </>
-                  )}
+                <div key={key} className="py-2 text-caption">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <span className="w-28 font-medium text-ink">{name}</span>
+                    <span className={`${style.badge} gap-1`}>
+                      <Icon icon={style.icon} width={14} aria-hidden="true" />
+                      {tier.status === "degraded" ? `Failing ${tier.consecutive_failures}×` : style.text}
+                    </span>
+                    <span className="text-ink-48">Last success: {tier.last_success_at ? formatDistanceToNowStrict(new Date(tier.last_success_at), { addSuffix: true }) : "—"}</span>
+                    {tier.consecutive_failures > 0 && tier.last_failure_username && (
+                      <span className="text-error-main font-medium">Last failure: @{tier.last_failure_username} — {lastFailure ? lastFailure.reason : fallbackReason}</span>
+                    )}
+                  </div>
+                  <details className="mt-2 group">
+                    <summary className="cursor-pointer text-[11px] font-medium text-primary-main hover:text-primary-dark select-none inline-flex items-center gap-1">
+                      <Icon icon="solar:alt-arrow-right-bold-duotone" className="group-open:rotate-90 transition-transform" />
+                      Recent attempts
+                    </summary>
+                    <div className="mt-2 space-y-1.5 pl-4 border-l border-hairline max-h-60 overflow-y-auto">
+                      {tier.events && tier.events.length > 0 ? (
+                        tier.events.map((ev, i) => (
+                          <div key={i} className="flex items-start gap-2 text-[11px]">
+                            <span className="w-16 shrink-0 text-ink-48 tabular-nums" title={format(new Date(ev.at), "MMM d HH:mm:ss")}>
+                              {formatDistanceToNowStrict(new Date(ev.at))}
+                            </span>
+                            <span className="w-24 shrink-0 font-medium truncate" title={`@${ev.username}`}>
+                              @{ev.username}
+                            </span>
+                            <span className={`shrink-0 badge text-[10px] ${ev.ok ? 'badge-green' : 'badge-red'}`}>
+                              {ev.ok ? 'OK' : 'Failed'}
+                            </span>
+                            <span className="truncate text-ink-80" title={ev.detail || undefined}>
+                              {ev.reason}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-ink-48 text-[11px] italic">No recent attempts</div>
+                      )}
+                    </div>
+                  </details>
                 </div>
               );
             })}

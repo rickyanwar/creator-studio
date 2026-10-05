@@ -17,11 +17,12 @@ class FakeRedis:
     def __init__(self):
         self.hashes = {}
         self.sets = {}
+        self.lists = {}
         self.ttls = {}
         self.scripts = []
 
-    def eval(self, script, count, key, users, action, timestamp, username, error, kind, ttl):
-        assert count == 2
+    def eval(self, script, count, key, users, events, action, timestamp, username, error, kind, ttl, event_json):
+        assert count == 3
         self.scripts.append(script)
         if action == "success":
             self.hset(key, {"last_success_at": timestamp, "consecutive_failures": 0,
@@ -33,9 +34,14 @@ class FakeRedis:
             if not self.hashes[key].get("streak_started_at"):
                 self.hashes[key]["streak_started_at"] = timestamp
             self.hset(key, {"last_failure_at": timestamp, "last_error": error,
-                            "last_error_kind": kind})
+                            "last_error_kind": kind, "last_failure_username": username})
             self.sadd(users, username)
+        
+        self.lists.setdefault(events, []).insert(0, event_json)
+        self.lists[events] = self.lists[events][:20]
+
         self.ttls[key] = ttl
+        self.ttls[events] = ttl
         if users in self.sets:
             self.ttls[users] = ttl
 
@@ -51,8 +57,19 @@ class FakeRedis:
             def scard(self, key):
                 pending.append(("scard", key))
 
+            def lrange(self, key, start, end):
+                pending.append(("lrange", key, start, end))
+
             def execute(self):
-                return [getattr(self_redis, method)(key) for method, key in pending]
+                res = []
+                for args in pending:
+                    method = args[0]
+                    key = args[1]
+                    if method == "lrange":
+                        res.append(self_redis.lrange(key, args[2], args[3]))
+                    else:
+                        res.append(getattr(self_redis, method)(key))
+                return res
 
         self_redis = self
         yield Pipeline()
@@ -68,6 +85,12 @@ class FakeRedis:
 
     def scard(self, key):
         return len(self.sets.get(key, set()))
+
+    def lrange(self, key, start, end):
+        lst = self.lists.get(key, [])
+        if end == -1:
+            return lst[start:]
+        return lst[start:end+1]
 
     def delete(self, key):
         self.sets.pop(key, None)
@@ -91,9 +114,10 @@ def test_streak_and_reset():
     assert state["last_failure_at"] == NOW.isoformat()
     assert len(r.hashes["ig_viewer:health:gramsnap"]["last_error"]) <= 300
     assert r.scripts and all(script == _UPDATE_LUA for script in r.scripts)
-    assert "HINCRBY" in _UPDATE_LUA and "SADD" in _UPDATE_LUA
+    assert "HINCRBY" in _UPDATE_LUA and "SADD" in _UPDATE_LUA and "LPUSH" in _UPDATE_LUA
     assert r.ttls["ig_viewer:health:gramsnap"] == HEALTH_TTL_SECONDS
     assert r.ttls["ig_viewer:health:gramsnap:users"] == HEALTH_TTL_SECONDS
+    assert r.ttls["ig_viewer:health:gramsnap:events"] == HEALTH_TTL_SECONDS
 
     record_tier_result("gramsnap", "bob", True, redis_client=r, now=NOW)
     state = get_health(redis_client=r, now=NOW)["tiers"]["gramsnap"]

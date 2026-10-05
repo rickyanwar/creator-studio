@@ -786,8 +786,8 @@ def test_records_only_attempted_tiers_with_kinds():
         with patch.object(_scraper_mod, "record_tier_result") as recorder:
             fetch_recent_posts("user")
     assert recorder.call_args_list == [
-        call("gramsnap", "user", False, error_kind="site_down", error="503"),
-        call("anonyig", "user", True, error_kind=None, error=None),
+        call("gramsnap", "user", False, error_kind="site_down", error="503", posts=None),
+        call("anonyig", "user", True, error_kind=None, error=None, posts=1),
     ]
     tiers[2][1].assert_not_called()
 
@@ -800,9 +800,9 @@ def test_records_parse_failure_all_video_and_unexpected_error():
         with patch.object(_scraper_mod, "record_tier_result") as recorder:
             assert fetch_recent_posts("user") == []
     assert recorder.call_args_list == [
-        call("gramsnap", "user", False, error_kind="script", error="0 image posts after normalisation"),
-        call("anonyig", "user", False, error_kind="script", error="RuntimeError: boom"),
-        call("igstoryviewer", "user", True, error_kind=None, error=None),
+        call("gramsnap", "user", False, error_kind="script", error="0 image posts after normalisation", posts=None),
+        call("anonyig", "user", False, error_kind="script", error="RuntimeError: boom", posts=None),
+        call("igstoryviewer", "user", True, error_kind=None, error=None, posts=0),
     ]
 
 
