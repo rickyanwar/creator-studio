@@ -119,6 +119,11 @@ class Settings(BaseSettings):
     ai_fallback_after_failures: int = 3
     ai_fallback_reset_after_minutes: int = 15
 
+    # ── IG Viewer ─────────────────────────────────
+    # Playwright context timezone — must match the VPS host TZ (Asia/Jakarta) so
+    # Cloudflare's in-page fingerprint check issues its token and postsV2 returns 200.
+    ig_viewer_timezone: str = "Asia/Jakarta"
+
     # ── Crawl ─────────────────────────────────────
     crawl_interval_minutes: int = 10
     crawl_sleep_start_wib: int = 5   # 05:00 WIB — UK sleeping (BST 23:00)

@@ -617,6 +617,19 @@ def _after_page_action(page) -> None:
 
 # ── Browser launch (sync patchright, imported lazily) ─────────────────────────
 
+def _resolve_timezone() -> str:
+    """Return the Playwright timezone_id to use for the browser context.
+
+    Priority: IG_VIEWER_TIMEZONE env var > settings.ig_viewer_timezone > "Asia/Jakarta".
+    getattr fallback keeps the live_check stub config (redis_url + app_env only) working.
+    """
+    from app.config import get_settings
+    return (
+        os.environ.get("IG_VIEWER_TIMEZONE")
+        or getattr(get_settings(), "ig_viewer_timezone", None)
+        or "Asia/Jakarta"
+    )
+
 def _launch_browser():
     """Launch sync patchright with master_fetch stealthy browser settings."""
     from patchright.sync_api import sync_playwright  # lazy!
@@ -638,18 +651,20 @@ def _launch_browser():
             browser = pw.chromium.launch(channel=channel, **opts)
         ua = (_get_chrome_ua() if channel == "chrome" else None) or _ua_for_version(browser.version)
         profile = _generate_fingerprint_profile(_os_from_ua(ua) or _host_os_key())
+        tz = _resolve_timezone()
         context = browser.new_context(
             user_agent=ua, color_scheme="dark", is_mobile=False, has_touch=False,
             service_workers="allow", ignore_https_errors=True,
             screen={"width": 1920, "height": 1080},
             viewport={"width": 1920, "height": 1080},
             permissions=["geolocation", "notifications"],
+            timezone_id=tz,
         )
         # patchright context.add_init_script routes requests and can break DNS;
         # evaluate immediately after navigation commit, as master_fetch does.
         context._ig_stealth_script = _build_stealth_init_script(profile, full=channel != "chrome")
-        logger.info("Viewer browser channel=%s UA=%s profile=%s full=%s",
-                    channel, ua, profile["platform"], channel != "chrome")
+        logger.info("Viewer browser channel=%s UA=%s profile=%s full=%s timezone=%s",
+                    channel, ua, profile["platform"], channel != "chrome", tz)
         return pw, browser, context
     except Exception:
         if browser:

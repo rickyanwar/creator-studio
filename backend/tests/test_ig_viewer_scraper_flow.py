@@ -30,6 +30,7 @@ from app.services.ig_viewer_scraper import (
     _acquire_lock,
     _release_lock,
     _is_video_node,
+    _resolve_timezone,
 )
 from app.services.ig_media import (
     IGMedia,
@@ -814,3 +815,72 @@ def test_raising_recorder_preserves_success_and_failure():
             with pytest.raises(ViewerScrapeError) as exc:
                 fetch_recent_posts("user")
     assert exc.value.tier_errors == {"gramsnap": "broken"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. Browser timezone — _resolve_timezone + config field
+# ═══════════════════════════════════════════════════════════════════════════
+
+import os as _os
+from types import SimpleNamespace as _SimpleNamespace
+
+
+class TestBrowserTimezone:
+    """_resolve_timezone picks TZ from env > settings > fallback; _launch_browser
+    passes the result as timezone_id to new_context."""
+
+    def _call_resolve(self, settings_ns, env_extra=None):
+        env = dict(env_extra or {})
+        with (
+            patch("app.config.get_settings", return_value=settings_ns),
+            patch.dict("os.environ", env, clear=False),
+        ):
+            _os.environ.pop("IG_VIEWER_TIMEZONE", None)
+            if "IG_VIEWER_TIMEZONE" in env:
+                _os.environ["IG_VIEWER_TIMEZONE"] = env["IG_VIEWER_TIMEZONE"]
+            return _scraper_mod._resolve_timezone()
+
+    def test_default_timezone_asia_jakarta(self):
+        """Settings lacks ig_viewer_timezone, no env → fallback Asia/Jakarta."""
+        stub = _SimpleNamespace(redis_url="redis://x", app_env="development")
+        with patch.dict("os.environ", {}, clear=False):
+            _os.environ.pop("IG_VIEWER_TIMEZONE", None)
+            with patch("app.config.get_settings", return_value=stub):
+                result = _scraper_mod._resolve_timezone()
+        assert result == "Asia/Jakarta"
+
+    def test_settings_timezone_used(self):
+        """Settings has ig_viewer_timezone → that value returned."""
+        stub = _SimpleNamespace(
+            redis_url="redis://x", app_env="development",
+            ig_viewer_timezone="America/New_York",
+        )
+        with patch.dict("os.environ", {}, clear=False):
+            _os.environ.pop("IG_VIEWER_TIMEZONE", None)
+            with patch("app.config.get_settings", return_value=stub):
+                result = _scraper_mod._resolve_timezone()
+        assert result == "America/New_York"
+
+    def test_env_override_wins_over_settings(self):
+        """IG_VIEWER_TIMEZONE env var beats settings value."""
+        stub = _SimpleNamespace(
+            redis_url="redis://x", app_env="development",
+            ig_viewer_timezone="Asia/Jakarta",
+        )
+        with patch.dict("os.environ", {"IG_VIEWER_TIMEZONE": "Europe/London"}, clear=False):
+            with patch("app.config.get_settings", return_value=stub):
+                result = _scraper_mod._resolve_timezone()
+        assert result == "Europe/London"
+
+    def test_config_default_is_asia_jakarta(self):
+        """Settings.ig_viewer_timezone default value is Asia/Jakarta."""
+        from app.config import Settings
+        s = Settings(_env_file=None)
+        assert s.ig_viewer_timezone == "Asia/Jakarta"
+
+    def test_config_respects_env_var(self):
+        """IG_VIEWER_TIMEZONE env sets the config field."""
+        from app.config import Settings
+        with patch.dict("os.environ", {"IG_VIEWER_TIMEZONE": "US/Pacific"}, clear=False):
+            s = Settings(_env_file=None)
+        assert s.ig_viewer_timezone == "US/Pacific"
