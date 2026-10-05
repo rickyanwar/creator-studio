@@ -45,8 +45,11 @@ export default function SettingsPage() {
         repliz_access_key: "",
         repliz_secret_key: "",
         telegram_bot_token: "",
-        flashapi_api_key: "",
       });
+
+      if (settings.scraper_mode === "flashapi") {
+        setForm((prev) => ({ ...prev, scraper_mode: "viewer" }));
+      }
     }
   }, [settings]);
 
@@ -211,7 +214,7 @@ export default function SettingsPage() {
       <section className="card space-y-4">
         <h2 className="text-base font-semibold text-text-primary">Instagram Scraper</h2>
         <p className="text-xs text-text-secondary">
-          How often the crawler runs and how it fetches posts. <strong>Auto</strong> tries your burner accounts first and falls back to FlashAPI when all are unavailable.
+          How often the crawler runs and how it fetches posts. <strong>Auto</strong> tries your burner accounts first and falls back to the Web Viewer scraper (GramSnap / AnonyIG / IGStoryViewer) when no burner is available.
         </p>
 
         <div className="grid grid-cols-2 gap-4">
@@ -232,7 +235,7 @@ export default function SettingsPage() {
         <div>
           <label className="label">Scraper Mode</label>
           <div className="flex gap-3 mt-1">
-            {(["auto", "instagrapi", "flashapi"] as const).map((mode) => (
+            {(["auto", "instagrapi", "viewer"] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"
@@ -245,31 +248,14 @@ export default function SettingsPage() {
               >
                 {mode === "auto" && "Auto"}
                 {mode === "instagrapi" && "Burner Accounts"}
-                {mode === "flashapi" && "FlashAPI"}
+                {mode === "viewer" && "Web Viewer (no login)"}
               </button>
             ))}
           </div>
           <p className="text-xs text-text-secondary mt-2">
-            {form.scraper_mode === "auto" && "Tries burner accounts first; falls back to FlashAPI if none are available."}
+            {form.scraper_mode === "auto" && "Tries burner accounts first; falls back to Web Viewer if none are available."}
             {form.scraper_mode === "instagrapi" && "Always uses burner accounts. Stops crawling if all burners are rate-limited."}
-            {form.scraper_mode === "flashapi" && "Always uses FlashAPI. No burner accounts needed. Requires an API key below."}
-          </p>
-        </div>
-
-        <div>
-          <label className="label">
-            FlashAPI Key{" "}
-            {settings?.has_flashapi_key && <span className="text-primary-main">✓ saved</span>}
-          </label>
-          <input
-            className="input-rect"
-            type="password"
-            placeholder="Leave blank to keep existing"
-            value={form.flashapi_api_key as string ?? ""}
-            onChange={(e) => set("flashapi_api_key", e.target.value)}
-          />
-          <p className="text-xs text-text-secondary mt-1">
-            Required when mode is <strong>FlashAPI</strong> or as auto-fallback. Get a key at flashapi.ru.
+            {form.scraper_mode === "viewer" && "Always uses Web Viewer (GramSnap / AnonyIG / IGStoryViewer). No login or burner accounts needed."}
           </p>
         </div>
       </section>

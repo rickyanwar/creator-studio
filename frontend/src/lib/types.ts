@@ -362,8 +362,7 @@ export interface AppSettings {
   has_repliz_keys: boolean;
   has_telegram_token: boolean;
   telegram_chat_id: string | null;
-  scraper_mode: "auto" | "instagrapi" | "flashapi";
-  has_flashapi_key: boolean;
+  scraper_mode: "auto" | "instagrapi" | "viewer" | "flashapi"; // keep flashapi in type for fallback check
   scraper_proxies: string | null;
   scraper_proxy_count: number;
   scraper_relays: string | null;

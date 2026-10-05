@@ -112,7 +112,7 @@ export const updateIGSource = (
     ig_username?: string;
     is_active?: boolean;
     album_image_indices?: number[];
-    scraper_backend?: string;
+    scraper_backend?: "auto" | "instagrapi" | "viewer";
     caption_tone?: string;
     caption_language?: string;
     caption_max_length?: number | null;

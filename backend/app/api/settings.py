@@ -38,7 +38,6 @@ def get_settings(db: DB, _: CurrentUser):
         has_telegram_token=bool(row.telegram_bot_token_encrypted),
         telegram_chat_id=row.telegram_chat_id,
         scraper_mode=row.scraper_mode or "auto",
-        has_flashapi_key=bool(row.flashapi_api_key_encrypted),
         scraper_proxies=row.scraper_proxies,
         scraper_proxy_count=len(parse_proxies(row.scraper_proxies)),
         scraper_relays=row.scraper_relays,
@@ -74,8 +73,6 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         row.repliz_secret_key_encrypted = encrypt(data.pop("repliz_secret_key"))
     if "telegram_bot_token" in data:
         row.telegram_bot_token_encrypted = encrypt(data.pop("telegram_bot_token"))
-    if "flashapi_api_key" in data:
-        row.flashapi_api_key_encrypted = encrypt(data.pop("flashapi_api_key"))
     if "nine_router_api_key" in data:
         row.nine_router_api_key_encrypted = encrypt(data.pop("nine_router_api_key"))
     if "youtube_cookies" in data:
@@ -89,6 +86,17 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         row.youtube_cookies_encrypted = encrypt(cookies) if cookies else None
     if "youtube_proxy" in data:
         data["youtube_proxy"] = (data["youtube_proxy"] or "").strip() or None
+
+    # Silently ignore legacy flashapi_api_key field if sent by old clients
+    data.pop("flashapi_api_key", None)
+
+    # Normalise scraper_mode: remap legacy "flashapi" → "viewer"; reject unknowns
+    if "scraper_mode" in data:
+        mode = data["scraper_mode"]
+        if mode == "flashapi":
+            data["scraper_mode"] = "viewer"
+        elif mode not in ("auto", "instagrapi", "viewer", None):
+            raise HTTPException(status_code=400, detail=f"Invalid scraper_mode: must be auto, instagrapi, or viewer")
 
     for field, value in data.items():
         setattr(row, field, value)

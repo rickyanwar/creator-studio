@@ -18,8 +18,7 @@ class SettingsUpdate(BaseModel):
     repliz_secret_key: Optional[str] = None
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
-    scraper_mode: Optional[str] = None      # "auto" | "instagrapi" | "flashapi"
-    flashapi_api_key: Optional[str] = None  # plain — will be encrypted before saving
+    scraper_mode: Optional[str] = None      # "auto" | "instagrapi" | "viewer" (legacy "flashapi" mapped to "viewer")
     scraper_proxies: Optional[str] = None   # newline-separated proxy pool for the news scraper
     scraper_relays: Optional[str] = None    # newline-separated relay pool (fallback fetch path)
     gallery_scraping_paused: Optional[bool] = None
@@ -46,7 +45,6 @@ class SettingsOut(BaseModel):
     has_telegram_token: bool
     telegram_chat_id: Optional[str] = None
     scraper_mode: str = "auto"
-    has_flashapi_key: bool = False
     scraper_proxies: Optional[str] = None   # raw text so the UI can edit the pool
     scraper_proxy_count: int = 0
     scraper_relays: Optional[str] = None    # raw text so the UI can edit the pool

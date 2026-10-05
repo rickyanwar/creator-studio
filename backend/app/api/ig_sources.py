@@ -16,7 +16,7 @@ class UpdateIGSourceRequest(BaseModel):
     ig_username: Optional[str] = None
     is_active: Optional[bool] = None
     album_image_indices: Optional[List[int]] = None
-    scraper_backend: Optional[str] = None  # "auto" | "instagrapi" | "flashapi"
+    scraper_backend: Optional[str] = None  # "auto" | "instagrapi" | "viewer"
     # Per-source caption criteria (None = leave unchanged; "" = clear → fanpage default)
     caption_tone: Optional[str] = None
     caption_language: Optional[str] = None
@@ -125,10 +125,12 @@ def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: Cur
 
     if body.scraper_backend is not None:
         from app.models.ig_sources import ScraperBackend
+        # Remap legacy "flashapi" input to "viewer" (treated identically at runtime)
+        backend_val = "viewer" if body.scraper_backend == "flashapi" else body.scraper_backend
         try:
-            source.scraper_backend = ScraperBackend(body.scraper_backend)
+            source.scraper_backend = ScraperBackend(backend_val)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid scraper_backend: must be auto, instagrapi, or flashapi")
+            raise HTTPException(status_code=400, detail=f"Invalid scraper_backend: must be auto, instagrapi, or viewer")
 
     # Caption criteria: apply only fields present in the request; "" clears back
     # to the fanpage default (stored as NULL).

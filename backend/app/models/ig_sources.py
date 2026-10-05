@@ -7,9 +7,10 @@ from app.database import Base
 
 
 class ScraperBackend(str, enum.Enum):
-    auto = "auto"            # try instagrapi; fall back to FlashAPI if no burner
+    auto = "auto"            # try instagrapi; fall back to viewer if no burner
     instagrapi = "instagrapi"  # always use burner account
-    flashapi = "flashapi"    # always use FlashAPI (no burner needed)
+    flashapi = "flashapi"    # legacy — DB rows keep this value; treated as viewer at runtime
+    viewer = "viewer"        # login-free web viewer (GramSnap → AnonyIG → IGStoryViewer)
 
 
 class IGSource(Base):

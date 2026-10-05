@@ -5,6 +5,16 @@ Anti-ban rules:
 - Delay 30-90s random between each burner.
 - Max 200 req/day per burner.
 - Jitter ±5 min built in via Celery countdown randomisation.
+
+Scraper backends:
+- instagrapi  — logged-in burner account (fastest, needs a burner slot).
+- viewer      — login-free web viewers (GramSnap → AnonyIG → IGStoryViewer).
+               Redis lock ig_viewer:browser_lock prevents concurrent browser sessions.
+               ViewerBusyError triggers a task retry (countdown 120-300 s, max 8).
+- auto        — instagrapi if a burner is available, otherwise viewer.
+
+Legacy "flashapi" values (per-source enum or global scraper_mode) are treated as
+viewer at runtime; the DB column / enum value is kept for backward-compat.
 """
 
 import logging
@@ -190,6 +200,12 @@ def crawl_single_source(self, source_id: int):
         logger.info("@%s: found %d new posts", source.ig_username, new_count)
 
     except Exception as exc:
+        from app.services.ig_viewer_scraper import ViewerBusyError
+        if isinstance(exc, ViewerBusyError):
+            # Busy retries use max_retries=8, separate from task-level max_retries=2.
+            db.rollback()
+            raise self.retry(exc=exc, countdown=random.randint(120, 300), max_retries=8)
+
         db.rollback()
         logger.error("Error crawling @%s: %s", source_id, exc, exc_info=True)
         try:
@@ -205,49 +221,41 @@ def crawl_single_source(self, source_id: int):
 
 
 def _resolve_effective_backend(source_backend, db):
-    """Return the effective ScraperBackend, applying the global scraper_mode override."""
+    """Return the effective ScraperBackend, applying the global scraper_mode override.
+
+    Legacy "flashapi" values (global or per-source) are normalised to viewer.
+    """
     from app.models.ig_sources import ScraperBackend
     from app.models.settings import Settings as DBSettings
 
     db_settings = db.query(DBSettings).filter_by(id=1).first()
     global_mode = (db_settings.scraper_mode if db_settings and db_settings.scraper_mode else "auto")
 
-    if global_mode == "flashapi":
-        return ScraperBackend.flashapi
+    if global_mode in ("viewer", "flashapi"):
+        return ScraperBackend.viewer
     if global_mode == "instagrapi":
         return ScraperBackend.instagrapi
-    # "auto" → honour per-source setting
-    return source_backend or ScraperBackend.auto
-
-
-def _get_flashapi_key(db) -> str:
-    """Return the FlashAPI key from DB (preferred) or env fallback."""
-    from app.models.settings import Settings as DBSettings
-    from app.services.encryption import decrypt
-
-    db_settings = db.query(DBSettings).filter_by(id=1).first()
-    if db_settings and db_settings.flashapi_api_key_encrypted:
-        try:
-            return decrypt(db_settings.flashapi_api_key_encrypted)
-        except Exception:
-            pass
-    return settings.flashapi_api_key  # env fallback
+    # "auto" → honour per-source setting; remap legacy flashapi → viewer
+    effective = source_backend or ScraperBackend.auto
+    if effective == ScraperBackend.flashapi:
+        return ScraperBackend.viewer
+    return effective
 
 
 def _fetch_medias(source, backend, db, amount: int) -> list:
     """Fetch recent posts using the appropriate backend for this source.
 
     Global scraper_mode in DB Settings overrides the per-source backend.
-    Falls back to FlashAPI (auto mode) when no burner is available.
+    Falls back to viewer (login-free web viewers) when no burner is available.
     """
     from app.models.ig_sources import ScraperBackend
     from app.models.burner_accounts import BurnerAccount, BurnerStatus
     from app.services.ig_session_manager import IGSessionManager
 
     effective = _resolve_effective_backend(backend, db)
-    use_flashapi = effective == ScraperBackend.flashapi
 
-    if effective in (ScraperBackend.auto, ScraperBackend.instagrapi):
+    # ── instagrapi path (burner only) ──────────────────────────────────────
+    if effective == ScraperBackend.instagrapi:
         burner = None
         if source.burner_account_id:
             assigned = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
@@ -268,22 +276,57 @@ def _fetch_medias(source, backend, db, amount: int) -> list:
                 source.burner_account_id = burner.id
                 db.commit()
                 logger.info("Re-assigned @%s to burner @%s", source.ig_username, burner.ig_username)
-            elif effective == ScraperBackend.instagrapi:
+            else:
                 logger.warning("No available burners to crawl @%s — all busy or at limit", source.ig_username)
                 source.last_crawl_error = "No active burner available"
                 db.commit()
                 return []
-            else:
-                # auto mode: no burner → fall back to FlashAPI
-                logger.info("No burner available for @%s — trying FlashAPI fallback", source.ig_username)
-                use_flashapi = True
 
-        if not use_flashapi:
+        manager = IGSessionManager(burner, db)
+        medias = manager.fetch_recent_posts(source.ig_username, amount=amount)
+        burner.requests_today = (burner.requests_today or 0) + 1
+
+        # Warmup: 15% chance to like 1 already-fetched post
+        if medias and random.random() < 0.15:
+            try:
+                post_to_like = random.choice(medias[:5])
+                manager.client.media_like(post_to_like.id)
+                burner.requests_today += 1
+                logger.debug("Warmup like on @%s", source.ig_username)
+            except Exception:
+                pass
+
+        db.commit()
+        return medias
+
+    # ── auto path: burner if available, else viewer ────────────────────────
+    if effective == ScraperBackend.auto:
+        burner = None
+        if source.burner_account_id:
+            assigned = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
+            if assigned and assigned.status == BurnerStatus.active and assigned.requests_today < 200:
+                burner = assigned
+
+        if burner is None:
+            available = (
+                db.query(BurnerAccount)
+                .filter(
+                    BurnerAccount.status == BurnerStatus.active,
+                    BurnerAccount.requests_today < 200,
+                )
+                .all()
+            )
+            if available:
+                burner = random.choice(available)
+                source.burner_account_id = burner.id
+                db.commit()
+                logger.info("Re-assigned @%s to burner @%s", source.ig_username, burner.ig_username)
+
+        if burner is not None:
             manager = IGSessionManager(burner, db)
             medias = manager.fetch_recent_posts(source.ig_username, amount=amount)
             burner.requests_today = (burner.requests_today or 0) + 1
 
-            # Warmup: 15% chance to like 1 already-fetched post
             if medias and random.random() < 0.15:
                 try:
                     post_to_like = random.choice(medias[:5])
@@ -296,43 +339,25 @@ def _fetch_medias(source, backend, db, amount: int) -> list:
             db.commit()
             return medias
 
-    # ── FlashAPI path ──────────────────────────────────────────────────────
-    api_key = _get_flashapi_key(db)
-    if not api_key:
-        logger.warning(
-            "FlashAPI backend requested for @%s but no API key is configured — skipping",
-            source.ig_username,
-        )
-        source.last_crawl_error = "FlashAPI key not configured"
-        db.commit()
-        return []
+        # No burner — fall through to viewer
+        logger.info("No burner available for @%s — trying viewer fallback", source.ig_username)
 
-    from app.services.flashapi_client import FlashAPIClient
-    import requests as _requests
-    client = FlashAPIClient(api_key=api_key, base_url=settings.flashapi_base_url)
+    # ── viewer path (ScraperBackend.viewer, or auto with no burner) ────────
+    from app.services.ig_viewer_scraper import fetch_recent_posts, ViewerBusyError, ViewerScrapeError
     try:
-        medias = client.fetch_recent_posts(source.ig_username, amount=amount)
+        medias = fetch_recent_posts(source.ig_username, amount=amount)
         source.last_crawl_error = None
         db.commit()
         return medias
-    except _requests.HTTPError as exc:
-        status = exc.response.status_code if exc.response else 0
-        if status in (400, 401, 403, 422):
-            try:
-                body = exc.response.json()
-                msg = body.get("answer") or body.get("message") or f"HTTP {status}"
-            except Exception:
-                msg = f"HTTP {status}"
-            logger.warning("FlashAPI %s for @%s — %s", status, source.ig_username, msg)
-            source.last_crawl_error = f"FlashAPI: {msg}"
-            db.commit()
-            return []
-        raise  # 5xx or network errors: let the task retry normally
-    except _requests.RequestException as exc:
-        logger.warning("FlashAPI network error for @%s: %s — skipping", source.ig_username, exc)
-        source.last_crawl_error = f"FlashAPI network error: {str(exc)[:200]}"
+    except ViewerScrapeError as exc:
+        msg = "Viewer: all tiers failed (" + "; ".join(f"{k}: {v}" for k, v in exc.tier_errors.items()) + ")"
+        msg = msg[:512]
+        source.last_crawl_error = msg
         db.commit()
+        logger.warning("Viewer all tiers failed for @%s: %s", source.ig_username, msg)
         return []
+    except ViewerBusyError:
+        raise  # propagate — crawl_single_source will retry
 
 
 def _extract_image_urls(media) -> list[str]:

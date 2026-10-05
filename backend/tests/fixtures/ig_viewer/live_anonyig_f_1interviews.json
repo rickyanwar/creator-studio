@@ -1,0 +1,249 @@
+[
+  {
+    "id": "3993463626930560866",
+    "__typename": "GraphVideo",
+    "is_video": true,
+    "dimensions": {
+      "height": 1280,
+      "width": 720
+    },
+    "shortcode": "DdrogKqo59i",
+    "display_url": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/820292175_18122418382918541_5932993975352787321_n.jpg?stp=dst-jpg_e15_tt6&_nc_cat=106&ig_cache_key=Mzk5MzQ2MzYyNjkzMDU2MDg2NjE4MTIyNDE4Mzc2OTE4NTQx.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkNMSVBTLnhwaWRzLjcyMC5zZHIudmlkZW9fdXNlcl9zZWxlY3RlZF90aHVtYm5haWwuQzMifQ%3D%3D&_nc_ohc=QnvOUV8LUuMQ7kNvwHpxUU1&_nc_oc=AdpJ3qbsOq60Ak4uDo1ltRwHoL50jHT1UmRnm9jTVQtV-mEIAN3kwUTQFFzLELWHWktIvq41aGsatGAF5eE6RiKk&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQMayWYJN4YHGQh1zoy8LH45o0_INp_cHfKdglS5eKZYBQ&oe=6AC8BF7A",
+    "display_resources": [
+      {
+        "src": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/820292175_18122418382918541_5932993975352787321_n.jpg?stp=dst-jpg_e15_tt6&_nc_cat=106&ig_cache_key=Mzk5MzQ2MzYyNjkzMDU2MDg2NjE4MTIyNDE4Mzc2OTE4NTQx.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkNMSVBTLnhwaWRzLjcyMC5zZHIudmlkZW9fdXNlcl9zZWxlY3RlZF90aHVtYm5haWwuQzMifQ%3D%3D&_nc_ohc=QnvOUV8LUuMQ7kNvwHpxUU1&_nc_oc=AdpJ3qbsOq60Ak4uDo1ltRwHoL50jHT1UmRnm9jTVQtV-mEIAN3kwUTQFFzLELWHWktIvq41aGsatGAF5eE6RiKk&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQMayWYJN4YHGQh1zoy8LH45o0_INp_cHfKdglS5eKZYBQ&oe=6AC8BF7A",
+        "config_width": 720,
+        "config_height": 1280
+      },
+      {
+        "src": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/820292175_18122418382918541_5932993975352787321_n.jpg?stp=dst-jpg_e15_p640x640_tt6&_nc_cat=106&ig_cache_key=Mzk5MzQ2MzYyNjkzMDU2MDg2NjE4MTIyNDE4Mzc2OTE4NTQx.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkNMSVBTLnhwaWRzLjcyMC5zZHIudmlkZW9fdXNlcl9zZWxlY3RlZF90aHVtYm5haWwuQzMifQ%3D%3D&_nc_ohc=QnvOUV8LUuMQ7kNvwHpxUU1&_nc_oc=AdpJ3qbsOq60Ak4uDo1ltRwHoL50jHT1UmRnm9jTVQtV-mEIAN3kwUTQFFzLELWHWktIvq41aGsatGAF5eE6RiKk&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQOL6GObhW3RhRasn1eywP7IPAMU5MfDfGB6KZdtVrUtdw&oe=6AC8BF7A",
+        "config_width": 640,
+        "config_height": 1138
+      }
+    ],
+    "thumbnail_src": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/820292175_18122418382918541_5932993975352787321_n.jpg?stp=c0.280.720.720a_dst-jpg_e15_s150x150_tt6&_nc_cat=106&ig_cache_key=Mzk5MzQ2MzYyNjkzMDU2MDg2NjE4MTIyNDE4Mzc2OTE4NTQx.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkNMSVBTLnhwaWRzLjcyMC5zZHIudmlkZW9fdXNlcl9zZWxlY3RlZF90aHVtYm5haWwuQzMifQ%3D%3D&_nc_ohc=QnvOUV8LUuMQ7kNvwHpxUU1&_nc_oc=AdpJ3qbsOq60Ak4uDo1ltRwHoL50jHT1UmRnm9jTVQtV-mEIAN3kwUTQFFzLELWHWktIvq41aGsatGAF5eE6RiKk&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQPs21j8_sM2LnXyPXs15-XNQsaOdfSX8Cgdc0agE0Fi0w&oe=6AC8BF7A",
+    "video_url": "https://scontent-cdg6-1.cdninstagram.com/o1/v/t2/f2/m86/AQObjfttmCTJht7w1SgiP34_OWpaMb6BDtdEuyqlJSptZ3wpq1orrhQsXwg1eXkRxSklhCIx-acjKX3bQNk6nU-thaatfQgwnTVn5Es.mp4?_nc_cat=105&_nc_sid=5e9851&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_ohc=3b81tZ2azOcQ7kNvwHSq4oq&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5JTlNUQUdSQU0uQ0xJUFMuQzMuNzIwLmRhc2hfYmFzZWxpbmVfMV92MSIsInhwdl9hc3NldF9pZCI6MTU5Nzg1MTk0NTA1MDIyMywiYXNzZXRfYWdlX2RheXMiOjEwLCJ2aV91c2VjYXNlX2lkIjoxMDA5OSwiZHVyYXRpb25fcyI6NDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=5a9584b397031d1c&_nc_vs=HBksFQIYUmlnX3hwdl9yZWVsc19wZXJtYW5lbnRfc3JfcHJvZC8xRDRFQUZFNjgxREI1NDIyQzg4MDU3NTVEQTNENjM4M192aWRlb19kYXNoaW5pdC5tcDQVAALIARIAFQIYUWlnX3hwdl9wbGFjZW1lbnRfcGVybWFuZW50X3YyL0I1NTM3MDhBQjI5NTREMUVBODAxNDA5MzQzNzZENDRCX2F1ZGlvX2Rhc2hpbml0Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACbegbXZnM_WBRUCKAJDMywXQERVP3ztkWgYEmRhc2hfYmFzZWxpbmVfMV92MREAdf4HZeadAQA&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&_nc_zt=28&oh=00_AQNskP6OouVaNjL6xwucVUGoRXJP_AMO2czYkPX9KXQiJQ&oe=6AC4F1D6",
+    "video_view_count": null,
+    "edge_media_to_caption": {
+      "edges": [
+        {
+          "node": {
+            "text": "😂😂😂😂"
+          }
+        }
+      ]
+    },
+    "edge_media_to_parent_comment": {
+      "count": 6
+    },
+    "taken_at_timestamp": 1790278024,
+    "owner": {
+      "username": "f.1interviews"
+    },
+    "dash_info": {
+      "video_dash_manifest": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"urn:mpeg:dash:schema:mpd:2011 DASH-MPD.xsd\" profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\" minBufferTime=\"PT2S\" type=\"static\" mediaPresentationDuration=\"PT40.666668S\" FBManifestTimestamp=\"1791162369\" FBManifestIdentifier=\"FoLgl6wNGBBpZ19kYXNoX2Jhc2VsaW5lGTbYufaMoM/WBczVksagz9YFyq/Xz6DP1gUiGBhkYXNoX2xuX2hlYWFjX3ZicjNfYXVkaW8iLBkYC2V4dHJhX2xpZ2h0ABYUFAASFAIA\"><Period id=\"0\" duration=\"PT40.666668S\"><AdaptationSet id=\"0\" contentType=\"video\" subsegmentAlignment=\"true\" par=\"9:16\" FBUnifiedUploadResolutionMos=\"360:68.5\"><SupplementalProperty schemeIdUri=\"urn:mpeg:mpegB:cicp:TransferCharacteristics\" value=\"1\"/><Representation id=\"1597852461716838v\" bandwidth=\"659345\" codecs=\"avc1.64001f\" mimeType=\"video/mp4\" sar=\"1:1\" FBEncodingTag=\"dash_baseline_1_v1\" FBContentLength=\"3351672\" FBPlaybackResolutionMos=\"0:100,360:95.3,480:94.1,720:90.4\" FBPlaybackResolutionMosConfidenceLevel=\"high\" FBPlaybackResolutionCsvqm=\"0:100,360:98.47,480:97.9,720:96.6\" FBAbrPolicyTags=\"\" width=\"720\" height=\"1280\" frameRate=\"15360/512\" FBQualityClass=\"hd\" FBQualityLabel=\"720p\"><BaseURL>https://scontent-cdg6-1.cdninstagram.com/o1/v/t2/f2/m86/AQObjfttmCTJht7w1SgiP34_OWpaMb6BDtdEuyqlJSptZ3wpq1orrhQsXwg1eXkRxSklhCIx-acjKX3bQNk6nU-thaatfQgwnTVn5Es.mp4?_nc_cat=105&amp;_nc_sid=9ca052&amp;_nc_ht=scontent-cdg6-1.cdninstagram.com&amp;_nc_ohc=3b81tZ2azOcQ7kNvwHSq4oq&amp;efg=eyJ2ZW5jb2RlX3RhZyI6ImlnLXhwdmRzLmNsaXBzLmMyLUMzLmRhc2hfYmFzZWxpbmVfMV92MSIsInZpZGVvX2lkIjpudWxsLCJvaWxfdXJsZ2VuX2FwcF9pZCI6LTEsImNsaWVudF9uYW1lIjoiaWciLCJ4cHZfYXNzZXRfaWQiOjE1OTc4NTE5NDUwNTAyMjMsImFzc2V0X2FnZV9kYXlzIjoxMCwidmlfdXNlY2FzZV9pZCI6MTAwOTksImR1cmF0aW9uX3MiOjQwLCJiaXRyYXRlIjo2NTkzNDUsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&amp;ccb=17-1&amp;_nc_gid=iEyc_EMbZs6kzlmuEgSwng&amp;_nc_ss=7a22e&amp;_nc_zt=28&amp;oh=00_AQMTT_dG9uCbZ96pPygdlmPEp6WRnx1pQ-xp4QGKa5mJYQ&amp;oe=6AC4F1D6</BaseURL><SegmentBase indexRange=\"892-1031\" timescale=\"15360\" FBMinimumPrefetchRange=\"1032-40752\" FBPartialPrefetchDuration=\"2500\" FBPartialPrefetchRange=\"1032-229407\" FBFirstSegmentRange=\"1032-429343\" FBFirstSegmentDuration=\"5000\" FBSecondSegmentRange=\"429344-903046\" FBPrefetchSegmentRange=\"1032-429343\" FBPrefetchSegmentDuration=\"5000\"><Initialization range=\"0-891\"/></SegmentBase></Representation><Representation id=\"1597852471716837v\" bandwidth=\"158913\" codecs=\"avc1.4d001e\" mimeType=\"video/mp4\" sar=\"1:1\" FBEncodingTag=\"dash_baseline_3_v1\" FBContentLength=\"807811\" FBPlaybackResolutionMos=\"0:100,360:75.4,480:71.9,720:64.5\" FBPlaybackResolutionMosConfidenceLevel=\"high\" FBPlaybackResolutionCsvqm=\"0:100,360:89.9,480:86.5,720:79.6\" FBAbrPolicyTags=\"\" width=\"360\" height=\"640\" frameRate=\"15360/512\" FBQualityClass=\"sd\" FBQualityLabel=\"360p\"><BaseURL>https://scontent-cdg4-1.cdninstagram.com/o1/v/t2/f2/m86/AQMGxYwL8b-4_sL-UZ6I0VAAxCTv6rKGfMm4Ln9cAzYCSuIpMkTC18PiLER_ZGRCCYye1K9Glyc7GMHmQeLBuRv5SCuWbvKCrw39Itg.mp4?_nc_cat=102&amp;_nc_sid=9ca052&amp;_nc_ht=scontent-cdg4-1.cdninstagram.com&amp;_nc_ohc=q7ampydyBKkQ7kNvwHcozQz&amp;efg=eyJ2ZW5jb2RlX3RhZyI6ImlnLXhwdmRzLmNsaXBzLmMyLUMzLmRhc2hfYmFzZWxpbmVfM192MSIsInZpZGVvX2lkIjpudWxsLCJvaWxfdXJsZ2VuX2FwcF9pZCI6LTEsImNsaWVudF9uYW1lIjoiaWciLCJ4cHZfYXNzZXRfaWQiOjE1OTc4NTE5NDUwNTAyMjMsImFzc2V0X2FnZV9kYXlzIjoxMCwidmlfdXNlY2FzZV9pZCI6MTAwOTksImR1cmF0aW9uX3MiOjQwLCJiaXRyYXRlIjoxNTg5MTMsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&amp;ccb=17-1&amp;_nc_gid=iEyc_EMbZs6kzlmuEgSwng&amp;_nc_ss=7a22e&amp;_nc_zt=28&amp;oh=00_AQNmQzgrrq1lJRUAEUlC5zqfaUHPv7dExXIHDnUOFm_6yQ&amp;oe=6AC4D7FF</BaseURL><SegmentBase indexRange=\"887-1026\" timescale=\"15360\" FBMinimumPrefetchRange=\"1027-12547\" FBPartialPrefetchDuration=\"2500\" FBPartialPrefetchRange=\"1027-51746\" FBFirstSegmentRange=\"1027-97939\" FBFirstSegmentDuration=\"5000\" FBSecondSegmentRange=\"97940-220718\" FBPrefetchSegmentRange=\"1027-97939\" FBPrefetchSegmentDuration=\"5000\"><Initialization range=\"0-886\"/></SegmentBase></Representation></AdaptationSet><AdaptationSet id=\"1\" contentType=\"audio\" subsegmentStartsWithSAP=\"1\" subsegmentAlignment=\"true\"><Representation id=\"1597852401716844a\" bandwidth=\"50512\" codecs=\"mp4a.40.5\" mimeType=\"audio/mp4\" FBAvgBitrate=\"50512\" audioSamplingRate=\"44100\" FBEncodingTag=\"dash_ln_heaac_vbr3_audio\" FBContentLength=\"257810\" FBPaqMos=\"90.93\" FBAbrPolicyTags=\"\"><AudioChannelConfiguration schemeIdUri=\"urn:mpeg:dash:23003:3:audio_channel_configuration:2011\" value=\"2\"/><BaseURL>https://scontent-cdg4-1.cdninstagram.com/o1/v/t2/f2/m78/AQO9hCOhq9G6uPUnG5y-tFvypkmKYho5GjN6rjrgBASsYEItq2RAshuSUNkxDeBfSiV3NDsKcLbkuDPi-lFkjvYnRrla6W4fy8MupQo.mp4?_nc_cat=102&amp;_nc_sid=9ca052&amp;_nc_ht=scontent-cdg4-1.cdninstagram.com&amp;_nc_ohc=GDSbD5c9t_YQ7kNvwHD1XQX&amp;efg=eyJ2ZW5jb2RlX3RhZyI6ImlnLXhwdmRzLmNsaXBzLmMyLUMzLmRhc2hfbG5faGVhYWNfdmJyM19hdWRpbyIsInZpZGVvX2lkIjpudWxsLCJvaWxfdXJsZ2VuX2FwcF9pZCI6LTEsImNsaWVudF9uYW1lIjoiaWciLCJ4cHZfYXNzZXRfaWQiOjE1OTc4NTE5NDUwNTAyMjMsImFzc2V0X2FnZV9kYXlzIjoxMCwidmlfdXNlY2FzZV9pZCI6MTAwOTksImR1cmF0aW9uX3MiOjQwLCJiaXRyYXRlIjo1MDcyOSwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&amp;ccb=17-1&amp;_nc_gid=iEyc_EMbZs6kzlmuEgSwng&amp;_nc_ss=7a22e&amp;_nc_zt=28&amp;_nc_enc=QX6P5UUgPhuEwjhLEXKdPnfUfQ4Qr3RIULo90vPLGmW6_Kf4lQf5y-PSXwlSatoW5HO33zH9vje-qVYB21x2NPzWvlFuKnuNLecSCmwFu8DH9ap8ocGTIXyZEUs&amp;oh=00_AQNYP8IuuT6GaS4MjfwzRenS3DOYLuE7HrFLNN0iOXGCHA&amp;oe=6AC4D2EB</BaseURL><SegmentBase indexRange=\"824-1107\" timescale=\"44100\" FBMinimumPrefetchRange=\"1108-1451\" FBPartialPrefetchDuration=\"2500\" FBPartialPrefetchRange=\"1108-16959\" FBFirstSegmentRange=\"1108-14264\" FBFirstSegmentDuration=\"2021\" FBSecondSegmentRange=\"14265-27073\" FBPrefetchSegmentRange=\"1108-27073\" FBPrefetchSegmentDuration=\"4017\"><Initialization range=\"0-823\"/></SegmentBase></Representation></AdaptationSet></Period></MPD>\n"
+    },
+    "video_url_downloadable": "https://media.anonyig.com/get?__sig=zrNKggpkDuBZSo33LwoWLg&__expires=1791163639&uri=https%3A%2F%2Fscontent-cdg6-1.cdninstagram.com%2Fo1%2Fv%2Ft2%2Ff2%2Fm86%2FAQObjfttmCTJht7w1SgiP34_OWpaMb6BDtdEuyqlJSptZ3wpq1orrhQsXwg1eXkRxSklhCIx-acjKX3bQNk6nU-thaatfQgwnTVn5Es.mp4%3F_nc_cat%3D105%26_nc_sid%3D5e9851%26_nc_ht%3Dscontent-cdg6-1.cdninstagram.com%26_nc_ohc%3D3b81tZ2azOcQ7kNvwHSq4oq%26efg%3DeyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5JTlNUQUdSQU0uQ0xJUFMuQzMuNzIwLmRhc2hfYmFzZWxpbmVfMV92MSIsInhwdl9hc3NldF9pZCI6MTU5Nzg1MTk0NTA1MDIyMywiYXNzZXRfYWdlX2RheXMiOjEwLCJ2aV91c2VjYXNlX2lkIjoxMDA5OSwiZHVyYXRpb25fcyI6NDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%253D%253D%26ccb%3D17-1%26vs%3D5a9584b397031d1c%26_nc_vs%3DHBksFQIYUmlnX3hwdl9yZWVsc19wZXJtYW5lbnRfc3JfcHJvZC8xRDRFQUZFNjgxREI1NDIyQzg4MDU3NTVEQTNENjM4M192aWRlb19kYXNoaW5pdC5tcDQVAALIARIAFQIYUWlnX3hwdl9wbGFjZW1lbnRfcGVybWFuZW50X3YyL0I1NTM3MDhBQjI5NTREMUVBODAxNDA5MzQzNzZENDRCX2F1ZGlvX2Rhc2hpbml0Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACbegbXZnM_WBRUCKAJDMywXQERVP3ztkWgYEmRhc2hfYmFzZWxpbmVfMV92MREAdf4HZeadAQA%26_nc_gid%3DiEyc_EMbZs6kzlmuEgSwng%26_nc_ss%3D7a22e%26_nc_zt%3D28%26oh%3D00_AQNskP6OouVaNjL6xwucVUGoRXJP_AMO2czYkPX9KXQiJQ%26oe%3D6AC4F1D6&filename=AQObjfttmCTJht7w1SgiP34_OWpaMb6BDtdEuyqlJSptZ3wpq1orrhQsXwg1eXkRxSklhCIx-acjKX3bQNk6nU-thaatfQgw.mp4",
+    "video_url_wrapped": "https://media.anonyig.com/get?__sig=zrNKggpkDuBZSo33LwoWLg&__expires=1791163639&uri=https%3A%2F%2Fscontent-cdg6-1.cdninstagram.com%2Fo1%2Fv%2Ft2%2Ff2%2Fm86%2FAQObjfttmCTJht7w1SgiP34_OWpaMb6BDtdEuyqlJSptZ3wpq1orrhQsXwg1eXkRxSklhCIx-acjKX3bQNk6nU-thaatfQgwnTVn5Es.mp4%3F_nc_cat%3D105%26_nc_sid%3D5e9851%26_nc_ht%3Dscontent-cdg6-1.cdninstagram.com%26_nc_ohc%3D3b81tZ2azOcQ7kNvwHSq4oq%26efg%3DeyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5JTlNUQUdSQU0uQ0xJUFMuQzMuNzIwLmRhc2hfYmFzZWxpbmVfMV92MSIsInhwdl9hc3NldF9pZCI6MTU5Nzg1MTk0NTA1MDIyMywiYXNzZXRfYWdlX2RheXMiOjEwLCJ2aV91c2VjYXNlX2lkIjoxMDA5OSwiZHVyYXRpb25fcyI6NDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%253D%253D%26ccb%3D17-1%26vs%3D5a9584b397031d1c%26_nc_vs%3DHBksFQIYUmlnX3hwdl9yZWVsc19wZXJtYW5lbnRfc3JfcHJvZC8xRDRFQUZFNjgxREI1NDIyQzg4MDU3NTVEQTNENjM4M192aWRlb19kYXNoaW5pdC5tcDQVAALIARIAFQIYUWlnX3hwdl9wbGFjZW1lbnRfcGVybWFuZW50X3YyL0I1NTM3MDhBQjI5NTREMUVBODAxNDA5MzQzNzZENDRCX2F1ZGlvX2Rhc2hpbml0Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACbegbXZnM_WBRUCKAJDMywXQERVP3ztkWgYEmRhc2hfYmFzZWxpbmVfMV92MREAdf4HZeadAQA%26_nc_gid%3DiEyc_EMbZs6kzlmuEgSwng%26_nc_ss%3D7a22e%26_nc_zt%3D28%26oh%3D00_AQNskP6OouVaNjL6xwucVUGoRXJP_AMO2czYkPX9KXQiJQ%26oe%3D6AC4F1D6&filename=AQObjfttmCTJht7w1SgiP34_OWpaMb6BDtdEuyqlJSptZ3wpq1orrhQsXwg1eXkRxSklhCIx-acjKX3bQNk6nU-thaatfQgw.mp4"
+  },
+  {
+    "id": "3988905904574003012",
+    "__typename": "GraphImage",
+    "is_video": false,
+    "dimensions": {
+      "height": 1350,
+      "width": 1080
+    },
+    "shortcode": "DdbcMk8l3dE",
+    "display_url": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/815920810_18121774318918541_196127467328916908_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=106&ig_cache_key=Mzk4ODkwNTkwNDU3NDAwMzAxMg%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=8WzSbNAm4P0Q7kNvwGh0F0H&_nc_oc=Adqz_iJD_8p8gaVkJbnFr7yBYKML2kvhuOZZzy738xdtZQM3NvYwd8hJ_PI_OvlYsktXnucH4nBDAe-Gut-UqRSt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQM3x0xqWrhyd2ktarIpyfk3sEjkI90jA3J1NyG-vDigwg&oe=6AC8C6C8",
+    "display_resources": [
+      {
+        "src": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/815920810_18121774318918541_196127467328916908_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=106&ig_cache_key=Mzk4ODkwNTkwNDU3NDAwMzAxMg%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=8WzSbNAm4P0Q7kNvwGh0F0H&_nc_oc=Adqz_iJD_8p8gaVkJbnFr7yBYKML2kvhuOZZzy738xdtZQM3NvYwd8hJ_PI_OvlYsktXnucH4nBDAe-Gut-UqRSt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQM3x0xqWrhyd2ktarIpyfk3sEjkI90jA3J1NyG-vDigwg&oe=6AC8C6C8",
+        "config_width": 1080,
+        "config_height": 1350
+      },
+      {
+        "src": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/815920810_18121774318918541_196127467328916908_n.jpg?stp=dst-jpg_e35_p720x720_sh2.08_tt6&_nc_cat=106&ig_cache_key=Mzk4ODkwNTkwNDU3NDAwMzAxMg%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=8WzSbNAm4P0Q7kNvwGh0F0H&_nc_oc=Adqz_iJD_8p8gaVkJbnFr7yBYKML2kvhuOZZzy738xdtZQM3NvYwd8hJ_PI_OvlYsktXnucH4nBDAe-Gut-UqRSt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQNKH_tnjkc5Ob8X83GInB2Z-tELxFE10N1zKB56v_RDHg&oe=6AC8C6C8",
+        "config_width": 720,
+        "config_height": 900
+      }
+    ],
+    "thumbnail_src": "https://scontent-cdg6-1.cdninstagram.com/v/t51.82787-15/815920810_18121774318918541_196127467328916908_n.jpg?stp=c0.135.1080.1080a_dst-jpg_e35_s150x150_sh2.08_tt6&_nc_cat=106&ig_cache_key=Mzk4ODkwNTkwNDU3NDAwMzAxMg%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=8WzSbNAm4P0Q7kNvwGh0F0H&_nc_oc=Adqz_iJD_8p8gaVkJbnFr7yBYKML2kvhuOZZzy738xdtZQM3NvYwd8hJ_PI_OvlYsktXnucH4nBDAe-Gut-UqRSt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg6-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQM-QwenMWywg74ajVnoNUG0fAFEyyV6VooKj8znEopQuw&oe=6AC8C6C8",
+    "edge_media_to_caption": {
+      "edges": [
+        {
+          "node": {
+            "text": "NICO ROSBERG’S TWO DIFFERENT STANDARDS?\n\nDuring Sky F1’s post-race coverage at Monza, Rosberg — who believed Leclerc was 100% responsible for forcing Hamilton off at Turn 2 — explained that Ferrari still couldn’t prioritise Lewis because Charles is the team’s “golden boy” and remains mathematically in the championship.\n\nInteresting.\n\nBecause the same Nico Rosberg believes McLaren should eventually support Norris, whom he considers “clearly the best driver” in that team.\n\nAfter Monza, Hamilton is 76 points behind Antonelli. Leclerc is another 36 points behind Lewis — meaning he is approximately 112 points away from the championship lead with 10 races remaining.\n\nMathematically possible? Yes.\n\nCompetitively realistic in a Ferrari that hasn’t consistently matched Mercedes since Silverstone? Absolutely not, in my opinion.\n\nThe most revealing part of Rosberg’s statement isn’t “mathematical chance”. It’s “golden boy”.\n\nIt suggests that Ferrari isn’t only considering the championship situation. The team is also managing Leclerc’s special status inside the organisation.\n\nWas Rosberg trying to balance his earlier criticism of Charles? We cannot know. But Nico enjoys taking the opposite position, and he knows that every opinion he gives about Hamilton carries extra weight and generates reactions.\n\nAfter all, he will always be introduced as the 2016 World Champion who “beat Lewis in equal machinery”.\n\nRosberg says Ferrari may have to “play the game” later.\n\nHamilton says it is already far too late.\n\nThat is the real problem: Ferrari waited so long to make a decision that there may now be nothing left to decide.\n\nSporting fairness — or a convenient double standard?\n\nSource: Sky Sports F1 / Crash.net\n\n#F1 #NicoRosberg #LewisHamilton #CharlesLeclerc #Ferrari #ScuderiaFerrari #ItalianGP"
+          }
+        }
+      ]
+    },
+    "edge_media_to_parent_comment": {
+      "count": 28
+    },
+    "taken_at_timestamp": 1789734669,
+    "owner": {
+      "username": "f.1interviews"
+    }
+  },
+  {
+    "id": "3988167036483945670",
+    "__typename": "GraphImage",
+    "is_video": false,
+    "dimensions": {
+      "height": 1350,
+      "width": 1080
+    },
+    "shortcode": "DdY0MoajETG",
+    "display_url": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/813841741_18121673071918541_1643908817079334700_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=104&ig_cache_key=Mzk4ODE2NzAzNjQ4Mzk0NTY3MA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=t-etNxQIEuIQ7kNvwEdS9TV&_nc_oc=Adr-IfVdFy8Tymss0btPm19zssi1v5vmn7RN4GM8I_cbfdQcd_y612HTto7GUJq097qzso2AupLph_SQhpMgQzpx&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQNLYRtdshLxK3sM3jaC865c1cSKFTFQQvLF_YJPZsxKZQ&oe=6AC8C15E",
+    "display_resources": [
+      {
+        "src": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/813841741_18121673071918541_1643908817079334700_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=104&ig_cache_key=Mzk4ODE2NzAzNjQ4Mzk0NTY3MA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=t-etNxQIEuIQ7kNvwEdS9TV&_nc_oc=Adr-IfVdFy8Tymss0btPm19zssi1v5vmn7RN4GM8I_cbfdQcd_y612HTto7GUJq097qzso2AupLph_SQhpMgQzpx&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQNLYRtdshLxK3sM3jaC865c1cSKFTFQQvLF_YJPZsxKZQ&oe=6AC8C15E",
+        "config_width": 1080,
+        "config_height": 1350
+      },
+      {
+        "src": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/813841741_18121673071918541_1643908817079334700_n.jpg?stp=dst-jpg_e35_p720x720_sh2.08_tt6&_nc_cat=104&ig_cache_key=Mzk4ODE2NzAzNjQ4Mzk0NTY3MA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=t-etNxQIEuIQ7kNvwEdS9TV&_nc_oc=Adr-IfVdFy8Tymss0btPm19zssi1v5vmn7RN4GM8I_cbfdQcd_y612HTto7GUJq097qzso2AupLph_SQhpMgQzpx&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQNO_MNVADkdCLZeAUDCr0NCZhP8bCJpQE49oXuO14xIjw&oe=6AC8C15E",
+        "config_width": 720,
+        "config_height": 900
+      }
+    ],
+    "thumbnail_src": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/813841741_18121673071918541_1643908817079334700_n.jpg?stp=c0.135.1080.1080a_dst-jpg_e35_s150x150_sh2.08_tt6&_nc_cat=104&ig_cache_key=Mzk4ODE2NzAzNjQ4Mzk0NTY3MA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=t-etNxQIEuIQ7kNvwEdS9TV&_nc_oc=Adr-IfVdFy8Tymss0btPm19zssi1v5vmn7RN4GM8I_cbfdQcd_y612HTto7GUJq097qzso2AupLph_SQhpMgQzpx&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQMPsZKNwfGy8eWlR7fbKnKo6m0KdXC7UKo4t2uHpsiNNQ&oe=6AC8C15E",
+    "edge_media_to_caption": {
+      "edges": [
+        {
+          "node": {
+            "text": "Nico Rosberg found an easy target after F1’s first race at the Madring: Carlos Sainz.\n\nWith the Spanish driver acting as an ambassador for the event, Rosberg joked that he was the man to criticise after a race heavily criticised for its lack of action.\n\nBut Sainz pushed back.\n\nAccording to him, the circuit had already been designed and approved by the FIA before he signed his ambassador agreement. He even admitted being frustrated that he had not been given the opportunity to contribute to the layout.\n\nSainz may have been one of the public faces of the Madrid Grand Prix, but being its ambassador does not make him its circuit designer.\n\nWas Rosberg’s criticism fair, or was Sainz simply the easiest person to blame?\n\n🎙️ Nico Rosberg via Sky Sports F1\n🎙️ Carlos Sainz via Nextgen-Auto\n\n#F1 #Formula1 #CarlosSainz #NicoRosberg #MadridGP #Madring #SpanishGP"
+          }
+        }
+      ]
+    },
+    "edge_media_to_parent_comment": {
+      "count": 11
+    },
+    "taken_at_timestamp": 1789646590,
+    "owner": {
+      "username": "f.1interviews"
+    }
+  },
+  {
+    "id": "3987423637154319588",
+    "__typename": "GraphImage",
+    "is_video": false,
+    "dimensions": {
+      "height": 1350,
+      "width": 1080
+    },
+    "shortcode": "DdWLKv1lEzk",
+    "display_url": "https://scontent-cdg4-3.cdninstagram.com/v/t51.82787-15/794958760_18121570276918541_471319640670272467_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=110&ig_cache_key=Mzk4NzQyMzYzNzE1NDMxOTU4OA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=F_noCQw_E8wQ7kNvwG3lpv9&_nc_oc=AdpJp7SOoeFDgn0Vrzm8ECgB73U99Qqpbv7UqIifjci2NFdD6VKSOx5ydI8C0iex67PzwtxWrvyUVzb_NiMFvfMt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-3.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQPCl9DASTfwC3WfHe74IH17hYOgnzeYd5r5GbbpD1pX2Q&oe=6AC8BB83",
+    "display_resources": [
+      {
+        "src": "https://scontent-cdg4-3.cdninstagram.com/v/t51.82787-15/794958760_18121570276918541_471319640670272467_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=110&ig_cache_key=Mzk4NzQyMzYzNzE1NDMxOTU4OA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=F_noCQw_E8wQ7kNvwG3lpv9&_nc_oc=AdpJp7SOoeFDgn0Vrzm8ECgB73U99Qqpbv7UqIifjci2NFdD6VKSOx5ydI8C0iex67PzwtxWrvyUVzb_NiMFvfMt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-3.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQPCl9DASTfwC3WfHe74IH17hYOgnzeYd5r5GbbpD1pX2Q&oe=6AC8BB83",
+        "config_width": 1080,
+        "config_height": 1350
+      },
+      {
+        "src": "https://scontent-cdg4-3.cdninstagram.com/v/t51.82787-15/794958760_18121570276918541_471319640670272467_n.jpg?stp=dst-jpg_e35_p720x720_sh2.08_tt6&_nc_cat=110&ig_cache_key=Mzk4NzQyMzYzNzE1NDMxOTU4OA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=F_noCQw_E8wQ7kNvwG3lpv9&_nc_oc=AdpJp7SOoeFDgn0Vrzm8ECgB73U99Qqpbv7UqIifjci2NFdD6VKSOx5ydI8C0iex67PzwtxWrvyUVzb_NiMFvfMt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-3.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQPxioOn13KdW0LJvkIHXelgSUgDNbHKMoxaak8NwjnR3A&oe=6AC8BB83",
+        "config_width": 720,
+        "config_height": 900
+      }
+    ],
+    "thumbnail_src": "https://scontent-cdg4-3.cdninstagram.com/v/t51.82787-15/794958760_18121570276918541_471319640670272467_n.jpg?stp=c0.135.1080.1080a_dst-jpg_e35_s150x150_sh2.08_tt6&_nc_cat=110&ig_cache_key=Mzk4NzQyMzYzNzE1NDMxOTU4OA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=F_noCQw_E8wQ7kNvwG3lpv9&_nc_oc=AdpJp7SOoeFDgn0Vrzm8ECgB73U99Qqpbv7UqIifjci2NFdD6VKSOx5ydI8C0iex67PzwtxWrvyUVzb_NiMFvfMt&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-3.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQN1_EOc3XuU3oondbIvw4e_WiDMlOX22DU2HhraOxBKYA&oe=6AC8BB83",
+    "edge_media_to_caption": {
+      "edges": [
+        {
+          "node": {
+            "text": "While Max Verstappen tried to present the incident as Hamilton almost taking him out of the race, Laurent Mekies gave a much simpler and more realistic explanation.\n\nRed Bull believed that keeping the positions would inevitably have resulted in a five or ten-second penalty.\n\nThat is why the team asked Max to let both Antonelli and Hamilton back through — despite knowing Hamilton was already experiencing a problem and could potentially retire.\n\nMekies also understood something Max’s radio messages ignored: a time penalty can cost far more than the positions surrendered on track, especially if a Safety Car changes the race later.\n\nSo Red Bull did not ask Verstappen to give the place back because they suddenly stopped supporting their driver.\n\nThey did it because they knew the position was not defensible.\n\nHamilton had made the better start and got ahead. Max avoided contact by using the run-off, but then rejoined in front. Avoiding an accident was sensible; retaining the advantage gained off-track was not.\n\nMax supplied the emotion and attempted to control the narrative.\n\nMekies supplied the sporting reality.\n\nAnd his explanation indirectly confirms what Red Bull already understood during the race: returning the position was not “Mickey Mouse racing”. It was the only sensible way to avoid an inevitable penalty.\n\nDo Mekies’ comments settle the debate over the incident?\n\nQuote: F1 TV via Formula1.com\n📸 Formula 1 / PlanetF1\n\n#F1 #LaurentMekies #MaxVerstappen #LewisHamilton #RedBullRacing #SpanishGP"
+          }
+        }
+      ]
+    },
+    "edge_media_to_parent_comment": {
+      "count": 3
+    },
+    "taken_at_timestamp": 1789557968,
+    "owner": {
+      "username": "f.1interviews"
+    }
+  },
+  {
+    "id": "3986708425249938695",
+    "__typename": "GraphImage",
+    "is_video": false,
+    "dimensions": {
+      "height": 1350,
+      "width": 1080
+    },
+    "shortcode": "DdTojC2FF0H",
+    "display_url": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/810485605_18121470454918541_6599914902026138083_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=104&ig_cache_key=Mzk4NjcwODQyNTI0OTkzODY5NQ%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=BJofKfRIgpAQ7kNvwFS8EAo&_nc_oc=AdrdHnnZ5L4yJPre33hNmJZU8OW-ub_PqbFfBRwX5fswvZFjb7q4LZf1WU7JJ4FNHDwefTBEZsQskrABqqUOKNSQ&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQM-ju1fiWNcuUdSHDgTXpBpXHICAry-Q4nLjjx4-dqEJg&oe=6AC8B30D",
+    "display_resources": [
+      {
+        "src": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/810485605_18121470454918541_6599914902026138083_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=104&ig_cache_key=Mzk4NjcwODQyNTI0OTkzODY5NQ%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=BJofKfRIgpAQ7kNvwFS8EAo&_nc_oc=AdrdHnnZ5L4yJPre33hNmJZU8OW-ub_PqbFfBRwX5fswvZFjb7q4LZf1WU7JJ4FNHDwefTBEZsQskrABqqUOKNSQ&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQM-ju1fiWNcuUdSHDgTXpBpXHICAry-Q4nLjjx4-dqEJg&oe=6AC8B30D",
+        "config_width": 1080,
+        "config_height": 1350
+      },
+      {
+        "src": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/810485605_18121470454918541_6599914902026138083_n.jpg?stp=dst-jpg_e35_p720x720_sh2.08_tt6&_nc_cat=104&ig_cache_key=Mzk4NjcwODQyNTI0OTkzODY5NQ%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=BJofKfRIgpAQ7kNvwFS8EAo&_nc_oc=AdrdHnnZ5L4yJPre33hNmJZU8OW-ub_PqbFfBRwX5fswvZFjb7q4LZf1WU7JJ4FNHDwefTBEZsQskrABqqUOKNSQ&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQNH7ggFvkajmo5EM9yO5j337zR3Sx8gm3sHNPP014b8TA&oe=6AC8B30D",
+        "config_width": 720,
+        "config_height": 900
+      }
+    ],
+    "thumbnail_src": "https://scontent-cdg4-1.cdninstagram.com/v/t51.82787-15/810485605_18121470454918541_6599914902026138083_n.jpg?stp=c0.135.1080.1080a_dst-jpg_e35_s150x150_sh2.08_tt6&_nc_cat=104&ig_cache_key=Mzk4NjcwODQyNTI0OTkzODY5NQ%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=BJofKfRIgpAQ7kNvwFS8EAo&_nc_oc=AdrdHnnZ5L4yJPre33hNmJZU8OW-ub_PqbFfBRwX5fswvZFjb7q4LZf1WU7JJ4FNHDwefTBEZsQskrABqqUOKNSQ&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-1.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQMsULBXoFO_y078LLBGMMuJNyrXHNNwkRloSJ1TprjKdQ&oe=6AC8B30D",
+    "edge_media_to_caption": {
+      "edges": [
+        {
+          "node": {
+            "text": "CARLOS SAINZ THINKS FERNANDO ALONSO TALKED HIM INTO A PENALTY. 👀\n\nOn Lap 14 in Madrid, Alonso closed on Sainz approaching Turn 5. The two Spaniards made contact, damaging Alonso’s front wing.\n\nThe stewards concluded that Sainz moved towards the right-hand edge after the deceleration phase had already begun and should have left more room. The usual sanction for moving under braking would have been a black-and-white flag, but the contact turned it into a five-second penalty.\n\nSainz saw the incident very differently.\n\nHe argued that there was only room for one car through the right-left sequence, that he could not continuously watch his mirrors while negotiating the corner and that Alonso was not properly alongside.\n\nBut his strongest accusation concerned Fernando’s radio message: Sainz believes Alonso’s complaints helped influence the outcome.\n\nThat is the bigger debate.\n\nDrivers know that team radio is no longer only communication with their engineers. It can also frame an incident in real time for Race Control, the broadcasters and millions of spectators.\n\nHowever, the stewards stated that their verdict was based on video, telemetry and onboard footage.\n\nDid Alonso’s radio influence the penalty — or did the evidence make it inevitable?\n\n📸 Formula 1 / F1 TV\n\n#F1 #Formula1 #CarlosSainz #FernandoAlonso #SpanishGP #Madring #WilliamsF1 #AstonMartinF1 #F1Interviews"
+          }
+        }
+      ]
+    },
+    "edge_media_to_parent_comment": {
+      "count": 33
+    },
+    "taken_at_timestamp": 1789472709,
+    "owner": {
+      "username": "f.1interviews"
+    }
+  },
+  {
+    "id": "3985150162344037334",
+    "__typename": "GraphImage",
+    "is_video": false,
+    "dimensions": {
+      "height": 1350,
+      "width": 1080
+    },
+    "shortcode": "DdOGPVbG0vW",
+    "display_url": "https://scontent-cdg4-2.cdninstagram.com/v/t51.82787-15/807658183_18121239886918541_1518508960126282894_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=101&ig_cache_key=Mzk4NTE1MDE2MjM0NDAzNzMzNA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=u7GHnDQS9ogQ7kNvwF0OJgp&_nc_oc=Ado0XiNTa0NnVVFKgu54cmDmEAjUExSA6Ezdh82YqusqRMGq9BsCLPsO0DpArYklmTr30oApHiBQ7rXuhUxseYrq&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-2.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQOH_ZLyILeWRFZCf00pjzf3R-4GL1LnPW1b47yv5u52Cg&oe=6AC8CE1E",
+    "display_resources": [
+      {
+        "src": "https://scontent-cdg4-2.cdninstagram.com/v/t51.82787-15/807658183_18121239886918541_1518508960126282894_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=101&ig_cache_key=Mzk4NTE1MDE2MjM0NDAzNzMzNA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=u7GHnDQS9ogQ7kNvwF0OJgp&_nc_oc=Ado0XiNTa0NnVVFKgu54cmDmEAjUExSA6Ezdh82YqusqRMGq9BsCLPsO0DpArYklmTr30oApHiBQ7rXuhUxseYrq&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-2.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQOH_ZLyILeWRFZCf00pjzf3R-4GL1LnPW1b47yv5u52Cg&oe=6AC8CE1E",
+        "config_width": 1080,
+        "config_height": 1350
+      },
+      {
+        "src": "https://scontent-cdg4-2.cdninstagram.com/v/t51.82787-15/807658183_18121239886918541_1518508960126282894_n.jpg?stp=dst-jpg_e35_p720x720_sh2.08_tt6&_nc_cat=101&ig_cache_key=Mzk4NTE1MDE2MjM0NDAzNzMzNA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=u7GHnDQS9ogQ7kNvwF0OJgp&_nc_oc=Ado0XiNTa0NnVVFKgu54cmDmEAjUExSA6Ezdh82YqusqRMGq9BsCLPsO0DpArYklmTr30oApHiBQ7rXuhUxseYrq&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-2.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQOU3vftHJ0ow83y-MOnh49FbdHcYVpzOlBRGFrPE6S__w&oe=6AC8CE1E",
+        "config_width": 720,
+        "config_height": 900
+      }
+    ],
+    "thumbnail_src": "https://scontent-cdg4-2.cdninstagram.com/v/t51.82787-15/807658183_18121239886918541_1518508960126282894_n.jpg?stp=c0.135.1080.1080a_dst-jpg_e35_s150x150_sh2.08_tt6&_nc_cat=101&ig_cache_key=Mzk4NTE1MDE2MjM0NDAzNzMzNA%3D%3D.3-ccb7-5&ccb=7-5&_nc_sid=58cdad&efg=eyJ2ZW5jb2RlX3RhZyI6IkZFRUQueHBpZHMuMTA4MC5zZHIucmVndWxhcl9waG90by5DMyJ9&_nc_ohc=u7GHnDQS9ogQ7kNvwF0OJgp&_nc_oc=Ado0XiNTa0NnVVFKgu54cmDmEAjUExSA6Ezdh82YqusqRMGq9BsCLPsO0DpArYklmTr30oApHiBQ7rXuhUxseYrq&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent-cdg4-2.cdninstagram.com&_nc_gid=iEyc_EMbZs6kzlmuEgSwng&_nc_ss=7a22e&oh=00_AQOuzHiEDWV-uYb228JYCvrs7NBXoc6x57YnQPecLNk7TQ&oe=6AC8CE1E",
+    "edge_media_to_caption": {
+      "edges": [
+        {
+          "node": {
+            "text": "“HE HAS TO BE SUCCESSFUL — THEN HE LEAVES WHENEVER HE WANTS.”\n\nFIA President Mohammed Ben Sulayem believes Fernando Alonso should not leave Formula 1 because Aston Martin and Honda are currently uncompetitive.\n\nSpeaking in Madrid, he said it was “not acceptable” for a two-time World Champion to arrive in his own country and find himself at the back of the grid.\n\nBut when did the FIA’s role include ensuring that a particular driver must be successful before retiring?\n\nThe FIA can create neutral mechanisms such as ADUO, allowing any engine manufacturer that meets the performance-deficit criteria to spend more and introduce additional upgrades.\n\nWhat it should not do is make competitive success sound like something a champion is personally entitled to receive.\n\nAlonso subsequently said he had not spoken to Ben Sulayem about this. His weekly conversations are with Stefano Domenicali — and his message is not simply that Aston Martin needs a faster car.\n\nHis message is that Formula 1 itself cannot continue like this.\n\nShould the FIA help write the ending to a champion’s career — or simply guarantee fair competition for everyone?\n\nSource: RacingNews365 / New Economy Forum, Madrid\n\n#F1 #FernandoAlonso #BenSulayem #FIA #AstonMartin"
+          }
+        }
+      ]
+    },
+    "edge_media_to_parent_comment": {
+      "count": 4
+    },
+    "taken_at_timestamp": 1789286949,
+    "owner": {
+      "username": "f.1interviews"
+    }
+  }
+]

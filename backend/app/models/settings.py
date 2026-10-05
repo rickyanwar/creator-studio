@@ -33,9 +33,10 @@ class Settings(Base):
     # ── Scraper mode ──────────────────────────────────────────────────────────
     # "auto"       → per-source scraper_backend field governs
     # "instagrapi" → always use burner accounts (ignore per-source setting)
-    # "flashapi"   → always use FlashAPI (ignore per-source setting)
+    # "viewer"     → always use login-free web viewers (ignore per-source setting)
+    # Legacy "flashapi" rows are treated as "viewer" at runtime.
     scraper_mode = Column(String(32), default="auto", nullable=False, server_default="auto")
-    flashapi_api_key_encrypted = Column(String(512), nullable=True)
+    flashapi_api_key_encrypted = Column(String(512), nullable=True)  # legacy, unused
 
     # ── News-scraper proxy pool ───────────────────────────────────────────────
     # One proxy per line (e.g. http://user:pass@host:port). The news scraper

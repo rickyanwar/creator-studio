@@ -18,6 +18,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Chromium for render_mode "js" news sources (Cloudflare-protected sites)
 RUN playwright install --with-deps chromium
+# Real Chrome TLS/JA4 fingerprint passes Cloudflare; bundled Chromium fallback does not.
+RUN patchright install --with-deps chrome
+# Bundled Chromium remains fallback when real Chrome cannot launch.
+RUN patchright install chromium
 
 # Mode 7 (YouTube clips): ffmpeg (yt-dlp section downloads, frame
 # decode/encode, libass captions — Debian's build has libx264 + libass) and
