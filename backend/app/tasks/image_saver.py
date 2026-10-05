@@ -74,36 +74,6 @@ def save_post_images(self, post_id: int, image_urls: list[str]):
         db.close()
 
 
-@celery_app.task(name="app.tasks.image_saver.recover_stuck_image_edits")
-def recover_stuck_image_edits():
-    """Re-trigger image editing for posts stuck in 'editing_image' too long.
-
-    Runs every 30 minutes to catch cases where the edit retries were
-    exhausted or the task was dropped from Redis mid-chain.
-    """
-    from datetime import datetime, timezone, timedelta
-
-    db = SessionLocal()
-    try:
-        from app.models.posts import Post, PostStatus
-
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
-
-        stuck_posts = (
-            db.query(Post)
-            .filter(
-                Post.status == PostStatus.editing_image,
-                Post.updated_at < cutoff,
-            )
-            .all()
-        )
-
-        for post in stuck_posts:
-            save_post_images.delay(post.id, list(post.image_source_urls))
-            logger.warning("Recovery: re-queued image edit for stuck post %d", post.id)
-
-    finally:
-        db.close()
 
 
 def _download_image(url: str, dest: Path, timeout: int = 30):

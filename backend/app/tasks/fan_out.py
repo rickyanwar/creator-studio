@@ -87,11 +87,7 @@ def create_fanout_jobs(self, post_id: int):
             job = PublishJob(
                 post_id=post_id,
                 fanpage_id=link.fanpage_id,
-                status=(
-                    PublishJobStatus.pending_watermark
-                    if link.fanpage.watermark_text
-                    else PublishJobStatus.pending_caption
-                ),
+                status=PublishJobStatus.pending_caption,
             )
             db.add(job)
             db.flush()
@@ -102,12 +98,8 @@ def create_fanout_jobs(self, post_id: int):
             # sharing the same IG source don't all post at exactly the same time.
             stagger = _fanpage_stagger(slot)
 
-            if job.status == PublishJobStatus.pending_watermark:
-                from app.tasks.image_watermark import apply_watermark_for_job
-                apply_watermark_for_job.apply_async(args=[job.id], countdown=stagger)
-            else:
-                from app.tasks.ai_generator import generate_caption_for_job
-                generate_caption_for_job.apply_async(args=[job.id], countdown=stagger)
+            from app.tasks.ai_generator import generate_caption_for_job
+            generate_caption_for_job.apply_async(args=[job.id], countdown=stagger)
 
             if stagger:
                 logger.info(

@@ -67,15 +67,12 @@ class Settings(BaseSettings):
     # ── AI Providers (fallback) ───────────────────
     gemini_api_key: str = ""
     groq_api_key: str = ""
-    qwen_api_key: str = ""  # Alibaba Cloud Model Studio (DashScope) — image edit fallback
     # 2.0-flash free-tier quota was cut to 0 (429 "limit: 0") — 2.5-flash still has free quota
     gemini_model: str = "gemini-2.5-flash"
     # llama-3.3-70b-versatile was retired from Groq's lineup (calls started
     # 404ing with "model does not exist") — gpt-oss-120b is Groq's current
     # largest general-purpose text model.
     groq_model: str = "openai/gpt-oss-120b"
-    qwen_image_edit_model: str = "qwen-image-edit-plus"
-    qwen_vl_model: str = "qwen3-vl-plus"  # vision-language model used to extract+translate burned-in text
 
     # ── Gallery image fetch (via 9Router web-fetch) ──
     # jina-reader gets past bot-walls that block plain HTTP. The template's

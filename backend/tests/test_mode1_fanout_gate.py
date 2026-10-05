@@ -94,10 +94,8 @@ def test_fanout_skips_disabled_fanpage(patch_celery_and_db, caplog):
     with caplog.at_level(logging.INFO, logger="app.tasks.fan_out"):
         with patch("app.tasks.fan_out.SessionLocal", return_value=db):
             # Patch async task calls so they don't actually fire
-            with patch("app.tasks.ai_generator.generate_caption_for_job") as mock_gen, \
-                 patch("app.tasks.image_watermark.apply_watermark_for_job") as mock_wm:
+            with patch("app.tasks.ai_generator.generate_caption_for_job") as mock_gen:
                 mock_gen.apply_async = MagicMock()
-                mock_wm.apply_async = MagicMock()
                 # Run the body of create_fanout_jobs directly (bypass Celery)
                 from app.models.posts import Post, PostStatus
                 from app.models.fanpage_sources import FanpageSource

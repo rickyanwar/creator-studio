@@ -14,7 +14,6 @@ celery_app = Celery(
     include=[
         "app.tasks.crawler",
         "app.tasks.image_saver",
-        "app.tasks.image_watermark",
         "app.tasks.fan_out",
         "app.tasks.ig_recreate",
         "app.tasks.ai_generator",
@@ -172,16 +171,6 @@ celery_app.conf.beat_schedule = {
     "recover-stuck-posts": {
         "task": "app.tasks.fan_out.recover_stuck_posts",
         "schedule": 900,  # every 15 minutes
-    },
-    # Recovery: re-trigger image cleanup edit for posts stuck in 'editing_image'
-    "recover-stuck-image-edits": {
-        "task": "app.tasks.image_saver.recover_stuck_image_edits",
-        "schedule": 1800,  # every 30 minutes
-    },
-    # Recovery: re-trigger per-fanpage watermarking for jobs stuck in 'pending_watermark'
-    "recover-stuck-watermarks": {
-        "task": "app.tasks.image_watermark.recover_stuck_watermarks",
-        "schedule": 1800,  # every 30 minutes
     },
     # Recovery: re-publish pending_publish jobs whose fanpage was switched to
     # auto AFTER the card had already rendered — a publish-mode change never
