@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -158,3 +158,92 @@ def test_other_failure_records_error_and_continues(setup_wave, monkeypatch):
     assert source.last_crawl_error == "broken"
     assert source.last_checked_at is not None
     assert dispatch.call_args.kwargs["kwargs"]["failed"] == 1
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# G3 — wave source filter: active fanpage + mode1_ig_repost_enabled=True
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _run_wave_and_capture_filter(monkeypatch, sources_result):
+    """Run crawl_all_sources(manual=True) and return the positional args
+    passed to db.query(IGSource).filter(...)."""
+    r = FakeRedis()
+    dispatch = MagicMock()
+    monkeypatch.setattr(crawler, "_wave_redis", lambda: r)
+    monkeypatch.setattr(crawler, "_in_sleep_window", lambda: False)
+    monkeypatch.setattr(crawler.crawl_wave_step, "apply_async", dispatch)
+
+    captured_filter_args = []
+
+    class CapturingQuery:
+        def filter(self, *args):
+            captured_filter_args.extend(args)
+            q = MagicMock()
+            q.order_by.return_value.all.return_value = sources_result
+            return q
+
+    db = MagicMock()
+    db.query.return_value = CapturingQuery()
+    db.close = MagicMock()
+    monkeypatch.setattr(crawler, "SessionLocal", lambda: db)
+
+    crawler.crawl_all_sources.run(manual=True)
+    return captured_filter_args
+
+
+def test_g3_filter_includes_target_fanpage_is_active(monkeypatch):
+    """EXISTS subquery must reference target_fanpages.is_active."""
+    args = _run_wave_and_capture_filter(monkeypatch, [])
+    filter_str = " ".join(str(a) for a in args)
+    assert "target_fanpages.is_active" in filter_str
+
+
+def test_g3_filter_includes_mode1_ig_repost_enabled(monkeypatch):
+    """EXISTS subquery must reference mode1_ig_repost_enabled."""
+    args = _run_wave_and_capture_filter(monkeypatch, [])
+    filter_str = " ".join(str(a) for a in args)
+    assert "mode1_ig_repost_enabled" in filter_str
+
+
+def test_g3_filter_includes_fanpage_sources_is_active(monkeypatch):
+    """EXISTS subquery must still reference fanpage_sources.is_active."""
+    args = _run_wave_and_capture_filter(monkeypatch, [])
+    filter_str = " ".join(str(a) for a in args)
+    assert "fanpage_sources.is_active" in filter_str
+
+
+def test_g3_sources_with_qualifying_fanpage_are_dispatched(monkeypatch):
+    """Sources returned by the filtered query are dispatched in wave."""
+    sources = [SimpleNamespace(id=7), SimpleNamespace(id=3)]
+    dispatch = MagicMock()
+    r = FakeRedis()
+    monkeypatch.setattr(crawler, "_wave_redis", lambda: r)
+    monkeypatch.setattr(crawler, "_in_sleep_window", lambda: False)
+    monkeypatch.setattr(crawler.crawl_wave_step, "apply_async", dispatch)
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = sources
+    db.close = MagicMock()
+    monkeypatch.setattr(crawler, "SessionLocal", lambda: db)
+
+    crawler.crawl_all_sources.run(manual=True)
+    dispatched_ids = dispatch.call_args.kwargs["args"][1]
+    assert dispatched_ids == [7, 3]
+
+
+def test_g3_no_qualifying_fanpage_dispatches_empty_list(monkeypatch):
+    """When the filter returns no sources, wave step gets an empty list."""
+    dispatch = MagicMock()
+    r = FakeRedis()
+    monkeypatch.setattr(crawler, "_wave_redis", lambda: r)
+    monkeypatch.setattr(crawler, "_in_sleep_window", lambda: False)
+    monkeypatch.setattr(crawler.crawl_wave_step, "apply_async", dispatch)
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+    db.close = MagicMock()
+    monkeypatch.setattr(crawler, "SessionLocal", lambda: db)
+
+    crawler.crawl_all_sources.run(manual=True)
+    dispatched_ids = dispatch.call_args.kwargs["args"][1]
+    assert dispatched_ids == []

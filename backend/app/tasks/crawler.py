@@ -71,6 +71,7 @@ def crawl_all_sources(self, manual: bool = False):
     try:
         from app.models.ig_sources import IGSource
         from app.models.fanpage_sources import FanpageSource
+        from app.models.target_fanpages import TargetFanpage
         from app.models.settings import Settings as DBSettings
         from sqlalchemy import exists, func
 
@@ -98,7 +99,8 @@ def crawl_all_sources(self, manual: bool = False):
                     )
                     return
 
-        # Only crawl sources that have at least one active fanpage link.
+        # Only crawl sources that have at least one active fanpage link to an
+        # active fanpage with Mode 1 (IG repost) enabled.
         # Use EXISTS to avoid join-multiplied rows (a source with N fanpages
         # would otherwise be dispatched N times even with .distinct()).
         wave_id = uuid.uuid4().hex
@@ -113,6 +115,9 @@ def crawl_all_sources(self, manual: bool = False):
                     exists().where(
                         FanpageSource.ig_source_id == IGSource.id,
                         FanpageSource.is_active == True,
+                        FanpageSource.fanpage_id == TargetFanpage.id,
+                        TargetFanpage.is_active == True,
+                        TargetFanpage.mode1_ig_repost_enabled == True,
                     ),
                 )
                 .order_by(IGSource.last_checked_at.asc().nullsfirst(), IGSource.id.asc())
@@ -292,6 +297,7 @@ def _crawl_source(db, source_id: int) -> None:
                 image_urls = all_urls[:1]
         else:
             image_urls = all_urls
+        post.image_source_urls = image_urls
         db.commit()
         save_post_images.delay(post.id, image_urls)
 

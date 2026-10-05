@@ -12,6 +12,7 @@ ERROR_KINDS = ("site_down", "blocked", "script")
 ALERT_MIN_CONSECUTIVE = 5
 ALERT_MIN_USERS = 2
 ALERT_MIN_STREAK_MINUTES = 60
+ALERT_RECENT_HOURS = 6
 HEALTH_TTL_SECONDS = 14 * 24 * 60 * 60
 REDIS_TIMEOUT_SECONDS = 2
 
@@ -64,14 +65,21 @@ def _text(value):
 
 
 def is_unhealthy(tier_state: dict, now) -> bool:
-    """Alert only for sustained script/blocked failures across accounts."""
+    """Alert only for sustained script/blocked failures across accounts within the last 6 hours."""
     started = tier_state.get("streak_started_at")
+    last_failure = tier_state.get("last_failure_at")
     if not started or tier_state.get("last_error_kind") not in ("script", "blocked"):
         return False
     try:
-        return (int(tier_state.get("consecutive_failures", 0)) >= ALERT_MIN_CONSECUTIVE
+        now_utc = _now(now)
+        if not last_failure:
+            return False
+        recent = (now_utc - _now(datetime.fromisoformat(last_failure))).total_seconds() \
+            <= ALERT_RECENT_HOURS * 3600
+        return (recent
+                and int(tier_state.get("consecutive_failures", 0)) >= ALERT_MIN_CONSECUTIVE
                 and int(tier_state.get("distinct_users", 0)) >= ALERT_MIN_USERS
-                and (_now(now) - _now(datetime.fromisoformat(started))).total_seconds()
+                and (now_utc - _now(datetime.fromisoformat(started))).total_seconds()
                 >= ALERT_MIN_STREAK_MINUTES * 60)
     except (ValueError, TypeError):
         return False

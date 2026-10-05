@@ -426,3 +426,109 @@ class TestCrawlSingleSourceViewerBusy:
         assert recorded, "retry was never called"
         countdown = recorded.get("countdown")
         assert 120 <= countdown <= 300, f"countdown {countdown} out of [120,300]"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# G2 — _crawl_source sets post.image_source_urls before save_post_images.delay
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _make_media(pk="123", media_type=1, code="abc", taken_at=None, url="https://cdn.ig/img.jpg"):
+    """Minimal instagrapi-style media stub."""
+    from datetime import datetime, timezone
+    m = MagicMock()
+    m.pk = pk
+    m.media_type = media_type
+    m.code = code
+    m.taken_at = taken_at or datetime(2026, 10, 5, 10, tzinfo=timezone.utc)
+    m.caption_text = "caption"
+    m.resources = []
+    m.thumbnail_url = url
+    m.url = url
+    return m
+
+
+class TestCrawlSourceImageSourceUrls:
+    """_crawl_source must set post.image_source_urls = image_urls before commit."""
+
+    def _run(self, media_type=1, album_indices=None):
+        from app.tasks.crawler import _crawl_source
+        from app.models.ig_sources import IGSource, ScraperBackend
+        from app.models.settings import Settings as DBSettings
+        from app.models.posts import Post, PostStatus, MediaType
+
+        media = _make_media(media_type=media_type)
+
+        source = MagicMock()
+        source.id = 1
+        source.ig_username = "testuser"
+        source.is_active = True
+        source.scraper_backend = ScraperBackend.viewer
+        source.burner_account_id = None
+        source.last_seen_post_id = None
+        source.album_image_indices = album_indices
+
+        created_posts = []
+
+        class CapturingDB:
+            def __init__(self):
+                self._call_count = {}
+
+            def query(self, model):
+                q = MagicMock()
+                if model is IGSource:
+                    q.filter_by.return_value.first.return_value = source
+                elif model is Post:
+                    q.filter_by.return_value.first.return_value = None
+                elif model is DBSettings:
+                    settings = MagicMock()
+                    settings.max_post_age_days = 30
+                    q.filter_by.return_value.first.return_value = settings
+                else:
+                    q.filter_by.return_value.first.return_value = None
+                return q
+
+            def add(self, obj):
+                if isinstance(obj, Post):
+                    obj.id = 99
+                    created_posts.append(obj)
+
+            def flush(self):
+                pass
+
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+            def close(self):
+                pass
+
+        db = CapturingDB()
+
+        saved_args = {}
+
+        def fake_delay(post_id, image_urls):
+            saved_args["post_id"] = post_id
+            saved_args["image_urls"] = image_urls
+
+        with (
+            patch("app.tasks.crawler._fetch_medias", return_value=[media]),
+            patch("app.tasks.image_saver.save_post_images.delay", side_effect=fake_delay),
+        ):
+            _crawl_source(db, source_id=1)
+
+        return created_posts, saved_args
+
+    def test_image_post_has_image_source_urls(self):
+        """Single image post: image_source_urls populated with the CDN URL."""
+        posts, saved = self._run(media_type=1)
+        assert posts, "no post created"
+        post = posts[0]
+        assert post.image_source_urls == ["https://cdn.ig/img.jpg"]
+        assert saved["image_urls"] == post.image_source_urls
+
+    def test_image_source_urls_matches_delay_args(self):
+        """image_source_urls on the Post equals what was passed to save_post_images.delay."""
+        posts, saved = self._run(media_type=1)
+        assert posts[0].image_source_urls == saved["image_urls"]

@@ -6,6 +6,7 @@ import pytest
 
 from app.services.ig_viewer_health import (
     TIERS, HEALTH_TTL_SECONDS, HealthUnavailableError, _UPDATE_LUA,
+    ALERT_RECENT_HOURS,
     get_health, is_unhealthy, record_tier_result,
 )
 
@@ -108,6 +109,7 @@ def test_streak_and_reset():
 def test_alert_boundaries():
     base = {"consecutive_failures": 5, "distinct_users": 2,
             "streak_started_at": (NOW - timedelta(minutes=60)).isoformat(),
+            "last_failure_at": NOW.isoformat(),
             "last_error_kind": "script"}
     assert is_unhealthy(base, NOW)
     assert is_unhealthy({**base, "last_error_kind": "blocked"}, NOW)
@@ -115,6 +117,32 @@ def test_alert_boundaries():
     assert not is_unhealthy({**base, "distinct_users": 1}, NOW)
     assert not is_unhealthy({**base, "streak_started_at": (NOW - timedelta(minutes=59)).isoformat()}, NOW)
     assert not is_unhealthy({**base, "last_error_kind": "site_down"}, NOW)
+    # stale: last failure > 6 h ago → not unhealthy
+    stale_failure = (NOW - timedelta(hours=ALERT_RECENT_HOURS, seconds=1)).isoformat()
+    assert not is_unhealthy({**base, "last_failure_at": stale_failure}, NOW)
+    # boundary: exactly 6 h ago → still unhealthy
+    boundary_failure = (NOW - timedelta(hours=ALERT_RECENT_HOURS)).isoformat()
+    assert is_unhealthy({**base, "last_failure_at": boundary_failure}, NOW)
+    # missing last_failure_at → not unhealthy
+    assert not is_unhealthy({**base, "last_failure_at": ""}, NOW)
+
+
+def test_recent_hours_stale_streak_not_unhealthy():
+    """Streak with last_failure 7 h ago is NOT unhealthy (stale)."""
+    base = {"consecutive_failures": 5, "distinct_users": 2,
+            "streak_started_at": (NOW - timedelta(hours=8)).isoformat(),
+            "last_failure_at": (NOW - timedelta(hours=7)).isoformat(),
+            "last_error_kind": "script"}
+    assert not is_unhealthy(base, NOW)
+
+
+def test_recent_hours_fresh_streak_unhealthy():
+    """Streak with last_failure 5 h ago IS unhealthy."""
+    base = {"consecutive_failures": 5, "distinct_users": 2,
+            "streak_started_at": (NOW - timedelta(hours=6)).isoformat(),
+            "last_failure_at": (NOW - timedelta(hours=5)).isoformat(),
+            "last_error_kind": "script"}
+    assert is_unhealthy(base, NOW)
 
 
 def test_all_tiers_down():
