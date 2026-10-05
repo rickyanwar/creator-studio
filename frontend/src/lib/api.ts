@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { ScraperHealth } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -35,6 +36,7 @@ export const login = (username: string, password: string) =>
 // ── Dashboard ────────────────────────────────────────────────────────────────
 export const getDashboardStats = () => api.get("/dashboard/stats");
 export const getCrawlerHealth = () => api.get("/dashboard/health");
+export const getScraperHealth = () => api.get<ScraperHealth>("/api/scraper-health");
 
 // ── Fanpages ─────────────────────────────────────────────────────────────────
 export const listFanpages = () => api.get("/fanpages");

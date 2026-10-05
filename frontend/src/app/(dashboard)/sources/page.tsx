@@ -1,9 +1,9 @@
 "use client";
 
 import useSWR from "swr";
-import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners, getCrawlerHealth } from "@/lib/api";
+import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners, getCrawlerHealth, getScraperHealth } from "@/lib/api";
 import { format, formatDistanceToNowStrict } from "date-fns";
-import type { CrawlerHealth } from "@/lib/types";
+import type { CrawlerHealth, ScraperHealth } from "@/lib/types";
 import { useState } from "react";
 import { Icon } from "@iconify/react";
 
@@ -25,6 +25,19 @@ type Burner = {
   status: string;
 };
 
+const viewerTiers = [
+  ["gramsnap", "GramSnap"],
+  ["anonyig", "AnonyIG"],
+  ["igstoryviewer", "IGStoryViewer"],
+] as const;
+
+const tierStyles = {
+  healthy: { badge: "badge-green", icon: "solar:check-circle-bold-duotone", text: "OK" },
+  degraded: { badge: "badge-yellow", icon: "solar:danger-circle-bold-duotone", text: "Gagal" },
+  unhealthy: { badge: "badge-red", icon: "solar:danger-triangle-bold-duotone", text: "Bermasalah" },
+  unknown: { badge: "badge-gray", icon: "solar:question-circle-bold-duotone", text: "Belum ada data" },
+} as const;
+
 export default function SourcesPage() {
   const { data: sources = [], isLoading, mutate } = useSWR<IGSourceRow[]>(
     "ig-sources",
@@ -39,6 +52,11 @@ export default function SourcesPage() {
     "crawler-health",
     () => getCrawlerHealth().then((r) => r.data),
     { refreshInterval: 30000 }
+  );
+  const { data: scraperHealth, error: scraperHealthError } = useSWR(
+    "scraper-health",
+    () => getScraperHealth().then((r) => r.data),
+    { refreshInterval: 60000 }
   );
 
   const burners: Burner[] = burnersData?.burners ?? (Array.isArray(burnersData) ? burnersData as Burner[] : []);
@@ -115,16 +133,64 @@ export default function SourcesPage() {
         )}
       </div>
 
-      {activeBurners.length === 0 && !isLoading && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+      {scraperHealth?.scraper_mode === "viewer" ? (
+        <div className="rounded-xl border border-info-main/30 bg-info-lighter p-4 flex items-start gap-3 text-info-darker">
+          <Icon icon="solar:info-circle-bold-duotone" className="mt-0.5 shrink-0" width={18} />
+          <p className="text-sm">Mode Web Viewer aktif — burner tidak diperlukan.</p>
+        </div>
+      ) : activeBurners.length === 0 && !isLoading && scraperHealth?.scraper_mode === "auto" ? (
+        <div className="rounded-xl border border-info-main/30 bg-info-lighter p-4 flex items-start gap-3 text-info-darker">
+          <Icon icon="solar:info-circle-bold-duotone" className="mt-0.5 shrink-0" width={18} />
+          <p className="text-sm">Tidak ada burner aktif — crawler otomatis memakai Web Viewer (GramSnap → AnonyIG → IGStoryViewer).</p>
+        </div>
+      ) : activeBurners.length === 0 && !isLoading && scraperHealth?.scraper_mode === "instagrapi" ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-warning-main/30 dark:bg-warning-lighter p-4 flex items-start gap-3">
           <Icon icon="solar:danger-triangle-bold-duotone" className="text-amber-500 mt-0.5 shrink-0" width={18} />
-          <p className="text-sm text-amber-800">
+          <p className="text-sm text-amber-800 dark:text-warning-darker">
             No active burner accounts found. Go to{" "}
             <a href="/burners" className="font-semibold underline">Burners</a>{" "}
             and import a session first, then come back to assign burners to sources.
           </p>
         </div>
-      )}
+      ) : null}
+
+      <section className="card-sm space-y-3" aria-labelledby="scraper-health-heading">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 id="scraper-health-heading" className="font-semibold text-ink">Scraper health</h2>
+          <span className="text-xs text-ink-48">Mode: {scraperHealth?.scraper_mode === "viewer" ? "Web Viewer" : scraperHealth?.scraper_mode === "instagrapi" ? "Instagrapi" : scraperHealth?.scraper_mode === "auto" ? "Otomatis" : "—"}</span>
+        </div>
+        {scraperHealthError || scraperHealth?.available === false ? (
+          <p className="text-caption text-ink-48">Data kesehatan scraper belum tersedia.</p>
+        ) : scraperHealth?.available ? (
+          <div className="divide-y divide-hairline">
+            {viewerTiers.map(([key, name]) => {
+              const tier = scraperHealth.tiers[key];
+              if (!tier) return null;
+              const style = tierStyles[tier.status];
+              return (
+                <div key={key} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-caption">
+                  <span className="w-28 font-medium text-ink">{name}</span>
+                  <span className={`${style.badge} gap-1`}>
+                    <Icon icon={style.icon} width={14} aria-hidden="true" />
+                    {tier.status === "degraded" ? `Gagal ${tier.consecutive_failures}×` : style.text}
+                  </span>
+                  <span className="text-ink-48">Sukses terakhir: {tier.last_success_at ? formatDistanceToNowStrict(new Date(tier.last_success_at), { addSuffix: true }) : "—"}</span>
+                  {tier.consecutive_failures > 0 && (
+                    <>
+                      <span className="text-ink-48">Gagal beruntun: {tier.consecutive_failures} ({tier.distinct_users} akun)</span>
+                      <span className="max-w-[220px] truncate text-ink-48" title={`${tier.last_error_kind}: ${tier.last_error}`}>
+                        {tier.last_error_kind}{tier.last_error ? `: ${tier.last_error}` : ""}
+                      </span>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-caption text-ink-48">Memuat data kesehatan scraper…</p>
+        )}
+      </section>
 
       {isLoading ? (
         <div className="text-caption text-ink-48">Loading…</div>

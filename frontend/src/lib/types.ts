@@ -348,6 +348,22 @@ export interface CrawlerHealth {
   active_sources: number;
 }
 
+export interface ScraperHealth {
+  available: boolean;
+  scraper_mode: "auto" | "instagrapi" | "viewer";
+  generated_at: string;
+  tiers: Partial<Record<"gramsnap" | "anonyig" | "igstoryviewer", {
+    status: "healthy" | "degraded" | "unhealthy" | "unknown";
+    last_success_at: string;
+    last_failure_at: string;
+    consecutive_failures: number;
+    distinct_users: number;
+    last_error_kind: string;
+    last_error: string;
+    unhealthy: boolean;
+  }>>;
+}
+
 export interface AppSettings {
   crawl_interval_minutes: number;
   max_post_age_days: number;
