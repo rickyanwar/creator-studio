@@ -51,6 +51,14 @@ def create_fanout_jobs(self, post_id: int):
         created = 0
         slot = 0  # stagger slot index for fanpages sharing this source
         for link in fanpage_links:
+            # Mode 1 gate: skip fanpages that have disabled IG repost
+            if not link.fanpage.mode1_ig_repost_enabled:
+                logger.info(
+                    "Post %d: skipping fanpage %d — mode1_ig_repost_enabled is false",
+                    post_id, link.fanpage_id,
+                )
+                continue
+
             # Idempotency: skip if job already exists
             existing = db.query(PublishJob).filter_by(
                 post_id=post_id, fanpage_id=link.fanpage_id

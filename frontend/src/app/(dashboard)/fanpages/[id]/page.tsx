@@ -1117,6 +1117,30 @@ export default function FanpageEditPage() {
         </div>
       </section>
 
+      {/* ── Section: Mode 1 — IG Repost ─────────────────── */}
+      <section className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-text-primary">Mode 1 — IG Repost</h2>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Repost otomatis dari IG Sources yang terhubung ke fanpage ini.
+            </p>
+          </div>
+          <button
+            onClick={() => set("mode1_ig_repost_enabled", !form.mode1_ig_repost_enabled)}
+            className={`relative w-11 h-6 rounded-full transition-colors ${
+              form.mode1_ig_repost_enabled ? "bg-primary-main" : "bg-hairline"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                form.mode1_ig_repost_enabled ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
+      </section>
+
       {/* ── Section: Mode 2 — News Content ─────────────── */}
       <section className="card space-y-5">
         <div className="flex items-center justify-between">
