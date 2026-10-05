@@ -32,10 +32,10 @@ For each unhealthy tier when no other incident is open, select 2 valid public us
 Use `/root/ig_test/venv_ig/bin/python` to execute the owner's host-provided references; inspect their entry points for user arguments instead of guessing flags. Confirm reference returned at least 1 post **from the named tier**, not merely a successful fallback. Confirmation may also run deployed, reviewed code on the host under `/root/ig_test/venv_ig`, read-only against `/opt/studio/backend`:
 
 ```sh
-/root/ig_test/venv_ig/bin/python /opt/studio/backend/scripts/ig_viewer_live_check.py --backend-dir /opt/studio/backend --tiers <tier> --users <user1> <user2> --json-out /root/hermes-work/<tier>-confirm.json
+/root/ig_test/venv_ig/bin/python /opt/studio/backend/scripts/ig_viewer_live_check.py --backend-dir /opt/studio/backend --tiers <tier> --users <user1>,<user2> --json-out /root/hermes-work/<tier>-confirm.json
 ```
 
-Standalone live check accepts `--backend-dir`, `--tiers` (separate tier argv tokens or `all`), `--users` (separate username argv tokens), `--rounds`, `--sleep`, `--json-out`, `--dry-run`. Exit 0 only if **every** tier/user/round run returned at least 1 post. JSON summary fields: `runs` (each with `round`, `tier`, `user`, `ok`, `posts`, `albums`, `kind`, `error`, `seconds`), `passed`, `failed`, `all_passed`. `--tiers all` exercises the **fallback flow**, not each tier independently; explicit tier names call `fetch_with_tier`. Read per-user failures; never mistake a successful fallback tier for success on a requested tier. Avoid rapid retries against viewer sites.
+Standalone live check accepts `--backend-dir`, `--tiers` (one comma-separated value, e.g. `gramsnap,anonyig`, or `all`), `--users` (one comma-separated value), `--rounds`, `--sleep`, `--json-out`, `--dry-run`. Exit 0 only if **every** tier/user/round run returned at least 1 post. JSON summary fields: `runs` (each with `round`, `tier`, `user`, `ok`, `posts`, `albums`, `kind`, `error`, `seconds`), `passed`, `failed`, `all_passed`. `--tiers all` exercises the **fallback flow**, not each tier independently; explicit tier names call `fetch_with_tier`. Read per-user failures; never mistake a successful fallback tier for success on a requested tier. Avoid rapid retries against viewer sites.
 
 | Evidence | Action |
 | --- | --- |
@@ -70,19 +70,38 @@ IMAGE="$(docker inspect studio-worker-1 --format '{{.Config.Image}}')"
 
 Never mount `/var/run/docker.sock`, `/root` itself, any other `/root` path, `/opt/studio`, or the `gh` token into candidate containers. The sole allowed `/root` source is `/root/hermes-work/creator-studio/backend`, mounted read-only at `/src`. Containers run non-root, drop all capabilities, and disallow privilege escalation. If container user cannot write HOME or temporary files, add `-e HOME=/tmp`.
 
-1. Pytest in throwaway container, without network:
+1. Pytest in throwaway container, without network. The worker image has no pytest, so build a test image once (rebuild whenever the worker image changes; needs network only during this build):
    ```sh
-   docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges -v /root/hermes-work/creator-studio/backend:/src:ro -w /src -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE" python -m pytest tests -q -p no:cacheprovider
+   printf 'FROM %s\nRUN pip install --no-cache-dir pytest==9.1.1\n' "$IMAGE" | docker build -q -t studio-worker-test -
    ```
-2. Live check failing tier, **3 allowlisted public users, 2 rounds, 3/3 each round**, in a fresh networked throwaway container. Emit JSON to stdout; host shell captures it outside the read-only mount:
+   Then run tests on `studio-worker-test` with no network:
    ```sh
-   docker run --rm --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --shm-size=1g -v /root/hermes-work/creator-studio/backend:/src:ro "$IMAGE" python /src/scripts/ig_viewer_live_check.py --backend-dir /src --tiers <tier> --users <user1> <user2> <user3> --rounds 2 > /root/hermes-work/<tier>-fixed.json
+   docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v /root/hermes-work/creator-studio/backend:/src:ro -w /src studio-worker-test python -m pytest tests -q -p no:cacheprovider
    ```
-3. Regression, fallback flow, 1 round; every user passes. Use another fresh container:
+   (verified: 319 passed, 1 skipped)
+2. Live check failing tier, **3 allowlisted public users, 2 rounds, 3/3 each round**, in a fresh networked throwaway container. `--users` takes ONE comma-separated value. Run the script inside a `sh -c` wrapper so that valid JSON goes to stdout; redirect docker run stdout to the host file:
    ```sh
-   docker run --rm --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --shm-size=1g -v /root/hermes-work/creator-studio/backend:/src:ro "$IMAGE" python /src/scripts/ig_viewer_live_check.py --backend-dir /src --tiers all --users <user1> <user2> <user3> --rounds 1 > /root/hermes-work/all-tiers-regression.json
+   docker run --rm --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --shm-size=1g -e HOME=/tmp -v /root/hermes-work/creator-studio/backend:/src:ro "$IMAGE" \
+     sh -c "python /src/scripts/ig_viewer_live_check.py --backend-dir /src --tiers <tier> --users <user1>,<user2>,<user3> --rounds 2 --json-out /tmp/r.json >/dev/null 2>&1; cat /tmp/r.json" \
+     > /root/hermes-work/<tier>-fixed.json
    ```
-   Also run the same container command with `--tiers gramsnap anonyig igstoryviewer` and redirect stdout to a different host JSON path to prove each tier independently; `all` alone can hide a broken tier through fallback. Each non-failing tier must pass its one-round checks.
+   (verified: sandboxed run returned valid JSON, all 3 tiers 12 posts)
+
+   **Exit code note:** the exit code of `docker run` here reflects `cat`, not the live-check script. Judge success from the JSON fields `all_passed` and per-run `ok`, not the exit code.
+
+3. Regression, fallback flow, 1 round; every user passes. Use another fresh container. Apply the same `sh -c` / `cat` form and comma-separated `--users`:
+   ```sh
+   docker run --rm --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --shm-size=1g -e HOME=/tmp -v /root/hermes-work/creator-studio/backend:/src:ro "$IMAGE" \
+     sh -c "python /src/scripts/ig_viewer_live_check.py --backend-dir /src --tiers all --users <user1>,<user2>,<user3> --rounds 1 --json-out /tmp/r.json >/dev/null 2>&1; cat /tmp/r.json" \
+     > /root/hermes-work/all-tiers-regression.json
+   ```
+   Also run the per-tier form (`--tiers gramsnap,anonyig,igstoryviewer` — comma-separated) and redirect stdout to a different host JSON path to prove each tier independently; `all` alone can hide a broken tier through fallback. Each non-failing tier must pass its one-round checks.
+   ```sh
+   docker run --rm --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --shm-size=1g -e HOME=/tmp -v /root/hermes-work/creator-studio/backend:/src:ro "$IMAGE" \
+     sh -c "python /src/scripts/ig_viewer_live_check.py --backend-dir /src --tiers gramsnap,anonyig,igstoryviewer --users <user1>,<user2>,<user3> --rounds 1 --json-out /tmp/r.json >/dev/null 2>&1; cat /tmp/r.json" \
+     > /root/hermes-work/all-tiers-explicit-regression.json
+   ```
+   Exit code note applies here too: judge from JSON, not exit code.
 
 Inspect exit codes **and** JSON summary; tests must represent the intended tiers, not fallbacks. Failed gate: diagnose and retry within 3 attempts; on third failure mark incident `failed`, report which gates failed and evidence to owner, then stop. No PR from failing tests.
 
@@ -132,6 +151,12 @@ Steps 1–4 (install `gh`, configure token, clone, and fix Hermes config) were c
 
 - Fine-grained PAT can technically push to `main`. Add GitHub branch protection/ruleset requiring PRs. Owner bypass preserves the owner's deploy pushes, but cannot stop a PAT acting as that same user. Better: replace it with a dedicated machine-user or GitHub App token limited to PR-only rights.
 - Hermes runs as root with terminal access in the existing setup; these controls are procedural. Later run Hermes as an unprivileged user.
+
+## Known environment facts
+
+- **Scraper browser timezone:** the browser must report the host timezone (`IG_VIEWER_TIMEZONE`, default `Asia/Jakarta`). With a UTC browser timezone, Cloudflare blocks GramSnap and AnonyIG: the posts API stays 422 because `/api/cf` never fires. Always verify this env var is set before diagnosing mysterious 422 errors on those tiers.
+- **Worker `/dev/shm`:** production worker containers have 64 MB `/dev/shm`. That is sufficient for normal operation; do not treat it as a bug.
+- **Candidate gate containers:** candidate (non-production) containers use `--shm-size=1g` to give the browser more shared memory during testing. Do not apply this to production worker restarts.
 
 ## Troubleshooting and pause
 
