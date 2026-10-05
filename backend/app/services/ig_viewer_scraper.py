@@ -27,6 +27,8 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 from app.services.ig_media import IGMedia, normalise_post, is_video_node as _is_video_node
+from app.services.ig_viewer_health import record_tier_result
+from app.services.ig_viewer_sanitize import sanitize_error
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,10 @@ class ViewerBusyError(Exception):
 
 class ViewerTierError(Exception):
     """A single tier failed."""
+
+    def __init__(self, msg: str, kind: str = "script"):
+        super().__init__(msg)
+        self.kind = kind
 
 
 class ViewerScrapeError(Exception):
@@ -428,6 +434,8 @@ def _detect_cloudflare(page_content: str) -> Optional[str]:
     for ctype in ("non-interactive", "managed", "interactive"):
         if f"cType: '{ctype}'" in page_content:
             return ctype
+    if "<title>Just a moment...</title>" in page_content:
+        return "non-interactive"
     if "challenges.cloudflare.com/turnstile/v" in page_content:
         return "embedded"
     return None
@@ -552,12 +560,40 @@ def _wait_for_stability(page) -> None:
             pass
 
 
+def _navigation_failure(exc: Exception, *, on_goto=True) -> bool:
+    if (on_goto and type(exc).__name__ == "TimeoutError"
+            and type(exc).__module__.startswith(("patchright", "playwright"))):
+        return True
+    message = str(exc).lower()
+    return any(marker in message for marker in ("net::err_", "ns_error", "dns", "name_not_resolved"))
+
+
+def _failure_kind(page, kind: str) -> str:
+    """Classify failed tier from main document only; embedded Turnstile is normal."""
+    for check in (
+        lambda: isinstance(page.url, str) and
+        ("/cdn-cgi/challenge-platform" in page.url or "__cf_chl" in page.url),
+        lambda: isinstance(title := page.title(), str) and title.startswith("Just a moment"),
+        lambda: page.locator("#challenge-form, #challenge-running").count() > 0,
+    ):
+        try:
+            if check():
+                return "blocked"
+        except Exception:
+            continue
+    return kind
+
+
 def _navigate(page, url: str) -> None:
     """BrowserSession.fetch order: commit, evaluate, stability, CF, stability, action, humanize."""
     try:
         response = page.goto(url, referer="https://www.google.com/", wait_until="commit")
     except Exception:
-        response = page.goto(url, referer="https://www.google.com/")
+        try:
+            response = page.goto(url, referer="https://www.google.com/")
+        except Exception as exc:
+            kind = "site_down" if _navigation_failure(exc) else "script"
+            raise ViewerTierError(sanitize_error(f"Navigation failed for {url}: {exc}"), kind=kind) from exc
     if response and (script := getattr(page.context, "_ig_stealth_script", None)):
         try:
             page.evaluate(script)
@@ -565,7 +601,9 @@ def _navigate(page, url: str) -> None:
             logger.debug("Stealth script injection error: %s", exc)
     _wait_for_stability(page)
     if not response:
-        raise ViewerTierError(f"No response for {url}")
+        raise ViewerTierError(sanitize_error(f"No response for {url}"), kind="script")
+    if response.status >= 500:
+        raise ViewerTierError(sanitize_error(f"HTTP {response.status} for {url}"), kind="site_down")
     _solve_cloudflare(page)
     _wait_for_stability(page)
 
@@ -683,11 +721,27 @@ def _tier_profile_viewer(page, username: str, url: str, name: str) -> list[dict]
 
 
 def _tier_anonyig(page, username: str) -> list[dict]:
-    return _tier_profile_viewer(page, username, "https://anonyig.com/en1/instagram-profile-viewer/", "anonyig")
+    try:
+        return _tier_profile_viewer(page, username, "https://anonyig.com/en1/instagram-profile-viewer/", "anonyig")
+    except ViewerTierError as exc:
+        exc.kind = _failure_kind(page, exc.kind)
+        raise
+    except Exception as exc:
+        raise ViewerTierError(sanitize_error(f"anonyig: {exc}"),
+                              kind=_failure_kind(page, "site_down" if _navigation_failure(exc, on_goto=False)
+                                                 else "script")) from exc
 
 
 def _tier_gramsnap(page, username: str) -> list[dict]:
-    return _tier_profile_viewer(page, username, "https://gramsnap.com/en/instagram-profile-viewer/", "gramsnap")
+    try:
+        return _tier_profile_viewer(page, username, "https://gramsnap.com/en/instagram-profile-viewer/", "gramsnap")
+    except ViewerTierError as exc:
+        exc.kind = _failure_kind(page, exc.kind)
+        raise
+    except Exception as exc:
+        raise ViewerTierError(sanitize_error(f"gramsnap: {exc}"),
+                              kind=_failure_kind(page, "site_down" if _navigation_failure(exc, on_goto=False)
+                                                 else "script")) from exc
 
 
 def _tier_igstoryviewer(page, username: str) -> list[dict]:
@@ -699,9 +753,9 @@ def _tier_igstoryviewer(page, username: str) -> list[dict]:
     def _on_response(resp):
         host = urlsplit(resp.url).hostname or ""
         if host == "igstoryviewer.to" or host.endswith(".igstoryviewer.to"):
-            logger.debug("igstoryviewer response: %s", resp.url)
+            logger.debug("igstoryviewer response: %s", sanitize_error(resp.url))
         if "api/instagram/posts" in resp.url:
-            api_urls.append(resp.url)
+            api_urls.append(sanitize_error(resp.url))
             try:
                 js = resp.json()
                 items = js.get("data", {}).get("posts", [])
@@ -710,7 +764,7 @@ def _tier_igstoryviewer(page, username: str) -> list[dict]:
                     if isinstance(node, dict):
                         captured.append(node)
             except Exception as exc:
-                logger.debug("igstoryviewer posts response parse failed: %s", exc)
+                logger.debug("igstoryviewer posts response parse failed: %s", sanitize_error(str(exc)))
 
     page.on("response", _on_response)
 
@@ -746,17 +800,22 @@ def _tier_igstoryviewer(page, username: str) -> list[dict]:
                 break
             page.wait_for_timeout(1000)
         _after_page_action(page)
+    except ViewerTierError as exc:
+        exc.kind = _failure_kind(page, exc.kind)
+        raise
     except Exception as exc:
         raise ViewerTierError(
-            f"igstoryviewer: {exc}; Posts clicked={posts_tab_clicked}; "
-            f"last API URLs={list(api_urls)}"
+            f"igstoryviewer: {sanitize_error(str(exc))}; Posts clicked={posts_tab_clicked}; "
+            f"last API URLs={list(api_urls)}",
+            kind=_failure_kind(page, "site_down" if _navigation_failure(exc, on_goto=False) else "script"),
         ) from exc
     if captured:
         return captured
 
     raise ViewerTierError(
         f"igstoryviewer: no posts captured; Posts clicked={posts_tab_clicked}; "
-        f"last API URLs={list(api_urls)}"
+        f"last API URLs={list(api_urls)}",
+        kind=_failure_kind(page, "script"),
     )
 
 
@@ -771,6 +830,14 @@ _TIERS = [
 # Lock exceeds worst-case total: tiers, jitters, browser launch.
 _LOCK_TIMEOUT = max(300, len(_TIERS) * _TIER_TIMEOUT
                     + (len(_TIERS) - 1) * int(_JITTER_MAX) + _BROWSER_LAUNCH)
+
+
+def _record_result(tier: str, username: str, ok: bool,
+                   error_kind: Optional[str] = None, error: Optional[str] = None) -> None:
+    try:
+        record_tier_result(tier, username, ok, error_kind=error_kind, error=error)
+    except Exception as exc:
+        logger.warning("Tier %s health recording failed: %s", tier, exc)
 
 
 # ── Main entry point ─────────────────────────────────────────────────────────
@@ -833,6 +900,7 @@ def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Option
                 if raw_nodes and video_count == len(raw_nodes):
                     logger.info("Tier %s returned %d nodes, all video — success with []",
                                 tier_name, len(raw_nodes))
+                    _record_result(tier_name, ig_username, True)
                     return []
 
                 if medias:
@@ -841,6 +909,7 @@ def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Option
                     medias = medias[:amount]
                     logger.info("Tier %s won for @%s: %d posts",
                                 tier_name, ig_username, len(medias))
+                    _record_result(tier_name, ig_username, True)
                     return medias
 
                 # 0 usable medias: check if non-video nodes failed to parse
@@ -853,14 +922,18 @@ def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Option
                                 tier_name, parse_fail_count, total, ig_username)
                 else:
                     tier_errors[tier_name] = "0 image posts after normalisation"
+                _record_result(tier_name, ig_username, False, "script", tier_errors[tier_name])
 
             except ViewerTierError as exc:
-                tier_errors[tier_name] = str(exc)
-                logger.info("Tier %s failed for @%s: %s", tier_name, ig_username, exc)
+                tier_errors[tier_name] = sanitize_error(str(exc))
+                logger.info("Tier %s failed for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
+                _record_result(tier_name, ig_username, False, exc.kind, tier_errors[tier_name])
             except Exception as exc:
-                tier_errors[tier_name] = f"{type(exc).__name__}: {str(exc)[:200]}"
-                logger.warning("Tier %s error for @%s: %s", tier_name, ig_username, exc,
-                               exc_info=True)
+                tier_errors[tier_name] = sanitize_error(f"{type(exc).__name__}: {exc}")
+                logger.warning("Tier %s error for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
+                _record_result(tier_name, ig_username, False,
+                               "site_down" if _navigation_failure(exc, on_goto=False) else "script",
+                               tier_errors[tier_name])
             finally:
                 if page:
                     try:

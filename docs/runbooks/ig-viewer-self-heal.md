@@ -1,0 +1,142 @@
+# IG viewer self-heal — Hermes VPS runbook
+
+## Purpose and hard rules
+
+Detect sustained Mode 1 viewer tier failures, prove our scraper broke against the owner's working reference, request Telegram approval, then fix and open a PR. Run as root on VPS; cron notepad persists between runs. Telegram chat sessions must read that notepad **and** the incident JSON before acting.
+
+- NEVER edit or restart anything in `/opt/studio` or production containers. Reading files and `docker exec` for the health command are allowed. NEVER deploy, merge PRs, or push to `main`.
+- NEVER print secrets, tokens, or credential-bearing URLs in Telegram, PRs, test evidence, or logs. Keep credentials outside repo.
+- Only one open incident across tiers; no new fix/approval while one is `awaiting_approval`, `fixing`, or `pr_opened`. At most **3 fix attempts per incident**; then report failure with evidence and stop.
+- Dedupe script-broken alerts **per tier for 24 hours** using cron notepad timestamps. Dedupe health-command failure notes for 6 hours. Record site/reference failures there too. Do not repeat Telegram messages on every run.
+- NEVER execute agent-edited candidate code on the host. Run candidate pytest and live checks only in a throwaway container created from the deployed worker image, with code mounted read-only and no Docker socket, credentials, or unrelated host paths.
+- Fix only after the owner replies `YA PERBAIKI <incident-id>` for the matching `awaiting_approval` incident. Accept it only from the Telegram user ID in Hermes `TELEGRAM_ALLOWED_USERS`, in that owner's private chat. `TIDAK <incident-id>` closes it; silence is not approval.
+
+## Detection — every 30 minutes
+
+Run `docker exec studio-api-1 python -m app.scripts.ig_viewer_health`. Success prints sanitized JSON and exits 0. Parse top-level `generated_at`, `tiers`, `all_tiers_down`. Each `tiers.<tier>` (`gramsnap`, `anonyig`, `igstoryviewer`) has `last_success_at`, `last_failure_at`, `streak_started_at`, `consecutive_failures`, `distinct_users`, `last_error`, `last_error_kind`, `unhealthy`. Times are UTC ISO 8601; `last_error` is capped at 300 characters. `all_tiers_down` is informational, not a repair trigger.
+
+An `unhealthy` tier has at least 5 consecutive failures on 2 distinct users over at least 60 minutes, with `last_error_kind` `script` or `blocked`. `site_down` alone never triggers repair. If no tier has `unhealthy=true`, exit silently (except recovery check below). Unavailable data prints `{"error":"health_unavailable"}` and exits 2. If that occurs, the container is down, output is not valid JSON, or the command otherwise fails, send one short note at most once per 6 hours and stop; do not infer scraper health from missing data. Health and live-check errors are sanitized, but never paste raw logs or stack traces into Telegram or PRs; summarize them.
+
+> `Cek IG tertunda: data kesehatan tidak tersedia (<alasan singkat>). Saya cek lagi pada jadwal berikutnya.`
+
+## Confirm before alerting
+
+For each unhealthy tier when no other incident is open, select 2 valid public usernames from this fixed allowlist: `marcmarquez93`, `f.1interviews`, `crossesup`, `effettogp`, `calfkicks`. If another username is needed, first validate it against `^[A-Za-z0-9._]{1,30}$`. Always pass usernames as separate argv tokens; never interpolate Telegram/text input into a shell command string. Under `/root/ig_test/venv_ig`, run owner's proven reference for **that tier and both users**, then run our deployed code against the **same two users**:
+
+| Tier | Owner's reference in `/root/ig_test` |
+| --- | --- |
+| `gramsnap` | `fast_test.py` using `anonyig_hybrid_monitor.process_username`, or explicitly `fetch_via_dom` from `anonyig_hybrid_monitor.py`; inspect output to ensure GramSnap path actually ran. |
+| `anonyig` | `fast_test.py` using `anonyig_hybrid_monitor.process_username`; explicitly verify AnonyIG path ran, or call the matching function in `anonyig_hybrid_monitor.py`. |
+| `igstoryviewer` | `test_only_igstory.py`, or `fetch_via_igstoryviewer` from `anonyig_hybrid_monitor.py`. |
+
+Use `/root/ig_test/venv_ig/bin/python` to execute the owner's host-provided references; inspect their entry points for user arguments instead of guessing flags. Confirm reference returned at least 1 post **from the named tier**, not merely a successful fallback. Confirmation may also run deployed, reviewed code on the host under `/root/ig_test/venv_ig`, read-only against `/opt/studio/backend`:
+
+```sh
+/root/ig_test/venv_ig/bin/python /opt/studio/backend/scripts/ig_viewer_live_check.py --backend-dir /opt/studio/backend --tiers <tier> --users <user1> <user2> --json-out /root/hermes-work/<tier>-confirm.json
+```
+
+Standalone live check accepts `--backend-dir`, `--tiers` (separate tier argv tokens or `all`), `--users` (separate username argv tokens), `--rounds`, `--sleep`, `--json-out`, `--dry-run`. Exit 0 only if **every** tier/user/round run returned at least 1 post. JSON summary fields: `runs` (each with `round`, `tier`, `user`, `ok`, `posts`, `albums`, `kind`, `error`, `seconds`), `passed`, `failed`, `all_passed`. `--tiers all` exercises the **fallback flow**, not each tier independently; explicit tier names call `fetch_with_tier`. Read per-user failures; never mistake a successful fallback tier for success on a requested tier. Avoid rapid retries against viewer sites.
+
+| Evidence | Action |
+| --- | --- |
+| Reference OK on both users; ours FAIL on either | `SCRIPT BROKEN`: alert with evidence; open one incident. |
+| Reference and ours both FAIL on same users | Likely site/Cloudflare issue: note first seen, tier, users, outcomes in cron notepad; no repair alert. Re-check next run. If still failing **more than 24 hours** after first confirmation, send one informational Telegram note (no fix offer), deduped per tier; reset timer after recovery. |
+| Ours OK now | Transient: no alert; clear pending site-failure observation. |
+| Reference inconclusive, mixed results, or only fallback succeeded | Do not label script broken. Record uncertainty in notepad; retry next run. |
+
+> `Info IG <tier>: referensi dan skrip kita sama-sama gagal >24 jam pada <jumlah> akun. Kemungkinan situs/Cloudflare bermasalah; saya pantau, tanpa perubahan kode.`
+
+## Script-broken alert and incident record
+
+Before sending alert, check per-tier 24-hour dedupe timestamp and the one-open-incident rule. Create `/root/hermes-work/incidents/<id>.json` with `id`, `tier`, `started` (UTC streak start), `status: "awaiting_approval"`, 2 tested usernames, health counters/error, reference and ours results, proposed approach, alert timestamp, and `attempts: 0`. Create directory root-only (`chmod 700`); incident file `chmod 600`. Put incident ID/path, tier, started, status, alert timestamp, and per-tier dedupe timestamps in cron notepad so chat sessions can locate it. Never include tokens in incident files. If same tier is still pending, update evidence without re-alerting. Approval expires 24 hours after the alert timestamp; send a fresh alert before accepting a later reply.
+
+> `IG <tier> bermasalah sejak <waktu UTC>: <gagal beruntun> gagal, <jumlah akun> akun (uji: <akun1>, <akun2>). Error <jenis>: <pesan singkat>. Referensi: <hasil 2 akun>; skrip kita: <hasil 2 akun>. Dugaan: <penyebab>. Usulan: <perbaikan singkat>. Boleh saya perbaiki? Balas: YA PERBAIKI <incident-id> / TIDAK <incident-id>`
+
+## After Telegram approval — fix and verify
+
+Chat session: read cron notepad and `/root/hermes-work/incidents/<id>.json`; verify status is `awaiting_approval`, incident ID matches exactly, reply is no more than 24 hours after the latest alert, sender ID is in `TELEGRAM_ALLOWED_USERS`, chat is that owner's private chat, and no competing incident exists. Record approving Telegram message ID and timestamp in incident JSON, then atomically change status to `fixing` in JSON and notepad. That transition consumes approval; never reuse it for another attempt or incident. Keep all edits under `/root/hermes-work/creator-studio`, a separate clone created with `gh repo clone rickyanwar/creator-studio /root/hermes-work/creator-studio` once. Do not work in `/opt/studio`.
+
+```sh
+git fetch origin && git checkout -B hermes/fix-ig-viewer-<tier>-<YYYYMMDD> origin/main
+```
+
+Run from `/root/hermes-work/creator-studio` only after confirming no uncommitted work or branch with an existing PR would be overwritten. Compare failure with `/root/ig_test/anonyig_hybrid_monitor.py` and `.ref`-style `master_fetch` behavior; make minimal change in `backend/app/services/ig_viewer_scraper.py` or `backend/app/services/ig_media.py`. Count each edit-and-test cycle as one attempt, maximum 3. Record test output and attempt count in incident JSON and notepad.
+
+**All gates must pass before pushing or opening PR. Candidate code must never run on the host.** Resolve the deployed image exactly once:
+
+```sh
+IMAGE="$(docker inspect studio-worker-1 --format '{{.Config.Image}}')"
+```
+
+Never mount `/var/run/docker.sock`, `/root` itself, any other `/root` path, `/opt/studio`, or the `gh` token into candidate containers. The sole allowed `/root` source is `/root/hermes-work/creator-studio/backend`, mounted read-only at `/src`. Containers run non-root, drop all capabilities, and disallow privilege escalation. If container user cannot write HOME or temporary files, add `-e HOME=/tmp`.
+
+1. Pytest in throwaway container, without network:
+   ```sh
+   docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges -v /root/hermes-work/creator-studio/backend:/src:ro -w /src -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE" python -m pytest tests -q -p no:cacheprovider
+   ```
+2. Live check failing tier, **3 allowlisted public users, 2 rounds, 3/3 each round**, in a fresh networked throwaway container. Emit JSON to stdout; host shell captures it outside the read-only mount:
+   ```sh
+   docker run --rm --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --shm-size=1g -v /root/hermes-work/creator-studio/backend:/src:ro "$IMAGE" python /src/scripts/ig_viewer_live_check.py --backend-dir /src --tiers <tier> --users <user1> <user2> <user3> --rounds 2 > /root/hermes-work/<tier>-fixed.json
+   ```
+3. Regression, fallback flow, 1 round; every user passes. Use another fresh container:
+   ```sh
+   docker run --rm --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --shm-size=1g -v /root/hermes-work/creator-studio/backend:/src:ro "$IMAGE" python /src/scripts/ig_viewer_live_check.py --backend-dir /src --tiers all --users <user1> <user2> <user3> --rounds 1 > /root/hermes-work/all-tiers-regression.json
+   ```
+   Also run the same container command with `--tiers gramsnap anonyig igstoryviewer` and redirect stdout to a different host JSON path to prove each tier independently; `all` alone can hide a broken tier through fallback. Each non-failing tier must pass its one-round checks.
+
+Inspect exit codes **and** JSON summary; tests must represent the intended tiers, not fallbacks. Failed gate: diagnose and retry within 3 attempts; on third failure mark incident `failed`, report which gates failed and evidence to owner, then stop. No PR from failing tests.
+
+> `Perbaikan IG <tier> belum berhasil setelah 3 percobaan. Gagal: <uji + hasil singkat>. Bukti: <ringkasan>. Tidak ada PR atau deploy. Mohon tinjau manual.`
+
+On green gates, commit only intended code/tests, push **feature branch only**, and create PR with `gh pr create --base main --head hermes/fix-ig-viewer-<tier>-<YYYYMMDD> --title "Fix IG viewer <tier> scraper" --body "<body>"`. Body template (fill actual results, not claims):
+
+```text
+Cause: <root cause; reference comparison>
+Change: <minimal code change>
+Tests: pytest <passed count>; live <tier> 3/3 users x 2 rounds; regression fallback and each tier x 1 round
+Live-check JSON summary: <paste sanitized per-tier/user/round totals and errors from JSON outputs>
+```
+
+Save PR URL and `status: "pr_opened"` in incident JSON and cron notepad. Send:
+
+> `Perbaikan IG <tier> siap: <tautan PR>. Penyebab: <singkat>. Uji: pytest <hasil>; live 3/3 akun x 2 putaran; regresi tiap tier lulus. Silakan review & merge; deploy otomatis via CI setelah merge.`
+
+## After merge
+
+On subsequent cron runs, check PR merged state with `gh pr view <PR-URL> --json state,mergedAt` and health JSON. Once merged **and** affected tier has recovered (new `last_success_at` after fix/merge, `unhealthy=false`, `consecutive_failures=0`), send one recovery message and set incident `closed` in JSON and notepad. If still unhealthy, keep `pr_opened`, record evidence, and do not start a second fix without fresh owner approval.
+
+> `IG <tier> pulih. PR <tautan PR> sudah digabung; cek terbaru berhasil pada <waktu UTC>. Insiden ditutup.`
+
+## One-time VPS setup — owner/Claude, not Hermes
+
+Steps 1–4 (install `gh`, configure token, clone, and fix Hermes config) were completed on **2026-10-05**. Create/enable cron only after Phase 2 is deployed.
+
+1. Install `gh` from GitHub CLI apt repository as root (verify current commands at https://github.com/cli/cli/blob/trunk/docs/install_linux.md):
+   ```sh
+   apt update && apt install -y curl gpg
+   curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+   chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+   printf 'deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/github-cli.list
+   apt update && apt install -y gh
+   ```
+2. Create fine-grained GitHub PAT scoped **only** to `rickyanwar/creator-studio`, with repository permissions **Contents: Read and write** and **Pull requests: Read and write**. Store token in root-only file outside repo (`chmod 600`; parent directory root-only), then run `gh auth login --with-token < /root/<token-file>` as root; check `gh auth status` without sending output to Telegram. Do not commit token or credential-bearing clone URLs. Configure root git identity for Hermes commits: `git config --global user.name "Hermes Agent"` and `git config --global user.email "<owner-approved-email>"`.
+3. Create `/root/hermes-work` and `/root/hermes-work/incidents` with mode 700; clone once: `gh repo clone rickyanwar/creator-studio /root/hermes-work/creator-studio`. Ensure this runbook is present in clone and `venv_ig` plus references work before scheduling.
+4. Fix duplicate `api_key` near line ~283 in Hermes `config.yaml` via `hermes config edit` (remove duplicate only), then `hermes config check`. Do not show key contents in output or chat.
+5. **After Phase 2 deploy only:** cron command template, adapted to actual `hermes cron create --help` flags before running:
+   ```sh
+   hermes cron create <schedule-option> '*/30 * * * *' <prompt-option> 'Read /root/hermes-work/creator-studio/docs/runbooks/ig-viewer-self-heal.md in full. Follow Detection and Confirmation each run; use persistent per-job notepad and /root/hermes-work/incidents for dedupe, incident state, and approval handoff. Never fix without matching Telegram approval. Never edit or restart /opt/studio, deploy, merge, or push main.' <name-option> ig-viewer-self-heal
+   ```
+    Replace placeholder options and shell quoting with syntax from local help; cron must run every 30 minutes with persistent per-job notepad. Configure Telegram owner as recipient through Hermes settings; test one manual run before enabling schedule.
+
+## Residual risks for owner
+
+- Fine-grained PAT can technically push to `main`. Add GitHub branch protection/ruleset requiring PRs. Owner bypass preserves the owner's deploy pushes, but cannot stop a PAT acting as that same user. Better: replace it with a dedicated machine-user or GitHub App token limited to PR-only rights.
+- Hermes runs as root with terminal access in the existing setup; these controls are procedural. Later run Hermes as an unprivileged user.
+
+## Troubleshooting and pause
+
+- Missing JSON or command exit 2: check `docker inspect studio-api-1` and health CLI/Redis from the allowed read-only surface; send deduped note, stop. Do not restart services.
+- Reference tests use wrong tier or no posts: inspect `/root/ig_test` entry points and tier-specific output; do not classify inconclusive comparison as script broken.
+- Live check fails despite pytest green: read saved JSON per run and compare reference behavior; retry within attempt cap. Confirm three known working users and installed reference venv before judging code.
+- Lost chat context: read cron notepad plus `/root/hermes-work/incidents/<id>.json` before replying or editing. Stop if state/approval cannot be verified.
+- Pause job with `hermes cron pause <job-id-or-name>` (confirm accepted argument with `hermes cron pause --help`); inspect cron listing to verify paused. Resume only after owner decides.

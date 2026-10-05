@@ -177,6 +177,7 @@ def _run_patched(tiers, sleep_mock=None, lock_token="tok", lock_redis=None, busy
         patch.object(_scraper_mod, "_acquire_lock", side_effect=_fake_acquire),
         patch.object(_scraper_mod, "_release_lock", side_effect=_fake_release),
         patch.object(_scraper_mod, "_TIERS", tiers),
+        patch.object(_scraper_mod, "record_tier_result"),
         patch("time.sleep", side_effect=_fake_sleep),
     ):
         yield {
@@ -675,7 +676,141 @@ def test_igstoryviewer_posts_response_and_failure_hint():
         with pytest.raises(ViewerTierError, match="Posts clicked=False") as exc:
             _scraper_mod._tier_igstoryviewer(page, "test")
 
-    assert response.url in str(exc.value)
+    assert "https://media.igstoryviewer.to/api/instagram/posts" in str(exc.value)
+    assert "?user=test" not in str(exc.value)
     assert page.wait_for_timeout.call_args_list[-15:] == [call(1000)] * 15
     page.fill.assert_called_with("input[placeholder*='username' i]", "test")
     page.wait_for_selector.assert_called_with("input", timeout=15000)
+
+
+def test_navigation_failure_kinds():
+    page = MagicMock()
+    page.goto.side_effect = TimeoutError("net::ERR_TIMED_OUT")
+    with pytest.raises(ViewerTierError) as exc:
+        _scraper_mod._navigate(page, "https://gramsnap.com/")
+    assert exc.value.kind == "site_down"
+    assert page.goto.call_count == 2
+
+    page.goto.side_effect = None
+    page.goto.return_value = MagicMock(status=503)
+    with pytest.raises(ViewerTierError) as exc:
+        _scraper_mod._navigate(page, "https://gramsnap.com/")
+    assert exc.value.kind == "site_down"
+
+
+def test_generic_navigation_failure_is_script():
+    page = MagicMock()
+    page.goto.side_effect = RuntimeError("selector broken")
+    with pytest.raises(ViewerTierError) as exc:
+        _scraper_mod._navigate(page, "https://gramsnap.com/")
+    assert exc.value.kind == "script"
+
+
+def test_embedded_turnstile_does_not_abort_navigation_or_block_failed_tiers():
+    page = MagicMock()
+    page.goto.return_value = MagicMock(status=200)
+    page.url = "https://igstoryviewer.to/en/"
+    page.title.return_value = "Instagram Viewer"
+    page.locator.return_value.count.return_value = 0
+    page.frames = [MagicMock(url="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b")]
+    with (patch.object(_scraper_mod, "_solve_cloudflare"),
+          patch.object(_scraper_mod, "_get_page_content", return_value="challenges.cloudflare.com/turnstile/v0/api.js"),
+          patch.object(_scraper_mod, "_failure_kind", wraps=_scraper_mod._failure_kind) as classify):
+        _scraper_mod._navigate(page, "https://igstoryviewer.to/en/")
+        classify.assert_not_called()
+        for tier in (_scraper_mod._tier_gramsnap, _scraper_mod._tier_anonyig,
+                     _scraper_mod._tier_igstoryviewer):
+            with patch.object(_scraper_mod, "_navigate", side_effect=ViewerTierError("offline", "site_down")):
+                with pytest.raises(ViewerTierError) as exc:
+                    tier(page, "user")
+            assert exc.value.kind == "site_down"
+
+
+@pytest.mark.parametrize("signal", ["url", "query", "title", "element"])
+@pytest.mark.parametrize("tier", [_scraper_mod._tier_gramsnap, _scraper_mod._tier_anonyig,
+                                  _scraper_mod._tier_igstoryviewer])
+def test_main_page_interstitial_classifies_failed_tier_as_blocked(tier, signal):
+    page = MagicMock()
+    page.url = ("https://site.test/cdn-cgi/challenge-platform/h/b" if signal == "url" else
+                "https://site.test/?__cf_chl=token" if signal == "query" else "https://site.test/")
+    page.title.return_value = "Just a moment..." if signal == "title" else "Instagram Viewer"
+    page.locator.return_value.count.return_value = int(signal == "element")
+    with patch.object(_scraper_mod, "_navigate", side_effect=ViewerTierError("offline", "site_down")):
+        with pytest.raises(ViewerTierError) as exc:
+            tier(page, "user")
+    assert exc.value.kind == "blocked"
+
+
+def test_igstoryviewer_success_with_embedded_turnstile_skips_classification():
+    page = MagicMock()
+    page.url = "https://igstoryviewer.to/en/"
+    page.title.return_value = "Instagram Viewer"
+    page.frames = [MagicMock(url="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b")]
+    page.goto.return_value = MagicMock(status=200)
+    handlers = {}
+    page.on.side_effect = lambda event, handler: handlers.setdefault(event, handler)
+    response = MagicMock(url="https://media.igstoryviewer.to/api/instagram/posts")
+    response.json.return_value = {"data": {"posts": [{"node": {"code": "ABC"}}]}}
+    page.wait_for_timeout.side_effect = lambda _: handlers["response"](response)
+    with (patch.object(_scraper_mod, "_solve_cloudflare") as solve,
+          patch.object(_scraper_mod, "_failure_kind") as classify):
+        assert _scraper_mod._tier_igstoryviewer(page, "user") == [{"code": "ABC"}]
+    solve.assert_called_once_with(page)
+    classify.assert_not_called()
+
+
+def test_tier_script_errors_and_navigation_kind_preserved():
+    page = MagicMock()
+    with patch.object(_scraper_mod, "_navigate", side_effect=ViewerTierError("offline", "site_down")):
+        for tier in (_scraper_mod._tier_gramsnap, _scraper_mod._tier_anonyig,
+                     _scraper_mod._tier_igstoryviewer):
+            with pytest.raises(ViewerTierError) as exc:
+                tier(page, "user")
+            assert exc.value.kind == "site_down"
+
+    with patch.object(_scraper_mod, "_navigate", side_effect=RuntimeError("selector broken")):
+        for tier in (_scraper_mod._tier_gramsnap, _scraper_mod._tier_anonyig,
+                     _scraper_mod._tier_igstoryviewer):
+            with pytest.raises(ViewerTierError) as exc:
+                tier(page, "user")
+            assert exc.value.kind == "script"
+    assert ViewerTierError("missing selector").kind == "script"
+
+
+def test_records_only_attempted_tiers_with_kinds():
+    tiers = [("gramsnap", _tier_raise(ViewerTierError("503", "site_down"))),
+             ("anonyig", _tier_ok([_image_node()])),
+             ("igstoryviewer", MagicMock())]
+    with _run_patched(tiers):
+        with patch.object(_scraper_mod, "record_tier_result") as recorder:
+            fetch_recent_posts("user")
+    assert recorder.call_args_list == [
+        call("gramsnap", "user", False, error_kind="site_down", error="503"),
+        call("anonyig", "user", True, error_kind=None, error=None),
+    ]
+    tiers[2][1].assert_not_called()
+
+
+def test_records_parse_failure_all_video_and_unexpected_error():
+    tiers = [("gramsnap", _tier_ok([])),
+             ("anonyig", _tier_raise(RuntimeError("boom"))),
+             ("igstoryviewer", _tier_ok([_video_node()]))]
+    with _run_patched(tiers):
+        with patch.object(_scraper_mod, "record_tier_result") as recorder:
+            assert fetch_recent_posts("user") == []
+    assert recorder.call_args_list == [
+        call("gramsnap", "user", False, error_kind="script", error="0 image posts after normalisation"),
+        call("anonyig", "user", False, error_kind="script", error="RuntimeError: boom"),
+        call("igstoryviewer", "user", True, error_kind=None, error=None),
+    ]
+
+
+def test_raising_recorder_preserves_success_and_failure():
+    with _run_patched([("gramsnap", _tier_ok([_image_node()]))]):
+        with patch.object(_scraper_mod, "record_tier_result", side_effect=RuntimeError("redis")):
+            assert len(fetch_recent_posts("user")) == 1
+    with _run_patched([("gramsnap", _tier_fail("broken"))]):
+        with patch.object(_scraper_mod, "record_tier_result", side_effect=RuntimeError("redis")):
+            with pytest.raises(ViewerScrapeError) as exc:
+                fetch_recent_posts("user")
+    assert exc.value.tier_errors == {"gramsnap": "broken"}
