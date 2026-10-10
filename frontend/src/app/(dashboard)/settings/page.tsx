@@ -11,7 +11,7 @@ const fetcher = () => getSettings().then((r) => r.data as AppSettings);
 
 export default function SettingsPage() {
   const { data: settings, mutate } = useSWR("settings", fetcher);
-  const [form, setForm] = useState<Record<string, string | number>>({});
+  const [form, setForm] = useState<Record<string, string | number | boolean>>({});
   const [saved, setSaved]               = useState(false);
   const [loadingSave, setLoadingSave]   = useState(false);
   const [loadingTest, setLoadingTest]   = useState(false);
@@ -45,6 +45,7 @@ export default function SettingsPage() {
         repliz_access_key: "",
         repliz_secret_key: "",
         telegram_bot_token: "",
+        metrics_ingestion_enabled: settings.metrics_ingestion_enabled ?? false,
       });
 
       if (settings.scraper_mode === "flashapi") {
@@ -53,7 +54,7 @@ export default function SettingsPage() {
     }
   }, [settings]);
 
-  function set(key: string, value: string | number) {
+  function set(key: string, value: string | number | boolean) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -157,6 +158,25 @@ export default function SettingsPage() {
               {replizResult.message}
             </span>
           )}
+        </div>
+      </section>
+
+      {/* Post Metrics */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">Post metrics (Repliz Gold)</h2>
+        <div className="flex items-center gap-3">
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" className="sr-only peer"
+              checked={form.metrics_ingestion_enabled as boolean ?? false}
+              onChange={(e) => set("metrics_ingestion_enabled", e.target.checked)} />
+            <div className="w-9 h-5 bg-divider-soft peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-main"></div>
+            <span className="ml-3 text-sm font-medium text-text-primary">Enable metrics ingestion</span>
+          </label>
+        </div>
+        <div className="text-xs text-text-secondary space-y-1">
+          <p>Plan Status: {settings?.metrics_plan_status || "Unknown"}</p>
+          <p>Last Checked: {settings?.metrics_plan_checked_at ? new Date(settings.metrics_plan_checked_at + "Z").toLocaleString() : "Never"}</p>
+          {settings?.metrics_last_error && <p className="text-error-main">Last Error: {settings.metrics_last_error}</p>}
         </div>
       </section>
 

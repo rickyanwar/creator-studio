@@ -87,4 +87,9 @@ class Settings(Base):
     youtube_blocked_until = Column(DateTime, nullable=True)
     youtube_last_error = Column(Text, nullable=True)
 
+    metrics_ingestion_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    metrics_plan_status = Column(String(32), nullable=True)
+    metrics_plan_checked_at = Column(DateTime, nullable=True)
+    metrics_last_error = Column(Text, nullable=True)
+
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

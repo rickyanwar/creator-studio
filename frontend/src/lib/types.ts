@@ -403,4 +403,94 @@ export interface AppSettings {
   youtube_proxy?: string | null;
   youtube_blocked_until?: string | null;
   youtube_last_error?: string | null;
+  metrics_ingestion_enabled: boolean;
+  metrics_plan_status: string | null;
+  metrics_plan_checked_at: string | null;
+  metrics_last_error: string | null;
+}
+
+export interface AnalyticsMetricsStatus {
+  enabled: boolean;
+  plan_status: string | null;
+  checked_at: string | null;
+  last_error: string | null;
+  snapshots_total: number;
+}
+
+export interface AnalyticsTrend {
+  label: "rising" | "flat" | "falling" | "insufficient";
+  change_pct: number | null;
+  n_recent: number;
+  n_prior: number;
+}
+
+export interface AnalyticsOverview {
+  days: number;
+  metrics: AnalyticsMetricsStatus;
+  fanpages: Array<{
+    fanpage_id: number;
+    name: string;
+    timezone: string;
+    is_active: boolean;
+    posts: number;
+    posts_with_metrics: number;
+    eng_final_median: number | null;
+    trend: AnalyticsTrend;
+    best_hour_local: number | null;
+  }>;
+}
+
+export interface FanpageAnalytics {
+  fanpage: {
+    id: number;
+    name: string;
+    timezone: string;
+    target_country: string;
+  };
+  days: number;
+  metrics: AnalyticsMetricsStatus;
+  totals: {
+    posts: number;
+    posts_with_metrics: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    engagement: number;
+  };
+  daily: Array<{
+    date: string;
+    posts: number;
+    n: number;
+    engagement: number;
+  }>;
+  by_hour: Array<{
+    hour: number;
+    posts: number;
+    n: number;
+    eng_median: number | null;
+  }>;
+  by_weekday: Array<{
+    weekday: number;
+    label: string;
+    posts: number;
+    n: number;
+    eng_median: number | null;
+  }>;
+  by_content_type: Array<{
+    content_type: string;
+    posts: number;
+    n: number;
+    eng_median: number | null;
+  }>;
+  top_posts: Array<{
+    job_id: number;
+    content_type: string;
+    scheduled_for: string;
+    title: string;
+    likes: number;
+    comments: number;
+    shares: number;
+    engagement: number;
+  }>;
+  trend: AnalyticsTrend;
 }

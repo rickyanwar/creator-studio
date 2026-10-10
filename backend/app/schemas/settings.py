@@ -28,6 +28,7 @@ class SettingsUpdate(BaseModel):
     nine_router_discussion_model: Optional[str] = None
     youtube_cookies: Optional[str] = None   # Netscape cookies.txt text — encrypted before saving; "" clears
     youtube_proxy: Optional[str] = None
+    metrics_ingestion_enabled: Optional[bool] = None
 
 
 class SettingsOut(BaseModel):
@@ -59,6 +60,10 @@ class SettingsOut(BaseModel):
     youtube_proxy: Optional[str] = None
     youtube_blocked_until: Optional[datetime] = None
     youtube_last_error: Optional[str] = None
+    metrics_ingestion_enabled: bool = False
+    metrics_plan_status: Optional[str] = None
+    metrics_plan_checked_at: Optional[datetime] = None
+    metrics_last_error: Optional[str] = None
 
     model_config = {"from_attributes": False}
 

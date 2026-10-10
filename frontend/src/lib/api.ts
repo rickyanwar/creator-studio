@@ -366,6 +366,12 @@ export const triggerCrawl = () => api.post("/jobs/crawl-now");
 export const triggerFanpageSync = () => api.post("/jobs/sync-fanpages");
 export const restartBeat = () => api.post("/jobs/restart-beat");
 
+// ── Analytics ─────────────────────────────────────────────────────────────────
+export const getAnalyticsOverview = (days: number) =>
+  api.get(`/analytics/overview`, { params: { days } });
+export const getFanpageAnalytics = (id: number, days: number) =>
+  api.get(`/analytics/fanpages/${id}`, { params: { days } });
+
 // ── Logs ──────────────────────────────────────────────────────────────────────
 export const getLogs = (params?: { category?: string; days?: number }) =>
   api.get<{

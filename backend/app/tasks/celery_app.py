@@ -34,6 +34,7 @@ celery_app = Celery(
         "app.tasks.yt_clip",
         "app.tasks.yt_clip_render",
         "app.tasks.ai_health_check",
+        "app.tasks.post_metrics",
     ],
 )
 
@@ -242,5 +243,15 @@ celery_app.conf.beat_schedule = {
     "warmup-burners": {
         "task": "app.tasks.warmup.run_warmup",
         "schedule": crontab(minute=30, hour="*/3"),
+    },
+    "collect-post-metrics": {
+        "task": "app.tasks.post_metrics.collect_post_metrics",
+        "schedule": 300,
+        "options": {"expires": 290},
+    },
+    "backfill-post-metrics": {
+        "task": "app.tasks.post_metrics.backfill_post_metrics",
+        "schedule": 3600,
+        "options": {"expires": 3500},
     },
 }

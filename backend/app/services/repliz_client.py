@@ -36,6 +36,10 @@ def _schedule_at_now_plus(seconds: int = 60) -> str:
     return format_schedule_at(datetime.now(timezone.utc) + timedelta(seconds=seconds))
 
 
+class ReplizPlanRequired(Exception):
+    pass
+
+
 class ReplizClient:
     def __init__(self, access_key: str, secret_key: str, base_url: str | None = None):
         self.base_url = (base_url or settings.repliz_base_url).rstrip("/")
@@ -166,6 +170,16 @@ class ReplizClient:
     def get_schedule(self, schedule_id: str) -> dict:
         """Poll status of a scheduled post."""
         resp = self._client.get(f"/public/schedule/{schedule_id}")
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_content_statistic(self, content_id: str, account_id: str) -> dict:
+        resp = self._client.get(
+            f"/public/content/{content_id}/statistic",
+            params={"accountId": account_id},
+        )
+        if resp.status_code == 402:
+            raise ReplizPlanRequired(resp.text[:200])
         resp.raise_for_status()
         return resp.json()
 
