@@ -3,14 +3,20 @@
 import logging
 import random
 from datetime import datetime, timezone, timedelta
-
-import pytz
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 
 logger = logging.getLogger(__name__)
-WIB = pytz.timezone("Asia/Jakarta")
+
+def _fanpage_tz(fanpage) -> ZoneInfo:
+    if fanpage and fanpage.timezone:
+        try:
+            return ZoneInfo(fanpage.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.warning("Fanpage %s has unknown timezone %s, falling back to Asia/Jakarta", fanpage.id, fanpage.timezone)
+    return ZoneInfo("Asia/Jakarta")
 
 _RETRY_BACKOFF = [300, 900, 2700]  # 5/15/45 minutes
 
@@ -94,25 +100,25 @@ def _in_sleep_window(hour: int, start: int, end: int) -> bool:
     return hour >= start or hour < end  # wraps past midnight, e.g. 22 -> 6
 
 
-def _push_past_sleep(dt_wib: datetime, start: int, end: int) -> datetime:
-    """dt_wib is WIB-aware. Returns the next moment >= dt_wib that's outside
+def _push_past_sleep(dt_local: datetime, start: int, end: int) -> datetime:
+    """dt_local is aware in the fanpage's tz. Returns the next moment >= dt_local that's outside
     the [start, end) sleep window (rolling to end:00, next day if already past)."""
-    if not _in_sleep_window(dt_wib.hour, start, end):
-        return dt_wib
-    target = dt_wib.replace(hour=end, minute=0, second=0, microsecond=0)
-    if target <= dt_wib:
+    if not _in_sleep_window(dt_local.hour, start, end):
+        return dt_local
+    target = dt_local.replace(hour=end, minute=0, second=0, microsecond=0)
+    if target <= dt_local:
         target += timedelta(days=1)
-    return target
+    return target.astimezone(timezone.utc).astimezone(dt_local.tzinfo)
 
 
 _MAX_DAY_HOPS = 60  # bounded — even a multi-week backlog resolves well inside this
 
 
 def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
-    """This fanpage's next Facebook go-live slot: the EARLIEST WIB day (starting
+    """This fanpage's next Facebook go-live slot: the EARLIEST local day (starting
     from now) that still has room under the daily cap, with the actual time
     spaced a random 10-20 min gap after THAT DAY's own latest scheduled post,
-    never inside the WIB sleep window.
+    never inside the local sleep window.
 
     Deliberately scoped per-day rather than chained off the fanpage's single
     all-time latest scheduled_for (the old behavior): a burst of renders
@@ -143,11 +149,12 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
     normal queue — "time-sensitive" doesn't mean "simultaneous with this
     page's last post." Unlike the normal path's day-scoped gap check, this
     looks at the fanpage's all-time latest scheduled_for (a second breaking
-    story minutes after the first, possibly crossing a WIB midnight, should
+    story minutes after the first, possibly crossing a local midnight, should
     still respect the gap)."""
     from app.models.target_fanpages import TargetFanpage
 
     fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    tz = _fanpage_tz(fanpage)
     sleep_start = fanpage.publish_sleep_start_hour if fanpage else None
     sleep_end = fanpage.publish_sleep_end_hour if fanpage else None
     floor_utc = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
@@ -168,29 +175,29 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
             ))
             candidate_utc = max(candidate_utc, last_scheduled + gap)
         if sleep_start is not None and sleep_end is not None:
-            candidate_wib = candidate_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
-            pushed_wib = _push_past_sleep(candidate_wib, sleep_start, sleep_end)
-            return pushed_wib.astimezone(timezone.utc).replace(tzinfo=None)
+            candidate_local = candidate_utc.replace(tzinfo=timezone.utc).astimezone(tz)
+            pushed_local = _push_past_sleep(candidate_local, sleep_start, sleep_end)
+            return pushed_local.astimezone(timezone.utc).replace(tzinfo=None)
         return candidate_utc
 
     from sqlalchemy import func
     from app.models.publish_jobs import PublishJob
 
     base_daily_limit = (fanpage.publish_daily_limit if fanpage else None) or _DEFAULT_DAILY_LIMIT
-    day_wib = floor_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
+    day_local = floor_utc.replace(tzinfo=timezone.utc).astimezone(tz)
 
     for _ in range(_MAX_DAY_HOPS):
-        day_start_wib = day_wib.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end_wib = day_start_wib + timedelta(days=1)
-        day_start_utc = day_start_wib.astimezone(timezone.utc).replace(tzinfo=None)
-        day_end_utc = day_end_wib.astimezone(timezone.utc).replace(tzinfo=None)
+        day_start_local = day_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end_local = day_start_local + timedelta(days=1)
+        day_start_utc = day_start_local.astimezone(timezone.utc).replace(tzinfo=None)
+        day_end_utc = day_end_local.astimezone(timezone.utc).replace(tzinfo=None)
 
         # Recomputed per day (not once outside the loop): a multi-day
         # backlog can hop from a quiet day into an event day or vice versa,
         # and each day's own limit must reflect whether THAT day sits in a
         # detected race/practice/fight window for this fanpage's niche.
         daily_limit = (
-            _event_boosted_daily_limit(db, fanpage, base_daily_limit, day_start_wib.date())
+            _event_boosted_daily_limit(db, fanpage, base_daily_limit, day_start_local.date())
             if fanpage else base_daily_limit
         )
 
@@ -204,7 +211,7 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
             .one()
         )
         if count_today >= daily_limit:
-            day_wib = day_end_wib
+            day_local = day_end_local
             continue
 
         gap = timedelta(seconds=random.randint(_MIN_POST_GAP_SECONDS, _MAX_POST_GAP_SECONDS))
@@ -212,16 +219,16 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
         candidate_utc = max(earliest_today_utc, last_today + gap) if last_today else earliest_today_utc
 
         if candidate_utc >= day_end_utc:
-            day_wib = day_end_wib
+            day_local = day_end_local
             continue
 
         if sleep_start is not None and sleep_end is not None:
-            candidate_wib = candidate_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
-            pushed_wib = _push_past_sleep(candidate_wib, sleep_start, sleep_end)
-            if pushed_wib != candidate_wib:
-                pushed_utc = pushed_wib.astimezone(timezone.utc).replace(tzinfo=None)
+            candidate_local = candidate_utc.replace(tzinfo=timezone.utc).astimezone(tz)
+            pushed_local = _push_past_sleep(candidate_local, sleep_start, sleep_end)
+            if pushed_local != candidate_local:
+                pushed_utc = pushed_local.astimezone(timezone.utc).replace(tzinfo=None)
                 if pushed_utc >= day_end_utc:
-                    day_wib = day_end_wib
+                    day_local = day_end_local
                     continue
                 candidate_utc = pushed_utc
 

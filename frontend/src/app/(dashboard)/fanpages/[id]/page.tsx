@@ -44,6 +44,60 @@ import { Icon } from "@iconify/react";
 import { CaptionCriteriaEditor, captionFromSource, captionToPayload, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
 import { YtClipSection } from "@/components/fanpages/YtClipSection";
 
+
+const TARGET_COUNTRIES = [
+  { code: 'GB', name: 'United Kingdom', defaultTz: 'Europe/London' },
+  { code: 'US', name: 'United States', defaultTz: 'America/New_York' },
+  { code: 'FR', name: 'France', defaultTz: 'Europe/Paris' },
+  { code: 'ID', name: 'Indonesia', defaultTz: 'Asia/Jakarta' },
+  { code: 'AU', name: 'Australia', defaultTz: 'Australia/Sydney' },
+  { code: 'DE', name: 'Germany', defaultTz: 'Europe/Berlin' },
+  { code: 'IN', name: 'India', defaultTz: 'Asia/Kolkata' },
+  { code: 'IT', name: 'Italy', defaultTz: 'Europe/Rome' },
+];
+
+const IANA_ZONES = typeof Intl !== 'undefined' && (Intl as any).supportedValuesOf 
+  ? (Intl as any).supportedValuesOf("timeZone") as string[] 
+  : ['Europe/London', 'America/New_York', 'Europe/Paris', 'Asia/Jakarta'];
+const IANA_SET = new Set(IANA_ZONES);
+
+function isValidTz(z: string): boolean {
+  if (!z) return false;
+  if (IANA_SET.has(z)) return true;
+  if (!z.includes("/")) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: z });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function TzClock({ tz }: { tz: string }) {
+  const [nowLocal, setNowLocal] = useState("");
+  const [nowWib, setNowWib] = useState("");
+
+  useEffect(() => {
+    function update() {
+      try {
+        const d = new Date();
+        const safeTz = isValidTz(tz) ? tz : "Europe/London";
+        setNowLocal(d.toLocaleTimeString("en-US", { timeZone: safeTz, hour: "2-digit", minute: "2-digit", hour12: false }));
+        setNowWib(d.toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }));
+      } catch (e) {}
+    }
+    update();
+    const timer = setInterval(update, 15000);
+    return () => clearInterval(timer);
+  }, [tz]);
+
+  return (
+    <span className="font-semibold text-primary-main">
+      {nowLocal || "..."} <span className="font-normal text-text-secondary">(WIB {nowWib || "..."})</span>
+    </span>
+  );
+}
+
 const fetcher = (id: number) => getFanpage(id).then((r) => r.data as FanpageDetail);
 
 const MAX_ALBUM = 10;
@@ -308,6 +362,44 @@ export default function FanpageEditPage() {
       await mutate();
     } finally {
       setWmUploading(false);
+    }
+  }
+
+  const [tzInput, setTzInput] = useState("");
+  const [tzMsg, setTzMsg] = useState("");
+
+  function handleTimezoneChange(newTz: string) {
+    if (!newTz || !isValidTz(newTz)) return;
+    const oldTz = form.timezone || "Europe/London";
+    set("timezone", newTz);
+
+    if (form.publish_sleep_start_hour != null && form.publish_sleep_end_hour != null) {
+      try {
+        const d = new Date();
+        const t1 = new Date(d.toLocaleString('en-US', { timeZone: oldTz }));
+        const t2 = new Date(d.toLocaleString('en-US', { timeZone: newTz }));
+        const diffHours = Math.round((t2.getTime() - t1.getTime()) / (1000 * 60 * 60));
+
+        if (diffHours !== 0) {
+          const newStart = (form.publish_sleep_start_hour + diffHours + 24) % 24;
+          const newEnd = (form.publish_sleep_end_hour + diffHours + 24) % 24;
+          set("publish_sleep_start_hour", newStart);
+          set("publish_sleep_end_hour", newEnd);
+          setTzMsg(`Sleep window shifted by ${diffHours > 0 ? '+' : ''}${diffHours}h to maintain absolute time.`);
+          setTimeout(() => setTzMsg(""), 5000);
+        }
+      } catch (e) {}
+    }
+  }
+
+  function handleCountryChange(newCode: string) {
+    set("target_country", newCode || null);
+    if (newCode) {
+      const target = TARGET_COUNTRIES.find(c => c.code === newCode);
+      if (target && target.defaultTz && target.defaultTz !== form.timezone) {
+        setTzInput(target.defaultTz);
+        handleTimezoneChange(target.defaultTz);
+      }
     }
   }
 
@@ -650,6 +742,7 @@ export default function FanpageEditPage() {
   useEffect(() => {
     if (fp && !hasEdited.current) {
       setForm({ ...fp });
+      setTzInput(fp.timezone || "Europe/London");
     }
   }, [fp]);
 
@@ -1124,16 +1217,62 @@ export default function FanpageEditPage() {
       {/* ── Section: Publish Pacing (anti-bot-detection) ─── */}
       <section className="card space-y-3">
         <div>
-          <h2 className="text-base font-semibold text-text-primary">Publish Pacing</h2>
+          <h2 className="text-base font-semibold text-text-primary">Publish Pacing & Timezone</h2>
           <p className="text-xs text-text-secondary mt-0.5">
             Keeps auto-publish looking like a real page admin — a sleep window
-            (no posts at 3am) and a daily cap (a page that never stops posting
-            is itself a bot signal). Applies to every content mode.
+            (no posts at 3am) and a daily cap. Applies to every content mode.
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="label">Sleep window (WIB)</label>
+            <label className="label">Target Country</label>
+            <select
+              className="input-rect w-full"
+              value={form.target_country || ""}
+              onChange={(e) => handleCountryChange(e.target.value)}
+            >
+              <option value="">— None (Global) —</option>
+              {TARGET_COUNTRIES.map(c => (
+                <option key={c.code} value={c.code}>{c.name}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-text-secondary mt-1">Country for scheduling & target audience.</p>
+          </div>
+          <div>
+            <label className="label">Timezone</label>
+            <input
+              list="iana-zones"
+              className="input-rect w-full"
+              value={tzInput}
+              onChange={(e) => {
+                const val = e.target.value;
+                setTzInput(val);
+                if (isValidTz(val) && val !== form.timezone) {
+                  handleTimezoneChange(val);
+                }
+              }}
+              onBlur={() => {
+                if (!isValidTz(tzInput)) {
+                  setTzInput(form.timezone || "Europe/London");
+                }
+              }}
+              placeholder="e.g. Europe/London"
+            />
+            <datalist id="iana-zones">
+              {IANA_ZONES.map(z => <option key={z} value={z} />)}
+            </datalist>
+            {!isValidTz(tzInput) && (
+              <p className="text-[11px] text-error-main mt-1">Unknown timezone</p>
+            )}
+            <p className="text-[11px] text-text-secondary mt-1">
+              Local time: <TzClock tz={form.timezone || "Europe/London"} />
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-4 mt-2">
+          <div>
+            <label className="label">Sleep window (local time)</label>
             <div className="flex items-center gap-2">
               <select
                 className="input-rect py-1.5 text-sm w-20"
@@ -1157,6 +1296,7 @@ export default function FanpageEditPage() {
                 ))}
               </select>
             </div>
+            {tzMsg && <p className="text-[11px] text-amber-500 mt-1 font-semibold">{tzMsg}</p>}
           </div>
           <div>
             <label className="label">Max posts / day</label>

@@ -28,6 +28,8 @@ export interface Fanpage {
   is_active: boolean;
   publish_mode: PublishMode;
   // ── Publish pacing (anti-bot-detection) ──
+  target_country: string | null;
+  timezone: string;
   publish_sleep_start_hour: number | null;
   publish_sleep_end_hour: number | null;
   publish_daily_limit: number;

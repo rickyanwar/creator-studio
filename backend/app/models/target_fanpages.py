@@ -27,6 +27,8 @@ class TargetFanpage(Base):
     picture_url = Column(Text, nullable=True)
     platform_type = Column(String(32), default="facebook", nullable=False)
     is_connected = Column(Boolean, default=True, nullable=False)
+    timezone = Column(String(64), nullable=False, default="Europe/London", server_default="Europe/London")
+    target_country = Column(String(2), nullable=True, default="GB", server_default="GB")
 
     # ── Local toggles ─────────────────────────────
     is_active = Column(Boolean, default=False, nullable=False)
