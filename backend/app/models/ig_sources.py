@@ -44,3 +44,4 @@ class IGSource(Base):
 
     burner = relationship("BurnerAccount", foreign_keys=[burner_account_id])
     fanpage_links = relationship("FanpageSource", back_populates="ig_source", cascade="all, delete-orphan")
+    radar_posts = relationship("RadarPost", back_populates="ig_source", cascade="all, delete-orphan")

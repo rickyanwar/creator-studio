@@ -65,3 +65,6 @@ test-renders/
 split-test-output/
 expand-test-output/
 local_media/
+
+# local E2E/test data (never commit)
+.ref/

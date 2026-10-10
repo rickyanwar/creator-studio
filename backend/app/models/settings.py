@@ -87,4 +87,19 @@ class Settings(Base):
     youtube_blocked_until = Column(DateTime, nullable=True)
     youtube_last_error = Column(Text, nullable=True)
 
+    # ── Viral Radar ───────────────────────────────────────────────────────────
+    radar_sleep_start_wib = Column(Integer, nullable=True)
+    radar_sleep_end_wib = Column(Integer, nullable=True)
+    radar_very_hot_interval_min = Column(Integer, default=8, nullable=False, server_default="8")
+    radar_hot_interval_min = Column(Integer, default=12, nullable=False, server_default="12")
+    radar_cold_interval_min = Column(Integer, default=50, nullable=False, server_default="50")
+    radar_hot_window_h = Column(Integer, default=2, nullable=False, server_default="2")
+    radar_track_max_age_h = Column(Integer, default=48, nullable=False, server_default="48")
+    radar_story_sharing = Column(String(16), default="shared", nullable=False, server_default="shared")
+    radar_share_max = Column(Integer, default=0, nullable=False, server_default="0")
+    radar_news_stagger_max_min = Column(Integer, default=10, nullable=False, server_default="10")
+
+    # ── Visual Engine ─────────────────────────────────────────────────────────
+    visual_engine_daily_max = Column(Integer, default=60, nullable=False, server_default="60")
+
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

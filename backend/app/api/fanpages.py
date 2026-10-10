@@ -12,7 +12,7 @@ from app.schemas.fanpage import (
     FanpageSourceAdd, PreviewCaptionRequest, PreviewCaptionResponse,
     FanpageNewsSourceAdd, NewsSourceRef,
     PreviewNewsCopyRequest, PreviewNewsCopyResponse,
-    FanpageSourceRecreateUpdate,
+    FanpageSourceRecreateUpdate, FanpageSourceTriggerUpdate,
     DiscussionTopicAdd, DiscussionTopicUpdate,
     DiscussionContentIdeaUpdate, DiscussionContentIdeaCreate,
     PinterestSourceAdd, PinterestSourceUpdate, PinterestContentIdeaUpdate,
@@ -45,6 +45,7 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
     links = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, is_active=True).all()
     source_ids = [l.ig_source_id for l in links]
     recreate_by_source = {l.ig_source_id: l.ig_recreate_enabled for l in links}
+    trigger_by_source = {l.ig_source_id: l.trigger for l in links}
     sources = db.query(IGSource).filter(IGSource.id.in_(source_ids)).all() if source_ids else []
 
     from app.schemas.fanpage import IGSourceRef
@@ -55,6 +56,7 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
             ig_username=s.ig_username,
             album_image_indices=s.album_image_indices or [1],
             ig_recreate_enabled=recreate_by_source.get(s.id),
+            trigger=trigger_by_source.get(s.id, "every_post"),
             caption_tone=s.caption_tone,
             caption_language=s.caption_language,
             caption_max_length=s.caption_max_length,
@@ -220,6 +222,19 @@ def set_source_recreate_override(fanpage_id: int, ig_source_id: int, body: Fanpa
     link.ig_recreate_enabled = body.ig_recreate_enabled
     db.commit()
     return {"ok": True, "ig_recreate_enabled": link.ig_recreate_enabled}
+
+
+@router.put("/{fanpage_id}/sources/{ig_source_id}/trigger")
+def set_source_trigger(fanpage_id: int, ig_source_id: int, body: FanpageSourceTriggerUpdate, db: DB, _: CurrentUser):
+    from app.models.fanpage_sources import FanpageSource
+
+    link = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, ig_source_id=ig_source_id).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Source link not found")
+
+    link.trigger = body.trigger
+    db.commit()
+    return {"ok": True, "trigger": link.trigger}
 
 
 @router.delete("/{fanpage_id}/sources/{ig_source_id}")

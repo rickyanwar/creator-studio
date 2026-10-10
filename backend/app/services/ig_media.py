@@ -44,6 +44,8 @@ class IGMedia:
     resources: list = field(default_factory=list)
     thumbnail_url: str = ""
     url: str = ""
+    like_count: Optional[int] = None
+    comment_count: Optional[int] = None
 
     @property
     def id(self):
@@ -244,6 +246,28 @@ def normalise_post(item: dict) -> Optional[IGMedia]:
         logger.debug("Dropping non-video post %s with no valid IG CDN image", code or pk)
         return None
 
+    # ── Engagement ────────────────────────────────────────────────────────
+    def _parse_count(*keys) -> Optional[int]:
+        for key in keys:
+            parts = key.split(".")
+            curr = item
+            for p in parts:
+                if isinstance(curr, dict):
+                    curr = curr.get(p)
+                else:
+                    curr = None
+            if curr is not None:
+                try:
+                    val = int(curr)
+                    if val >= 0:
+                        return val
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    like_count = _parse_count("edge_liked_by.count", "edge_media_preview_like.count", "like_count")
+    comment_count = _parse_count("edge_media_to_comment.count", "edge_media_to_parent_comment.count", "comment_count")
+
     return IGMedia(
         pk=pk,
         code=code,
@@ -253,4 +277,6 @@ def normalise_post(item: dict) -> Optional[IGMedia]:
         resources=resources,
         thumbnail_url=thumb,
         url=thumb,
+        like_count=like_count,
+        comment_count=comment_count,
     )

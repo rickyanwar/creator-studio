@@ -73,25 +73,17 @@ def _vision_datauri(image_bytes: bytes, max_dim: int = 768, quality: int = 78) -
 # the photo. Everything below is either verified (the first four) or the same
 # Gemini-flash family/architecture as the verified ones.
 #
-# 2026-09-02: direct per-model testing against a real photo found 3 of these
-# hanging ~49-65s before an APITimeoutError instead of failing fast (the
-# provider is retiring the gemini-3.5/3-flash-agent generation) — with the
-# broken primary tried FIRST on every single call, that's ~49s wasted before
-# even reaching a working fallback, which is what silently turned into
-# multi-hour gallery-download/render_discussion stalls (100-300+ photos per
-# keyword × ~50s each). All 3 DROPPED (not just deprioritized) and replaced
-# with ag/gemini-3.7-flash-high and ag/gemini-3.6-flash-high — every model
-# below re-verified against a real photo that same day. (ag/gpt-oss-120b-
-# medium also returned a correct answer on the real-photo test but was
-# deliberately excluded from this list per user instruction — not trusted
-# for vision here despite passing the test.)
+# 2026-10-10: removed ag/gemini-3.7-flash-* as they 404. Replaced with ag/gemini-3.8-flash-* and expanded fallbacks.
 _VISION_MODEL_FALLBACKS = [
-    "ag/gemini-3.7-flash-low",
-    "ag/gemini-3.7-flash-medium",
-    "ag/gemini-3.7-flash-high",
+    "ag/gemini-3.8-flash-low",
+    "ag/gemini-3.8-flash-medium",
+    "ag/gemini-3.8-flash-high",
+    "ag/gemini-3.8-flash",
     "ag/gemini-3.6-flash-low",
     "ag/gemini-3.6-flash-medium",
     "ag/gemini-3.6-flash-high",
+    "ag/gemini-3.5-flash-extra-low",
+    "ag/gemini-3-flash-agent",
     "ag/gemini-pro-agent",
     "ag/gemini-3.1-pro-low",
 ]
@@ -2902,9 +2894,9 @@ def _mark_gallery_image_used(db, gi) -> None:
 
 
 def _gallery_verified_candidates(
-    db, subject: str, exclude_path: str | None = None, use_vision: bool = True,
+    db, subject: str, exclude_paths: set[str] | None = None, use_vision: bool = True,
     image_type: str | None = None, allow_stale_reuse: bool = True, niche: str = "",
-    pool_limit: int = 8,
+    pool_limit: int = 8, exclude_path: str | None = None,
 ):
     """Shared lookup behind find_gallery_datauri and find_gallery_datauris:
     matching gallery rows for `subject`, honoring the reuse cooldown and
@@ -2920,10 +2912,15 @@ def _gallery_verified_candidates(
     winner to survive verification, but a joint pick needs enough SURVIVORS
     left after verification to have real pairing choices, and identity
     verification alone already discards a chunk of any raw sample."""
+    if exclude_path:
+        exclude_paths = (exclude_paths or set()) | {exclude_path}
     from sqlalchemy import func, or_
     from app.models.gallery import GalleryImage
 
-    needle = f"%{subject.lower()}%"
+    import re
+    cleaned = re.sub(r'[^a-zA-Z0-9]+', '%', subject.strip(' \'`"'))
+    cleaned = re.sub(r'%+', '%', cleaned)
+    needle = f"%{cleaned.lower()}%"
     base = db.query(GalleryImage).filter(
         # A photo can feature more than one person — match either the primary
         # keyword it was downloaded under or any additional tag on the image.
@@ -2941,7 +2938,17 @@ def _gallery_verified_candidates(
     if not rows:
         rows = _eligible_rows(base, limit=pool_limit, allow_stale_reuse=allow_stale_reuse)
 
-    usable = [gi for gi in rows if gi.local_path and gi.local_path != exclude_path and os.path.exists(gi.local_path)]
+    if exclude_paths:
+        usable = []
+        for gi in rows:
+            if gi.local_path and os.path.exists(gi.local_path):
+                # gi.id is int, gi.source_image_url is string, gi.local_path is string
+                if str(gi.id) in exclude_paths: continue
+                if gi.source_image_url and gi.source_image_url in exclude_paths: continue
+                if gi.local_path in exclude_paths: continue
+                usable.append(gi)
+    else:
+        usable = [gi for gi in rows if gi.local_path and os.path.exists(gi.local_path)]
     if not usable:
         return []
 
@@ -2956,8 +2963,9 @@ def _gallery_verified_candidates(
 
 
 def find_gallery_datauri(
-    db, subject: str, exclude_path: str | None = None, use_vision: bool = True,
+    db, subject: str, exclude_paths: set[str] | None = None, use_vision: bool = True,
     image_type: str | None = None, allow_stale_reuse: bool = True, niche: str = "",
+    exclude_path: str | None = None,
 ):
     """Find the best gallery image whose keyword matches the subject — see
     _gallery_verified_candidates for the matching/verification rules. 9Router
@@ -2978,8 +2986,10 @@ def find_gallery_datauri(
     caller has a fresher fallback (a live Getty/Google search) it should try
     first, then call this again with the default True as the true last
     resort if that fresh search also finds nothing."""
+    if exclude_path:
+        exclude_paths = (exclude_paths or set()) | {exclude_path}
     candidates = _gallery_verified_candidates(
-        db, subject, exclude_path, use_vision, image_type, allow_stale_reuse, niche,
+        db, subject, exclude_paths, use_vision, image_type, allow_stale_reuse, niche,
     )
     if not candidates:
         return None, None
@@ -2991,16 +3001,19 @@ def find_gallery_datauri(
 
 
 def find_gallery_datauris(
-    db, subject: str, exclude_path: str | None = None, image_type: str | None = None,
+    db, subject: str, exclude_paths: set[str] | None = None, image_type: str | None = None,
     allow_stale_reuse: bool = True, niche: str = "", top_n: int = 3, pool_limit: int = 8,
+    exclude_path: str | None = None,
 ):
     """Like find_gallery_datauri but returns up to `top_n` identity-verified
     candidate (datauri, GalleryImage) tuples instead of picking a winner —
     for callers doing their own joint selection (e.g. a pose-matched split
     pair). Always identity-verifies (there's no single-winner vision_pick_best
     step here to skip). See _gallery_verified_candidates for `pool_limit`."""
+    if exclude_path:
+        exclude_paths = (exclude_paths or set()) | {exclude_path}
     candidates = _gallery_verified_candidates(
-        db, subject, exclude_path, True, image_type, allow_stale_reuse, niche, pool_limit,
+        db, subject, exclude_paths, True, image_type, allow_stale_reuse, niche, pool_limit,
     )
     return candidates[:top_n]
 
@@ -3138,7 +3151,7 @@ def _extract_two_subjects_once(title: str, niche: str):
         return None, None
 
 
-def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5):
+def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5, exclude_paths: set[str] | None = None, exclude_path: str | None = None):
     """Fetch fresh, context-appropriate candidate photos of `subject` straight
     from the Getty search (via 9Router/jina), store the ones that pass the
     same quality gate the scheduled downloader uses (dest keyword = the
@@ -3148,6 +3161,8 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
     returned them (newest/most-relevant first) — NOT yet reduced to a single
     winner, so callers can do their own joint selection (e.g. picking a
     pose-matched pair for a split layout).
+    
+    `exclude_path` is accepted for backward compatibility and merged into `exclude_paths`.
 
     Storing every candidate (not just the winner) — rather than the old
     behavior of returning a bare in-memory data-URI — fixes a real bug found
@@ -3160,6 +3175,8 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
     candidates become free bonus stock for later picks instead of being
     discarded, too."""
     from urllib.parse import quote
+    if exclude_path:
+        exclude_paths = (exclude_paths or set()) | {exclude_path}
     from pathlib import Path
 
     from sqlalchemy.exc import IntegrityError
@@ -3199,6 +3216,8 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
         u for (u,) in
         db.query(GalleryImage.source_image_url).filter(GalleryImage.keyword == keyword).all()
     }
+    if exclude_paths:
+        skip_urls.update(exclude_paths)
     dest_dir = Path(s.storage_base_path) / "gallery" / keyword_slug(keyword)
     saved = _fetch_and_store(candidate_urls, dest_dir, max_candidates, (300, 300), skip_urls, "9router-live", subject=subject)
     if not saved:
@@ -3245,13 +3264,15 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
     return verified
 
 
-def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5):
+def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str = "MotoGP", max_candidates: int = 5, exclude_paths: set[str] | None = None, exclude_path: str | None = None):
     """Single-best convenience wrapper around _fetch_verified_subject_candidates
     for callers that just want one photo (discussion cards, the inset flow).
-    Returns a data-URI or None."""
-    verified = _fetch_verified_subject_candidates(db, subject, image_type, niche, max_candidates)
+    Returns a (data-URI, GalleryImage) or (None, None)."""
+    if exclude_path:
+        exclude_paths = (exclude_paths or set()) | {exclude_path}
+    verified = _fetch_verified_subject_candidates(db, subject, image_type, niche, max_candidates, exclude_paths=exclude_paths)
     if not verified:
-        return None
+        return None, None
     uris = [uri for _, uri in verified]
     best = vision_pick_best(uris, subject, image_type=image_type)
     picked_gi, picked_uri = verified[best]
@@ -3260,16 +3281,18 @@ def fetch_subject_datauri(db, subject: str, image_type: str = "face", niche: str
         "fetch_subject_datauri: %r (%s) → %d candidate(s) verified, picked %d",
         subject, image_type, len(verified), best,
     )
-    return picked_uri
+    return picked_uri, picked_gi
 
 
 def fetch_subject_datauris(db, subject: str, image_type: str = "face", niche: str = "MotoGP",
-                            max_candidates: int = 5, top_n: int = 3):
+                            max_candidates: int = 5, top_n: int = 3, exclude_paths: set[str] | None = None, exclude_path: str | None = None):
     """Like fetch_subject_datauri but returns up to `top_n` identity-verified
     candidate (GalleryImage, datauri) tuples instead of picking a winner —
     for callers doing their own joint selection (e.g. a pose-matched split
     pair)."""
-    verified = _fetch_verified_subject_candidates(db, subject, image_type, niche, max_candidates)
+    if exclude_path:
+        exclude_paths = (exclude_paths or set()) | {exclude_path}
+    verified = _fetch_verified_subject_candidates(db, subject, image_type, niche, max_candidates, exclude_paths=exclude_paths)
     return verified[:top_n]
 
 
@@ -3342,7 +3365,7 @@ def fetch_topic_datauri(title: str, niche: str, excerpt: str = "", max_candidate
     return verified[best]
 
 
-def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclude_path: str | None = None):
+def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclude_paths: set[str] | None = None, known_primary: str | None = None, exclude_path: str | None = None):
     """Source the MAIN photo for a recreated news card by its subject — so the
     card shows a clean, relevant photo instead of the original IG screenshot
     (which often carries the source page's own text/branding).
@@ -3353,31 +3376,44 @@ def source_news_main(db, title: str, niche: str, use_vision: bool = True, exclud
     because a fresh search also came up empty. Returns (datauri, path) or
     (None, None) so the caller can fall back to the IG image.
 
-    `exclude_path` (a GalleryImage.local_path) is forwarded to
-    find_gallery_datauri so a History "Re-edit with new image" retry can rule
-    out the exact photo it picked last time.
+    `exclude_paths` (GalleryImage.local_path or Getty URL) is forwarded to
+    find_gallery_datauri so a History "Re-edit with new image" retry or Radar
+    dedup can rule out the exact photos picked last time.
     """
-    primary, _ = extract_two_subjects(title, niche)
+    if known_primary:
+        primary = known_primary
+    else:
+        primary, _ = extract_two_subjects(title, niche)
+    
     if not primary:
         return None, None
+        
+    # backward compatibility shim
+    if exclude_path:
+        exclude_paths = (exclude_paths or set()) | {exclude_path}
     image_type = pick_split_image_type(title, niche)  # "face" or "action"
+    
     uri, gi = find_gallery_datauri(
-        db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type,
+        db, primary, exclude_paths=exclude_paths, use_vision=use_vision, image_type=image_type,
         allow_stale_reuse=False, niche=niche,
     )
     if uri:
         logger.info("Recreate main: fresh gallery photo for %r (%s)", primary, image_type)
         return uri, (gi.local_path if gi else None)
-    uri = fetch_subject_datauri(db, primary, image_type, niche)
+    
+    # Getty: exclude_paths also skips already-used source URLs.
+    uri, gi = fetch_subject_datauri(db, primary, image_type, niche, exclude_paths=exclude_paths)
     if uri:
         logger.info("Recreate main: fresh Getty photo for %r (%s)", primary, image_type)
-        return uri, None
+        return uri, gi.source_image_url
+        
     uri, gi = find_gallery_datauri(
-        db, primary, exclude_path=exclude_path, use_vision=use_vision, image_type=image_type, niche=niche,
+        db, primary, exclude_paths=exclude_paths, use_vision=use_vision, image_type=image_type, niche=niche,
     )
     if uri:
         logger.info("Recreate main: stale gallery photo for %r (%s) — nothing fresher available", primary, image_type)
         return uri, (gi.local_path if gi else None)
+
     logger.info("Recreate main: no photo for %r — falling back to IG image", primary)
     return None, None
 
@@ -3683,9 +3719,9 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
         if not subject:
             logger.info("Design: no secondary subject for %r — image_2 left empty", title[:50])
             return template_json, _with_inset(template_json, [main_datauri])
-        uri = fetch_subject_datauri(db, subject, "face", niche)
+        uri, _ = fetch_subject_datauri(db, subject, "face", niche)
         if not uri:
-            uri, _ = find_gallery_datauri(db, subject, exclude_path=main_path, image_type="face", niche=niche)
+            uri, _ = find_gallery_datauri(db, subject, exclude_paths={main_path} if main_path else None, image_type="face", niche=niche)
         if not uri:
             logger.info("Design: no photo found for secondary subject %r", subject)
             return template_json, _with_inset(template_json, [main_datauri])
@@ -3754,7 +3790,7 @@ def prepare_design_images(db, template_json, canvas_width: int, title: str, nich
     # bike) paired against a plain face-portrait inset of Bagnaia, the exact
     # "motor dengan wajah" mismatch the split path's VEHICLE checks exist to
     # prevent, just reached through the fallback path instead.
-    uri, gi = find_gallery_datauri(db, subject, exclude_path=main_path, image_type=image_type, niche=niche)
+    uri, gi = find_gallery_datauri(db, subject, exclude_paths={main_path} if main_path else None, image_type=image_type, niche=niche)
     if not uri:
         logger.info("Design: no gallery image for secondary subject %r — image widened to full width", subject)
         tj = _widen_to_full(template_json, canvas_width)

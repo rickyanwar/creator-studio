@@ -27,6 +27,7 @@ from app.services.ig_viewer_scraper import (
     _BROWSER_LAUNCH,
     _RELEASE_LUA,
     fetch_recent_posts,
+    fetch_many_recent_posts,
     _acquire_lock,
     _release_lock,
     _is_video_node,
@@ -519,6 +520,76 @@ class TestResultOrdering:
         codes = [m.code for m in result]
         assert codes.count("DUP") == 1
         assert "UNIQ" in codes
+
+    def test_pinned_old_node_first(self):
+        nodes = [
+            _image_node(code="PINNED", pk="1", taken_at=100),
+            _image_node(code="NEWEST", pk="2", taken_at=900),
+            _image_node(code="MIDDLE", pk="3", taken_at=500),
+        ]
+        tiers = [("t1", _tier_ok(nodes))]
+        with _run_patched(tiers):
+            result = fetch_recent_posts("user", amount=10)
+
+        codes = [m.code for m in result]
+        assert codes == ["NEWEST", "MIDDLE", "PINNED"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8b. fetch_many_recent_posts
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestFetchManyRecentPosts:
+    def test_multi_account_success(self):
+        call_order = []
+        def _t1(page, username):
+            call_order.append(username)
+            return [_image_node(code=f"IMG_{username}")]
+
+        tiers = [("t1", _t1)]
+        with _run_patched(tiers) as ctx:
+            with patch.object(_scraper_mod, "record_tier_result") as recorder:
+                result = fetch_many_recent_posts(["user1", "user2", "user3"])
+
+        assert call_order == ["user1", "user2", "user3"]
+        assert len(result) == 3
+        assert result["user1"][0].code == "IMG_user1"
+        assert result["user2"][0].code == "IMG_user2"
+        assert result["user3"][0].code == "IMG_user3"
+        # 3 users -> 2 sleeps between users
+        assert len(ctx["sleep_calls"]) == 2
+        
+        assert recorder.call_args_list == [
+            call("t1", "user1", True, error_kind=None, error=None, posts=1),
+            call("t1", "user2", True, error_kind=None, error=None, posts=1),
+            call("t1", "user3", True, error_kind=None, error=None, posts=1),
+        ]
+
+    def test_multi_account_partial_failure(self):
+        def _t1(page, username):
+            if username == "user2":
+                raise ViewerTierError("t1 fail")
+            return [_image_node(code=f"IMG_{username}")]
+
+        tiers = [("t1", _t1)]
+        with _run_patched(tiers):
+            result = fetch_many_recent_posts(["user1", "user2", "user3"])
+
+        assert len(result) == 3
+        assert isinstance(result["user1"], list)
+        assert isinstance(result["user2"], ViewerScrapeError)
+        assert isinstance(result["user3"], list)
+
+    def test_browser_launched_once(self):
+        tiers = [("t1", _tier_ok([_image_node()]))]
+        with _run_patched(tiers) as ctx:
+            with patch.object(_scraper_mod, "_launch_browser", side_effect=lambda: (MagicMock(), MagicMock(), MagicMock())) as launch:
+                try:
+                    fetch_many_recent_posts(["user1", "user2"])
+                except Exception:
+                    pass
+            assert launch.call_count == 1
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════

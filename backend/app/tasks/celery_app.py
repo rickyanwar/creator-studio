@@ -34,6 +34,9 @@ celery_app = Celery(
         "app.tasks.yt_clip",
         "app.tasks.yt_clip_render",
         "app.tasks.ai_health_check",
+        "app.tasks.radar",
+        "app.tasks.radar_crawl",
+        "app.tasks.radar_dispatch",
     ],
 )
 
@@ -242,5 +245,27 @@ celery_app.conf.beat_schedule = {
     "warmup-burners": {
         "task": "app.tasks.warmup.run_warmup",
         "schedule": crontab(minute=30, hour="*/3"),
+    },
+    # Viral Radar evaluation: every 2 minutes
+    "evaluate-radar": {
+        "task": "app.tasks.radar.evaluate_radar",
+        "schedule": 120,
+    },
+    # Viral Radar nightly: daily at 03:30 WIB (20:30 UTC)
+    "radar-nightly": {
+        "task": "app.tasks.radar.radar_nightly",
+        "schedule": crontab(hour=20, minute=30),
+    },
+    # Radar crawl tick: every 60s
+    "radar-crawl-tick": {
+        "task": "app.tasks.radar_crawl.radar_crawl_tick",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
+    # Radar dispatch tick: every 60s
+    "radar-dispatch-tick": {
+        "task": "app.tasks.radar_dispatch.radar_dispatch_tick",
+        "schedule": 60,
+        "options": {"expires": 55},
     },
 }

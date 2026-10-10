@@ -116,15 +116,19 @@ Tests: pytest <passed count>; live <tier> 3/3 users x 2 rounds; regression fallb
 Live-check JSON summary: <paste sanitized per-tier/user/round totals and errors from JSON outputs>
 ```
 
-Save PR URL and `status: "pr_opened"` in incident JSON and cron notepad. Send:
+Save PR URL, `head_sha` of the branch, and `status: "pr_opened"` in incident JSON and cron notepad. Send:
 
-> `Perbaikan IG <tier> siap: <tautan PR>. Penyebab: <singkat>. Uji: pytest <hasil>; live 3/3 akun x 2 putaran; regresi tiap tier lulus. Silakan review & merge; deploy otomatis via CI setelah merge.`
+> `Perbaikan IG <tier> siap: <tautan PR> (SHA: <head-sha>). Penyebab: <singkat>. Uji: pytest <hasil>; live 3/3 akun x 2 putaran; regresi tiap tier lulus. Boleh saya merge dan deploy? Balas: YA MERGE <incident-id>`
 
-## After merge
+## After PR opened — Telegram approval to merge
 
-On subsequent cron runs, check PR merged state with `gh pr view <PR-URL> --json state,mergedAt` and health JSON. Once merged **and** affected tier has recovered (new `last_success_at` after fix/merge, `unhealthy=false`, `consecutive_failures=0`), send one recovery message and set incident `closed` in JSON and notepad. If still unhealthy, keep `pr_opened`, record evidence, and do not start a second fix without fresh owner approval.
+Chat session: read cron notepad and `/root/hermes-work/incidents/<id>.json`; verify status is `pr_opened`, incident ID matches exactly, reply is no more than 24 hours after the alert, sender ID is in `TELEGRAM_ALLOWED_USERS`, and chat is private. Verify that the PR's CI is green and the current head SHA of the PR matches the `head_sha` saved in the incident JSON exactly (any new commit invalidates the approval). Record approving Telegram message ID and timestamp in incident JSON, then atomically change status to `merging`.
 
-> `IG <tier> pulih. PR <tautan PR> sudah digabung; cek terbaru berhasil pada <waktu UTC>. Insiden ditutup.`
+Once approved, merge the PR using `gh pr merge --squash` (do not use admin bypass). Wait and watch the CI deploy, then check the health command. If the health command confirms recovery (new `last_success_at` after merge, `unhealthy=false`, `consecutive_failures=0`), send a recovery message and set incident `closed` in JSON and notepad.
+
+> `IG <tier> pulih. PR <tautan PR> sudah digabung dan di-deploy; cek terbaru berhasil pada <waktu UTC>. Insiden ditutup.`
+
+If still unhealthy or deploy fails, keep incident open, record evidence, and propose a new fix (or PR revert, which also needs a new `YA MERGE <incident-id>` approval process). Do not start a new fix without fresh owner approval.
 
 ## One-time VPS setup — owner/Claude, not Hermes
 

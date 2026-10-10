@@ -376,6 +376,27 @@ export const getLogs = (params?: { category?: string; days?: number }) =>
     ai_stats: AIStats;
   }>("/logs", { params });
 
+// ── Radar (Feature 3) ────────────────────────────────────────────────────────
+export const listRadarAccounts = (niche?: string) =>
+  api.get("/radar/accounts", { params: niche ? { niche } : {} });
+export const createRadarAccount = (data: { niche: string; ig_username: string }) =>
+  api.post("/radar/accounts", data);
+export const updateRadarAccount = (id: number, data: { niche?: string; is_active?: boolean }) =>
+  api.patch(`/radar/accounts/${id}`, data);
+export const deleteRadarAccount = (id: number) =>
+  api.delete(`/radar/accounts/${id}`);
+export const listRadarNiches = () => api.get("/radar/niches");
+export const listRadarStories = (params?: { niche?: string; status?: string; limit?: number }) =>
+  api.get("/radar/stories", { params });
+export const getShadowReport = (days?: number) =>
+  api.get("/radar/shadow-report", { params: days ? { days } : {} });
+export const setSourceTrigger = (fanpageId: number, igSourceId: number, trigger: "every_post" | "viral_only") =>
+  api.put(`/fanpages/${fanpageId}/sources/${igSourceId}/trigger`, { trigger });
+export const previewRadarDecision = (decisionId: number) =>
+  api.post(`/radar/decisions/${decisionId}/preview`);
+export const regenerateRadarDecision = (decisionId: number) =>
+  api.post(`/radar/decisions/${decisionId}/regenerate`);
+
 export interface ActivityLog {
   id: string;
   category: "burner" | "publish" | "ai";
@@ -407,3 +428,26 @@ export interface Notification {
   link: string;
   created_at: string;
 }
+
+// F1 Drivers
+import { F1Driver } from "./types";
+
+export const listF1Drivers = (season?: number) =>
+  api.get<F1Driver[]>("/api/f1-drivers", { params: { season } });
+
+export const createF1Driver = (data: Record<string, unknown>) =>
+  api.post<F1Driver>("/api/f1-drivers", data);
+
+export const updateF1Driver = (id: number, data: Record<string, unknown>) =>
+  api.patch<F1Driver>(`/api/f1-drivers/${id}`, data);
+
+export const deleteF1Driver = (id: number) =>
+  api.delete(`/api/f1-drivers/${id}`);
+
+export const uploadF1DriverLogo = (id: number, file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return api.post<F1Driver>(`/api/f1-drivers/${id}/logo`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+};

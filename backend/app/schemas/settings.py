@@ -29,6 +29,18 @@ class SettingsUpdate(BaseModel):
     youtube_cookies: Optional[str] = None   # Netscape cookies.txt text — encrypted before saving; "" clears
     youtube_proxy: Optional[str] = None
 
+    # ── Viral Radar ──
+    radar_sleep_start_wib: Optional[int] = None
+    radar_sleep_end_wib: Optional[int] = None
+    radar_very_hot_interval_min: Optional[int] = None
+    radar_hot_interval_min: Optional[int] = None
+    radar_cold_interval_min: Optional[int] = None
+    radar_hot_window_h: Optional[int] = None
+    radar_track_max_age_h: Optional[int] = None
+    radar_story_sharing: Optional[str] = None
+    radar_share_max: Optional[int] = None
+    radar_news_stagger_max_min: Optional[int] = None
+
 
 class SettingsOut(BaseModel):
     crawl_interval_minutes: int
@@ -59,6 +71,18 @@ class SettingsOut(BaseModel):
     youtube_proxy: Optional[str] = None
     youtube_blocked_until: Optional[datetime] = None
     youtube_last_error: Optional[str] = None
+
+    # ── Viral Radar ──
+    radar_sleep_start_wib: Optional[int] = None
+    radar_sleep_end_wib: Optional[int] = None
+    radar_very_hot_interval_min: int = 8
+    radar_hot_interval_min: int = 12
+    radar_cold_interval_min: int = 50
+    radar_hot_window_h: int = 2
+    radar_track_max_age_h: int = 48
+    radar_story_sharing: str = "shared"
+    radar_share_max: int = 0
+    radar_news_stagger_max_min: int = 10
 
     model_config = {"from_attributes": False}
 

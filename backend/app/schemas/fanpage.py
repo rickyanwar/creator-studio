@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.models.target_fanpages import PublishMode, AttributionPosition
 
 
@@ -95,6 +95,32 @@ class FanpageBase(BaseModel):
     yt_clip_watermark: bool = True
     yt_clip_action_crop: str = Field("smart", pattern="^(smart|fit)$")
 
+    # ── Viral Radar ───────────────────────────────────────────────────────────
+    radar_enabled: bool = False
+    radar_niches: list[str] = []
+    radar_shadow: bool = True
+    radar_min_likes: int = Field(1000, ge=1, le=10_000_000)
+    radar_confirm_ratio: float = Field(1.5, ge=1.0, le=20.0)
+    radar_fast_ratio: float = Field(2.0, ge=1.0, le=20.0)
+    radar_fast_window_min: int = Field(60, ge=5, le=240)
+    radar_shelf_news_h: int = Field(72, ge=1, le=720)
+    radar_shelf_evergreen_h: int = Field(168, ge=1, le=720)
+    radar_burst_enabled: bool = True
+    radar_daily_max: int = Field(3, ge=0, le=100)
+    visual_engine: str = Field("off", pattern="^(off|gflow|chatgpt|auto)$")
+
+    @field_validator("radar_niches", mode="before")
+    @classmethod
+    def clean_radar_niches(cls, v):
+        if not isinstance(v, list):
+            return v
+        cleaned = []
+        for x in v:
+            x_str = str(x).strip()
+            if x_str and len(x_str) <= 64 and x_str not in cleaned:
+                cleaned.append(x_str)
+        return cleaned
+
 
 class FanpageUpdate(FanpageBase):
     pass
@@ -110,6 +136,10 @@ class FanpageSourceRemove(BaseModel):
 
 class FanpageSourceRecreateUpdate(BaseModel):
     ig_recreate_enabled: Optional[bool] = None  # null = inherit the fanpage's setting
+
+
+class FanpageSourceTriggerUpdate(BaseModel):
+    trigger: str = Field(..., pattern="^(every_post|viral_only)$")
 
 
 class FanpageOut(FanpageBase):
@@ -133,6 +163,7 @@ class IGSourceRef(BaseModel):
     # Per-(fanpage, source) override of Mode-3 ig_recreate: null inherits the
     # fanpage's blanket ig_recreate_enabled setting.
     ig_recreate_enabled: Optional[bool] = None
+    trigger: str = "every_post"
     # Per-source caption criteria (global; managed from the fanpage page)
     caption_tone: Optional[str] = None
     caption_language: Optional[str] = None

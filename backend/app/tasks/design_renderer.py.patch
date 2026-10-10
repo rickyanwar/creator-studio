@@ -1,0 +1,91 @@
+--- backend/app/tasks/design_renderer.py
++++ backend/app/tasks/design_renderer.py
+@@ -19,6 +19,20 @@
+ 
+ logger = logging.getLogger(__name__)
+ 
++import re
++
++def clean_title_for_render(title: str) -> str:
++    if not title:
++        return ""
++    title = re.sub(r'(\*\*|__)', '', title)
++    title = re.sub(r'`', '', title)
++    return title.strip()
++
++def clear_template_text_objects(template_json: dict):
++    if not template_json or "objects" not in template_json:
++        return
++    for obj in template_json.get("objects", []):
++        role = obj.get("placeholderRole")
++        if role in ("title", "subtitle", "caption", "label"):
++            if "text" in obj:
++                obj["text"] = ""
++
+ _RENDER_TIMEOUT = 120.0
+ 
+ 
+@@ -280,6 +294,9 @@
+         )
+         # See build_split_srcs / prepare_design_images's split-flow branch —
+         # the corrective per-photo zoom is stashed here rather than widening
+@@ -321,6 +338,8 @@
+         news_badge_text = _news_badge_text(fanpage) if category == "news" else ""
+ 
+         # ── Render via Puppeteer + Fabric.js service ──
++        title = clean_title_for_render(title)
++        clear_template_text_objects(template_json)
+         resp = httpx.post(
+             f"{settings.renderer_url.rstrip('/')}/render",
+             json={
+@@ -536,6 +555,8 @@
+         if is_split:
+             focus_points = align_split_focus_points(focus_points)
+ 
++        clear_template_text_objects(template_json)
++        d_title = clean_title_for_render(job.design_title or "")
+         resp = httpx.post(
+             f"{settings.renderer_url.rstrip('/')}/render",
+             json={
+                 "template_json": template_json,
+                 "width": template.canvas_width,
+                 "height": template.canvas_height,
+-                "title": job.design_title or "",
++                "title": d_title,
+                 "label": job.design_subtitle or "DISCUSSION",
+                 "watermark": fanpage.watermark_text or "",
+                 "watermark_image": watermark_datauri(fanpage),
+@@ -754,6 +775,8 @@
+         # since Mode 5 was first built; inject.js hides the label AND its
+         # badge together when no label value is sent (see its
+         # `if (labelObj && label) ... else labelObj.set({visible:false})`
+         # branch), so leaving this out cleanly removes the badge/pill from
+         # Pinterest cards instead of showing a label that was never
+         # actually about the reused template's own News/Discussion framing.
++        clear_template_text_objects(template_json)
++        d_title = clean_title_for_render(job.design_title or "")
+         payload = {
+             "template_json": template_json,
+             "width": template.canvas_width,
+             "height": template.canvas_height,
+-            "title": job.design_title or "",
++            "title": d_title,
+             "subtitle": "",
+             "caption": job.design_caption or "",
+@@ -1016,6 +1039,8 @@
+         else:
+             subtitle, label = "", _news_badge_text(fanpage)
+ 
++        clear_template_text_objects(template_json)
++        d_title = clean_title_for_render(job.design_title or "")
+         resp = httpx.post(
+             f"{settings.renderer_url.rstrip('/')}/render",
+             json={
+                 "template_json": template_json,
+                 "width": template.canvas_width,
+                 "height": template.canvas_height,
+-                "title": job.design_title or "",
++                "title": d_title,
+                 "subtitle": subtitle,
+                 "caption": "",
+                 "label": label,

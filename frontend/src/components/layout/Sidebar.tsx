@@ -13,6 +13,7 @@ const nav = [
   { href: "/burners",   label: "Burners",      icon: "solar:users-group-rounded-bold-duotone" },
   { href: "/sources",   label: "IG Sources",   icon: "solar:global-bold-duotone" },
   { href: "/news-sources", label: "News Sources", icon: "solar:documents-bold-duotone" },
+  { href: "/radar",     label: "Viral Radar",  icon: "solar:radar-2-bold-duotone" },
   { href: "/gallery",   label: "Gallery",      icon: "solar:gallery-wide-bold-duotone" },
   { href: "/templates", label: "Templates",    icon: "solar:palette-bold-duotone" },
   { href: "/history",   label: "History",      icon: "solar:history-bold-duotone" },

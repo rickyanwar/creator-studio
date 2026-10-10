@@ -22,6 +22,19 @@ from app.models.yt_clip_sources import YtClipSource
 from app.models.yt_videos import YtVideo
 from app.models.yt_clip_ideas import YtClipIdea
 from app.models.ai_copy_events import AICopyEvent
+from app.models.radar import (
+    RadarAccount,
+    RadarPost,
+    RadarSnapshot,
+    RadarStory,
+    RadarStoryDecision,
+    StoryContentHint,
+    StoryShelfKind,
+    StoryStatus,
+    DecisionRule,
+    DecisionStatus,
+)
+from app.models.f1_drivers import F1Driver
 
 __all__ = [
     "User",
@@ -59,4 +72,15 @@ __all__ = [
     "YtVideo",
     "YtClipIdea",
     "AICopyEvent",
+    "RadarAccount",
+    "RadarPost",
+    "RadarSnapshot",
+    "RadarStory",
+    "RadarStoryDecision",
+    "StoryContentHint",
+    "StoryShelfKind",
+    "StoryStatus",
+    "DecisionRule",
+    "DecisionStatus",
+    "F1Driver",
 ]

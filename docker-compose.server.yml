@@ -80,6 +80,21 @@ services:
       redis:
         condition: service_healthy
 
+  worker-visual:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1 --queues=visual --max-tasks-per-child=50
+    env_file: .env
+    volumes:
+      - media_data:/opt/studio/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # ── Celery Worker (Mode 7 video — YouTube analysis + clip renders) ──
   #    One render at a time: an 83s captioned clip measured ~245s wall and
   #    ~700MB peak RSS (python + ffmpeg decoder + encoder) on 2 CPUs

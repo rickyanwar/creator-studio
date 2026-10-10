@@ -46,6 +46,21 @@ export interface Fanpage {
   watermark_image_url: string | null;
   last_synced_at: string | null;
   created_at: string;
+  
+  // ── Radar (Feature 3) ──
+  radar_enabled: boolean;
+  radar_niches: string[];
+  radar_shadow: boolean;
+  radar_min_likes: number;
+  radar_confirm_ratio: number;
+  radar_fast_ratio: number;
+  radar_fast_window_min: number;
+  radar_shelf_news_h: number;
+  radar_shelf_evergreen_h: number;
+  radar_burst_enabled: boolean;
+  radar_daily_max: number;
+  visual_engine: "off" | "gflow" | "chatgpt" | "auto";
+
   // ── Content modes (Feature 2) ──
   mode1_ig_repost_enabled: boolean;
   mode2_news_content_enabled: boolean;
@@ -131,6 +146,10 @@ export interface IGSourceRef {
   caption_hashtag_count: number | null;
   caption_cta_text: string | null;
   caption_custom_prompt: string | null;
+  watermark_text: string | null;
+  watermark_image_url: string | null;
+  last_used_at: string | null;
+  trigger?: "every_post" | "viral_only";
 }
 
 export interface PinterestSourceRef {
@@ -262,7 +281,85 @@ export interface Burner {
   created_at: string;
 }
 
+// ── Radar (Feature 3) ──
+export interface RadarAccount {
+  id: number;
+  niche: string;
+  ig_username: string;
+  is_active: boolean;
+  leader_score: number;
+  last_checked_at: string | null;
+  last_post_seen_at: string | null;
+  avg_scrape_seconds: number | null;
+  last_error: string | null;
+}
+
+export interface RadarStoryMember {
+  ig_username: string;
+  shortcode: string;
+  post_url: string;
+  taken_at: string;
+  latest_like_count: number | null;
+  latest_comment_count: number | null;
+  thumbnail_url: string | null;
+}
+
+export interface RadarDecision {
+  fanpage_id: number;
+  fanpage_name: string;
+  rule: string;
+  status: string;
+  shadow: boolean;
+  would_trigger_at: string | null;
+  reason: string | null;
+  publish_job_id: number | null;
+  preview_image_path: string | null;
+  preview_status: string | null;
+  preview_error: string | null;
+  id: number;
+}
+
+export interface RadarStory {
+  id: number;
+  niche: string | null;
+  first_seen_at: string;
+  last_member_at: string;
+  member_count: number;
+  distinct_accounts: number;
+  heat_score: number;
+  status: string;
+  shelf_kind: string | null;
+  expires_at: string | null;
+  final_max_likes_24h: number | null;
+  members: RadarStoryMember[];
+  decisions: RadarDecision[];
+}
+
+export interface ShadowReportDecision {
+  story_id: number;
+  rule: string;
+  minutes: number;
+  username: string;
+  shortcode: string;
+  final_likes: number | null;
+}
+
+export interface ShadowReportSection {
+  decisions_by_rule: Record<string, number>;
+  median_minutes: number;
+  p90_minutes: number;
+  precision: number;
+  missed_stories: number;
+  recent_decisions: ShadowReportDecision[];
+}
+
+export interface ShadowReport {
+  overall: ShadowReportSection;
+  fanpages: Record<string, ShadowReportSection>;
+}
+
 export interface PublishJob {
+
   id: number;
   post_id: number | null;
   fanpage_id: number;
@@ -401,4 +498,29 @@ export interface AppSettings {
   youtube_proxy?: string | null;
   youtube_blocked_until?: string | null;
   youtube_last_error?: string | null;
+
+  // ── Radar (Feature 3) ──
+  radar_sleep_start_wib: number | null;
+  radar_sleep_end_wib: number | null;
+  radar_very_hot_interval_min: number;
+  radar_hot_interval_min: number;
+  radar_cold_interval_min: number;
+  radar_hot_window_h: number;
+  radar_track_max_age_h: number;
+  radar_story_sharing: "shared" | "exclusive";
+  radar_share_max: number;
+  radar_news_stagger_max_min: number;
+}
+
+export interface F1Driver {
+  id: number;
+  season: number;
+  surname: string;
+  full_name?: string;
+  number: number;
+  team_name: string;
+  team_colour: string;
+  team_logo_path?: string;
+  verified: boolean;
+  updated_at?: string;
 }

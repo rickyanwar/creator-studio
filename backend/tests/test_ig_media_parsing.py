@@ -16,6 +16,7 @@ from app.services.ig_media import (
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ig_viewer"
 LIVE_FIXTURES = sorted(FIXTURES.glob("live_*.json"))
+ENGAGEMENT_FIXTURES = sorted(FIXTURES.glob("engagement_*.json"))
 
 
 @pytest.mark.parametrize("fixture", LIVE_FIXTURES, ids=lambda path: path.stem)
@@ -81,6 +82,32 @@ def test_cdn_validation_rejects_suffix_spoof():
 
 def test_normalise_post_rejects_non_cdn_image():
     assert normalise_post({"id": "1", "shortcode": "bad", "display_url": "https://evil.com/a.jpg"}) is None
+
+
+@pytest.mark.parametrize("fixture", ENGAGEMENT_FIXTURES, ids=lambda path: path.stem)
+def test_normalise_post_engagement_fields(fixture):
+    nodes = json.loads(fixture.read_text())
+    assert nodes
+
+    for node in nodes:
+        media = normalise_post(node)
+        if is_video_node(node) or media is None:
+            continue
+
+        def _get_raw(keys):
+            for k in keys:
+                curr = node
+                for p in k.split("."):
+                    curr = curr.get(p) if isinstance(curr, dict) else None
+                if curr is not None:
+                    return int(curr)
+            return None
+
+        raw_like = _get_raw(["edge_liked_by.count", "edge_media_preview_like.count", "like_count"])
+        raw_comment = _get_raw(["edge_media_to_comment.count", "edge_media_to_parent_comment.count", "comment_count"])
+
+        assert media.like_count == raw_like
+        assert media.comment_count == raw_comment
 
 
 def _walk_values(value):

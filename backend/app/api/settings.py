@@ -52,6 +52,16 @@ def get_settings(db: DB, _: CurrentUser):
         youtube_proxy=row.youtube_proxy,
         youtube_blocked_until=row.youtube_blocked_until,
         youtube_last_error=row.youtube_last_error,
+        radar_sleep_start_wib=row.radar_sleep_start_wib,
+        radar_sleep_end_wib=row.radar_sleep_end_wib,
+        radar_very_hot_interval_min=row.radar_very_hot_interval_min,
+        radar_hot_interval_min=row.radar_hot_interval_min,
+        radar_cold_interval_min=row.radar_cold_interval_min,
+        radar_hot_window_h=row.radar_hot_window_h,
+        radar_track_max_age_h=row.radar_track_max_age_h,
+        radar_story_sharing=row.radar_story_sharing,
+        radar_share_max=row.radar_share_max,
+        radar_news_stagger_max_min=row.radar_news_stagger_max_min,
     )
 
 

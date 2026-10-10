@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Enum, func
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Enum, Float, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -194,6 +194,20 @@ class TargetFanpage(Base):
     # Shots without a dominant face: "smart" = 9:16 crop following the action
     # (centred for a cockpit POV), "fit" = whole frame over a blurred copy.
     yt_clip_action_crop = Column(String(8), default="smart", nullable=False, server_default="smart")
+
+    # ── Viral Radar ───────────────────────────────────────────────────────────
+    radar_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    radar_niches = Column(ARRAY(String), server_default="{}", nullable=False)
+    radar_shadow = Column(Boolean, default=True, nullable=False, server_default="true")
+    radar_min_likes = Column(Integer, default=1000, nullable=False, server_default="1000")
+    radar_confirm_ratio = Column(Float, default=1.5, nullable=False, server_default="1.5")
+    radar_fast_ratio = Column(Float, default=2.0, nullable=False, server_default="2.0")
+    radar_fast_window_min = Column(Integer, default=60, nullable=False, server_default="60")
+    radar_shelf_news_h = Column(Integer, default=72, nullable=False, server_default="72")
+    radar_shelf_evergreen_h = Column(Integer, default=168, nullable=False, server_default="168")
+    radar_burst_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    radar_daily_max = Column(Integer, default=3, nullable=False, server_default="3")
+    visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

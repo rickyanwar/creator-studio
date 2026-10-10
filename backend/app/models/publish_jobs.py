@@ -85,6 +85,7 @@ class PublishJob(Base):
 
     repliz_schedule_id = Column(String(128), nullable=True, index=True)
     repliz_response_json = Column(JSON, nullable=True)
+    design_analysis_json = Column(JSON, nullable=True)
     # The actual Facebook go-live time sent to Repliz as scheduleAt — distinct
     # from published_at (when we made the API call). Used to space out
     # consecutive posts on the SAME fanpage (see publisher._next_schedule_at):

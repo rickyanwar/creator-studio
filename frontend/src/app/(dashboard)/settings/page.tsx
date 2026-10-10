@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { getSettings, updateSettings, testReplizCredentials, testProxies, testRelays } from "@/lib/api";
 import { YouTubeSettingsCard } from "@/components/settings/YouTubeSettingsCard";
+import { F1DriversSettings } from "@/components/settings/F1DriversSettings";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -11,7 +12,7 @@ const fetcher = () => getSettings().then((r) => r.data as AppSettings);
 
 export default function SettingsPage() {
   const { data: settings, mutate } = useSWR("settings", fetcher);
-  const [form, setForm] = useState<Record<string, string | number>>({});
+  const [form, setForm] = useState<Record<string, string | number | null>>({});
   const [saved, setSaved]               = useState(false);
   const [loadingSave, setLoadingSave]   = useState(false);
   const [loadingTest, setLoadingTest]   = useState(false);
@@ -39,6 +40,18 @@ export default function SettingsPage() {
         nine_router_base_url: settings.nine_router_base_url ?? "",
         nine_router_model: settings.nine_router_model ?? "",
         nine_router_discussion_model: settings.nine_router_discussion_model ?? "",
+        
+        radar_sleep_start_wib: settings.radar_sleep_start_wib ?? "",
+        radar_sleep_end_wib: settings.radar_sleep_end_wib ?? "",
+        radar_very_hot_interval_min: settings.radar_very_hot_interval_min,
+        radar_hot_interval_min: settings.radar_hot_interval_min,
+        radar_cold_interval_min: settings.radar_cold_interval_min,
+        radar_hot_window_h: settings.radar_hot_window_h,
+        radar_track_max_age_h: settings.radar_track_max_age_h,
+        radar_story_sharing: settings.radar_story_sharing ?? "shared",
+        radar_share_max: settings.radar_share_max,
+        radar_news_stagger_max_min: settings.radar_news_stagger_max_min,
+        
         nine_router_api_key: "",
         gemini_api_key: "",
         groq_api_key: "",
@@ -53,7 +66,7 @@ export default function SettingsPage() {
     }
   }, [settings]);
 
-  function set(key: string, value: string | number) {
+  function set(key: string, value: string | number | null) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -427,6 +440,123 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Radar Settings */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">Viral Radar Engine</h2>
+        <p className="text-xs text-text-secondary -mt-2">
+          Global polling limits and scraping behavior for Viral Radar (Feature 3).
+        </p>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Sleep Window Start (Hour, WIB)</label>
+            <input
+              type="number"
+              className="input-rect"
+              placeholder="e.g. 0"
+              value={form.radar_sleep_start_wib as number | string ?? ""}
+              onChange={(e) => set("radar_sleep_start_wib", e.target.value !== "" ? parseInt(e.target.value) : null)}
+            />
+          </div>
+          <div>
+            <label className="label">Sleep Window End (Hour, WIB)</label>
+            <input
+              type="number"
+              className="input-rect"
+              placeholder="e.g. 6"
+              value={form.radar_sleep_end_wib as number | string ?? ""}
+              onChange={(e) => set("radar_sleep_end_wib", e.target.value !== "" ? parseInt(e.target.value) : null)}
+            />
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="label">Very Hot Interval (min)</label>
+            <input
+              type="number"
+              className="input-rect"
+              value={form.radar_very_hot_interval_min as number ?? 8}
+              onChange={(e) => set("radar_very_hot_interval_min", parseInt(e.target.value) || 8)}
+            />
+          </div>
+          <div>
+            <label className="label">Hot Interval (min)</label>
+            <input
+              type="number"
+              className="input-rect"
+              value={form.radar_hot_interval_min as number ?? 12}
+              onChange={(e) => set("radar_hot_interval_min", parseInt(e.target.value) || 12)}
+            />
+          </div>
+          <div>
+            <label className="label">Cold Interval (min)</label>
+            <input
+              type="number"
+              className="input-rect"
+              value={form.radar_cold_interval_min as number ?? 50}
+              onChange={(e) => set("radar_cold_interval_min", parseInt(e.target.value) || 50)}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Hot Window (h)</label>
+            <input
+              type="number"
+              className="input-rect"
+              value={form.radar_hot_window_h as number ?? 2}
+              onChange={(e) => set("radar_hot_window_h", parseInt(e.target.value) || 2)}
+            />
+            <p className="text-[10px] text-text-secondary mt-1">Posts newer than this get hot/very-hot intervals.</p>
+          </div>
+          <div>
+            <label className="label">Track Max Age (h)</label>
+            <input
+              type="number"
+              className="input-rect"
+              value={form.radar_track_max_age_h as number ?? 48}
+              onChange={(e) => set("radar_track_max_age_h", parseInt(e.target.value) || 48)}
+            />
+            <p className="text-[10px] text-text-secondary mt-1">Stop tracking likes after this age.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="label">Sharing Mode</label>
+            <select
+              className="input w-full"
+              value={form.radar_story_sharing as string ?? "shared"}
+              onChange={(e) => set("radar_story_sharing", e.target.value)}
+            >
+              <option value="shared">Shared</option>
+              <option value="exclusive">Exclusive</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Share Max Fanpages</label>
+            <input
+              type="number"
+              className="input-rect"
+              value={form.radar_share_max as number ?? 0}
+              onChange={(e) => set("radar_share_max", parseInt(e.target.value) || 0)}
+            />
+            <p className="text-[10px] text-text-secondary mt-1">0 = infinite</p>
+          </div>
+          <div>
+            <label className="label">News Stagger Max (min)</label>
+            <input
+              type="number"
+              className="input-rect"
+              value={form.radar_news_stagger_max_min as number ?? 10}
+              onChange={(e) => set("radar_news_stagger_max_min", parseInt(e.target.value) || 10)}
+            />
+          </div>
+        </div>
+      </section>
+
       <YouTubeSettingsCard settings={settings} onChanged={() => mutate()} />
 
       {/* Telegram */}
@@ -444,10 +574,12 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <button onClick={handleSave} disabled={loadingSave} className="btn-primary">
+      <button onClick={handleSave} disabled={loadingSave} className="btn-primary mb-6">
         <Icon icon="solar:refresh-bold-duotone" width={14} className={loadingSave ? "animate-spin" : "hidden"} />
         {saved ? "Saved!" : loadingSave ? "Saving…" : "Save Settings"}
       </button>
+
+      <F1DriversSettings />
     </div>
   );
 }
