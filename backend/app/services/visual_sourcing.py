@@ -22,7 +22,7 @@ def is_in_event_window(db, subject_or_niche: str, today: date) -> bool:
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import func, or_, cast, String
+from sqlalchemy import func, cast, String
 from app.models.gallery import GalleryImage
 from app.services.ig_content_classifier import PostAnalysis
 from app.services.design_images import (

@@ -1,7 +1,7 @@
-from typing import List, Set, Tuple, Dict, Callable
+from typing import List, Set, Tuple, Dict
 from datetime import datetime
-from sqlalchemy.orm import Session, selectinload, joinedload
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import select, and_
 from app.models.radar import RadarStory, RadarPost, RadarSnapshot, RadarAccount, RadarStoryDecision
 from app.models.target_fanpages import TargetFanpage
 from app.models.fanpage_sources import FanpageSource

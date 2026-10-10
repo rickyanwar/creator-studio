@@ -131,7 +131,7 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
         from app.services.ai_caption import build_caption_prompt, generate_caption, GroqRateLimitError
         from app.services.ig_content_classifier import analyze_ig_post, is_f1_niche
         
-        from app.models.radar import RadarStoryDecision, DecisionStatus, RadarStory, RadarPost
+        from app.models.radar import RadarStoryDecision, DecisionStatus
         from app.services.facebook_photo_source import is_incomplete_quote
         from app.services.radar_clustering import quote_matches_source, captions_too_similar
 

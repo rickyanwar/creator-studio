@@ -1,6 +1,5 @@
 """Pure functions for the Viral Radar scoring, see PLAN.md §6.1."""
 
-import math
 import statistics
 from dataclasses import dataclass
 from typing import Sequence, Callable

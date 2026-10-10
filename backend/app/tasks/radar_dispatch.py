@@ -7,11 +7,11 @@ from datetime import datetime, timezone, timedelta
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.config import get_settings
-from sqlalchemy import exists, and_, func
+from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from app.tasks.radar_locks import _RELEASE_LUA
 
-from app.models.radar import RadarStoryDecision, DecisionStatus, RadarStory, RadarPost
+from app.models.radar import RadarStoryDecision, DecisionStatus, RadarStory
 from app.models.settings import Settings
 from app.models.fanpage_sources import FanpageSource
 from app.models.ig_sources import IGSource
@@ -21,7 +21,7 @@ from app.models.publish_jobs import PublishJob
 from app.services.radar_clustering import token_set, jaccard
 from app.tasks.fan_out import fanout_link
 from app.tasks.ig_recreate import recreate_post_for_fanpage
-from app.tasks.image_saver import save_post_images, download_ig_image
+from app.tasks.image_saver import download_ig_image
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +288,6 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
                 db.flush()
                 
                 if post.image_source_urls:
-                    from app.tasks.image_saver import download_ig_image
                     from pathlib import Path
                     
                     post_dir = Path(app_settings.storage_base_path) / "posts" / str(post.uuid)

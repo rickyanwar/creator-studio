@@ -2,7 +2,6 @@ import logging
 import uuid
 import redis
 from datetime import timedelta
-from typing import Optional
 from celery import shared_task
 from app.database import SessionLocal
 from app.config import get_settings

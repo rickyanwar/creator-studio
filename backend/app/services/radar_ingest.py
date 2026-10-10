@@ -1,8 +1,7 @@
 import logging
-import httpx
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
-from typing import Callable, Any, Optional
+from datetime import datetime, timedelta
+from typing import Callable, Any
 
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert

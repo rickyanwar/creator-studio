@@ -1,9 +1,7 @@
 import logging
 import time
 import uuid
-import httpx
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import datetime
 
 import redis
 
@@ -69,7 +67,7 @@ def _process_radar_tick(db, r, db_settings):
     from app.models.fanpage_sources import FanpageSource
     from app.models.target_fanpages import TargetFanpage
     from app.models.radar import RadarPost
-    from sqlalchemy import exists, or_, func
+    from sqlalchemy import exists
     from app.services.ig_viewer_scraper import fetch_many_recent_posts, ViewerBusyError
     from app.services.radar_ingest import ingest_medias
     

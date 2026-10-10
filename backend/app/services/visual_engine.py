@@ -1,7 +1,6 @@
 from typing import List, Tuple
 import base64
 import io
-import json
 from dataclasses import dataclass
 from typing import Literal
 from datetime import datetime, timezone
@@ -191,15 +190,12 @@ def _is_quota_error(msg: str, code: int) -> bool:
     return any(w in msg_low for w in ['quota', 'limit', 'exhausted', 'entitled'])
 
 
-import httpx
-
 def generate(db: Session, req: GenerationRequest, *, timeout: float = 600, fanpage_id: int | None = None) -> bytes:
     cfg = get_nine_router_config(db)
     
     settings = db.query(Settings).first()
     daily_max = settings.visual_engine_daily_max if settings else 60
-    
-    from zoneinfo import ZoneInfo
+
     now_wib = datetime.now(ZoneInfo("Asia/Jakarta"))
     start_of_day = datetime(now_wib.year, now_wib.month, now_wib.day, tzinfo=ZoneInfo("Asia/Jakarta")).astimezone(timezone.utc)
     
