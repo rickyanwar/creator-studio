@@ -97,18 +97,14 @@ def sync_pending_schedules():
 
         _pending_status_lower = list(_REPLIZ_PENDING_STATUSES)
 
-        try:
-            # PostgreSQL JSONB path: cast the JSON sub-field to text, lower it.
-            status_text = func.lower(
-                cast(PublishJob.repliz_response_json["status"].astext, String)
-            )
+        if db.bind and db.bind.dialect.name == "sqlite":
+            no_final_status_condition = True  # type: ignore[assignment]
+        else:
+            status_text = func.lower(func.json_extract_path_text(PublishJob.repliz_response_json, "status"))
             no_final_status_condition = or_(
-                PublishJob.repliz_response_json["status"].astext == None,  # noqa: E711
+                func.json_extract_path_text(PublishJob.repliz_response_json, "status") == None,  # noqa: E711
                 status_text.in_(_pending_status_lower),
             )
-        except (AttributeError, TypeError):
-            # Fallback for environments without JSONB support (tests / SQLite)
-            no_final_status_condition = True  # type: ignore[assignment]
 
         jobs = (
             db.query(PublishJob)
@@ -120,7 +116,7 @@ def sync_pending_schedules():
                 PublishJob.scheduled_for >= now - _POLL_MAX_AGE,
                 no_final_status_condition,
             )
-            .order_by(PublishJob.scheduled_for.asc())
+            .order_by(PublishJob.scheduled_for.desc())
             .limit(50)
             .all()
         )
