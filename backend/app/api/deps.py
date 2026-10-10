@@ -1,6 +1,6 @@
 """FastAPI dependency injection helpers."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
+from app.services import api_tokens
+from app.models.api_tokens import ApiToken
 
 settings = get_settings()
 _bearer = HTTPBearer()
@@ -36,3 +38,24 @@ def get_current_user(
 
 CurrentUser = Annotated[str, Depends(get_current_user)]
 DB = Annotated[Session, Depends(get_db)]
+
+def require_hermes_scope(scope: str):
+    def dependency(
+        credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
+        db: Session = Depends(get_db)
+    ) -> ApiToken:
+        token = api_tokens.verify(db, credentials.credentials)
+        if not token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked token")
+        
+        if scope not in token.scopes:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing required scope")
+        
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if not token.last_used_at or (now - token.last_used_at) > timedelta(minutes=1):
+            token.last_used_at = now
+            db.commit()
+            
+        return token
+    return dependency
+

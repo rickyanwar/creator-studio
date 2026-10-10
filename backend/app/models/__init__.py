@@ -23,6 +23,8 @@ from app.models.yt_videos import YtVideo
 from app.models.yt_clip_ideas import YtClipIdea
 from app.models.ai_copy_events import AICopyEvent
 from app.models.post_metric_snapshots import PostMetricSnapshot
+from app.models.api_tokens import ApiToken
+from app.models.strategy import StrategyRecommendation, FanpageContentMemory
 
 __all__ = [
     "User",
@@ -61,4 +63,7 @@ __all__ = [
     "YtClipIdea",
     "AICopyEvent",
     "PostMetricSnapshot",
+    "ApiToken",
+    "StrategyRecommendation",
+    "FanpageContentMemory",
 ]

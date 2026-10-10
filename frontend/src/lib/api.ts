@@ -413,3 +413,19 @@ export interface Notification {
   link: string;
   created_at: string;
 }
+
+// ── Strategy ──────────────────────────────────────────────────────────────────
+export const listRecommendations = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
+  api.get("/strategy/recommendations", { params });
+export const approveRecommendation = (id: number) =>
+  api.post(`/strategy/recommendations/${id}/approve`);
+export const rejectRecommendation = (id: number) =>
+  api.post(`/strategy/recommendations/${id}/reject`);
+export const getContentMemory = (fanpageId: number) =>
+  api.get(`/strategy/memory/${fanpageId}`);
+export const refreshContentMemory = (fanpageId: number) =>
+  api.post(`/strategy/memory/${fanpageId}/refresh`);
+export const listApiTokens = () => api.get("/strategy/tokens");
+export const createApiToken = (data: { name: string; scopes: string[] }) =>
+  api.post("/strategy/tokens", data);
+export const revokeApiToken = (id: number) => api.delete(`/strategy/tokens/${id}`);

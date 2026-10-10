@@ -494,3 +494,42 @@ export interface FanpageAnalytics {
   }>;
   trend: AnalyticsTrend;
 }
+
+// ── Strategy (Hermes) ────────────────────────────────────────────────────────
+export interface ApiToken {
+  id: number;
+  name: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  token?: string; // only returned once on creation
+}
+
+export interface StrategyRecommendation {
+  id: number;
+  fanpage_id: number;
+  fanpage_name: string;
+  kind: "sleep_window" | "daily_cap" | "best_hours" | "content_mix" | "topic" | "other" | string;
+  title: string;
+  proposal: any;
+  rationale: string;
+  evidence: any | null;
+  status: "proposed" | "approved" | "applied" | "rejected" | "failed" | "superseded" | string;
+  source: string;
+  created_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+  applied_at: string | null;
+  apply_error: string | null;
+  previous_values: any | null;
+  current_values: any | null;
+}
+
+export interface FanpageContentMemory {
+  fanpage_id: number;
+  auto: any | null;
+  notes: any | null;
+  auto_updated_at: string | null;
+  notes_updated_at: string | null;
+}

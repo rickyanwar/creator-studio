@@ -35,6 +35,7 @@ celery_app = Celery(
         "app.tasks.yt_clip_render",
         "app.tasks.ai_health_check",
         "app.tasks.post_metrics",
+        "app.tasks.content_memory",
     ],
 )
 
@@ -253,5 +254,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.post_metrics.backfill_post_metrics",
         "schedule": 3600,
         "options": {"expires": 3500},
+    },
+    "refresh-content-memory": {
+        "task": "app.tasks.content_memory.refresh_content_memory",
+        "schedule": 604800,
+        "options": {"expires": 3600},
     },
 }

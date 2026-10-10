@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.utils.logger import setup_logging
-from app.api import auth, fanpages, burners, publish_jobs, settings as settings_router, jobs, ig_sources, dashboard, notifications, logs, news_sources, gallery, templates, yt_clips, scraper_health, analytics
+from app.api import auth, fanpages, burners, publish_jobs, settings as settings_router, jobs, ig_sources, dashboard, notifications, logs, news_sources, gallery, templates, yt_clips, scraper_health, analytics, strategy, hermes
 
 
 @asynccontextmanager
@@ -44,6 +44,8 @@ app.include_router(gallery.router)
 app.include_router(templates.router)
 app.include_router(yt_clips.router)
 app.include_router(analytics.router)
+app.include_router(strategy.router)
+app.include_router(hermes.router)
 
 
 @app.get("/health")

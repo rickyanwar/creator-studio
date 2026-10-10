@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { getSettings, updateSettings, testReplizCredentials, testProxies, testRelays } from "@/lib/api";
 import { YouTubeSettingsCard } from "@/components/settings/YouTubeSettingsCard";
+import { HermesTokensCard } from "@/components/settings/HermesTokensCard";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -448,6 +449,8 @@ export default function SettingsPage() {
       </section>
 
       <YouTubeSettingsCard settings={settings} onChanged={() => mutate()} />
+
+      <HermesTokensCard />
 
       {/* Telegram */}
       <section className="card space-y-4">
