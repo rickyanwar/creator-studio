@@ -3190,8 +3190,10 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
     from app.config import get_settings
     from app.models.gallery import GalleryImage
     from app.services.image_downloader import (
-        _9router_fetch_markdown, _IMG_URL_RE, _fetch_and_store, keyword_slug,
+        _9router_fetch_markdown, _IMG_URL_RE, _CAPTION_IMG_RE, _parse_caption_date,
+        _fetch_and_store, keyword_slug,
     )
+    from app.services.getty_dates import anchors_from_db, build_hints, estimate_date_from_anchors, parse_asset_id
 
     s = get_settings()
     keyword = subject.strip().lower()
@@ -3219,6 +3221,12 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
     if not candidate_urls:
         return []
 
+    captured_dates = {}
+    for match in _CAPTION_IMG_RE.finditer(md):
+        parsed_date = _parse_caption_date(match.group(1))
+        if parsed_date:
+            captured_dates[match.group(2).split("?", 1)[0]] = parsed_date
+
     skip_urls = {
         u for (u,) in
         db.query(GalleryImage.source_image_url).filter(GalleryImage.keyword == keyword).all()
@@ -3226,7 +3234,7 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
     if exclude_paths:
         skip_urls.update(exclude_paths)
     dest_dir = Path(s.storage_base_path) / "gallery" / keyword_slug(keyword)
-    saved = _fetch_and_store(candidate_urls, dest_dir, max_candidates, (300, 300), skip_urls, "9router-live", subject=subject)
+    saved = _fetch_and_store(candidate_urls, dest_dir, max_candidates, (300, 300), skip_urls, "9router-live", subject=subject, captured_dates=captured_dates)
     if not saved:
         return []
 
@@ -3242,6 +3250,16 @@ def _fetch_verified_subject_candidates(db, subject: str, image_type: str = "face
             source_engine=item.engine,
             label=item.label,
         )
+        if gi.captured_at is None:
+            asset_id = parse_asset_id(gi.source_image_url)
+            estimate = estimate_date_from_anchors(asset_id, anchors_from_db(db)) if asset_id is not None else None
+            if estimate:
+                gi.captured_at, confidence = estimate
+                gi.attributes = {
+                    "captured_at_confidence": confidence,
+                    "captured_at_source": "getty_id",
+                    "getty_hints": build_hints(gi.source_image_url),
+                }
         db.add(gi)
         try:
             db.commit()

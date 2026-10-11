@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/labeler", tags=["labeler"])
 class ClaimRequest(BaseModel):
     limit: int = Field(ge=1, le=50)
     worker: str = Field(min_length=1, max_length=64)
+    label: Optional[Literal["face", "action", "other"]] = None
 
 
 class ResultsRequest(BaseModel):
@@ -30,7 +31,7 @@ def schema(token=Depends(require_hermes_scope("labels:write"))):
 
 @router.post("/claim")
 def claim(body: ClaimRequest, db: DB, token=Depends(require_hermes_scope("labels:write"))):
-    items = muse_labeler.claim_images(db, body.limit, body.worker)
+    items = muse_labeler.claim_images(db, body.limit, body.worker, label=body.label)
     logger.info("Muse label claim worker=%s count=%d", body.worker, len(items))
     return items
 

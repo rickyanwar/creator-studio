@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import re
+import string
 from PIL import Image
 import httpx
 from app.config import get_settings
@@ -39,8 +40,29 @@ CONTEXT_SESSIONS = {
     "race", "qualifying", "practice", "pitlane", "podium", "paddock", "garage",
     "event", "unknown",
     "game", "fight", "weigh_in", "training", "warm_up", "press_conference",
-    "media_day", "ceremony",
+    "media_day", "ceremony", "sprint", "sprint_qualifying",
 }
+
+_GENERIC_KEYWORD_WORDS = {
+    "podium", "paddock", "crash", "motogp", "f1", "formula", "1", "ufc", "nba",
+    "mma", "racing", "news", "photo",
+}
+
+
+def keyword_name_from_gallery_keyword(keyword: str | None) -> str | None:
+    """Return a person-like name from a gallery search keyword, or None."""
+    if not keyword:
+        return None
+    cleaned = keyword.strip().lstrip("`~\"'")
+    cleaned = re.sub(r"[^\w\s-]", " ", cleaned, flags=re.UNICODE)
+    words = cleaned.split()
+    while words and (words[-1].lower() in _GENERIC_KEYWORD_WORDS or " ".join(words[-2:]).lower() == "formula 1"):
+        if len(words) >= 2 and " ".join(words[-2:]).lower() == "formula 1":
+            words.pop()
+        words.pop()
+    if not words or all(word.lower() in _GENERIC_KEYWORD_WORDS for word in words):
+        return None
+    return " ".join(words).title()
 
 EVENT_SESSIONS = CONTEXT_SESSIONS
 
@@ -56,7 +78,7 @@ LABEL_PROMPT = """Analyze this image and return a JSON object with the following
   "activity": "driving" | "celebrating" | "interview" | "walking" | "talking" | "posing" | "working_on_car" | "waiting" | "spraying_champagne" | "playing" | "shooting" | "dunking" | "fighting" | "striking" | "grappling" | "training" | "warming_up" | "weigh_in" | "face_off" | "press_conference" | "walkout" | "signing_autographs" | "other",
   "expression": "happy" | "smiling" | "serious" | "focused" | "celebrating" | "disappointed" | "neutral" | "not_visible" | "angry" | "shouting" | "emotional",
   "context": {
-    "session": "race" | "qualifying" | "practice" | "pitlane" | "podium" | "paddock" | "garage" | "event" | "game" | "fight" | "weigh_in" | "training" | "warm_up" | "press_conference" | "media_day" | "ceremony" | "unknown",
+    "session": "race" | "qualifying" | "practice" | "sprint" | "sprint_qualifying" | "pitlane" | "podium" | "paddock" | "garage" | "event" | "game" | "fight" | "weigh_in" | "training" | "warm_up" | "press_conference" | "media_day" | "ceremony" | "unknown",
     "rain": boolean,
     "night": boolean,
     "circuit_visible": boolean
@@ -119,7 +141,7 @@ def _parse_json(raw: str) -> dict:
     return val
 
 
-def normalise_label_output(data: dict) -> dict:
+def normalise_label_output(data: dict, keyword: str | None = None) -> dict:
     """Validate and normalise label output dictionary according to spec."""
     if not isinstance(data, dict):
         raise ValueError("input must be a dictionary")
@@ -237,12 +259,22 @@ def normalise_label_output(data: dict) -> dict:
         "quality": quality_dict,
         "caption": caption,
     }
+    keyword_mismatch = data.get("keyword_mismatch", False)
+    if not isinstance(keyword_mismatch, bool):
+        raise ValueError("keyword_mismatch must be a boolean")
+    people = data.get("people") if isinstance(data.get("people"), list) else []
+    if not people and not keyword_mismatch:
+        name = keyword_name_from_gallery_keyword(keyword)
+        if name:
+            people = [{"name": name, "confidence": 0.8, "source": "keyword"}]
+    result["people"] = people
+    result["keyword_mismatch"] = keyword_mismatch
     if event_dict is not None:
         result["event"] = event_dict
     return result
 
 
-def label_image(path: str, provider: str = "router") -> dict:
+def label_image(path: str, provider: str = "router", keyword: str | None = None) -> dict:
     """Label a local image file using provider ('router' or 'external')."""
     datauri = _image_to_datauri(path, max_dim=512)
 
@@ -306,4 +338,4 @@ def label_image(path: str, provider: str = "router") -> dict:
         raise LabelerError(f"Unknown labeler provider: {provider}")
 
     parsed = _parse_json(raw)
-    return normalise_label_output(parsed)
+    return normalise_label_output(parsed, keyword=keyword)

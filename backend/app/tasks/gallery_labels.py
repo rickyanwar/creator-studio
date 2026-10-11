@@ -51,7 +51,7 @@ def label_gallery_image(image_id: int):
             return
 
         try:
-            norm = label_image(img.local_path, provider="router")
+            norm = label_image(img.local_path, provider="router", keyword=img.keyword)
             img.attributes = norm
             img.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
             img.label_error = None
@@ -105,7 +105,7 @@ def label_new_gallery_images() -> int:
                 continue
 
             try:
-                norm = label_image(img.local_path, provider="router")
+                norm = label_image(img.local_path, provider="router", keyword=img.keyword)
                 img.attributes = norm
                 img.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 img.label_error = None

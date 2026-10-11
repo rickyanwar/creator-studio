@@ -82,6 +82,16 @@ def test_normaliser_accepts_sport_agnostic_values_and_venue():
     assert norm["kit_colors"] == ["purple", "gold"]
 
 
+def test_normaliser_accepts_sprint_sessions_for_context_and_event():
+    norm = normalise_label_output({
+        "context": {"session": "sprint"},
+        "event": {"session": "sprint_qualifying", "event_name": "Italian GP", "year": 2026},
+    })
+
+    assert norm["context"]["session"] == "sprint"
+    assert norm["event"]["session"] == "sprint_qualifying"
+
+
 def test_normaliser_preserves_legacy_values_and_maps_new_unknowns():
     norm = normalise_label_output({
         "sport": "motorsport",

@@ -17,10 +17,13 @@ from app.services.gallery_labeler import (
     SPORTS,
     VENUE_TYPES,
     normalise_label_output,
+    keyword_name_from_gallery_keyword,
 )
+from app.services.getty_dates import anchors_from_db, build_hints, estimate_date_from_anchors, parse_asset_id
 
 LEASE_PREFIX = "labeler:lease:"
 LEASE_SECONDS = 30 * 60
+CLAIM_LABELS = ("face", "action", "other")
 CONFIDENCE_RANK = {"none": 0, "estimated": 1, "day": 2, "exact": 3}
 
 
@@ -63,6 +66,7 @@ def label_schema() -> dict:
             "quality.obstructed": {"type": "boolean"},
             "caption": {"type": "string", "max": 160},
             "people": {"type": "array", "max": 10, "item": {"name": "string <= 80", "confidence": "number 0..1"}},
+            "keyword_mismatch": {"type": "boolean", "optional": True},
             "event": {"type": "object", "fields": {
                 "series": "string <= 40", "event_name": "string <= 80",
                 "year": "integer 1950..2100", "season": "YYYY or YYYY-YY",
@@ -70,8 +74,8 @@ def label_schema() -> dict:
             }},
             "evidence": {"type": "string", "max": 300},
         },
-        "limits": {"claim": 50, "results": 50},
-        "guidelines": "One label set per photo; people are visible identifiable people with confidence; use evidence for dates; never guess names.",
+        "limits": {"claim": 50, "results": 50, "label": list(CLAIM_LABELS)},
+        "guidelines": "One label set per photo; use the gallery keyword as a name hint; name a matching person at confidence >= 0.8 with gallery keyword + visual cue evidence; leave people empty and set keyword_mismatch when the photo contradicts the keyword; use evidence for dates; never guess names.",
     }
 
 
@@ -84,8 +88,19 @@ def _bounded_string(value: Any, max_length: int, field: str) -> str:
     return value
 
 
-def normalise_result(data: dict) -> dict:
-    attributes = normalise_label_output(data.get("attributes") or data)
+def normalise_result(data: dict, keyword: str | None = None) -> dict:
+    return _normalise_result(data, keyword=keyword)
+
+
+def apply_archival_photo(row, attributes: dict) -> None:
+    if attributes.get("archival_photo") is True:
+        row.attributes = dict(row.attributes or {})
+        row.attributes["archival_photo"] = True
+        row.attributes["captured_at_confidence"] = "estimated"
+
+
+def _normalise_result(data: dict, keyword: str | None = None) -> dict:
+    attributes = normalise_label_output(data.get("attributes") or data, keyword=keyword)
     people = data.get("people", [])
     if not isinstance(people, list) or len(people) > 10:
         raise ValueError("people must be a list of at most 10 items")
@@ -98,7 +113,19 @@ def normalise_result(data: dict) -> dict:
         if not name or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
             raise ValueError("people requires name and confidence between 0 and 1")
         normalized_people.append({"name": name, "confidence": confidence})
-    attributes["people"] = normalized_people
+    if normalized_people:
+        attributes["people"] = normalized_people
+    elif not attributes.get("keyword_mismatch"):
+        name = keyword_name_from_gallery_keyword(keyword)
+        attributes["people"] = ([{"name": name, "confidence": 0.8, "source": "keyword"}] if name else [])
+    keyword_mismatch = data.get("keyword_mismatch", False)
+    if not isinstance(keyword_mismatch, bool):
+        raise ValueError("keyword_mismatch must be a boolean")
+    attributes["keyword_mismatch"] = keyword_mismatch
+    archival_photo = data.get("archival_photo", False)
+    if not isinstance(archival_photo, bool):
+        raise ValueError("archival_photo must be a boolean")
+    attributes["archival_photo"] = archival_photo
 
     raw_event = data.get("event")
     if raw_event is not None:
@@ -145,8 +172,15 @@ def apply_captured_at(row, value: str, confidence: str) -> None:
     row.attributes["captured_at_confidence"] = confidence
 
 
-def claim_images(db, limit: int, worker: str, client=None) -> list[dict]:
+def claim_images(db, limit: int, worker: str, client=None, label: str | None = None) -> list[dict]:
     client = client or redis_client()
+    if label is not None and label not in CLAIM_LABELS:
+        raise ValueError(f"label must be one of {CLAIM_LABELS}")
+    leased_ids = {
+        int(key[len(LEASE_PREFIX):])
+        for key in client.scan_iter(match=f"{LEASE_PREFIX}*")
+        if key[len(LEASE_PREFIX):].isdigit()
+    }
     usage = (
         db.query(GalleryImage.keyword, func.count(GalleryImage.id).label("usage_count"))
         .filter(GalleryImage.is_used.is_(True), GalleryImage.last_used_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=90))
@@ -157,7 +191,12 @@ def claim_images(db, limit: int, worker: str, client=None) -> list[dict]:
         .outerjoin(usage, GalleryImage.keyword == usage.c.keyword)
         .filter(GalleryImage.is_deleted.is_(False), GalleryImage.attributes.is_(None), GalleryImage.label_attempts < 3)
         .order_by(func.coalesce(usage.c.usage_count, 0).desc(), GalleryImage.downloaded_at.desc())
-        .limit(max(limit * 3, limit)).all())
+    )
+    if label is not None:
+        candidates = candidates.filter(GalleryImage.label == label)
+    if leased_ids:
+        candidates = candidates.filter(GalleryImage.id.notin_(leased_ids))
+    candidates = candidates.limit(max(limit * 3, limit)).all()
     selected = []
     for image in candidates:
         if len(selected) >= limit:
@@ -166,7 +205,11 @@ def claim_images(db, limit: int, worker: str, client=None) -> list[dict]:
             selected.append({"id": image.id, "image_url": image.public_url, "keyword": image.keyword,
                              "extra_keywords": image.extra_keywords or [], "current_label": image.label,
                              "source_engine": image.source_engine, "downloaded_at": image.downloaded_at,
-                             "captured_at": image.captured_at, "width": image.width, "height": image.height})
+                             "captured_at": image.captured_at,
+                             "captured_at_confidence": (image.attributes or {}).get("captured_at_confidence"),
+                             "captured_at_source": (image.attributes or {}).get("captured_at_source"),
+                             "getty_hints": build_hints(image.source_image_url),
+                             "width": image.width, "height": image.height})
     return selected
 
 
@@ -189,13 +232,14 @@ def process_results(db, payload: dict, worker: str, client=None) -> dict:
                 row.label_error = str(item["error"])[:300]
                 failed += 1
             else:
-                attrs = normalise_result(item)
+                attrs = _normalise_result(item, keyword=row.keyword)
                 row.attributes = attrs
                 row.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 row.label_error = None
                 confidence = item.get("captured_at_confidence")
                 if item.get("captured_at") and confidence:
                     apply_captured_at(row, item["captured_at"], confidence)
+                apply_archival_photo(row, attrs)
                 saved += 1
         except ValueError as exc:
             row.label_attempts = (row.label_attempts or 0) + 1
@@ -206,3 +250,23 @@ def process_results(db, payload: dict, worker: str, client=None) -> dict:
             release_lease(client, image_id, worker)
     db.commit()
     return {"saved": saved, "failed": failed, "skipped": skipped, "errors": errors}
+
+
+def fill_people_from_keyword(db, dry_run: bool = False) -> int:
+    """Fill empty people arrays for labeled, non-mismatched gallery rows."""
+    changed = 0
+    rows = db.query(GalleryImage).filter(GalleryImage.attributes.is_not(None)).yield_per(500)
+    for row in rows:
+        attributes = dict(row.attributes or {})
+        if attributes.get("keyword_mismatch") is True or attributes.get("people"):
+            continue
+        name = keyword_name_from_gallery_keyword(row.keyword)
+        if not name:
+            continue
+        attributes["people"] = [{"name": name, "confidence": 0.8, "source": "keyword"}]
+        changed += 1
+        if not dry_run:
+            row.attributes = attributes
+    if not dry_run:
+        db.commit()
+    return changed
