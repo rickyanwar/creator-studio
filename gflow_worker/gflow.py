@@ -57,11 +57,11 @@ class GflowRunner:
     def __init__(self, cfg):
         self.cfg = cfg
 
-    def run(self, args):
+    def run(self, args, profile=None):
         # The studio token is never needed by the child CLI.
         env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
         try:
-            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds):
+            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=profile):
                 process = subprocess.Popen([*shlex.split(self.cfg.gflow_cmd), *map(str, args), "--json"],
                                            cwd=self.cfg.cli_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                            text=True, env=env, start_new_session=True)
@@ -90,14 +90,14 @@ class GflowRunner:
         return self.run(["credits", "list"])
 
     def create_project(self, profile, name):
-        return self.run(["project", "create", "--profile", profile, "--name", name])
+        return self.run(["project", "create", "--profile", profile, "--name", name], profile=profile)
 
     def _video(self, mode, prompt, *, profile, project, model, aspect, duration, out, frame=None):
         args = ["video", mode]
         if frame is not None:
             args += ["--initial-frame", str(frame)]
         return self.run([*args, prompt, "--model", model, "--aspect", aspect, "--duration", str(duration),
-                         "--profile", profile, "--project", project, "-o", str(out)])
+                         "--profile", profile, "--project", project, "-o", str(out)], profile=profile)
 
     def t2v(self, prompt, **kwargs):
         return self._video("t2v", prompt, **kwargs)

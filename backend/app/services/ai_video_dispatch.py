@@ -172,7 +172,20 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
     if not candidates:
         return None
 
-    candidate_by_id = {acc.id: acc for acc in candidates}
+    # Compute busy account ids: accounts with a VideoJob in claimed or generating across any worker
+    busy_account_ids = {
+        row[0]
+        for row in db.query(VideoJob.account_id)
+        .filter(
+            VideoJob.account_id.isnot(None),
+            VideoJob.status.in_(("claimed", "generating")),
+        )
+        .all()
+    }
+
+    candidate_by_id = {acc.id: acc for acc in candidates if acc.id not in busy_account_ids}
+    if not candidate_by_id:
+        return None
 
     # 1. Pinned jobs
     pinned_query = (
@@ -186,6 +199,8 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
     )
 
     for cand_job in pinned_query.all():
+        if cand_job.account_id in busy_account_ids:
+            continue
         acc = candidate_by_id.get(cand_job.account_id)
         if not acc:
             continue
@@ -233,7 +248,7 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         # Ties: least recently used (acc.last_used_at is None or older)
         matching_accounts = [
             acc for acc in candidates
-            if (acc.credits - credit_reserve) >= cand_job.credits_estimate
+            if acc.id not in busy_account_ids and (acc.credits - credit_reserve) >= cand_job.credits_estimate
         ]
         if not matching_accounts:
             continue

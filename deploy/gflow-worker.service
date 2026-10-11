@@ -1,5 +1,8 @@
 # Install: copy to /etc/systemd/system/gflow-worker.service, create the protected
 # /etc/gflow-worker.env, then run systemctl daemon-reload and enable --now.
+# Concurrency: GFLOW_MAX_CONCURRENT defaults to 1. Set to 2 only when RAM allows (recommended after VPS RAM upgrade).
+# Locking: worker takes shared flock on GFLOW_LOCK_FILE and exclusive flock per profile (gflow-flow.<profile>.lock).
+# Hermes flow.sh takes exclusive flock on GFLOW_LOCK_FILE, excluding worker jobs while allowing 2 worker jobs concurrently.
 [Unit]
 Description=Studio Google Flow video worker
 After=network-online.target

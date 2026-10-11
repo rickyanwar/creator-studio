@@ -1,9 +1,12 @@
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 import os
 import re
 import shlex
 import socket
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,9 @@ class Config:
                       ffmpeg=os.getenv("FFMPEG", "ffmpeg"), ffprobe=os.getenv("FFPROBE", "ffprobe"))
         for name in ("max_concurrent", "mem_reserve_mb", "chrome_peak_mb", "seed_offset_ms"):
             values[name] = int(os.getenv("GFLOW_" + name.upper(), str(cls.__dataclass_fields__[name].default)))
+        if values["max_concurrent"] > 2:
+            log.warning("GFLOW_MAX_CONCURRENT=%d clamped to 2", values["max_concurrent"])
+            values["max_concurrent"] = 2
         for name in ("poll_seconds", "credits_refresh_minutes", "clip_timeout_seconds", "keep_done_days"):
             values[name] = float(os.getenv("GFLOW_" + name.upper(), str(cls.__dataclass_fields__[name].default)))
         cfg = cls(**values)

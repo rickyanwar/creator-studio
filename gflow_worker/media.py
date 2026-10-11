@@ -52,7 +52,7 @@ class Media:
             labels.append(f"[v{i}][a{i}]")
         filters.append("".join(labels) + f"concat=n={len(clips)}:v=1:a=1[v][a]")
         self._run([*args, "-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]", "-c:v", "libx264",
-                   "-crf", "21", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+                   "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                    "-movflags", "+faststart", str(out)])
 
     def thumbnail(self, video, jpg):

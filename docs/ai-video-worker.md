@@ -8,7 +8,10 @@ Mode 8 creates original short videos with Google Flow through `gflow-cli` and pu
 - One video uses one account and one Flow project. Clip 1 is text-to-video; later clips are image-to-video from the previous clip's last frame. All clips use the same profile and project.
 - Account selection must cover the whole remaining video after the global credit reserve. An account runs at most one video at a time.
 - A failed clip is retried on the same account. If that account cannot continue, the complete video restarts from clip 1 on another account. Clips from different generations are never mixed.
-- `GFLOW_MAX_CONCURRENT` defaults to 1 and is at most 2 on the VPS. A run can start only when available memory minus `GFLOW_CHROME_PEAK_MB` is at least `GFLOW_MEM_RESERVE_MB`.
+- `GFLOW_MAX_CONCURRENT` defaults to 1 and is clamped to 1..2 (values >2 become 2 with a warning log). Setting to 2 is recommended only when RAM allows (e.g. after a VPS RAM upgrade). A run can start only when available memory minus `GFLOW_CHROME_PEAK_MB` is at least `GFLOW_MEM_RESERVE_MB`.
+- Locking architecture:
+  - Global shared lock: Worker gflow and probe calls take `fcntl.LOCK_SH` on `GFLOW_LOCK_FILE` (`/tmp/gflow-flow.lock`). Hermes `flow.sh` takes `fcntl.LOCK_EX` on the same file. This ensures Hermes and the worker mutually exclude each other, while up to 2 worker jobs can hold `LOCK_SH` simultaneously.
+  - Per-account exclusive lock: In addition to the global shared lock, each call using a profile acquires `fcntl.LOCK_EX` on `<lock dir>/gflow-flow.<profile>.lock` (profile sanitized to `[A-Za-z0-9._-]`). This prevents two concurrent worker jobs or probes from driving the same Chrome profile at once. Lock order is always global shared first, then per-profile exclusive, avoiding deadlocks. Credit probes take the same per-profile lock.
 - Mode 8 is off on every fanpage until enabled per fanpage. Each enabled page chooses Auto or Manual review.
 - Narration is English. Prompts must not name real teams, sponsors, or brands.
 
@@ -136,7 +139,12 @@ GFLOW_MEM_RESERVE_MB=1536
 GFLOW_WORKER_ID=vps-gflow-1
 ```
 
-The repository contains the matching unit at `deploy/gflow-worker.service`. Copy it to `/etc/systemd/system/gflow-worker.service`, create `/etc/gflow-worker.env` with mode `600`, then run `systemctl daemon-reload` and `systemctl enable --now gflow-worker.service`. Hermes and this worker share `/tmp/gflow-flow.lock`; every Flow subprocess and credit UI probe waits for that exclusive lock, so neither process runs Chrome at the same time. The lock file is owned by the process that creates it; ensure the `gflow` user can open the existing file or create it before starting the service.
+The repository contains the matching unit at `deploy/gflow-worker.service`. Copy it to `/etc/systemd/system/gflow-worker.service`, create `/etc/gflow-worker.env` with mode `600`, then run `systemctl daemon-reload` and `systemctl enable --now gflow-worker.service`.
+
+Hermes and this worker coordinate via flock on `/tmp/gflow-flow.lock`:
+- Worker takes `LOCK_SH` on the global lock file and `LOCK_EX` on `/tmp/gflow-flow.<profile>.lock`.
+- Hermes `flow.sh` takes `LOCK_EX` on `/tmp/gflow-flow.lock`.
+Thus Hermes and the worker exclude each other, while two worker jobs on distinct profiles can run concurrently when `GFLOW_MAX_CONCURRENT=2` is enabled. Every lock file is owned by the process that creates it; ensure the `gflow` user can open the existing file or create it in the lock directory before starting the service.
 
 To add another Flow account later, log that profile in as user `gflow` using the CLI. The worker picks it up on the next credits refresh and automatically creates a `credit-probe` project for it.
 

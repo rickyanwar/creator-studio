@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 
 import httpx
@@ -419,3 +420,222 @@ def test_concat_silent_clip(cfg, runner):
     probe = runner.media.probe(out)
     assert any(s["codec_type"] == "audio" for s in probe["streams"])
     assert float(probe["format"]["duration"]) == pytest.approx(2, abs=0.2)
+
+
+def test_concat_uses_hermes_encode_settings(cfg, runner, monkeypatch):
+    monkeypatch.setattr(runner.media, "probe", lambda path: {
+        "format": {"duration": "1"},
+        "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+    })
+    commands = []
+    monkeypatch.setattr(runner.media, "_run", lambda args: commands.append(args))
+
+    runner.media.concat(["clip.mp4"], "out.mp4")
+
+    args = commands[0]
+    assert args[args.index("-c:v") + 2:args.index("-c:v") + 4] == ["-crf", "18"]
+    assert args[args.index("-c:a") + 2:args.index("-c:a") + 4] == ["-b:a", "192k"]
+    assert args[args.index("-movflags") + 1:args.index("-movflags") + 2] == ["+faststart"]
+
+
+def test_two_worker_shared_locks_concurrent_hermes_exclusive_blocks(cfg, tmp_path):
+    from gflow_worker.lock import flow_lock, LockTimeout
+    import concurrent.futures
+
+    lock_file = tmp_path / "gflow-flow.lock"
+
+    # 1. Two shared locks can be held simultaneously
+    held_shared = threading.Event()
+    release_shared = threading.Event()
+    worker1_started = threading.Event()
+    worker2_started = threading.Event()
+
+    def run_worker1():
+        with flow_lock(lock_file, 1.0, profile=None):
+            worker1_started.set()
+            release_shared.wait()
+
+    def run_worker2():
+        worker1_started.wait()
+        with flow_lock(lock_file, 1.0, profile=None):
+            worker2_started.set()
+            release_shared.wait()
+
+    t1 = threading.Thread(target=run_worker1)
+    t2 = threading.Thread(target=run_worker2)
+    t1.start()
+    t2.start()
+
+    assert worker1_started.wait(timeout=2.0)
+    assert worker2_started.wait(timeout=2.0)
+
+    # 2. While shared lock is held, Hermes LOCK_EX blocks and times out
+    holder = _hold_lock(lock_file, 0.2)
+    # Give child process a moment to attempt flock LOCK_EX
+    time.sleep(0.05)
+    # The holder should still be running because it's blocked on the shared lock
+    assert holder.poll() is None
+
+    # Release worker shared locks
+    release_shared.set()
+    t1.join(timeout=2.0)
+    t2.join(timeout=2.0)
+    holder.wait(timeout=2.0)
+
+    # 3. While Hermes holds LOCK_EX, worker shared lock blocks
+    hermes_holder = _hold_lock(lock_file, 0.3)
+    time.sleep(0.05)
+    started = time.monotonic()
+    with flow_lock(lock_file, 1.0, profile=None):
+        elapsed = time.monotonic() - started
+        assert elapsed >= 0.15
+    hermes_holder.wait(timeout=2.0)
+
+
+def test_per_profile_lock_serialization_and_concurrency(cfg, tmp_path):
+    from gflow_worker.lock import flow_lock, LockTimeout
+
+    lock_file = tmp_path / "gflow-flow.lock"
+
+    # Same profile serializes
+    p1_first_acquired = threading.Event()
+    p1_release_first = threading.Event()
+    p1_second_acquired = threading.Event()
+
+    def worker_p1_first():
+        with flow_lock(lock_file, 1.0, profile="profA"):
+            p1_first_acquired.set()
+            p1_release_first.wait()
+
+    def worker_p1_second():
+        p1_first_acquired.wait()
+        try:
+            with flow_lock(lock_file, 0.1, profile="profA"):
+                p1_second_acquired.set()
+        except LockTimeout:
+            pass
+
+    t1 = threading.Thread(target=worker_p1_first)
+    t2 = threading.Thread(target=worker_p1_second)
+    t1.start()
+    t2.start()
+
+    assert p1_first_acquired.wait(timeout=2.0)
+    # Second should fail / time out while first holds profA lock
+    t2.join(timeout=2.0)
+    assert not p1_second_acquired.is_set()
+
+    p1_release_first.set()
+    t1.join(timeout=2.0)
+
+    # Different profiles run concurrently
+    pA_acquired = threading.Event()
+    pB_acquired = threading.Event()
+    release_both = threading.Event()
+
+    def worker_pA():
+        with flow_lock(lock_file, 1.0, profile="profA"):
+            pA_acquired.set()
+            release_both.wait()
+
+    def worker_pB():
+        pA_acquired.wait()
+        with flow_lock(lock_file, 1.0, profile="profB"):
+            pB_acquired.set()
+            release_both.wait()
+
+    tA = threading.Thread(target=worker_pA)
+    tB = threading.Thread(target=worker_pB)
+    tA.start()
+    tB.start()
+
+    assert pA_acquired.wait(timeout=2.0)
+    assert pB_acquired.wait(timeout=2.0)
+
+    release_both.set()
+    tA.join(timeout=2.0)
+    tB.join(timeout=2.0)
+
+
+def test_lock_order_and_cleanup_on_profile_timeout(cfg, tmp_path):
+    from gflow_worker.lock import flow_lock, LockTimeout
+    import fcntl
+
+    lock_file = tmp_path / "gflow-flow.lock"
+    prof_file = tmp_path / "gflow-flow.my_prof.lock"
+
+    # Pre-acquire profile lock exclusively using another fd
+    prof_file.parent.mkdir(parents=True, exist_ok=True)
+    with prof_file.open("a+") as pf:
+        fcntl.flock(pf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        # Worker attempting to acquire global-then-profile should time out on profile
+        # and release global shared lock
+        with pytest.raises(LockTimeout):
+            with flow_lock(lock_file, 0.05, profile="my_prof"):
+                pass
+
+        # Verify global lock was released by acquiring it exclusively
+        with lock_file.open("a+") as gf:
+            fcntl.flock(gf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(gf.fileno(), fcntl.LOCK_UN)
+
+
+def test_max_concurrent_clamping(monkeypatch, cfg):
+    monkeypatch.setenv("STUDIO_API_URL", "https://studio.test")
+    monkeypatch.setenv("GFLOW_WORKER_TOKEN", "tok")
+    monkeypatch.setenv("GFLOW_CLI_DIR", str(cfg.cli_dir))
+
+    monkeypatch.setenv("GFLOW_MAX_CONCURRENT", "3")
+    c3 = Config.from_env()
+    assert c3.max_concurrent == 2
+
+    monkeypatch.setenv("GFLOW_MAX_CONCURRENT", "5")
+    c5 = Config.from_env()
+    assert c5.max_concurrent == 2
+
+    monkeypatch.setenv("GFLOW_MAX_CONCURRENT", "1")
+    c1 = Config.from_env()
+    assert c1.max_concurrent == 1
+
+    monkeypatch.setenv("GFLOW_MAX_CONCURRENT", "2")
+    c2 = Config.from_env()
+    assert c2.max_concurrent == 2
+
+    monkeypatch.setenv("GFLOW_MAX_CONCURRENT", "0")
+    with pytest.raises(ValueError, match="invalid worker limits"):
+        Config.from_env()
+
+
+def test_claim_skips_locally_busy_account_in_worker(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    job1 = payload()
+    job1["id"] = 101
+    job1["account"] = {"id": 1, "profile": "p1"}
+
+    job2 = payload()
+    job2["id"] = 102
+    job2["account"] = {"id": 1, "profile": "p1"}
+
+    studio.claims = [job2]
+    # Set max_concurrent to 2
+    worker = Worker(replace(cfg, max_concurrent=2), studio.api)
+    try:
+        # Before ticking, pretend job1 is currently running on worker
+        mock_future = Future()
+        worker.jobs[101] = (job1, mock_future)
+        worker.runner.busy_profiles.add("p1")
+
+        # Worker tick claims next job
+        worker.tick()
+
+        # Job 102 has profile p1 which is in worker.runner.busy_profiles; runner should fail it
+        worker.jobs[102][1].result(timeout=2.0)
+        fail_events = [data for route, data in studio.requests if route.endswith(f"/jobs/{job2['id']}/fail")]
+        assert len(fail_events) == 1
+        assert fail_events[0]["reason"] == "other"
+        assert fail_events[0]["message"] == "profile busy"
+    finally:
+        worker.executor.shutdown(wait=False)
+
+

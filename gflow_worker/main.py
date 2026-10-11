@@ -79,7 +79,7 @@ class Worker:
         command = [*shlex.split(self.cfg.probe_prefix), *shlex.split(self.cfg.probe_python_cmd),
                    str(script), project, str(out_dir)]
         try:
-            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds):
+            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=profile):
                 completed = subprocess.run(command, cwd=self.cfg.cli_dir, env=env, text=True,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                            timeout=self.cfg.probe_timeout_seconds, check=False)
