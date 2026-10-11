@@ -21,21 +21,21 @@
   },
   "blocks": {
     "vehicle_presets": {
-      "classic_gp": "A {era_vehicle} in a {livery} livery{lettering}, no sponsor logos, no numbers, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner",
-      "classic_gp_short": "{livery_short} {era_vehicle}{lettering_short}, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner"
+      "classic_gp": "A {era_vehicle} in a {livery} livery{lettering}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+      "classic_gp_short": "{livery_short} {era_vehicle}{lettering_short}, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner"
     }
   },
   "clip_templates": [
     {
       "role": "reveal",
       "mode": "t2v",
-      "prompt": "{style} {vehicle}, races across a historic asphalt Grand Prix circuit seen from a dramatic chase tracking angle. The camera swoops close to the {innovation_part}. The bodywork becomes translucent in a technical X-ray cutaway revealing {innovation_name}: {mechanism_details}. {working_action} Macro mechanical fidelity, motion blur across the track surface, no exhaust flames or fireballs, no F1 logo, no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+      "prompt": "{style} {vehicle}, races across a historic asphalt Grand Prix circuit seen from a dramatic chase tracking angle. The camera swoops close to the {innovation_part}. The bodywork becomes translucent in a technical X-ray cutaway revealing {innovation_name}: {mechanism_details}. {working_action} Macro mechanical fidelity, motion blur across the track surface, no exhaust flames or fireballs, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
       "narration_words": {"en": "22-24"}
     },
     {
       "role": "exploded_view",
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no exhaust flames or fireballs, one continuous camera move with no cuts. {effect_visual} The {innovation_part} assembly lifts and breaks apart into a technical exploded view in mid-air: {parts_list} separate and float with crisp mechanical precision above the rushing asphalt. The components smoothly reassemble and lock into place, finishing on a caption-free freeze moment of the operational device. {audio} {narrator_followup} \"{narration_2}\"",
+      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, no exhaust flames or fireballs, one continuous camera move with no cuts. {effect_visual} The {innovation_part} assembly lifts and breaks apart into a technical exploded view in mid-air: {parts_list} separate and float with crisp mechanical precision above the rushing asphalt. The components smoothly reassemble and lock into place, finishing on a caption-free freeze moment of the operational device. {audio} {narrator_followup} \"{narration_2}\"",
       "narration_words": {"en": "22-24"}
     }
   ],
@@ -45,7 +45,7 @@
     "Continue seamlessly from this exact frame",
     "one continuous camera move with no cuts",
     "caption-free freeze moment of the operational device",
-    "no sponsor logos, no numbers, no F1 logo"
+    "no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos)"
   ],
   "rules": [
     "Specific claims regarding years, lap-time gains, technical parameters, and ban reasons must come ONLY from verified research_notes.",

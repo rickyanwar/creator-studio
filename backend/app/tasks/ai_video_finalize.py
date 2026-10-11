@@ -1,7 +1,9 @@
 """Finalize uploaded Mode 8 videos through QC and the publish queue."""
 
 import logging
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.database import SessionLocal
 from app.tasks.celery_app import celery_app
@@ -16,6 +18,7 @@ def finalize_ai_video(video_job_id: int):
     from app.models.settings import Settings
     from app.models.target_fanpages import PublishMode, TargetFanpage
     from app.services.ai_video_qc import contact_sheet, technical_check, vision_check
+    from app.config import get_settings
 
     db = SessionLocal()
     try:
@@ -59,11 +62,63 @@ def finalize_ai_video(video_job_id: int):
         passed = vision is None or vision["passed"]
         job.qc = {"technical": technical, "vision": vision, "passed": passed, "reasons": reasons}
         publish_status = PublishJobStatus.pending_publish if vision is None or vision["passed"] else PublishJobStatus.pending_review
+        publish_video_path, publish_video_url = job.video_path, job.video_url
+        publish_thumbnail_path, publish_thumbnail_url = job.thumbnail_path, job.thumbnail_url
+        overlays_enabled = bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))
+        overlay_info = {"logo": bool(fanpage and fanpage.ai_video_logo_enabled),
+                        "captions": bool(fanpage and fanpage.ai_video_captions_enabled), "words": 0}
+        if overlays_enabled:
+            from app.services.ai_video_overlay import estimate_words, render_branded, speech_windows
+            raw_path = Path(job.video_path)
+            workdir = raw_path.parent / f"overlay_{job.id}_{uuid.uuid4().hex[:8]}"
+            try:
+                variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
+                texts = [variables.get(f"narration_{i}", "") for i in range(1, len(job.clips or []) + 1)]
+                windows = speech_windows(str(raw_path), job.clip_seconds, len(texts))
+                words = estimate_words(texts, windows)
+                overlay_info["words"] = len(words)
+                branded = raw_path.with_name(f"{raw_path.stem}_branded_{uuid.uuid4().hex[:8]}{raw_path.suffix}")
+                render_branded(str(raw_path), str(branded), fanpage, words, workdir)
+                thumbnail = branded.with_suffix(".jpg")
+                import subprocess
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(branded), "-frames:v", "1", "-q:v", "3", str(thumbnail)], check=True, timeout=60)
+                s = get_settings()
+                publish_video_path, publish_video_url = str(branded), f"{s.storage_base_url.rstrip('/')}/videos/{branded.name}"
+                publish_thumbnail_path, publish_thumbnail_url = str(thumbnail), f"{s.storage_base_url.rstrip('/')}/videos/{thumbnail.name}"
+                raw_path.unlink(missing_ok=True)
+                if job.thumbnail_path:
+                    Path(job.thumbnail_path).unlink(missing_ok=True)
+                job.video_path, job.video_url = publish_video_path, publish_video_url
+                job.thumbnail_path, job.thumbnail_url = publish_thumbnail_path, publish_thumbnail_url
+            except Exception as exc:
+                publish_status = PublishJobStatus.pending_review
+                overlay_info["error"] = str(exc)[:500]
+                publish_video_path, publish_video_url = job.video_path, job.video_url
+                publish_thumbnail_path, publish_thumbnail_url = job.thumbnail_path, job.thumbnail_url
+                publish_job = PublishJob(
+                    fanpage_id=job.fanpage_id, post_id=None, content_type=ContentType.ai_video,
+                    design_title=job.title, ai_generated_caption=job.caption,
+                    video_path=publish_video_path, video_url=publish_video_url,
+                    video_thumbnail_path=publish_thumbnail_path, video_thumbnail_url=publish_thumbnail_url,
+                    video_duration_s=job.duration_s, status=publish_status,
+                    last_error=f"overlay failed: {exc}"[:2000],
+                )
+                db.add(publish_job)
+                db.flush()
+                job.qc = {"technical": technical, "vision": vision, "passed": False,
+                          "reasons": reasons, "overlay": overlay_info}
+                job.publish_job_id, job.status = publish_job.id, "done"
+                if idea:
+                    idea.status = "done"
+                db.commit()
+                return
+        job.qc = {"technical": technical, "vision": vision, "passed": passed,
+                  "reasons": reasons, "overlay": overlay_info}
         publish_job = PublishJob(
             fanpage_id=job.fanpage_id, post_id=None, content_type=ContentType.ai_video,
             design_title=job.title, ai_generated_caption=job.caption,
-            video_path=job.video_path, video_url=job.video_url,
-            video_thumbnail_path=job.thumbnail_path, video_thumbnail_url=job.thumbnail_url,
+            video_path=publish_video_path, video_url=publish_video_url,
+            video_thumbnail_path=publish_thumbnail_path, video_thumbnail_url=publish_thumbnail_url,
             video_duration_s=job.duration_s, status=publish_status,
             last_error=None if publish_status == PublishJobStatus.pending_publish else "QC: " + "; ".join(reasons),
         )

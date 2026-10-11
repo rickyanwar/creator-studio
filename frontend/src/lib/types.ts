@@ -127,6 +127,14 @@ export interface Fanpage {
   ai_video_template: string | null;
   ai_video_clips: number;
   ai_video_narrator: string | null;
+  ai_video_logo_enabled: boolean;
+  ai_video_logo_size_pct: number;
+  ai_video_logo_position: "top_right" | "top_left" | "bottom_right" | "bottom_left";
+  ai_video_logo_margin_pct: number;
+  ai_video_captions_enabled: boolean;
+  ai_video_caption_size: number;
+  ai_video_caption_bottom_pct: number;
+  ai_video_caption_highlight: string;
 }
 
 export interface DiscussionTopicRef {

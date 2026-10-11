@@ -43,6 +43,8 @@ export const listFanpages = () => api.get("/fanpages");
 export const getFanpage = (id: number) => api.get(`/fanpages/${id}`);
 export const updateFanpage = (id: number, data: Record<string, unknown>) =>
   api.put(`/fanpages/${id}`, data);
+export const previewAiVideoOverlay = (fanpageId: number, data: Record<string, unknown>) =>
+  api.post(`/ai-video/fanpages/${fanpageId}/overlay-preview`, data, { responseType: "blob" });
 export const addIGSource = (fanpageId: number, igUsername: string) =>
   api.post(`/fanpages/${fanpageId}/sources`, { ig_username: igUsername });
 export const removeIGSource = (fanpageId: number, igSourceId: number) =>

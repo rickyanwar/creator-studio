@@ -14,14 +14,14 @@
     "white_red": {"full": "glossy white with bold red and black accents", "short": "white-and-red"}
   },
   "vehicle_presets": {
-    "f1_red": "A modern Formula 1 car in glossy racing red with white accents, no sponsor logos, no text, no numbers",
-    "f1_red_short": "glossy red Formula 1 car with white accents, no text",
-    "motogp": "A modern MotoGP racing motorcycle in glossy racing red with white accents and a rider in a plain red leather suit and plain helmet, no sponsor logos, no text, no numbers, no MotoGP logo, no watermark in any corner",
-    "motogp_short": "glossy red MotoGP motorcycle with white accents and the same plain-suited rider, no text, no MotoGP logo, no watermark in any corner",
-    "f1": "A modern open-wheel single-seater Grand Prix race car in a {livery} livery{lettering}, no sponsor logos, no numbers, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner",
-    "f1_short": "{livery_short} open-wheel single-seater Grand Prix race car{lettering_short}, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner",
-    "motogp_livery": "A modern MotoGP racing motorcycle in a {livery} livery{lettering} and a rider in a plain leather suit and plain helmet in matching colours, no sponsor logos, no numbers, no MotoGP logo, no watermark in any corner",
-    "motogp_livery_short": "{livery_short} MotoGP motorcycle{lettering_short} and the same plain-suited rider, no MotoGP logo, no watermark in any corner"
+    "f1_red": "A modern Formula 1 car in glossy racing red with white accents, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "f1_red_short": "glossy red Formula 1 car with white accents, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp": "A modern MotoGP racing motorcycle in glossy racing red with white accents and a rider in a plain red leather suit and plain helmet, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp_short": "glossy red MotoGP motorcycle with white accents and the same plain-suited rider, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "f1": "A modern open-wheel single-seater Grand Prix race car in a {livery} livery{lettering}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "f1_short": "{livery_short} open-wheel single-seater Grand Prix race car{lettering_short}, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp_livery": "A modern MotoGP racing motorcycle in a {livery} livery{lettering} and a rider in a plain leather suit and plain helmet in matching colours, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp_livery_short": "{livery_short} MotoGP motorcycle{lettering_short} and the same plain-suited rider, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner"
   },
   "narrator_presets": {
     "EN-PADDOCK": "a relaxed British male motorsport commentator in his forties with a slightly raspy, natural voice, speaking conversationally in English with small natural pauses and breaths, like chatting to a friend in the paddock, not a polished announcer, not a movie-trailer voice, says:",

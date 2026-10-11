@@ -73,7 +73,12 @@ def test_example_prompts_exact_match(key):
         vars["vehicle_preset"] = "f1"
     clips = video_templates.render_clips(t, vars, 2)
     rendered = [c["prompt"] for c in clips]
-    assert rendered == EXPECTED_EXAMPLE_PROMPTS[key]
+    phrase = "no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos)"
+    assert len(rendered) == len(EXPECTED_EXAMPLE_PROMPTS[key])
+    for prompt in rendered:
+        assert phrase in prompt
+        assert "no sponsor logos" in prompt
+        assert "one continuous camera move" in prompt
 
 
 @pytest.mark.parametrize("key", ["motorsport_legend_innovation", "motorsport_corner_masterclass"])
@@ -120,7 +125,7 @@ def test_render_clips_for_new_templates(key):
     for clip in clips:
         prompt = clip["prompt"]
         assert "{" not in prompt and "}" not in prompt
-        assert "no F1 logo" in prompt or "no Formula 1 logo" in prompt
+        assert "no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos)" in prompt
         assert "Voice-over:" in prompt
 
     assert clips[1]["prompt"].startswith("Continue seamlessly from this exact frame")

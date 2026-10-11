@@ -109,6 +109,15 @@ class FanpageBase(BaseModel):
     ai_video_template: Optional[str] = None
     ai_video_clips: int = Field(2, ge=1, le=6)
     ai_video_narrator: Optional[str] = None
+    # ── Mode 8 overlay (logo + captions) ──
+    ai_video_logo_enabled: bool = True
+    ai_video_logo_size_pct: int = Field(14, ge=5, le=30)
+    ai_video_logo_position: str = Field("top_right", pattern=r"^(top_right|top_left|bottom_right|bottom_left)$")
+    ai_video_logo_margin_pct: int = Field(3, ge=0, le=10)
+    ai_video_captions_enabled: bool = True
+    ai_video_caption_size: int = Field(76, ge=40, le=140)
+    ai_video_caption_bottom_pct: int = Field(29, ge=5, le=70)
+    ai_video_caption_highlight: str = Field("#FFE500", pattern=r"^#[0-9A-Fa-f]{6}$")
 
     @field_validator("ai_video_template")
     def validate_ai_video_template(cls, value):

@@ -77,8 +77,21 @@ def chunk_words(words: list[Word]) -> list[list[Word]]:
     return chunks
 
 
-def build_ass(words: list[Word], clip_duration: float) -> str:
+def _hex_to_ass_bgr(hex_color: str) -> str:
+    """Convert '#RRGGBB' to ASS BGR '&H00BBGGRR&'."""
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    return f"&H00{b:02X}{g:02X}{r:02X}&"
+
+
+def build_ass(words: list[Word], clip_duration: float, *,
+              font_size: int | None = None, margin_v: int | None = None,
+              highlight_hex: str | None = None) -> str:
     """ASS script for an already re-timed (clip_words) word list."""
+    fs = font_size if font_size is not None else _FONT_SIZE
+    mv = margin_v if margin_v is not None else _MARGIN_V
+    hl = _hex_to_ass_bgr(highlight_hex) if highlight_hex else _HIGHLIGHT
     header = f"""[Script Info]
 ScriptType: v4.00+
 WrapStyle: 0
@@ -88,7 +101,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{_FONT_NAME},{_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,0,0,0,0,100,100,1,0,1,{_OUTLINE},{_SHADOW},2,{_MARGIN_SIDE},{_MARGIN_SIDE},{_MARGIN_V},1
+Style: Default,{_FONT_NAME},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,0,0,0,0,100,100,1,0,1,{_OUTLINE},{_SHADOW},2,{_MARGIN_SIDE},{_MARGIN_SIDE},{mv},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -106,18 +119,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 end = w.end + 0.25
             end = min(max(end, w.start + 0.05), clip_duration)
             text = " ".join(
-                f"{{\\c{_HIGHLIGHT}}}{x.text.upper()}{{\\c&H00FFFFFF&}}" if xi == wi else x.text.upper()
+                f"{{\\c{hl}}}{x.text.upper()}{{\\c&H00FFFFFF&}}" if xi == wi else x.text.upper()
                 for xi, x in enumerate(chunk)
             )
             events.append(f"Dialogue: 0,{_ass_time(w.start)},{_ass_time(end)},Default,,0,0,0,,{text}")
     return header + "\n".join(events) + "\n"
 
 
-def write_ass(words: list[Word], start: float, end: float, path: Path) -> bool:
+def write_ass(words: list[Word], start: float, end: float, path: Path, *,
+              font_size: int | None = None, margin_v: int | None = None,
+              highlight_hex: str | None = None) -> bool:
     """Write the clip's caption file. False when the clip has no spoken words
     (the render then just skips captions)."""
     local = clip_words(words, start, end)
     if not local:
         return False
-    path.write_text(build_ass(local, end - start), encoding="utf-8")
+    path.write_text(build_ass(local, end - start, font_size=font_size,
+                              margin_v=margin_v, highlight_hex=highlight_hex), encoding="utf-8")
     return True
