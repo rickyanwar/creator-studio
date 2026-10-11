@@ -1,11 +1,12 @@
 """Celery task for sweeping AI video jobs."""
 
+import logging
+
 from app.database import SessionLocal
 from app.services import ai_video_dispatch
 from app.tasks.celery_app import celery_app
-from app.utils.logger import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="app.tasks.ai_video_dispatch.sweep_ai_video_jobs")
