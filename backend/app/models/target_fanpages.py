@@ -205,6 +205,15 @@ class TargetFanpage(Base):
     ai_video_template = Column(String(64), nullable=True)
     ai_video_clips = Column(Integer, default=2, nullable=False, server_default="2")
     ai_video_narrator = Column(String(32), nullable=True)
+    # ── Mode 8 overlay (logo + captions) ──────────────────────────────────────
+    ai_video_logo_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    ai_video_logo_size_pct = Column(Integer, default=14, nullable=False, server_default="14")
+    ai_video_logo_position = Column(String(16), default="top_right", nullable=False, server_default="top_right")
+    ai_video_logo_margin_pct = Column(Integer, default=3, nullable=False, server_default="3")
+    ai_video_captions_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    ai_video_caption_size = Column(Integer, default=76, nullable=False, server_default="76")
+    ai_video_caption_bottom_pct = Column(Integer, default=29, nullable=False, server_default="29")
+    ai_video_caption_highlight = Column(String(7), default="#FFE500", nullable=False, server_default="#FFE500")
     # ── Viral Radar ───────────────────────────────────────────────────────────
     radar_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     radar_niches = Column(ARRAY(String), server_default="{}", nullable=False)

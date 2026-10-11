@@ -1,6 +1,8 @@
 "use client";
 
 import type { FanpageDetail, AiVideoTemplate } from "@/lib/types";
+import { previewAiVideoOverlay } from "@/lib/api";
+import { useState } from "react";
 
 type Props = {
   form: Partial<FanpageDetail>;
@@ -12,6 +14,29 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
   const enabled = !!form.ai_video_enabled;
   const template = templates.find((item) => item.key === form.ai_video_template);
   const clips = form.ai_video_clips ?? template?.default_clips ?? 2;
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+
+  const preview = async () => {
+    if (!form.id) return;
+    setPreviewing(true);
+    try {
+      const response = await previewAiVideoOverlay(form.id, {
+        ai_video_logo_enabled: form.ai_video_logo_enabled ?? true,
+        ai_video_logo_size_pct: form.ai_video_logo_size_pct ?? 14,
+        ai_video_logo_position: form.ai_video_logo_position ?? "top_right",
+        ai_video_logo_margin_pct: form.ai_video_logo_margin_pct ?? 3,
+        ai_video_captions_enabled: form.ai_video_captions_enabled ?? true,
+        ai_video_caption_size: form.ai_video_caption_size ?? 76,
+        ai_video_caption_bottom_pct: form.ai_video_caption_bottom_pct ?? 29,
+        ai_video_caption_highlight: form.ai_video_caption_highlight ?? "#FFE500",
+      });
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(response.data));
+    } finally {
+      setPreviewing(false);
+    }
+  };
 
   return (
     <section className="card space-y-5">
@@ -79,6 +104,50 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
                 <option value="EN-US-ENG">American race engineer</option>
               </select>
             </div>
+          </div>
+          <div className="border-t border-hairline pt-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-text-primary">Logo & captions</h3>
+                <p className="text-xs text-text-secondary">Brand every generated video before it enters the publish queue.</p>
+              </div>
+              <button type="button" className="btn-secondary" onClick={preview} disabled={previewing}>
+                {previewing ? "Rendering…" : "Preview"}
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="flex items-center gap-2 text-sm text-text-primary">
+                <input type="checkbox" checked={form.ai_video_logo_enabled ?? true} onChange={(e) => set("ai_video_logo_enabled", e.target.checked)} /> Logo
+              </label>
+              <label className="flex items-center gap-3 text-sm text-text-primary">Size
+                <input type="range" min={5} max={30} value={form.ai_video_logo_size_pct ?? 14} onChange={(e) => set("ai_video_logo_size_pct", Number(e.target.value))} />
+                <span>{form.ai_video_logo_size_pct ?? 14}%</span>
+              </label>
+              <label className="text-sm text-text-primary">Position
+                <select className="input w-full mt-1" value={form.ai_video_logo_position ?? "top_right"} onChange={(e) => set("ai_video_logo_position", e.target.value)}>
+                  <option value="top_right">Top right</option><option value="top_left">Top left</option><option value="bottom_right">Bottom right</option><option value="bottom_left">Bottom left</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-3 text-sm text-text-primary">Margin
+                <input type="range" min={0} max={10} value={form.ai_video_logo_margin_pct ?? 3} onChange={(e) => set("ai_video_logo_margin_pct", Number(e.target.value))} />
+                <span>{form.ai_video_logo_margin_pct ?? 3}%</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-text-primary">
+                <input type="checkbox" checked={form.ai_video_captions_enabled ?? true} onChange={(e) => set("ai_video_captions_enabled", e.target.checked)} /> Captions
+              </label>
+              <label className="flex items-center gap-3 text-sm text-text-primary">Caption size
+                <input type="range" min={40} max={140} value={form.ai_video_caption_size ?? 76} onChange={(e) => set("ai_video_caption_size", Number(e.target.value))} />
+                <span>{form.ai_video_caption_size ?? 76}px</span>
+              </label>
+              <label className="flex items-center gap-3 text-sm text-text-primary">Vertical position
+                <input type="range" min={5} max={70} value={form.ai_video_caption_bottom_pct ?? 29} onChange={(e) => set("ai_video_caption_bottom_pct", Number(e.target.value))} />
+                <span>{form.ai_video_caption_bottom_pct ?? 29}%</span>
+              </label>
+              <label className="text-sm text-text-primary">Highlight colour
+                <input type="color" className="block mt-1 h-9 w-16" value={form.ai_video_caption_highlight ?? "#FFE500"} onChange={(e) => set("ai_video_caption_highlight", e.target.value)} />
+              </label>
+            </div>
+            {previewUrl && <img src={previewUrl} alt="AI video overlay preview" className="w-[270px] h-[480px] object-cover rounded-lg border border-hairline" />}
           </div>
         </div>
       )}

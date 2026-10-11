@@ -146,7 +146,8 @@ def test_vision_check_expectations_are_in_prompt():
     assert 'must read exactly "Auto"' in prompt
     assert 'Return JSON only: {"pass": bool, "issues": [string]} with short issue strings.' in prompt
     assert "Also fail on any of the following." in prompt
-    assert "Fail if any Formula 1 / F1 / FIA logo or wordmark is visible anywhere" in prompt
+    assert "Fail if any official league, series or governing-body logo or wordmark is visible anywhere" in prompt
+    assert "NBA, UFC, NFL, FIFA, UEFA, Premier League or similar" in prompt
 
 
 def test_vision_check_omits_optional_prompt_lines_and_truncates_values():

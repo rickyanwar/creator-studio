@@ -142,8 +142,9 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
                 fail_clauses.append("the exploded view is missing")
             prompt += "Fail if: " + "; ".join(fail_clauses) + ". Also fail on any of the following. "
         prompt += (
-            "Fail if any Formula 1 / F1 / FIA logo or wordmark is visible anywhere, including a small "
-            "watermark in a corner or on the nose. Check watermark/logo/URL overlays, garbled text, "
+            "Fail if any official league, series or governing-body logo or wordmark is visible anywhere "
+            "(F1, Formula 1, FIA, MotoGP, FIM, Dorna, NBA, UFC, NFL, FIFA, UEFA, Premier League or similar), "
+            "including a small corner watermark. Check watermark/logo/URL overlays, garbled text, "
             "severe AI artifacts, vehicle design or colour changes between frames, and NSFW. "
             'Return JSON only: {"pass": bool, "issues": [string]} with short issue strings.'
         )

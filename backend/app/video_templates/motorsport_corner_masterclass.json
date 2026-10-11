@@ -26,7 +26,7 @@
     {
       "role": "approach_and_turn_in",
       "mode": "t2v",
-      "prompt": "{style} {vehicle} races toward a generic unnamed {corner_type} at {approach_speed}, captured in a dynamic drone chase shot. A glowing neon racing line illuminates the asphalt track ahead, with braking-point marker boards rendered as plain blank geometric rectangular foam boards without text or numbers. Carbon-ceramic brake discs glow bright cherry red under heavy deceleration while the driver initiates turn-in. No F1 logo, no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+      "prompt": "{style} {vehicle} races toward a generic unnamed {corner_type} at {approach_speed}, captured in a dynamic drone chase shot. A glowing neon racing line illuminates the asphalt track ahead, with braking-point marker boards rendered as plain blank geometric rectangular foam boards without text or numbers. Carbon-ceramic brake discs glow bright cherry red under heavy deceleration while the driver initiates turn-in. No official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
       "narration_words": {"en": "22-24"}
     },
     {
@@ -44,7 +44,7 @@
     "one continuous camera move with no cuts",
     "glowing blue lateral force vectors and glowing yellow speed arrows",
     "tyre sidewall deformation gripping the rumble kerb",
-    "no sponsor logos, no numbers, no F1 logo"
+    "no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos)"
   ],
   "rules": [
     "Corners must be generic technical corner types (hairpin, chicane, banked sweeper, compression complex) - never name real circuits, curves, or track complexes.",

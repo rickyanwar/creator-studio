@@ -33,14 +33,14 @@
     {
       "role": "exploded_view",
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. {effect_visual} Then the entire {part} assembly breaks apart into a technical exploded view: {parts_list} and every bolt and screw separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible and spinning slowly. Finally all the parts fly back together and lock into place, and {final_state}. Crisp mechanical macro detail. {audio} {narrator_followup} \"{narration_2}\"",
+      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. {effect_visual} Then the entire {part} assembly breaks apart into a technical exploded view: {parts_list} and every bolt and screw separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible and spinning slowly. Finally all the parts fly back together and lock into place, and {final_state}. Crisp mechanical macro detail. {audio} {narrator_followup} \"{narration_2}\"",
       "narration_words": {"en": "22-24"}
     },
     {
       "role": "payoff",
       "optional": true,
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. The camera pulls back from the {part} to show the whole vehicle at full racing speed on the sunny circuit. {payoff_action} The camera finishes on a low hero shot as the vehicle races past. Crisp detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_3}\"",
+      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The camera pulls back from the {part} to show the whole vehicle at full racing speed on the sunny circuit. {payoff_action} The camera finishes on a low hero shot as the vehicle races past. Crisp detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_3}\"",
       "narration_words": {"en": "22-24"}
     }
   ],

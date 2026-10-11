@@ -2,13 +2,18 @@
 
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import FileResponse
+from pathlib import Path
+import tempfile
 from pydantic import BaseModel, Field
 
-from app.api.deps import DB, CurrentUser
+from app.api.deps import DB, CurrentUser, get_current_user
 from app.models.ai_video import VideoJob, GflowAccount, GflowWorker
 from app.models.target_fanpages import TargetFanpage
 from app.services import ai_video_dispatch
 from app.services.ai_video_dispatch import ConflictError
+from app.schemas.fanpage import FanpageUpdate
 
 router = APIRouter(prefix="/ai-video", tags=["ai_video_admin"])
 
@@ -16,6 +21,48 @@ router = APIRouter(prefix="/ai-video", tags=["ai_video_admin"])
 class AccountUpdate(BaseModel):
     enabled: Optional[bool] = None
     label: Optional[str] = Field(None, max_length=100)
+
+
+class OverlayPreviewRequest(BaseModel):
+    ai_video_logo_enabled: bool = True
+    ai_video_logo_size_pct: int = Field(14, ge=5, le=30)
+    ai_video_logo_position: str = Field("top_right", pattern=r"^(top_right|top_left|bottom_right|bottom_left)$")
+    ai_video_logo_margin_pct: int = Field(3, ge=0, le=10)
+    ai_video_captions_enabled: bool = True
+    ai_video_caption_size: int = Field(76, ge=40, le=140)
+    ai_video_caption_bottom_pct: int = Field(29, ge=5, le=70)
+    ai_video_caption_highlight: str = Field("#FFE500", pattern=r"^#[0-9A-Fa-f]{6}$")
+
+
+_preview_bearer = HTTPBearer()
+
+
+def _preview_auth(credentials: HTTPAuthorizationCredentials = Depends(_preview_bearer)):
+    return get_current_user(credentials)
+
+
+@router.post("/fanpages/{fanpage_id}/overlay-preview")
+def overlay_preview(fanpage_id: int, body: OverlayPreviewRequest, db: DB, user: str = Depends(_preview_auth)):
+    from app.models.ai_video import VideoJob
+    from app.services.ai_video_overlay import preview_frame
+    fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fanpage:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+    job = db.query(VideoJob).filter_by(fanpage_id=fanpage_id, status="done").order_by(VideoJob.finished_at.desc()).first()
+    source = job.video_path if job and job.video_path and Path(job.video_path).exists() else None
+    workdir = Path(tempfile.mkdtemp(prefix="ai-video-preview-"))
+    settings = body.model_dump()
+    from app.services.design_images import watermark_datauri
+    uri = watermark_datauri(fanpage) if body.ai_video_logo_enabled else None
+    if uri:
+        logo = workdir / "logo.png"
+        import base64
+        logo.write_bytes(base64.b64decode(uri.split(",", 1)[1]))
+        settings["watermark_image_path"] = str(logo)
+    settings["watermark_text"] = fanpage.watermark_text
+    out = workdir / "preview.png"
+    preview_frame(settings, source, out)
+    return FileResponse(out, media_type="image/png", filename="ai-video-overlay-preview.png")
 
 
 def _serialize_job(job: VideoJob, fanpage_name: Optional[str], account: Optional[GflowAccount]) -> dict:
