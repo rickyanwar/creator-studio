@@ -1,0 +1,34 @@
+{
+  "style": "Photorealistic 3D CGI, premium motorsport engineering documentary style, one continuous camera move with no cuts.",
+  "audio": "Audio: engine and wind ambience quietly under the voice-over, no music.",
+  "narrator_en": "Voice-over: a confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
+  "narrator_en_followup": "Voice-over: the same confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
+  "liveries": {
+    "scarlet": {"full": "deep glossy scarlet red with white and black accents", "short": "scarlet red"},
+    "navy_red_yellow": {"full": "matte dark navy blue with red and yellow accents", "short": "matte navy blue"},
+    "papaya": {"full": "bright papaya orange with dark blue accents", "short": "papaya orange"},
+    "silver_teal": {"full": "metallic silver and black with teal accents", "short": "silver-and-black"},
+    "racing_green": {"full": "metallic British racing green with lime green accents", "short": "racing green"},
+    "blue_pink": {"full": "bright blue with pink accents", "short": "blue-and-pink"},
+    "royal_blue": {"full": "royal blue with white and light blue accents", "short": "royal blue"},
+    "white_red": {"full": "glossy white with bold red and black accents", "short": "white-and-red"}
+  },
+  "vehicle_presets": {
+    "f1_red": "A modern Formula 1 car in glossy racing red with white accents, no sponsor logos, no text, no numbers",
+    "f1_red_short": "glossy red Formula 1 car with white accents, no text",
+    "motogp": "A modern MotoGP racing motorcycle in glossy racing red with white accents and a rider in a plain red leather suit and plain helmet, no sponsor logos, no text, no numbers, no MotoGP logo, no watermark in any corner",
+    "motogp_short": "glossy red MotoGP motorcycle with white accents and the same plain-suited rider, no text, no MotoGP logo, no watermark in any corner",
+    "f1": "A modern open-wheel single-seater Grand Prix race car in a {livery} livery{lettering}, no sponsor logos, no numbers, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner",
+    "f1_short": "{livery_short} open-wheel single-seater Grand Prix race car{lettering_short}, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner",
+    "motogp_livery": "A modern MotoGP racing motorcycle in a {livery} livery{lettering} and a rider in a plain leather suit and plain helmet in matching colours, no sponsor logos, no numbers, no MotoGP logo, no watermark in any corner",
+    "motogp_livery_short": "{livery_short} MotoGP motorcycle{lettering_short} and the same plain-suited rider, no MotoGP logo, no watermark in any corner"
+  },
+  "narrator_presets": {
+    "EN-PADDOCK": "a relaxed British male motorsport commentator in his forties with a slightly raspy, natural voice, speaking conversationally in English with small natural pauses and breaths, like chatting to a friend in the paddock, not a polished announcer, not a movie-trailer voice, says:",
+    "EN-AUSSIE-ENG": "a laid-back Australian race engineer in his thirties with a slightly gravelly, natural voice, explaining casually and enthusiastically in English with natural breaths, unscripted and down to earth, not a polished announcer, says:",
+    "EN-SCOT": "a calm Scottish man in his fifties with a gentle rasp, speaking conversationally in English at an easy pace with tiny natural hesitations, like an old mechanic telling a story, not a polished announcer, says:",
+    "EN-JOURNO-F": "a confident Northern English female motorsport journalist in her thirties with a slightly husky, natural voice, speaking in English like a relaxed podcast host with natural breaths, not a polished announcer, says:",
+    "EN-US-ENG": "a soft-spoken American race engineer in his forties, speaking casually in English as if explaining to a new team member, natural pauses and breaths, not a movie-trailer voice, says:"
+  },
+  "narrator_note": "Narrator line = 'Voice-over: ' + preset; follow-up clips replace the leading 'a' with 'the same'. Presets other than the original documentary voice (narrator_en) are untested; test with 4 s clips (7 credits) only with owner approval."
+}

@@ -58,9 +58,9 @@ def create_idea(db: Session, fanpage_id: int, data: dict, source: str, token_id=
         raise LimitExceededError("Maximum of 30 proposed ideas allowed per fanpage")
     cutoff = _now() - timedelta(days=30)
     normalized = _normalized_topic(data["topic"])
-    for idea in db.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage_id, VideoIdea.created_at >= cutoff, VideoIdea.status != "rejected").all():
+    for idea in db.query(VideoIdea).filter(VideoIdea.created_at >= cutoff, VideoIdea.status != "rejected").all():
         if _normalized_topic(idea.topic) == normalized:
-            raise ConflictError("duplicate topic")
+            raise ConflictError(f"topic already used on fanpage {idea.fanpage_id} in the last 30 days")
     approved = source == "owner"
     idea = VideoIdea(
         fanpage_id=fanpage_id, template_key=data["template_key"], topic=data["topic"].strip(),

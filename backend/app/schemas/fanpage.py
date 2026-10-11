@@ -108,6 +108,7 @@ class FanpageBase(BaseModel):
     ai_video_min_score: Optional[int] = Field(70, ge=0, le=100)
     ai_video_template: Optional[str] = None
     ai_video_clips: int = Field(2, ge=1, le=6)
+    ai_video_narrator: Optional[str] = None
 
     @field_validator("ai_video_template")
     def validate_ai_video_template(cls, value):
@@ -115,6 +116,16 @@ class FanpageBase(BaseModel):
             from app.services.video_templates import get_template
 
             get_template(value)
+        return value
+
+    @field_validator("ai_video_narrator")
+    @classmethod
+    def validate_ai_video_narrator(cls, value):
+        if value is not None:
+            from app.services.video_templates import get_template, narrator_presets
+
+            if value not in narrator_presets(get_template("motorsport_tech_explainer")):
+                raise ValueError(f"unknown ai_video_narrator {value}")
         return value
     # ── Viral Radar ───────────────────────────────────────────────────────────
     radar_enabled: bool = False

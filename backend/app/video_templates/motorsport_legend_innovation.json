@@ -1,0 +1,93 @@
+{
+  "key": "motorsport_legend_innovation",
+  "niches": ["f1"],
+  "clip_options": [2],
+  "default_clips": 2,
+  "id": "motorsport_legend_innovation",
+  "name": "Motorsport Legend Innovation — Banned & Game-Changing Tech",
+  "status": "active",
+  "generation": {
+    "engine": "Google Flow via gflow-cli (server flow.sh)",
+    "model": "omni-flash",
+    "aspect": "9:16",
+    "clip_seconds": 10,
+    "clips": 2,
+    "total_seconds": 20,
+    "credits_per_clip": 15,
+    "total_credits": 30,
+    "continuity": "clip N>1 uses the last frame of clip N-1 as its initial frame (flow.sh video --from)",
+    "join": "flow.sh join (ffmpeg concat of the Flow clips; no external audio)",
+    "narration": "spoken by Flow inside the clip; never external TTS"
+  },
+  "blocks": {
+    "vehicle_presets": {
+      "classic_gp": "A {era_vehicle} in a {livery} livery{lettering}, no sponsor logos, no numbers, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner",
+      "classic_gp_short": "{livery_short} {era_vehicle}{lettering_short}, no F1 logo, no Formula 1 logo or wordmark, no FIA logo, no watermark in any corner"
+    }
+  },
+  "clip_templates": [
+    {
+      "role": "reveal",
+      "mode": "t2v",
+      "prompt": "{style} {vehicle}, races across a historic asphalt Grand Prix circuit seen from a dramatic chase tracking angle. The camera swoops close to the {innovation_part}. The bodywork becomes translucent in a technical X-ray cutaway revealing {innovation_name}: {mechanism_details}. {working_action} Macro mechanical fidelity, motion blur across the track surface, no exhaust flames or fireballs, no F1 logo, no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+      "narration_words": {"en": "22-24"}
+    },
+    {
+      "role": "exploded_view",
+      "mode": "i2v_from_previous_last_frame",
+      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no exhaust flames or fireballs, one continuous camera move with no cuts. {effect_visual} The {innovation_part} assembly lifts and breaks apart into a technical exploded view in mid-air: {parts_list} separate and float with crisp mechanical precision above the rushing asphalt. The components smoothly reassemble and lock into place, finishing on a caption-free freeze moment of the operational device. {audio} {narrator_followup} \"{narration_2}\"",
+      "narration_words": {"en": "22-24"}
+    }
+  ],
+  "keywords_that_worked": [
+    "technical X-ray cutaway revealing ... (inside mechanism becomes visible)",
+    "breaks apart into a technical exploded view in mid-air",
+    "Continue seamlessly from this exact frame",
+    "one continuous camera move with no cuts",
+    "caption-free freeze moment of the operational device",
+    "no sponsor logos, no numbers, no F1 logo"
+  ],
+  "rules": [
+    "Specific claims regarding years, lap-time gains, technical parameters, and ban reasons must come ONLY from verified research_notes.",
+    "Never name real teams, constructors, drivers, circuits, or commercial sponsors in prompts or narration.",
+    "Do not display any F1 logo, Formula 1 or FIA wordmarks, team badges, or watermarks.",
+    "Narration must remain strictly within the word budget (22-24 words per clip) in English.",
+    "Clip 2 must continue seamlessly from clip 1's final frame with a single camera movement without cuts.",
+    "End clip 2 on a clean caption-free freeze frame of the innovation."
+  ],
+  "topic_ideas": [
+    "six-wheeled front steering geometry and low-drag front wing design",
+    "rear-mounted fan extracting air from sealed underbody tunnels",
+    "sliding ceramic ground-effect side skirts sealing negative pressure",
+    "double diffuser channeling stepped floor airflow into upper expansion chamber",
+    "tuned mass damper absorbing vertical chassis vibrations over kerbs",
+    "flexible front wing endplates deflecting downwards under high aerodynamic load",
+    "blown diffuser routing hot exhaust gases over floor strakes off-throttle",
+    "twin chassis decoupling aerodynamic platform from suspension stiffness",
+    "f-duct cabin fluidic switch stalling the rear wing on high-speed straights",
+    "dual axis steering altering front wheel toe angle down long straights"
+  ],
+  "example": {
+    "topic": "underbody suction fan",
+    "variables": {
+      "era_vehicle": "late-1970s wedge-shaped Grand Prix race car with slick tyres and a large rear wing",
+      "innovation_part": "rear engine bay and floor",
+      "innovation_name": "an underbody suction fan mechanism",
+      "mechanism_details": "a central driven hub, curved carbon-fibre fan blades, and perimeter rubber sealing skirts hugging the asphalt",
+      "working_action": "The fan spins at high speed, pulling atmospheric air from beneath the underfloor and venting it rearward.",
+      "effect_visual": "Glowing blue low-pressure suction vectors pull the chassis down towards the track surface as high-speed turbulent airflow streams rearward.",
+      "parts_list": "the central driven fan hub, high-pitch composite rotor blades, protective mesh cowl, drive clutch, and sealed underbody ducts",
+      "narration_1": "In nineteen seventy-eight, engineers fitted an engine-driven fan at the rear, generating immense suction under the chassis regardless of speed.",
+      "narration_2": "The enormous ground effect produced unbelievable cornering grip, but rival protests over thrown debris led to an immediate regulatory ban.",
+      "vehicle_preset": "classic_gp",
+      "livery": "scarlet",
+      "channel_name": "FORMULA ZONE",
+      "narrator_preset": "EN-SCOT"
+    }
+  },
+  "research": {
+    "required_before_script": true,
+    "questions": ["exact year introduced and banned", "underlying physics and mechanism", "why competitors protested", "proven performance delta"]
+  },
+  "language": "en"
+}

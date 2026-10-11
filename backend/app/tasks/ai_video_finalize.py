@@ -30,7 +30,17 @@ def finalize_ai_video(video_job_id: int):
         settings = db.query(Settings).filter_by(id=1).first()
         if technical["passed"] and settings and settings.ai_video_vision_qc_enabled:
             try:
-                vision = vision_check(contact_sheet(job.video_path), job.title)
+                expectations = None
+                if idea and isinstance(idea.variables, dict):
+                    expectation_keys = ("part", "mechanism_action", "final_state", "parts_list", "channel_name")
+                    expectations = {
+                        key: idea.variables[key]
+                        for key in expectation_keys
+                        if key in idea.variables and idea.variables[key] is not None
+                    }
+                    if not expectations:
+                        expectations = None
+                vision = vision_check(contact_sheet(job.video_path), job.title, expectations)
             except Exception:
                 vision = {
                     "passed": False,

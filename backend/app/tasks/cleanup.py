@@ -25,6 +25,7 @@ _STUCK_POST_MAX_AGE_HOURS = 12
 # no reason to reach back this far. 21 days matches the one-time backlog
 # cleanup run the same day (user's choice — freed 5.48GB/1475 files).
 _DESIGN_RETENTION_DAYS = 21
+_AI_VIDEO_RETENTION_DAYS = 14
 
 
 @celery_app.task(name="app.tasks.cleanup.cleanup_old_media")
@@ -156,5 +157,99 @@ def cleanup_old_designs():
     except Exception as exc:
         db.rollback()
         logger.error("Design cleanup task error: %s", exc, exc_info=True)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.cleanup.cleanup_old_ai_videos")
+def cleanup_old_ai_videos():
+    """Delete terminal Mode 8 video files older than the retention period."""
+    db = SessionLocal()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=_AI_VIDEO_RETENTION_DAYS)).replace(tzinfo=None)
+    cleaned = 0
+    media_dir = (Path(settings.storage_base_path) / "ai_videos").resolve()
+
+    def safe_path(raw_path):
+        if not raw_path:
+            return None
+        path = Path(raw_path)
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(media_dir)
+            return resolved
+        except ValueError:
+            logger.warning("Skipping AI video path outside media root: %s", raw_path)
+            return None
+
+    def delete_paths(paths):
+        resolved_paths = []
+        for raw_path in paths:
+            if raw_path:
+                resolved = safe_path(raw_path)
+                if resolved is None:
+                    return False
+                resolved_paths.append(resolved)
+        try:
+            for path in resolved_paths:
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.error("Failed to delete AI video file: %s", exc)
+            return False
+        return True
+
+    try:
+        from sqlalchemy import and_, or_, func
+        from app.models.ai_video import VideoJob
+        from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
+
+        publish_candidates = (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.content_type == ContentType.ai_video,
+                PublishJob.video_path.isnot(None),
+                PublishJob.status.in_([
+                    PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped,
+                ]),
+                or_(
+                    and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= cutoff),
+                    and_(PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
+                ),
+            )
+            .all()
+        )
+        for job in publish_candidates:
+            if not delete_paths((job.video_path, job.video_thumbnail_path)):
+                continue
+            job.video_path = job.video_url = None
+            job.video_thumbnail_path = job.video_thumbnail_url = None
+            cleaned += 1
+
+        video_candidates = db.query(VideoJob).filter(
+            or_(VideoJob.video_path.isnot(None), VideoJob.thumbnail_path.isnot(None)),
+        ).all()
+        terminal_statuses = {PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped}
+        for job in video_candidates:
+            if job.status in ("failed", "cancelled"):
+                age = job.finished_at or job.updated_at or job.created_at
+                eligible = age <= cutoff
+            elif job.status == "done" and job.publish_job_id:
+                publish_job = db.get(PublishJob, job.publish_job_id)
+                age = None
+                if publish_job and publish_job.status in terminal_statuses:
+                    age = publish_job.published_at or publish_job.updated_at
+                eligible = age is not None and age <= cutoff
+            else:
+                eligible = False
+            if not eligible or not delete_paths((job.video_path, job.thumbnail_path)):
+                continue
+            job.video_path = job.video_url = None
+            job.thumbnail_path = job.thumbnail_url = None
+            cleaned += 1
+
+        db.commit()
+        logger.info("AI video cleanup: removed %d file(s) older than %d days", cleaned, _AI_VIDEO_RETENTION_DAYS)
+    except Exception as exc:
+        db.rollback()
+        logger.error("AI video cleanup task error: %s", exc, exc_info=True)
     finally:
         db.close()

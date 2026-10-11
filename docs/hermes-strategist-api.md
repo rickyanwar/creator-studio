@@ -39,10 +39,17 @@ curl -H "Authorization: Bearer $HERMES_STUDIO_TOKEN" "$STUDIO_URL/hermes/fanpage
     "publish_sleep_end_hour": 7,
     "publish_daily_limit": 10,
     "mode2_gallery_niches": ["f1"],
-    "caption_language": "en"
+    "caption_language": "en",
+    "ai_video_enabled": true,
+    "ai_video_daily_count": 3,
+    "ai_video_publish_mode": "auto",
+    "ai_video_template": "motorsport_tech_explainer"
   }
 ]
 ```
+
+`ai_video_template` is the template Hermes should send as `template_key` when
+proposing an idea. If it is `null`, use `motorsport_tech_explainer`.
 
 ### GET /hermes/analytics/fanpages/{id}?days=28
 Scope: `read`
@@ -188,7 +195,8 @@ Returns the registered AI video templates:
       "2": ["part", "mechanism_details", "mechanism_action", "narration_1", "effect_visual", "parts_list", "final_state", "narration_2", "vehicle_preset"],
       "3": ["part", "mechanism_details", "mechanism_action", "narration_1", "effect_visual", "parts_list", "final_state", "narration_2", "vehicle_preset", "payoff_action", "narration_3"]
     },
-    "vehicle_presets": ["f1_red", "motogp"],
+    "vehicle_presets": ["f1", "motogp_livery"],
+    "liveries": ["f1", "motogp_livery"],
     "topic_ideas": []
   }
 ]

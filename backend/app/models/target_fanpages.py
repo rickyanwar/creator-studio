@@ -204,6 +204,7 @@ class TargetFanpage(Base):
     ai_video_min_score = Column(Integer, default=70, nullable=True, server_default="70")
     ai_video_template = Column(String(64), nullable=True)
     ai_video_clips = Column(Integer, default=2, nullable=False, server_default="2")
+    ai_video_narrator = Column(String(32), nullable=True)
     # ── Viral Radar ───────────────────────────────────────────────────────────
     radar_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     radar_niches = Column(ARRAY(String), server_default="{}", nullable=False)

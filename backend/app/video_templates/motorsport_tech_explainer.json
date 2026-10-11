@@ -22,26 +22,7 @@
     "narration": "spoken by Flow inside the clip; never external TTS",
     "longer_videos": "30 s = 3 clips (reveal, exploded_view, payoff) = 45 credits; each clip continues from the previous last frame."
   },
-  "blocks": {
-    "style": "Photorealistic 3D CGI, premium motorsport engineering documentary style, one continuous camera move with no cuts.",
-    "audio": "Audio: engine and wind ambience quietly under the voice-over, no music.",
-    "narrator_en": "Voice-over: a confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
-    "narrator_en_followup": "Voice-over: the same confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
-    "vehicle_presets": {
-      "f1_red": "A modern Formula 1 car in glossy racing red with white accents, no sponsor logos, no text, no numbers",
-      "f1_red_short": "glossy red Formula 1 car with white accents",
-      "motogp": "A modern MotoGP racing motorcycle in glossy racing red with white accents and a rider in a plain red leather suit and plain helmet, no sponsor logos, no text, no numbers",
-      "motogp_short": "glossy red MotoGP motorcycle with white accents and the same plain-suited rider"
-    },
-    "narrator_presets": {
-      "EN-PADDOCK": "a relaxed British male motorsport commentator in his forties with a slightly raspy, natural voice, speaking conversationally in English with small natural pauses and breaths, like chatting to a friend in the paddock, not a polished announcer, not a movie-trailer voice, says:",
-      "EN-AUSSIE-ENG": "a laid-back Australian race engineer in his thirties with a slightly gravelly, natural voice, explaining casually and enthusiastically in English with natural breaths, unscripted and down to earth, not a polished announcer, says:",
-      "EN-SCOT": "a calm Scottish man in his fifties with a gentle rasp, speaking conversationally in English at an easy pace with tiny natural hesitations, like an old mechanic telling a story, not a polished announcer, says:",
-      "EN-JOURNO-F": "a confident Northern English female motorsport journalist in her thirties with a slightly husky, natural voice, speaking in English like a relaxed podcast host with natural breaths, not a polished announcer, says:",
-      "EN-US-ENG": "a soft-spoken American race engineer in his forties, speaking casually in English as if explaining to a new team member, natural pauses and breaths, not a movie-trailer voice, says:"
-    },
-    "narrator_note": "Narrator line = 'Voice-over: ' + preset; follow-up clips replace the leading 'a' with 'the same'. Presets other than the original documentary voice (narrator_en) are untested; test with 4 s clips (7 credits) only with owner approval."
-  },
+  "blocks": {},
   "clip_templates": [
     {
       "role": "reveal",
@@ -52,14 +33,14 @@
     {
       "role": "exploded_view",
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no text, no numbers, one continuous camera move with no cuts. {effect_visual} Then the entire {part} assembly breaks apart into a technical exploded view: {parts_list} and every bolt and screw separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible and spinning slowly. Finally all the parts fly back together and lock into place, and {final_state}. Crisp mechanical macro detail. {audio} {narrator_followup} \"{narration_2}\"",
+      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. {effect_visual} Then the entire {part} assembly breaks apart into a technical exploded view: {parts_list} and every bolt and screw separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible and spinning slowly. Finally all the parts fly back together and lock into place, and {final_state}. Crisp mechanical macro detail. {audio} {narrator_followup} \"{narration_2}\"",
       "narration_words": {"en": "22-24"}
     },
     {
       "role": "payoff",
       "optional": true,
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no text, no numbers, one continuous camera move with no cuts. The camera pulls back from the {part} to show the whole vehicle at full racing speed on the sunny circuit. {payoff_action} The camera finishes on a low hero shot as the vehicle races past. Crisp detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_3}\"",
+      "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. The camera pulls back from the {part} to show the whole vehicle at full racing speed on the sunny circuit. {payoff_action} The camera finishes on a low hero shot as the vehicle races past. Crisp detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_3}\"",
       "narration_words": {"en": "22-24"}
     }
   ],
@@ -68,14 +49,18 @@
     "breaks apart into a technical exploded view ... every bolt and screw separate and float apart",
     "Continue seamlessly from this exact frame (with --from)",
     "one continuous camera move with no cuts",
-    "no sponsor logos, no text, no numbers"
+    "no sponsor logos, no numbers; text is forbidden except for the channel-name lettering"
   ],
   "rules": [
     "Ask the owner before generating: say model, clips and total credits (2 x 15 = 30).",
     "Never name real teams, sponsors or brands in the prompt; describe colours instead ('glossy racing red').",
     "Check every technical claim in the narration (F1 rules change by season; e.g. DRS was replaced by active aero in 2026).",
     "Keep narration within the word budget or Flow cuts it off.",
-    "Use the identical narrator sentence in every clip for a consistent voice."
+    "Use the identical narrator sentence in every clip for a consistent voice.",
+    "Every visible component must be placed where it really is on the real vehicle (e.g. MGU-K is on the engine power unit, not wheel hubs).",
+    "mechanism_action must state exactly what moves, around which pivot/axis, in which direction, and what stays fixed and rigid.",
+    "Show at most 3 to 5 large, recognisable components in mechanism_details and parts_list.",
+    "Prefer well-known, simple, correct anatomy over invented detail."
   ],
   "topic_ideas": {
     "f1": ["front wing winglets and downforce", "brake-by-wire and rear brake balance", "ERS / MGU-K energy recovery", "seamless-shift gearbox", "halo and the survival cell", "steering wheel controls", "2026 active aero (verify facts first)"],
@@ -92,8 +77,9 @@
       "final_state": "the complete rear wing closes its flap",
       "narration_1": "This is DRS, the Drag Reduction System. Inside the rear wing, a small hydraulic actuator pushes a piston to tilt the upper flap open.",
       "narration_2": "The open slot lets air slip straight through, cutting drag, so the car gains around ten to twelve kilometres per hour on the straight.",
-      "vehicle": "vehicle_presets.f1_red",
-      "vehicle_short": "glossy red Formula 1 car with white accents",
+      "vehicle_preset": "f1",
+      "livery": "scarlet",
+      "channel_name": "FORMULA ARCHIVES",
       "payoff_action": "The rear wing flap opens on the long straight and the car pulls alongside and overtakes a rival car in plain dark grey livery, then the flap snaps shut as it brakes for the corner.",
       "narration_3": "That extra speed is why drivers chase the car ahead. Close enough on the straight, the flap opens, and the overtake is on."
     }

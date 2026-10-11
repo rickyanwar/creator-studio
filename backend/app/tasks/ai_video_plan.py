@@ -1,4 +1,5 @@
 """Planner for turning approved Mode 8 ideas into generation jobs."""
+import logging
 from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal
@@ -8,6 +9,8 @@ from app.services.ai_video_fill import fill_idea
 from app.services.video_templates import credits_estimate, get_template
 from app.tasks.celery_app import celery_app
 from app.tasks.publisher import _fanpage_tz
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -41,8 +44,16 @@ def plan_ai_videos():
                 idea.variables, idea.status, idea.error = variables, "queued", None
                 db.add(job)
                 db.commit()
-            except Exception as exc:
+            except ValueError as exc:
+                db.rollback()
                 idea.status, idea.error = "failed", str(exc)[:2000]
                 db.commit()
+            except Exception as exc:
+                db.rollback()
+                idea.status = "approved"
+                idea.error = f"LLM unavailable, will retry: {type(exc).__name__}: {str(exc)[:200]}"
+                db.commit()
+                logger.warning("AI video planning paused: LLM unavailable for idea %s: %s", idea.id, exc)
+                return
     finally:
         db.close()

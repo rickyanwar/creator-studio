@@ -76,35 +76,76 @@ def technical_check(path: str, clips: int, clip_seconds: int, aspect: str) -> di
     return result
 
 
-def contact_sheet(path: str, n: int = 6) -> bytes:
+def contact_sheet(path: str, n: int = 8) -> bytes:
     duration = _duration(path)
     timestamps = [0.5] if duration <= 1 else [0.5 + i * (duration - 1) / max(n - 1, 1) for i in range(n)]
     frames = []
     for timestamp in timestamps:
         raw = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(timestamp), "-i", path,
-             "-frames:v", "1", "-vf", "scale=240:-1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
+             "-frames:v", "1", "-vf", "scale=320:-1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
             capture_output=True, check=True, timeout=60,
         ).stdout
         with Image.open(io.BytesIO(raw)) as image:
             frames.append(image.convert("RGB"))
-    tile_w, tile_h = 240, max(image.height for image in frames)
-    sheet = Image.new("RGB", (tile_w * 3, tile_h * 2), "black")
-    for index, image in enumerate(frames[:6]):
-        sheet.paste(ImageOps.contain(image, (tile_w, tile_h)), ((index % 3) * tile_w, (index // 3) * tile_h))
+    tile_w, tile_h = 320, max(image.height for image in frames)
+    sheet = Image.new("RGB", (tile_w * 4, tile_h * 2), "black")
+    for index, image in enumerate(frames[:8]):
+        sheet.paste(ImageOps.contain(image, (tile_w, tile_h)), ((index % 4) * tile_w, (index // 4) * tile_h))
     output = io.BytesIO()
     sheet.save(output, format="JPEG", quality=85)
     return output.getvalue()
 
 
-def vision_check(sheet_bytes: bytes, title: str) -> dict:
+def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = None) -> dict:
     try:
         from app.services.design_images import _vision_chat, _vision_datauri
 
-        prompt = (
-            f"Review this contact sheet for the AI video titled {title!r}. Return JSON only: "
-            '{"pass": bool, "issues": [string]}. Check watermark/logo/URL overlays, garbled text, '
-            "real team/sponsor logos, severe AI artifacts, vehicle design or colour changes, and NSFW."
+        prompt = f"Review this contact sheet for the AI video titled {title!r}. "
+        if expectations:
+            def clean(value):
+                return re.sub(r"\s+", " ", str(value).strip())[:300]
+
+            lines = []
+            has_mechanism = all(expectations.get(key) is not None for key in ("part", "mechanism_action", "final_state"))
+            if has_mechanism:
+                lines.append(
+                    "Topic part: " + clean(expectations["part"])
+                    + ". Expected mechanism: " + clean(expectations["mechanism_action"])
+                    + ". Final state: " + clean(expectations["final_state"]) + "."
+                )
+            lines.append("Frames are in time order, left to right, top row then bottom row.")
+            has_exploded = expectations.get("parts_list") is not None
+            if has_exploded:
+                lines.append(
+                    "At some point the video must show a technical exploded view: "
+                    + clean(expectations["parts_list"])
+                    + " visibly separated and floating apart, then reassembled."
+                )
+                lines.append(
+                    "During the exploded view, separated parts floating in mid-air and visible screws/bolts "
+                    "are intended and are not artifacts."
+                )
+            if expectations.get("channel_name") is not None:
+                lines.append(
+                    'If the car shows lettering, it must read exactly "'
+                    + clean(expectations["channel_name"])
+                    + '"; any misspelled, garbled or extra text fails.'
+                )
+            prompt += " ".join(lines) + " "
+            fail_clauses = [
+                "rigid parts (wings, bodywork, wheels, suspension) bend, twist, melt or tilt unnaturally"
+            ]
+            if has_mechanism:
+                fail_clauses.append("the shown part or motion contradicts the expected mechanism")
+            if has_exploded:
+                fail_clauses.append("the exploded view is missing")
+            prompt += "Fail if: " + "; ".join(fail_clauses) + ". Also fail on any of the following. "
+        prompt += (
+            "Fail if any Formula 1 / F1 / FIA logo or wordmark is visible anywhere, including a small "
+            "watermark in a corner or on the nose. Check watermark/logo/URL overlays, garbled text, "
+            "severe AI artifacts, vehicle design or colour changes between frames, and NSFW. "
+            'Return JSON only: {"pass": bool, "issues": [string]} with short issue strings.'
         )
         raw = _vision_chat([
             {"type": "text", "text": prompt},

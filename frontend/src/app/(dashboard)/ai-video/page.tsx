@@ -16,7 +16,6 @@ import {
   listGflowAccounts,
   updateGflowAccount,
   listGflowWorkers,
-  listFanpages,
 } from "@/lib/api";
 import type {
   AiVideoIdea,
@@ -27,6 +26,7 @@ import type {
   GflowWorker,
 } from "@/lib/types";
 import ClipPlayer from "@/components/ClipPlayer";
+import { useFanpages } from "@/lib/useFanpages";
 
 const statusOptions = [
   "proposed",
@@ -66,9 +66,7 @@ export default function AiVideoPage() {
   const [busy, setBusy] = useState<number | null>(null);
   const [actionError, setActionError] = useState<{ id: number; message: string } | null>(null);
 
-  const { data: fanpages = [] } = useSWR("fanpages", () =>
-    listFanpages().then((r) => r.data as Fanpage[])
-  );
+  const { data: fanpages = [] } = useFanpages();
   const { data: templates = [] } = useSWR("ai-video-templates", () =>
     listAiVideoTemplates().then((r) => r.data as AiVideoTemplate[])
   );

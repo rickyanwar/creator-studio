@@ -101,6 +101,38 @@ def test_duplicates_rejected_topics_do_not_count(db_session, fanpage):
         ai_video_ideas.reject(db_session, second, "admin")
 
 
+def test_duplicate_topic_on_another_fanpage_is_rejected_for_30_days(db_session, fanpage):
+    other = TargetFanpage(
+        repliz_account_id=f"other-{id(db_session)}-{datetime.now().timestamp()}",
+        name="Other F1 Page",
+        is_active=True,
+        is_connected=True,
+        timezone="America/New_York",
+        mode2_gallery_niches=["f1"],
+        ai_video_enabled=True,
+        caption_language="en",
+    )
+    db_session.add(other)
+    db_session.commit()
+    try:
+        existing = ai_video_ideas.create_idea(db_session, other.id, idea_data("  Rear wing, airflow! "), "owner")
+        with pytest.raises(ai_video_ideas.ConflictError, match=f"topic already used on fanpage {other.id} in the last 30 days"):
+            ai_video_ideas.create_idea(db_session, fanpage.id, idea_data("rear wing airflow"), "owner")
+
+        existing.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=31)
+        db_session.commit()
+        allowed = ai_video_ideas.create_idea(db_session, fanpage.id, idea_data("rear wing airflow"), "owner")
+        assert allowed.id != existing.id
+
+        rejected = ai_video_ideas.create_idea(db_session, other.id, idea_data("Rejected topic"), "owner")
+        rejected.status = "rejected"
+        db_session.commit()
+        assert ai_video_ideas.create_idea(db_session, fanpage.id, idea_data("Rejected topic"), "owner").status == "approved"
+    finally:
+        db_session.delete(other)
+        db_session.commit()
+
+
 def test_proposed_limit_and_decision_guards(db_session, fanpage):
     for i in range(30):
         ai_video_ideas.create_idea(db_session, fanpage.id, idea_data(topic=f"Proposed {i}", score=5, rationale="r"), "hermes")
@@ -111,9 +143,9 @@ def test_proposed_limit_and_decision_guards(db_session, fanpage):
 def test_fill_prompt_niche_and_parse_formats(fanpage):
     template = get_template("motorsport_tech_explainer")
     idea = SimpleNamespace(topic="topic", angle=None, research_notes=None, variables=None)
-    assert '"f1_red"' in ai_video_fill.build_fill_prompt(template, idea, fanpage, 2)
+    assert '"f1"' in ai_video_fill.build_fill_prompt(template, idea, fanpage, 2)
     fanpage.mode2_gallery_niches = ["MotoGP"]
-    assert '"motogp"' in ai_video_fill.build_fill_prompt(template, idea, fanpage, 2)
+    assert '"motogp_livery"' in ai_video_fill.build_fill_prompt(template, idea, fanpage, 2)
 
     payload = '{"variables": {}, "title": "Title", "caption": "Caption"}'
     for raw in (payload, "```json\n" + payload + "\n```", "Here is the result:\n" + payload + "\nThanks"):

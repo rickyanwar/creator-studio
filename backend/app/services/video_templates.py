@@ -8,6 +8,7 @@ import re
 
 BLOCK_VARS = {"style", "audio", "narrator", "narrator_followup", "vehicle", "vehicle_short"}
 _PLACEHOLDER = re.compile(r"\{([a-z_0-9]+)\}")
+_CHANNEL_ALLOWED = re.compile(r"[^A-Z0-9 &' .-]")
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "video_templates"
 
 
@@ -27,9 +28,18 @@ class VideoTemplate:
 
 @lru_cache(maxsize=1)
 def list_templates() -> list[VideoTemplate]:
+    shared_path = _TEMPLATE_DIR / "_shared_blocks.json"
+    shared_blocks = json.loads(shared_path.read_text(encoding="utf-8")) if shared_path.exists() else {}
+
     templates = []
     for path in sorted(_TEMPLATE_DIR.glob("*.json")):
+        if path.name.startswith("_"):
+            continue
         raw = json.loads(path.read_text(encoding="utf-8"))
+        merged_blocks = dict(shared_blocks)
+        merged_blocks.update(raw.get("blocks", {}))
+        raw["blocks"] = merged_blocks
+
         generation = raw["generation"]
         templates.append(VideoTemplate(
             key=raw["key"], name=raw["name"], niches=tuple(raw["niches"]),
@@ -53,11 +63,50 @@ def required_variables(t: VideoTemplate, clips: int) -> list[str]:
         for name in _PLACEHOLDER.findall(clip["prompt"]):
             if name not in BLOCK_VARS and name not in names:
                 names.append(name)
+    # Also inspect vehicle presets for custom variables beyond standard {livery} and {lettering}
+    for preset_key, preset_text in t.raw.get("blocks", {}).get("vehicle_presets", {}).items():
+        for name in _PLACEHOLDER.findall(preset_text):
+            if name not in BLOCK_VARS and name not in {"livery", "livery_short", "lettering", "lettering_short"} and name not in names:
+                names.append(name)
     return names + ["vehicle_preset"]
 
 
 def vehicle_presets(t: VideoTemplate) -> list[str]:
     return [key for key in t.raw["blocks"]["vehicle_presets"] if not key.endswith("_short")]
+
+
+def liveries(t: VideoTemplate) -> list[str]:
+    return list(t.raw["blocks"].get("liveries", {}))
+
+
+def narrator_presets(t: VideoTemplate) -> list[str]:
+    return ["EN-DOC"] + list(t.raw["blocks"]["narrator_presets"])
+
+
+def resolve_narrator(fanpage, t: VideoTemplate) -> str:
+    stored = getattr(fanpage, "ai_video_narrator", None)
+    if stored in narrator_presets(t):
+        return stored
+    timezone = getattr(fanpage, "timezone", "") or ""
+    if timezone.startswith("Australia/"):
+        return "EN-AUSSIE-ENG"
+    if timezone.startswith("America/"):
+        return "EN-US-ENG"
+    return ["EN-PADDOCK", "EN-SCOT", "EN-JOURNO-F", "EN-DOC"][fanpage.id % 4]
+
+
+def sanitize_channel_name(name: str) -> str | None:
+    value = name.upper()
+    value = _CHANNEL_ALLOWED.sub("", value)
+    value = " ".join(value.split())
+    if not value:
+        return None
+    if len(value) <= 24:
+        return value
+    truncated = value[:24].rstrip()
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0]
+    return truncated or value[:24]
 
 
 def render_clips(t: VideoTemplate, variables: dict, clips: int) -> list[dict]:
@@ -78,11 +127,43 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int) -> list[dict]:
         raise ValueError(f"unknown vehicle_preset {preset}")
     blocks = t.raw["blocks"]
     substitutions = dict(variables)
+    preset_text_vehicle = blocks["vehicle_presets"][preset]
+    preset_short_vehicle = blocks["vehicle_presets"][preset + "_short"]
+    if "{livery}" in preset_text_vehicle or "{livery_short}" in preset_short_vehicle:
+        livery = variables.get("livery")
+        if livery not in liveries(t):
+            raise ValueError(f"unknown livery {livery}")
+        channel_name = variables.get("channel_name")
+        if channel_name is not None:
+            if not isinstance(channel_name, str) or sanitize_channel_name(channel_name) != channel_name:
+                raise ValueError("channel_name must be sanitized")
+            lettering = f' with the name "{channel_name}" in large clean white block capital letters '
+            lettering += "on the fairing and the fuel tank, no other text" if "motogp" in preset else "on both sidepods, no other text"
+            lettering_short = f' with the same "{channel_name}" lettering and no other text'
+        else:
+            lettering, lettering_short = ", no text", ", no text"
+        livery_values = blocks["liveries"][livery]
+        substitutions.update(
+            livery=livery_values["full"],
+            livery_short=livery_values["short"],
+            lettering=lettering,
+            lettering_short=lettering_short,
+        )
+    narrator_preset = variables.get("narrator_preset")
+    if narrator_preset is None or narrator_preset == "EN-DOC":
+        narrator = blocks["narrator_en"]
+        narrator_followup = blocks["narrator_en_followup"]
+    else:
+        if narrator_preset not in narrator_presets(t):
+            raise ValueError(f"unknown narrator_preset {narrator_preset}")
+        preset_text = blocks["narrator_presets"][narrator_preset]
+        narrator = "Voice-over: " + preset_text
+        narrator_followup = "Voice-over: " + ("the same " + preset_text[2:] if preset_text.startswith("a ") else preset_text)
     substitutions.update(
-        style=blocks["style"], audio=blocks["audio"], narrator=blocks["narrator_en"],
-        narrator_followup=blocks["narrator_en_followup"],
-        vehicle=blocks["vehicle_presets"][preset],
-        vehicle_short=blocks["vehicle_presets"][preset + "_short"],
+        style=blocks["style"], audio=blocks["audio"], narrator=narrator,
+        narrator_followup=narrator_followup,
+        vehicle=_PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), preset_text_vehicle),
+        vehicle_short=_PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), preset_short_vehicle),
     )
     rendered = []
     for index, clip in enumerate(t.raw["clip_templates"][:clips], start=1):

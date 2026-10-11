@@ -1,0 +1,86 @@
+{
+  "key": "motorsport_corner_masterclass",
+  "niches": ["f1"],
+  "clip_options": [2],
+  "default_clips": 2,
+  "id": "motorsport_corner_masterclass",
+  "name": "Motorsport Corner Masterclass — Telemetry & Racing Line",
+  "status": "active",
+  "generation": {
+    "engine": "Google Flow via gflow-cli (server flow.sh)",
+    "model": "omni-flash",
+    "aspect": "9:16",
+    "clip_seconds": 10,
+    "clips": 2,
+    "total_seconds": 20,
+    "credits_per_clip": 15,
+    "total_credits": 30,
+    "continuity": "clip N>1 uses the last frame of clip N-1 as its initial frame (flow.sh video --from)",
+    "join": "flow.sh join (ffmpeg concat of the Flow clips; no external audio)",
+    "narration": "spoken by Flow inside the clip; never external TTS"
+  },
+  "blocks": {
+    "style": "Photorealistic 3D CGI, cinematic broadcast motorsport analysis style, one continuous camera move with no cuts."
+  },
+  "clip_templates": [
+    {
+      "role": "approach_and_turn_in",
+      "mode": "t2v",
+      "prompt": "{style} {vehicle} races toward a generic unnamed {corner_type} at {approach_speed}, captured in a dynamic drone chase shot. A glowing neon racing line illuminates the asphalt track ahead, with braking-point marker boards rendered as plain blank geometric rectangular foam boards without text or numbers. Carbon-ceramic brake discs glow bright cherry red under heavy deceleration while the driver initiates turn-in. No F1 logo, no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+      "narration_words": {"en": "22-24"}
+    },
+    {
+      "role": "apex_and_exit",
+      "mode": "i2v_from_previous_last_frame",
+      "prompt": "Continue seamlessly from this exact frame, same cinematic broadcast motorsport analysis style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. The camera swings low into the geometric apex of the {corner_type}, displaying glowing blue lateral force vectors and glowing yellow speed arrows across the chassis. Extreme macro close-up captures tyre sidewall deformation gripping the red-and-white rumble kerb before the car unleashes full traction and accelerates onto the exit straight. {audio} {narrator_followup} \"{narration_2}\"",
+      "narration_words": {"en": "22-24"}
+    }
+  ],
+  "keywords_that_worked": [
+    "Drone chase shot follows ... glowing neon racing line illuminates the asphalt",
+    "braking-point marker boards rendered as plain blank geometric rectangular foam boards without text",
+    "Carbon-ceramic brake discs glow bright cherry red",
+    "Continue seamlessly from this exact frame",
+    "one continuous camera move with no cuts",
+    "glowing blue lateral force vectors and glowing yellow speed arrows",
+    "tyre sidewall deformation gripping the rumble kerb",
+    "no sponsor logos, no numbers, no F1 logo"
+  ],
+  "rules": [
+    "Corners must be generic technical corner types (hairpin, chicane, banked sweeper, compression complex) - never name real circuits, curves, or track complexes.",
+    "Braking boards must be plain blank shapes without text, digits, or logos.",
+    "Never display F1, FIA, or MotoGP logos, wordmarks, or sponsor decals.",
+    "Narration must be strictly in English, exactly 22-24 words per clip.",
+    "Clip 2 must begin with 'Continue seamlessly from this exact frame' and maintain a single continuous camera move without cuts."
+  ],
+  "topic_ideas": [
+    "heavy braking downhill hairpin with acute turn-in and late apex line",
+    "high-speed off-camber chicane balancing rapid directional weight transfer",
+    "steeply banked bowl sweeper generating massive sustained lateral g-forces",
+    "blind uphill crest compression loading suspension at terminal velocity",
+    "double apex carousel requiring trail-braking and delicate throttle feathering",
+    "tight decreasing-radius sweeper punishing front-tyre thermal degradation",
+    "flat-out uphill esses demanding aerodynamic commitment and kerb clipping",
+    "high-speed friction chicane testing rapid damper rebound and floor clearance",
+    "ninety-degree street corner with zero margin against concrete barrier perimeter",
+    "reverse-camber switchback where rear traction limits exit acceleration"
+  ],
+  "example": {
+    "topic": "heavy braking hairpin",
+    "variables": {
+      "corner_type": "heavy-braking hairpin",
+      "approach_speed": "over three hundred kilometres per hour",
+      "narration_1": "Approaching a heavy braking hairpin, the driver stomps the pedal with over one hundred kilograms of force, scrubbing speed in hundred metres.",
+      "narration_2": "At the apex, lateral force reaches five Gs as tyres deform over the kerb before full throttle propels the car forward.",
+      "vehicle_preset": "f1",
+      "livery": "scarlet",
+      "channel_name": "FORMULA ZONE",
+      "narrator_preset": "EN-SCOT"
+    }
+  },
+  "research": {
+    "required_before_script": true,
+    "questions": ["corner telemetry and deceleration rate", "driver brake pressure", "peak lateral g-force", "throttle application technique"]
+  },
+  "language": "en"
+}

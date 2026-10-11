@@ -98,12 +98,14 @@ def test_technical_check_real_mp4s(tmp_path):
     assert any("black" in reason for reason in black_result["reasons"])
 
 
-def test_contact_sheet_is_720px_jpeg(tmp_path):
+def test_contact_sheet_is_1280px_jpeg_with_two_rows(tmp_path):
     video = tmp_path / "sheet.mp4"
     make_video(video)
     image = Image.open(__import__("io").BytesIO(ai_video_qc.contact_sheet(str(video))))
     assert image.format == "JPEG"
-    assert image.width == 720
+    assert image.width == 1280
+    assert image.height % 2 == 0
+    assert 1100 <= image.height <= 1160
 
 
 @pytest.mark.parametrize(
@@ -123,11 +125,81 @@ def test_vision_check_exception_fails_closed():
     assert "vision QC unavailable" in result["issues"][0]
 
 
-def seed_job(db, tmp_path, *, vision=False, mode=PublishMode.auto, technical=True):
+def test_vision_check_expectations_are_in_prompt():
+    with patch("app.services.design_images._vision_chat", return_value='{"pass": true, "issues": []}') as vision:
+        ai_video_qc.vision_check(
+            b"jpeg",
+            "title",
+            {
+                "part": "rear wing",
+                "mechanism_action": "upper flap opens",
+                "final_state": "flap remains open",
+                "parts_list": "upper flap, endplates",
+                "channel_name": "Auto",
+            },
+        )
+    prompt = vision.call_args.args[0][0]["text"]
+    assert "Topic part: rear wing. Expected mechanism: upper flap opens. Final state: flap remains open." in prompt
+    assert "Frames are in time order" in prompt
+    assert "At some point the video must show a technical exploded view: upper flap, endplates visibly separated and floating apart, then reassembled." in prompt
+    assert "During the exploded view, separated parts floating in mid-air and visible screws/bolts are intended and are not artifacts." in prompt
+    assert 'must read exactly "Auto"' in prompt
+    assert 'Return JSON only: {"pass": bool, "issues": [string]} with short issue strings.' in prompt
+    assert "Also fail on any of the following." in prompt
+    assert "Fail if any Formula 1 / F1 / FIA logo or wordmark is visible anywhere" in prompt
+
+
+def test_vision_check_omits_optional_prompt_lines_and_truncates_values():
+    long_value = "x" * 301
+    with patch("app.services.design_images._vision_chat", return_value='{"pass": true, "issues": []}') as vision:
+        ai_video_qc.vision_check(
+            b"jpeg",
+            "title",
+            {"part": long_value, "mechanism_action": "opens", "final_state": "open"},
+        )
+    prompt = vision.call_args.args[0][0]["text"]
+    assert "Topic part: " + ("x" * 300) + ". Expected mechanism: opens. Final state: open." in prompt
+    assert "must read exactly" not in prompt
+
+
+def test_vision_check_without_expectations_keeps_old_prompt():
+    with patch("app.services.design_images._vision_chat", return_value='{"pass": true, "issues": []}') as vision:
+        ai_video_qc.vision_check(b"jpeg", "title")
+    prompt = vision.call_args.args[0][0]["text"]
+    assert "Expected mechanism" not in prompt
+
+
+def test_vision_check_exploded_view_and_mechanism_conditions():
+    # When parts_list is omitted (e.g. corner masterclass), exploded view lines and fail clauses must be absent
+    with patch("app.services.design_images._vision_chat", return_value='{"pass": true, "issues": []}') as vision:
+        ai_video_qc.vision_check(
+            b"jpeg",
+            "corner title",
+            {"corner_type": "hairpin", "channel_name": "Formula Zone"},
+        )
+    prompt = vision.call_args.args[0][0]["text"]
+    assert "exploded view" not in prompt
+    assert "Expected mechanism" not in prompt
+    assert "the exploded view is missing" not in prompt
+
+    # When parts_list is present, exploded view lines and fail clauses must be present
+    with patch("app.services.design_images._vision_chat", return_value='{"pass": true, "issues": []}') as vision:
+        ai_video_qc.vision_check(
+            b"jpeg",
+            "explainer title",
+            {"parts_list": "front wing flap, endplate"},
+        )
+    prompt = vision.call_args.args[0][0]["text"]
+    assert "At some point the video must show a technical exploded view: front wing flap, endplate" in prompt
+    assert "During the exploded view" in prompt
+    assert "the exploded view is missing" in prompt
+
+
+def seed_job(db, tmp_path, *, vision=False, mode=PublishMode.auto, technical=True, variables=None):
     fanpage = TargetFanpage(repliz_account_id=f"v4-{uuid.uuid4().hex}", name="V4", ai_video_publish_mode=mode)
     db.add(fanpage)
     db.flush()
-    idea = VideoIdea(fanpage_id=fanpage.id, template_key="motorsport_tech_explainer", topic="topic", status="queued")
+    idea = VideoIdea(fanpage_id=fanpage.id, template_key="motorsport_tech_explainer", topic="topic", variables=variables, status="queued")
     db.add(idea)
     db.flush()
     video = tmp_path / f"job-{id(tmp_path)}.mp4"
@@ -166,6 +238,27 @@ def test_finalize_vision_fail_is_pending_review(db, tmp_path):
     assert publish.status == PublishJobStatus.pending_review
     assert publish.last_error == "QC: logo"
     assert not delay.called
+
+
+def test_finalize_passes_idea_expectations_to_vision_check(db, tmp_path):
+    variables = {
+        "part": "rear wing",
+        "mechanism_action": "upper flap opens",
+        "final_state": "flap open",
+        "parts_list": "upper flap, endplates",
+        "channel_name": "Auto",
+    }
+    job_id, _, _ = seed_job(db, tmp_path, vision=True, variables=variables)
+    with patch.object(ai_video_qc, "technical_check", return_value={
+        "passed": True, "reasons": [], "duration_s": 4.0, "width": 540, "height": 960,
+        "has_audio": True, "black_s": 0.0, "frozen_s": 0.0, "size_bytes": 300000,
+    }), patch.object(ai_video_qc, "contact_sheet", return_value=b"jpeg"), patch.object(
+        ai_video_qc,
+        "vision_check",
+        return_value={"passed": True, "issues": [], "raw": "x"},
+    ) as check, patch.object(publisher.publish_job, "delay"):
+        ai_video_finalize.finalize_ai_video(job_id)
+    assert check.call_args.args[2] == variables
 
 
 def test_finalize_technical_fail_marks_job_and_idea(db, tmp_path):

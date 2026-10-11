@@ -67,6 +67,18 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
                 {(template?.clip_options ?? [2, 3]).map((count) => <option key={count} value={count}>{count}</option>)}
               </select>
             </div>
+            <div>
+              <label className="label">Narrator voice</label>
+              <select className="input w-full" value={form.ai_video_narrator ?? ""} onChange={(e) => set("ai_video_narrator", e.target.value || null)}>
+                <option value="">Auto (by timezone)</option>
+                <option value="EN-DOC">British documentary (deep, warm)</option>
+                <option value="EN-PADDOCK">British paddock commentator</option>
+                <option value="EN-AUSSIE-ENG">Australian race engineer</option>
+                <option value="EN-SCOT">Scottish old mechanic</option>
+                <option value="EN-JOURNO-F">Northern English female journalist</option>
+                <option value="EN-US-ENG">American race engineer</option>
+              </select>
+            </div>
           </div>
         </div>
       )}

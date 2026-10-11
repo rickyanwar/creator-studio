@@ -62,7 +62,7 @@ from app.models.strategy import StrategyRecommendation
 from app.models.api_tokens import ApiToken
 from app.models.ai_video import VideoIdea, VideoJob
 from app.services import ai_video_ideas
-from app.services.video_templates import list_templates, required_variables, vehicle_presets
+from app.services.video_templates import list_templates, liveries, narrator_presets, required_variables, vehicle_presets
 
 class FanpageHermesResponse(BaseModel):
     id: int
@@ -75,6 +75,11 @@ class FanpageHermesResponse(BaseModel):
     publish_daily_limit: int
     mode2_gallery_niches: List[str]
     caption_language: str
+    ai_video_enabled: bool
+    ai_video_daily_count: int
+    ai_video_publish_mode: str
+    ai_video_template: Optional[str]
+    ai_video_narrator: Optional[str]
 
 @router.get("/fanpages", response_model=List[FanpageHermesResponse])
 def get_fanpages_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("read"))):
@@ -91,7 +96,12 @@ def get_fanpages_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("
             "publish_sleep_end_hour": f.publish_sleep_end_hour,
             "publish_daily_limit": f.publish_daily_limit,
             "mode2_gallery_niches": f.mode2_gallery_niches,
-            "caption_language": f.caption_language
+            "caption_language": f.caption_language,
+            "ai_video_enabled": f.ai_video_enabled,
+            "ai_video_daily_count": f.ai_video_daily_count,
+            "ai_video_publish_mode": f.ai_video_publish_mode.value,
+            "ai_video_template": f.ai_video_template,
+            "ai_video_narrator": f.ai_video_narrator,
         })
     return res
 
@@ -160,7 +170,7 @@ def list_recommendations_hermes(db: DB, token: ApiToken = Depends(require_hermes
 
 
 def _video_template_items():
-    return [{"key": t.key, "name": t.name, "niches": list(t.niches), "clip_options": list(t.clip_options), "default_clips": t.default_clips, "clip_seconds": t.clip_seconds, "credits_per_clip": t.credits_per_clip, "model": t.model, "variables_by_clips": {str(n): required_variables(t, n) for n in t.clip_options}, "vehicle_presets": vehicle_presets(t), "topic_ideas": t.raw.get("topic_ideas", [])} for t in list_templates()]
+    return [{"key": t.key, "name": t.name, "niches": list(t.niches), "clip_options": list(t.clip_options), "default_clips": t.default_clips, "clip_seconds": t.clip_seconds, "credits_per_clip": t.credits_per_clip, "model": t.model, "variables_by_clips": {str(n): required_variables(t, n) for n in t.clip_options}, "vehicle_presets": vehicle_presets(t), "liveries": liveries(t), "narrator_presets": narrator_presets(t), "topic_ideas": t.raw.get("topic_ideas", [])} for t in list_templates()]
 
 
 @router.get("/video-templates")

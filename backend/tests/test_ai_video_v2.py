@@ -318,6 +318,160 @@ def test_claim_skips_busy_accounts(db_session, test_fanpage):
     assert ai_video_dispatch.claim_job(db_session, "w1") is None
 
 
+def test_claim_two_concurrent_jobs_get_different_accounts(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True, reserve=0)
+    acc1 = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=200)
+    acc2 = GflowAccount(worker_id="w1", profile="p2", authenticated=True, status="ok", credits=100)
+    db_session.add_all([acc1, acc2])
+    db_session.commit()
+
+    j1 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 1",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    j2 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 2",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([j1, j2])
+    db_session.commit()
+
+    claim1 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claim1 is not None
+    job1_claimed, acc1_claimed = claim1
+    assert acc1_claimed.id == acc1.id
+
+    claim2 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claim2 is not None
+    job2_claimed, acc2_claimed = claim2
+    assert acc2_claimed.id == acc2.id
+    assert acc1_claimed.id != acc2_claimed.id
+
+
+def test_claim_single_account_second_claim_returns_none(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True, reserve=0)
+    acc1 = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=200)
+    db_session.add(acc1)
+    db_session.commit()
+
+    j1 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 1",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    j2 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 2",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([j1, j2])
+    db_session.commit()
+
+    claim1 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claim1 is not None
+
+    claim2 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claim2 is None
+
+
+def test_claim_pinned_job_on_busy_account_is_skipped(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True, reserve=0)
+    acc_busy = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=200)
+    acc_free = GflowAccount(worker_id="w1", profile="p2", authenticated=True, status="ok", credits=100)
+    db_session.add_all([acc_busy, acc_free])
+    db_session.commit()
+
+    # Active job on acc_busy
+    active_job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Active",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="claimed",
+        account_id=acc_busy.id,
+        worker_id="w1",
+    )
+    # Pinned job on acc_busy
+    pinned_job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Pinned",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+        account_id=acc_busy.id,
+    )
+    # Unpinned job that can run on acc_free
+    unpinned_job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Unpinned",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([active_job, pinned_job, unpinned_job])
+    db_session.commit()
+
+    claim = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claim is not None
+    c_job, c_acc = claim
+    # Pinned job on busy account was skipped, unpinned claimed on acc_free
+    assert c_job.id == unpinned_job.id
+    assert c_acc.id == acc_free.id
+
+
+
 def test_progress_clip_done_and_credits_decrement(db_session, test_fanpage):
     acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
     db_session.add(acc)

@@ -8,7 +8,7 @@ from app.api.deps import CurrentUser, DB
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
 from app.services import ai_video_ideas
-from app.services.video_templates import list_templates, required_variables, vehicle_presets
+from app.services.video_templates import list_templates, liveries, narrator_presets, required_variables, vehicle_presets
 
 router = APIRouter(prefix="/ai-video", tags=["ai-video"])
 
@@ -31,7 +31,7 @@ def _item(db, idea):
 
 @router.get("/templates")
 def templates(_: CurrentUser):
-    return [{"key": t.key, "name": t.name, "niches": list(t.niches), "clip_options": list(t.clip_options), "default_clips": t.default_clips, "clip_seconds": t.clip_seconds, "credits_per_clip": t.credits_per_clip, "model": t.model, "variables_by_clips": {str(n): required_variables(t, n) for n in t.clip_options}, "vehicle_presets": vehicle_presets(t), "topic_ideas": t.raw.get("topic_ideas", [])} for t in list_templates()]
+    return [{"key": t.key, "name": t.name, "niches": list(t.niches), "clip_options": list(t.clip_options), "default_clips": t.default_clips, "clip_seconds": t.clip_seconds, "credits_per_clip": t.credits_per_clip, "model": t.model, "variables_by_clips": {str(n): required_variables(t, n) for n in t.clip_options}, "vehicle_presets": vehicle_presets(t), "liveries": liveries(t), "narrator_presets": narrator_presets(t), "topic_ideas": t.raw.get("topic_ideas", [])} for t in list_templates()]
 
 
 @router.get("/ideas")

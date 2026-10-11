@@ -5,7 +5,7 @@ description: Analyze fanpage analytics, build content memory, and propose strate
 
 # Content Strategist
 
-Hermes skill for fanpage strategy optimization. Runs weekly per fanpage.
+Hermes skill for fanpage strategy optimization. Runs weekly per fanpage. Video ideas run daily; the rest of this skill remains weekly.
 
 ## Weekly Procedure
 
@@ -20,7 +20,15 @@ Hermes skill for fanpage strategy optimization. Runs weekly per fanpage.
    - **Decide Proposals**: Decide on 0-2 proposals based on decision rules (see below).
    - **POST Recommendations**: Call `POST /hermes/recommendations` with full rationale and evidence.
    - **Notify**: Send ONE Telegram approval request per proposal ONLY IF the owner enabled `TELEGRAM_NOTIFICATIONS_ENABLED`. Otherwise, send none.
-   - **Video Ideas**: When the fanpage has Mode 8 enabled, propose at most 2 video ideas for that fanpage in the weekly run. Fetch `GET /hermes/video-templates`, avoid topics already proposed or completed for the fanpage, and call `POST /hermes/video-ideas` with source-backed `research_notes`, a score, and a rationale. Narration for every idea must be in English.
+   - **Video Ideas (daily)**: Fetch `GET /hermes/fanpages` and `GET /hermes/video-ideas?fanpage_id={id}`. For each active fanpage with Mode 8 enabled, keep about one day of buffer by proposing `max(0, ai_video_daily_count - (ideas currently proposed + approved + queued for that page))` new ideas, capped at 10 per page per day. Fetch `GET /hermes/video-templates`, use the page's `ai_video_template` as `template_key` (or `motorsport_tech_explainer` when null), and ensure topics differ between every fanpage. The API answers 409 for a topic used on any page in the last 30 days: pick another topic and do not retry the same one. Spread topics so pages in the same niche do not cover the same subject in the same week. Avoid topics already proposed or completed, and call `POST /hermes/video-ideas` with source-backed `research_notes`, a score, and a rationale. Narration for every idea must be in English. If any 9Router call fails with a quota, rate-limit, or 5xx error, stop proposing for the rest of that day with no retry loop and do not send a Telegram message for it.
+
+### Video Idea Research
+
+Before writing any idea, research on the web with Hermes's own tools: use `web_search` to find sources, `web_extract` or the browser to read them, and the installed skills `master-fetch` for Cloudflare/Turnstile pages, `blocked-page-recovery` for 403/429/paywall/bot-wall pages, and `grounded-citations` to cite every fact.
+
+Use sources in this priority order: official sources (FIA / FIM-MotoGP regulations, formula1.com, motogp.com, and team sites), then tech journalism (The Race, Motorsport.com, Autosport, Racecar Engineering, F1Technical, and Crash.net). Use YouTube, forums, and Wikipedia only as leads that must be re-verified.
+
+Read at least 2 real pages per idea. Every specific number needs 2 independent sources and its season/year. Leave anything unverified out of the narration. `research_notes` must list the facts with their URLs; the planner uses `research_notes` as the ONLY source of specific facts. Research runs on 9Router; the existing stop-for-the-day rule on quota/rate-limit/5xx errors still applies.
 
 ## Decision Rules
 
@@ -29,7 +37,7 @@ Hermes skill for fanpage strategy optimization. Runs weekly per fanpage.
   - Max 2 proposals per fanpage per weekly run.
   - Max 1 open (`proposed`) proposal per applicable kind (`sleep_window`, `daily_cap`).
 - **Exploration**: ~10-20% budget for exploration.
-- **Video Ideas**: At most 2 ideas per enabled fanpage per weekly run. Include sources in `research_notes`, score each idea, explain the score in `rationale`, do not repeat topics, and require English narration.
+   - **Video Ideas**: Run daily, keep one day of buffer, and cap proposals at 10 per fanpage per day. Use each page's configured template, complete the required web research before proposing, include fact-and-URL citations in `research_notes`, score each idea, explain the score in `rationale`, use a different topic for every fanpage, and require English narration.
 
 ## Example Rationales
 
@@ -43,7 +51,7 @@ Hermes skill for fanpage strategy optimization. Runs weekly per fanpage.
 - **NEVER** send daily or weekly Telegram digests. Telegram is for approval requests or incidents only.
 - **NEVER** guess without data. Wait for minimum samples.
 - **NEVER** propose a video idea without source-backed `research_notes`, a score, and a rationale.
-- **NEVER** repeat a topic already proposed or completed for the fanpage.
+- **NEVER** repeat a topic already proposed or completed for any fanpage within the last 30 days.
 - **NEVER** write narration in a language other than English.
 
 ## Environment Variables
