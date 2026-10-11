@@ -27,6 +27,8 @@ class TargetFanpage(Base):
     picture_url = Column(Text, nullable=True)
     platform_type = Column(String(32), default="facebook", nullable=False)
     is_connected = Column(Boolean, default=True, nullable=False)
+    timezone = Column(String(64), nullable=False, default="Europe/London", server_default="Europe/London")
+    target_country = Column(String(2), nullable=True, default="GB", server_default="GB")
 
     # ── Local toggles ─────────────────────────────
     is_active = Column(Boolean, default=False, nullable=False)
@@ -194,6 +196,14 @@ class TargetFanpage(Base):
     # Shots without a dominant face: "smart" = 9:16 crop following the action
     # (centred for a cockpit POV), "fit" = whole frame over a blurred copy.
     yt_clip_action_crop = Column(String(8), default="smart", nullable=False, server_default="smart")
+
+    # ── Mode 8: AI video ──────────────────────────
+    ai_video_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    ai_video_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
+    ai_video_daily_count = Column(Integer, default=1, nullable=False, server_default="1")
+    ai_video_min_score = Column(Integer, default=70, nullable=True, server_default="70")
+    ai_video_template = Column(String(64), nullable=True)
+    ai_video_clips = Column(Integer, default=2, nullable=False, server_default="2")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

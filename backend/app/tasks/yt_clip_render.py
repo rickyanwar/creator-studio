@@ -183,7 +183,7 @@ def _cleanup_job_videos(db) -> int:
 
     now = _now()
     jobs = db.query(PublishJob).filter(
-        PublishJob.content_type == ContentType.youtube_clip,
+        PublishJob.content_type.in_([ContentType.youtube_clip, ContentType.ai_video]),
         PublishJob.video_path.isnot(None),
         or_(
             and_(PublishJob.status == PublishJobStatus.published,
@@ -196,8 +196,16 @@ def _cleanup_job_videos(db) -> int:
     for job in jobs:
         _unlink(job.video_path)
         job.video_path, job.video_url = None, None
+        if job.content_type == ContentType.ai_video:
+            from app.models.ai_video import VideoJob
+            db.query(VideoJob).filter(VideoJob.publish_job_id == job.id).update(
+                {
+                    VideoJob.video_path: None, VideoJob.video_url: None,
+                    VideoJob.thumbnail_path: None, VideoJob.thumbnail_url: None,
+                }, synchronize_session=False,
+            )
     old_thumbs = db.query(PublishJob).filter(
-        PublishJob.content_type == ContentType.youtube_clip,
+        PublishJob.content_type.in_([ContentType.youtube_clip, ContentType.ai_video]),
         PublishJob.video_thumbnail_path.isnot(None), PublishJob.video_path.is_(None),
         PublishJob.updated_at <= now - _THUMBNAIL_KEEP,
     ).all()

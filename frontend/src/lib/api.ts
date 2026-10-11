@@ -366,6 +366,12 @@ export const triggerCrawl = () => api.post("/jobs/crawl-now");
 export const triggerFanpageSync = () => api.post("/jobs/sync-fanpages");
 export const restartBeat = () => api.post("/jobs/restart-beat");
 
+// ── Analytics ─────────────────────────────────────────────────────────────────
+export const getAnalyticsOverview = (days: number) =>
+  api.get(`/analytics/overview`, { params: { days } });
+export const getFanpageAnalytics = (id: number, days: number) =>
+  api.get(`/analytics/fanpages/${id}`, { params: { days } });
+
 // ── Logs ──────────────────────────────────────────────────────────────────────
 export const getLogs = (params?: { category?: string; days?: number }) =>
   api.get<{
@@ -407,3 +413,35 @@ export interface Notification {
   link: string;
   created_at: string;
 }
+
+// ── Strategy ──────────────────────────────────────────────────────────────────
+export const listRecommendations = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
+  api.get("/strategy/recommendations", { params });
+export const approveRecommendation = (id: number) =>
+  api.post(`/strategy/recommendations/${id}/approve`);
+export const rejectRecommendation = (id: number) =>
+  api.post(`/strategy/recommendations/${id}/reject`);
+export const getContentMemory = (fanpageId: number) =>
+  api.get(`/strategy/memory/${fanpageId}`);
+export const refreshContentMemory = (fanpageId: number) =>
+  api.post(`/strategy/memory/${fanpageId}/refresh`);
+export const listApiTokens = () => api.get("/strategy/tokens");
+export const createApiToken = (data: { name: string; scopes: string[] }) =>
+  api.post("/strategy/tokens", data);
+export const revokeApiToken = (id: number) => api.delete(`/strategy/tokens/${id}`);
+
+// ── AI video (Mode 8) ────────────────────────────────────────────────────────
+export const listAiVideoTemplates = () => api.get("/ai-video/templates");
+export const listAiVideoIdeas = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
+  api.get("/ai-video/ideas", { params });
+export const createAiVideoIdea = (data: Record<string, unknown>) => api.post("/ai-video/ideas", data);
+export const approveAiVideoIdea = (id: number) => api.post(`/ai-video/ideas/${id}/approve`);
+export const rejectAiVideoIdea = (id: number) => api.post(`/ai-video/ideas/${id}/reject`);
+export const listAiVideoJobs = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
+  api.get("/ai-video/jobs", { params });
+export const retryAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/retry`);
+export const cancelAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/cancel`);
+export const listGflowAccounts = () => api.get("/ai-video/accounts");
+export const updateGflowAccount = (id: number, data: { enabled?: boolean; label?: string }) =>
+  api.patch(`/ai-video/accounts/${id}`, data);
+export const listGflowWorkers = () => api.get("/ai-video/workers");

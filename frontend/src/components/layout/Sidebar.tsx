@@ -8,6 +8,9 @@ import { useSidebar } from "@/contexts/SidebarContext";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard",   icon: "solar:widget-bold-duotone" },
+  { href: "/analytics", label: "Analytics",   icon: "solar:chart-2-bold-duotone" },
+  { href: "/strategy",  label: "Strategy",    icon: "solar:lightbulb-bolt-bold-duotone" },
+  { href: "/ai-video",  label: "AI Video",    icon: "solar:videocamera-record-bold-duotone" },
   { href: "/fanpages",  label: "Fanpages",     icon: "mingcute:facebook-fill" },
   { href: "/queue",     label: "Queue",        icon: "solar:clock-circle-bold-duotone" },
   { href: "/burners",   label: "Burners",      icon: "solar:users-group-rounded-bold-duotone" },

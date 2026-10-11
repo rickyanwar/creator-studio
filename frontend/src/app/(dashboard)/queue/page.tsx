@@ -17,7 +17,7 @@ const fetcher = async () => {
     listJobs({ status: "pending_publish", limit: 100 }),
   ]);
   const news = [...(design.data as PublishJob[]), ...(publish.data as PublishJob[])]
-    .filter((j) => j.content_type === "news_content" || j.content_type === "ig_recreate" || j.content_type === "discussion" || j.content_type === "pinterest_content" || j.content_type === "facebook_recreate" || j.content_type === "youtube_clip");
+    .filter((j) => j.content_type === "news_content" || j.content_type === "ig_recreate" || j.content_type === "discussion" || j.content_type === "pinterest_content" || j.content_type === "facebook_recreate" || j.content_type === "youtube_clip" || j.content_type === "ai_video");
   return [...(review.data as PublishJob[]), ...news].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
@@ -44,7 +44,7 @@ function timeAgo(iso: string) {
 
 /* Use source URL when public URL is localhost */
 function resolveUrls(job: PublishJob): string[] {
-  if (job.content_type === "youtube_clip") {
+  if (job.content_type === "youtube_clip" || job.content_type === "ai_video") {
     return job.video_thumbnail_url ? [job.video_thumbnail_url] : [];
   }
   if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") {
@@ -242,10 +242,10 @@ function QueueCard({
   const albumCount = urls.length;
   const caption = job.ai_generated_caption ?? "";
   const createdAt = (job as unknown as Record<string, string>).created_at;
-  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate" || job.content_type === "youtube_clip";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate" || job.content_type === "youtube_clip" || job.content_type === "ai_video";
   const needsDesign = (job.content_type === "news_content" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") && job.status === "pending_design";
   // Mode 7 clips render on the video worker — no Designer, no image lightbox.
-  const isClip = job.content_type === "youtube_clip";
+  const isClip = job.content_type === "youtube_clip" || job.content_type === "ai_video";
   const clipRendering = isClip && job.status === "pending_design";
 
   const mediaIcon =
@@ -275,7 +275,7 @@ function QueueCard({
           <p className="text-sm font-semibold text-text-primary truncate">{fanpage}</p>
           <p className="text-xs text-text-secondary truncate">
             {createdAt ? timeAgo(createdAt) : ""}{createdAt ? " · " : ""}
-            {isNews ? (job.design_title ?? (job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : "News content")) : `@${job.ig_username}`}
+            {isNews ? (job.design_title ?? (job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : job.content_type === "ai_video" ? "AI video" : "News content")) : `@${job.ig_username}`}
           </p>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -302,7 +302,7 @@ function QueueCard({
             </span>
             <span className="flex items-center gap-1 text-xs text-text-secondary">
               <Icon icon={clipRendering ? "solar:videocamera-record-bold-duotone" : needsDesign ? "solar:pen-2-bold-duotone" : "solar:check-circle-bold-duotone"} width={12} />
-              {clipRendering ? "rendering clip…" : needsDesign ? "needs design" : isClip ? `clip ready${job.video_duration_s ? ` · ${Math.round(job.video_duration_s)}s` : ""}` : "design ready"}
+              {clipRendering ? "rendering clip…" : needsDesign ? "needs design" : isClip ? `${job.content_type === "ai_video" ? "AI video" : "clip"} ready${job.video_duration_s ? ` · ${Math.round(job.video_duration_s)}s` : ""}` : "design ready"}
             </span>
           </>
         ) : (
@@ -358,6 +358,9 @@ function QueueCard({
 
       {/* Caption */}
       <div className="px-4 pt-3 pb-2 flex-1">
+        {job.last_error && (
+          <p className="mb-2 rounded bg-red-50 px-2.5 py-2 text-[11px] text-error-main whitespace-pre-wrap">{job.last_error}</p>
+        )}
         {isEditing ? (
           <div className="space-y-2">
             <textarea
@@ -460,8 +463,8 @@ function Lightbox({
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const color = avatarColor(fanpage);
   const caption = job.ai_generated_caption ?? "";
-  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate" || job.content_type === "youtube_clip";
-  const isClip = job.content_type === "youtube_clip";
+  const isNews = job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate" || job.content_type === "youtube_clip" || job.content_type === "ai_video";
+  const isClip = job.content_type === "youtube_clip" || job.content_type === "ai_video";
   const total = urls.length;
   const createdAt = (job as unknown as Record<string, string>).created_at;
 
@@ -548,12 +551,12 @@ function Lightbox({
                 <div className="min-w-0">
                   <p className="text-white text-xs font-semibold leading-none">{fanpage}</p>
                   <p className="text-white/60 text-[10px] mt-0.5">
-                    {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : "News content")) : `@${job.ig_username}`}
+                     {isNews ? (job.design_title ?? (job.content_type === "ig_recreate" ? "IG recreate" : job.content_type === "discussion" ? "Discussion" : job.content_type === "pinterest_content" ? "Pinterest" : job.content_type === "facebook_recreate" ? "Facebook photo" : job.content_type === "youtube_clip" ? "YouTube clip" : job.content_type === "ai_video" ? "AI video" : "News content")) : `@${job.ig_username}`}
                     {createdAt ? ` · ${timeAgo(createdAt)}` : ""}
                   </p>
                 </div>
                 <span className="ml-auto text-[10px] font-semibold text-white/60 uppercase tracking-wide bg-white/10 px-2 py-0.5 rounded-full">
-                  {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.content_type === "pinterest_content" ? "pinterest" : job.content_type === "facebook_recreate" ? "facebook" : job.content_type === "youtube_clip" ? "clip" : job.media_type}
+                   {job.content_type === "news_content" ? "news" : job.content_type === "ig_recreate" ? "recreate" : job.content_type === "discussion" ? "discussion" : job.content_type === "pinterest_content" ? "pinterest" : job.content_type === "facebook_recreate" ? "facebook" : job.content_type === "youtube_clip" ? "clip" : job.content_type === "ai_video" ? "AI video" : job.media_type}
                 </span>
               </div>
 

@@ -26,6 +26,7 @@ class ContentType(str, enum.Enum):
     pinterest_content = "pinterest_content"  # Mode 5: photo-seeded card from a consumed PinterestContentIdea
     facebook_recreate = "facebook_recreate"  # Mode 6: another FB page's photo classified + rebuilt on a news/discussion template
     youtube_clip = "youtube_clip"            # Mode 7: a 9:16 clip cut from a YouTube video (a Reel, not an image)
+    ai_video = "ai_video"                    # Mode 8: AI video made with Google Flow via gflow-cli, published as a Reel
 
 
 class AIProvider(str, enum.Enum):

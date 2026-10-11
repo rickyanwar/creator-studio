@@ -52,6 +52,9 @@ def get_settings(db: DB, _: CurrentUser):
         youtube_proxy=row.youtube_proxy,
         youtube_blocked_until=row.youtube_blocked_until,
         youtube_last_error=row.youtube_last_error,
+        ai_video_worker_enabled=row.ai_video_worker_enabled,
+        ai_video_vision_qc_enabled=row.ai_video_vision_qc_enabled,
+        ai_video_credit_reserve=row.ai_video_credit_reserve,
     )
 
 

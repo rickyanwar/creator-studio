@@ -33,7 +33,12 @@ celery_app = Celery(
         "app.tasks.facebook_photo",
         "app.tasks.yt_clip",
         "app.tasks.yt_clip_render",
+        "app.tasks.ai_video_finalize",
         "app.tasks.ai_health_check",
+        "app.tasks.post_metrics",
+        "app.tasks.content_memory",
+        "app.tasks.ai_video_plan",
+        "app.tasks.ai_video_dispatch",
     ],
 )
 
@@ -61,6 +66,7 @@ celery_app.conf.update(
         # as the gallery queue above.
         "app.tasks.yt_clip.analyze_video": {"queue": "video"},
         "app.tasks.yt_clip_render.render_youtube_clip": {"queue": "video"},
+        "app.tasks.ai_video_finalize.finalize_ai_video": {"queue": "video"},
     },
 )
 
@@ -242,5 +248,30 @@ celery_app.conf.beat_schedule = {
     "warmup-burners": {
         "task": "app.tasks.warmup.run_warmup",
         "schedule": crontab(minute=30, hour="*/3"),
+    },
+    "collect-post-metrics": {
+        "task": "app.tasks.post_metrics.collect_post_metrics",
+        "schedule": 300,
+        "options": {"expires": 290},
+    },
+    "backfill-post-metrics": {
+        "task": "app.tasks.post_metrics.backfill_post_metrics",
+        "schedule": 3600,
+        "options": {"expires": 3500},
+    },
+    "refresh-content-memory": {
+        "task": "app.tasks.content_memory.refresh_content_memory",
+        "schedule": 604800,
+        "options": {"expires": 3600},
+    },
+    "plan-ai-videos": {
+        "task": "app.tasks.ai_video_plan.plan_ai_videos",
+        "schedule": 600,
+        "options": {"expires": 590},
+    },
+    "sweep-ai-video-jobs": {
+        "task": "app.tasks.ai_video_dispatch.sweep_ai_video_jobs",
+        "schedule": 120,
+        "options": {"expires": 110},
     },
 }

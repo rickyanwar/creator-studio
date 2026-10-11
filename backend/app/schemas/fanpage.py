@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+import zoneinfo
+import re
 from app.models.target_fanpages import PublishMode, AttributionPosition
 
 
@@ -20,6 +22,10 @@ class FanpageBase(BaseModel):
     watermark_image_url: Optional[str] = None
     publish_mode: PublishMode = PublishMode.manual_review
     is_active: bool = False
+
+    # ── Locale ──
+    timezone: str = "Europe/London"
+    target_country: Optional[str] = None
 
     # ── Publish pacing (anti-bot-detection) ──
     publish_sleep_start_hour: Optional[int] = 0
@@ -95,9 +101,40 @@ class FanpageBase(BaseModel):
     yt_clip_watermark: bool = True
     yt_clip_action_crop: str = Field("smart", pattern="^(smart|fit)$")
 
+    # ── Mode 8: AI video ──
+    ai_video_enabled: bool = False
+    ai_video_publish_mode: PublishMode = PublishMode.manual_review
+    ai_video_daily_count: int = Field(1, ge=0, le=10)
+    ai_video_min_score: Optional[int] = Field(70, ge=0, le=100)
+    ai_video_template: Optional[str] = None
+    ai_video_clips: int = Field(2, ge=1, le=6)
+
+    @field_validator("ai_video_template")
+    def validate_ai_video_template(cls, value):
+        if value is not None:
+            from app.services.video_templates import get_template
+
+            get_template(value)
+        return value
+
 
 class FanpageUpdate(FanpageBase):
-    pass
+    @field_validator("timezone", mode="before")
+    def validate_timezone(cls, v):
+        if v not in zoneinfo.available_timezones():
+            raise ValueError(f"Unknown IANA timezone: {v}")
+        return v
+
+    @field_validator("target_country", mode="before")
+    def validate_target_country(cls, v):
+        if v is None or v == "":
+            return None
+        if not isinstance(v, str):
+            raise ValueError("target_country must be a 2-letter ISO code")
+        v = v.strip().upper()
+        if not re.match(r"^[A-Z]{2}$", v):
+            raise ValueError("target_country must be a 2-letter ISO code")
+        return v
 
 
 class FanpageSourceAdd(BaseModel):
