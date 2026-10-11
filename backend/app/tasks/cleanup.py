@@ -35,7 +35,7 @@ def cleanup_old_media():
     - Posts stuck in stored/pending_fanout for more than 12h
     """
     db = SessionLocal()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     cleaned = 0
 
     try:
@@ -75,7 +75,7 @@ def cleanup_old_media():
                 # All jobs failed/skipped — files will never be used
                 should_clean = True
 
-            elif post.crawled_at and (now - post.crawled_at.replace(tzinfo=timezone.utc)).total_seconds() > _STUCK_POST_MAX_AGE_HOURS * 3600:
+            elif post.crawled_at and (now - post.crawled_at).total_seconds() > _STUCK_POST_MAX_AGE_HOURS * 3600:
                 # Stuck in stored/pending_fanout for too long — orphaned
                 should_clean = True
 

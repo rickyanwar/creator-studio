@@ -44,6 +44,8 @@ import logging
 import random
 from datetime import datetime, timezone, timedelta
 
+from sqlalchemy.exc import IntegrityError
+
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 
@@ -523,49 +525,78 @@ def _consume_one(db, fanpage) -> bool:
     from app.models.target_fanpages import PublishMode
     from app.services.design_images import resolve_template
 
-    idea = (
-        db.query(DiscussionContentIdea)
-        .filter(DiscussionContentIdea.fanpage_id == fanpage.id, DiscussionContentIdea.status == "pending")
-        .order_by(DiscussionContentIdea.created_at.asc())
-        .first()
-    )
-    if not idea:
-        return False
+    while True:
+        idea = (
+            db.query(DiscussionContentIdea)
+            .filter(DiscussionContentIdea.fanpage_id == fanpage.id, DiscussionContentIdea.status == "pending")
+            .order_by(DiscussionContentIdea.created_at.asc())
+            .first()
+        )
+        if not idea:
+            return False
 
-    # Prefer a discussion-tagged template; fall back to the fanpage's News
-    # template if none is set/seeded (render_discussion applies the same
-    # fallback, this just pins a sensible template_id on the job up front).
-    template = resolve_template(db, "discussion", fanpage=fanpage) or resolve_template(db, "news", fanpage=fanpage)
+        if idea.source_article_id is not None:
+            existing_job = (
+                db.query(PublishJob.id)
+                .filter(
+                    PublishJob.source_article_id == idea.source_article_id,
+                    PublishJob.fanpage_id == fanpage.id,
+                )
+                .first()
+            )
+            if existing_job:
+                idea.status = "skipped"
+                db.commit()
+                logger.info(
+                    "Discussion: fanpage %d skipped idea %d because article %d already has a publish job",
+                    fanpage.id, idea.id, idea.source_article_id,
+                )
+                continue
 
-    job = PublishJob(
-        fanpage_id=fanpage.id,
-        post_id=None,
-        content_type=ContentType.discussion,
-        source_article_id=idea.source_article_id,
-        design_title=idea.question,
-        design_subtitle=idea.label,          # badge text ("DISCUSSION"/"HOT TAKE")
-        design_caption=idea.subject_name,    # subject for photo sourcing (not rendered)
-        ai_generated_caption=idea.caption,
-        design_template_id=template.id if template else None,
-        status=PublishJobStatus.pending_design,
-    )
-    db.add(job)
+        # Prefer a discussion-tagged template; fall back to the fanpage's News
+        # template if none is set/seeded (render_discussion applies the same
+        # fallback, this just pins a sensible template_id on the job up front).
+        template = resolve_template(db, "discussion", fanpage=fanpage) or resolve_template(db, "news", fanpage=fanpage)
 
-    idea.status = "used"
-    idea.used_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db.commit()
+        job = PublishJob(
+            fanpage_id=fanpage.id,
+            post_id=None,
+            content_type=ContentType.discussion,
+            source_article_id=idea.source_article_id,
+            design_title=idea.question,
+            design_subtitle=idea.label,          # badge text ("DISCUSSION"/"HOT TAKE")
+            design_caption=idea.subject_name,    # subject for photo sourcing (not rendered)
+            ai_generated_caption=idea.caption,
+            design_template_id=template.id if template else None,
+            status=PublishJobStatus.pending_design,
+        )
+        db.add(job)
 
-    logger.info(
-        "Discussion: fanpage %d created job %d from idea %d (%s) label=%s subject=%r",
-        fanpage.id, job.id, idea.id, idea.source_type, idea.label, idea.subject_name,
-    )
+        idea.status = "used"
+        idea.used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            idea.status = "skipped"
+            db.commit()
+            logger.info(
+                "Discussion: fanpage %d skipped idea %d because its article already has a publish job (race)",
+                fanpage.id, idea.id,
+            )
+            continue
 
-    # Auto mode → render now (staggered slightly); review mode waits for designer.
-    if fanpage.discussion_publish_mode == PublishMode.auto:
-        from app.tasks.design_renderer import render_discussion
-        render_discussion.apply_async(args=[job.id], countdown=random.randint(5, 90))
+        logger.info(
+            "Discussion: fanpage %d created job %d from idea %d (%s) label=%s subject=%r",
+            fanpage.id, job.id, idea.id, idea.source_type, idea.label, idea.subject_name,
+        )
 
-    return True
+        # Auto mode → render now (staggered slightly); review mode waits for designer.
+        if fanpage.discussion_publish_mode == PublishMode.auto:
+            from app.tasks.design_renderer import render_discussion
+            render_discussion.apply_async(args=[job.id], countdown=random.randint(5, 90))
+
+        return True
 
 
 @celery_app.task(name="app.tasks.discussion.generate_discussion_content")
