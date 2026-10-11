@@ -20,7 +20,7 @@ def mock_redis():
 def test_radar_crawl_tick_wave_active(mock_process, mock_db, mock_redis):
     # WAVE_KEY is active
     mock_redis.get.return_value = "1"
-    
+
     with patch("app.tasks.radar_crawl.SessionLocal", return_value=mock_db), \
          patch("app.tasks.radar_crawl._redis", return_value=mock_redis):
         radar_crawl_tick()
@@ -55,15 +55,17 @@ def test_process_radar_tick_ordering_and_cap(mock_ingest, mock_fetch, mock_db, m
     
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     
-    acc1 = MagicMock(ig_username="hot_acc", is_active=True, leader_score=0)
-    acc2 = MagicMock(ig_username="very_hot_acc", is_active=True, leader_score=0)
-    acc3 = MagicMock(ig_username="cold_leader", is_active=True, leader_score=1.0) # cold interval 30
-    acc4 = MagicMock(ig_username="cold_acc", is_active=True, leader_score=0) # cold interval 60
-    acc5 = MagicMock(ig_username="hot_acc2", is_active=True, leader_score=0)
-    acc6 = MagicMock(ig_username="cold_acc2", is_active=True, leader_score=0)
+    acc1 = MagicMock(ig_username="hot_acc", is_active=True, niche="f1", leader_score=0)
+    acc2 = MagicMock(ig_username="very_hot_acc", is_active=True, niche="f1", leader_score=0)
+    acc3 = MagicMock(ig_username="cold_leader", is_active=True, niche="f1", leader_score=1.0) # cold interval 30
+    acc4 = MagicMock(ig_username="cold_acc", is_active=True, niche="f1", leader_score=0) # cold interval 60
+    acc5 = MagicMock(ig_username="hot_acc2", is_active=True, niche="f1", leader_score=0)
+    acc6 = MagicMock(ig_username="cold_acc2", is_active=True, niche="f1", leader_score=0)
     
-    # Return 6 active radar accounts
+    enabled_fanpage = MagicMock(is_active=True, radar_enabled=True, radar_niches=["f1", "motogp"])
+    # Return enabled fanpage, then 6 active radar accounts, then no sources.
     mock_db.query.return_value.filter.return_value.all.side_effect = [
+        [enabled_fanpage],
         [acc1, acc2, acc3, acc4, acc5, acc6], # radar accounts
         [] # ig sources
     ]
@@ -119,8 +121,9 @@ def test_process_radar_tick_ordering_and_cap(mock_ingest, mock_fetch, mock_db, m
 def test_process_radar_tick_viewer_busy(mock_fetch, mock_db, mock_redis):
     db_settings = MagicMock(radar_very_hot_interval_min=None, radar_hot_window_h=None, radar_hot_interval_min=None, radar_cold_interval_min=None)
     
-    acc1 = MagicMock(ig_username="hot_acc", is_active=True, leader_score=0)
-    mock_db.query.return_value.filter.return_value.all.side_effect = [[acc1], []]
+    acc1 = MagicMock(ig_username="hot_acc", is_active=True, niche="f1", leader_score=0)
+    enabled_fanpage = MagicMock(is_active=True, radar_enabled=True, radar_niches=["f1"])
+    mock_db.query.return_value.filter.return_value.all.side_effect = [[enabled_fanpage], [acc1], []]
     mock_redis.hget.return_value = None
     
     # No latest_post for simplicity
@@ -138,8 +141,9 @@ def test_process_radar_tick_viewer_busy(mock_fetch, mock_db, mock_redis):
 def test_process_radar_tick_exception_per_account(mock_ingest, mock_fetch, mock_db, mock_redis):
     db_settings = MagicMock(radar_very_hot_interval_min=None, radar_hot_window_h=None, radar_hot_interval_min=None, radar_cold_interval_min=None)
     
-    acc1 = MagicMock(ig_username="hot_acc", is_active=True, leader_score=0)
-    mock_db.query.return_value.filter.return_value.all.side_effect = [[acc1], []]
+    acc1 = MagicMock(ig_username="hot_acc", is_active=True, niche="f1", leader_score=0)
+    enabled_fanpage = MagicMock(is_active=True, radar_enabled=True, radar_niches=["f1"])
+    mock_db.query.return_value.filter.return_value.all.side_effect = [[enabled_fanpage], [acc1], []]
     mock_redis.hget.return_value = None
     
     # No latest_post for simplicity
@@ -163,8 +167,9 @@ def test_process_radar_tick_cross_feed_mode1(mock_ingest, mock_mode1, mock_fetch
     
     # Has ig_source, no radar_account
     src = MagicMock(id=1, ig_username="source_acc", is_active=True)
-    
-    mock_db.query.return_value.filter.return_value.all.side_effect = [[], [src]]
+    enabled_fanpage = MagicMock(is_active=True, radar_enabled=True, radar_niches=["f1"])
+
+    mock_db.query.return_value.filter.return_value.all.side_effect = [[enabled_fanpage], [], [src]]
     mock_redis.hget.return_value = None
     
     # No latest_post for simplicity
@@ -179,3 +184,31 @@ def test_process_radar_tick_cross_feed_mode1(mock_ingest, mock_mode1, mock_fetch
     
     mock_ingest.assert_called_once()
     mock_mode1.assert_called_once()
+
+
+def test_process_radar_tick_skips_all_sources_when_radar_disabled(mock_db, mock_redis):
+    db_settings = MagicMock()
+    disabled = MagicMock(is_active=True, radar_enabled=False, radar_niches=[])
+    mock_db.query.return_value.filter_by.return_value.first.return_value = db_settings
+    mock_db.query.return_value.filter.return_value.all.return_value = []
+
+    with patch("app.services.ig_viewer_scraper.fetch_many_recent_posts") as fetch:
+        _process_radar_tick(mock_db, mock_redis, db_settings)
+
+    fetch.assert_not_called()
+
+
+def test_process_radar_tick_uses_only_enabled_fanpage_niches(mock_db, mock_redis):
+    db_settings = MagicMock(radar_very_hot_interval_min=8, radar_hot_window_h=24, radar_hot_interval_min=12, radar_cold_interval_min=60)
+    enabled = MagicMock(is_active=True, radar_enabled=True, radar_niches=["f1"])
+    account_f1 = MagicMock(ig_username="f1-driver", is_active=True, niche="f1", leader_score=0)
+    account_motogp = MagicMock(ig_username="moto-rider", is_active=True, niche="motogp", leader_score=0)
+    mock_db.query.return_value.filter.return_value.all.side_effect = [[enabled], [account_f1, account_motogp], []]
+    mock_redis.hget.return_value = None
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
+
+    with patch("app.services.ig_viewer_scraper.fetch_many_recent_posts") as fetch:
+        fetch.return_value = {"f1-driver": []}
+        _process_radar_tick(mock_db, mock_redis, db_settings)
+
+    assert fetch.call_args.args[0] == ["f1-driver"]

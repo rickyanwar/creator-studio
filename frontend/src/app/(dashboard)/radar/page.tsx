@@ -11,11 +11,11 @@ import {
   listRadarNiches,
   listRadarStories,
   getShadowReport,
-  listFanpages,
   previewRadarDecision,
   regenerateRadarDecision,
 } from "@/lib/api";
-import type { RadarAccount, RadarStory, ShadowReport, Fanpage, ShadowReportSection } from "@/lib/types";
+import type { RadarAccount, RadarStory, ShadowReport, ShadowReportSection } from "@/lib/types";
+import { useFanpages } from "@/lib/useFanpages";
 
 function formatAge(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -82,7 +82,7 @@ export default function RadarPage() {
     () => getShadowReport(shadowDays).then((r) => r.data as ShadowReport)
   );
 
-  const { data: fanpages } = useSWR("fanpages", () => listFanpages().then(r => r.data as Fanpage[]));
+  const { data: fanpages = [] } = useFanpages();
 
   const { data: niches } = useSWR("radar-niches", () => listRadarNiches().then(r => r.data as string[]));
 

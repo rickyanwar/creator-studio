@@ -8,10 +8,10 @@ import {
   rejectRecommendation,
   getContentMemory,
   refreshContentMemory,
-  listFanpages,
 } from "@/lib/api";
-import type { StrategyRecommendation, FanpageContentMemory, Fanpage } from "@/lib/types";
+import type { StrategyRecommendation, FanpageContentMemory } from "@/lib/types";
 import { Icon } from "@iconify/react";
+import { useFanpages } from "@/lib/useFanpages";
 
 const APPLICABLE_KINDS = ["sleep_window", "daily_cap"];
 
@@ -19,8 +19,7 @@ export default function StrategyPage() {
   const [tab, setTab] = useState<"proposed" | "applied" | "rejected" | "all">("proposed");
   const [selectedFanpageId, setSelectedFanpageId] = useState<number | "">("");
 
-  const { data: fanpagesRes } = useSWR("fanpages", () => listFanpages());
-  const fanpages = (fanpagesRes?.data || []) as Fanpage[];
+  const { data: fanpages = [] } = useFanpages();
 
   const { data: recsRes, mutate: mutateRecs } = useSWR(
     ["recs", tab, selectedFanpageId],
@@ -46,9 +45,9 @@ export default function StrategyPage() {
       if (rec.kind === "sleep_window") {
         const fp = fanpages.find(f => f.id === rec.fanpage_id);
         const tz = fp?.timezone || "UTC";
-        desc = `${rec.fanpage_name}'s sleep window to ${rec.proposal.publish_sleep_start_hour}:00–${rec.proposal.publish_sleep_end_hour}:00 (${tz})`;
+        desc = `${rec.fanpage_name}'s sleep window to ${rec.proposal?.publish_sleep_start_hour ?? "?"}:00–${rec.proposal?.publish_sleep_end_hour ?? "?"}:00 (${tz})`;
       } else if (rec.kind === "daily_cap") {
-        desc = `${rec.fanpage_name}'s daily limit to ${rec.proposal.publish_daily_limit}`;
+        desc = `${rec.fanpage_name}'s daily limit to ${rec.proposal?.publish_daily_limit ?? "?"}`;
       }
       if (!confirm(`This will change ${desc}. Proceed?`)) return;
     }
@@ -68,11 +67,12 @@ export default function StrategyPage() {
   };
 
   const formatSleepWindow = (prop: any, fpTz: string) => {
+    if (!prop || prop.publish_sleep_start_hour == null || prop.publish_sleep_end_hour == null) return `Unknown (${fpTz})`;
     return `${String(prop.publish_sleep_start_hour).padStart(2, "0")}:00–${String(prop.publish_sleep_end_hour).padStart(2, "0")}:00 (${fpTz})`;
   };
 
   const formatProposal = (rec: StrategyRecommendation) => {
-    if (!APPLICABLE_KINDS.includes(rec.kind)) return JSON.stringify(rec.proposal, null, 2);
+    if (!APPLICABLE_KINDS.includes(rec.kind)) return JSON.stringify(rec.proposal ?? {}, null, 2);
     
     const fp = fanpages.find(f => f.id === rec.fanpage_id);
     const tz = fp?.timezone || "UTC";
@@ -88,10 +88,10 @@ export default function StrategyPage() {
     
     if (rec.kind === "daily_cap") {
       const cur = rec.current_values?.publish_daily_limit || "None";
-      const prop = rec.proposal.publish_daily_limit;
+      const prop = rec.proposal?.publish_daily_limit ?? "None";
       return `${cur} → ${prop}`;
     }
-    return JSON.stringify(rec.proposal, null, 2);
+    return JSON.stringify(rec.proposal ?? {}, null, 2);
   };
 
   return (

@@ -193,7 +193,7 @@ def _router_enabled() -> bool:
 # prevent. Gemini/Groq (outside 9Router entirely) is still the final
 # fallback after every model here is exhausted.
 #
-# 2026-10-10: removed 3.5-flash-high and 3.7-flash-* as they 404. Replaced with 3.8-flash-* and expanded.
+# 2026-10-11: removed retired 3.6/3.7-flash-* and 3.5-flash-high model IDs.
 ROUTER_MODEL_FALLBACKS = [
     "ag/claude-opus-4-6-thinking",
     "ag/claude-sonnet-4-6",
@@ -202,10 +202,9 @@ ROUTER_MODEL_FALLBACKS = [
     "ag/gemini-3.8-flash-medium",
     "ag/gemini-3.8-flash-high",
     "ag/gemini-3.8-flash",
-    "ag/gemini-3.6-flash-low",
-    "ag/gemini-3.6-flash-medium",
-    "ag/gemini-3.6-flash-high",
     "ag/gemini-3.5-flash-extra-low",
+    "ag/gemini-3.5-flash-low",
+    "ag/gemini-3-flash",
     "ag/gemini-3-flash-agent",
     "ag/gemini-3-flash",
     "ag/gemini-pro-agent",

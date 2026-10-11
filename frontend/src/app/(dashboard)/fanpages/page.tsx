@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import useSWR from "swr";
 import Link from "next/link";
-import { listFanpages, updateFanpage, triggerFanpageSync } from "@/lib/api";
+import { updateFanpage, triggerFanpageSync } from "@/lib/api";
 import type { Fanpage } from "@/lib/types";
+import { useFanpages } from "@/lib/useFanpages";
 import { Icon } from "@iconify/react";
-
-const fetcher = () => listFanpages().then((r) => r.data as Fanpage[]);
 
 function FanpageMenu({ fp, onToggleActive, onTogglePublishMode, togglingId }: {
   fp: Fanpage;
@@ -85,7 +83,7 @@ function FanpageMenu({ fp, onToggleActive, onTogglePublishMode, togglingId }: {
 }
 
 export default function FanpagesPage() {
-  const { data: fanpages = [], isLoading, mutate } = useSWR("fanpages", fetcher);
+  const { data: fanpages = [], isLoading, mutate } = useFanpages();
   const [loadingSync, setLoadingSync] = useState(false);
   const [togglingId, setTogglingId] = useState<number | null>(null);
 

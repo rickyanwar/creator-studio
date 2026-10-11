@@ -41,6 +41,15 @@ _TEST_IMAGE_DATAURI = (
 _LATENCY_WARN_MS = 8000
 
 
+def _is_retired_model_error(message: str) -> bool:
+    normalized = message.lower()
+    return (
+        "404" in normalized
+        or "requested entity was not found" in normalized
+        or "not_found" in normalized
+    )
+
+
 @celery_app.task(name="app.tasks.ai_health_check.check_primary_models")
 def check_primary_models():
     _check_vision_primary()
@@ -79,7 +88,8 @@ def _probe(*, context: str, model: str, messages: list) -> None:
     except Exception as exc:
         latency_ms = int((time.monotonic() - t0) * 1000)
         outcome = "failed"
-        error_message = f"Primary model '{model}' health check failed: {exc}"
+        reason = "retired or unavailable (404/NOT_FOUND)" if _is_retired_model_error(str(exc)) else str(exc)
+        error_message = f"Primary model '{model}' health check failed: {reason}"
         logger.error(error_message)
 
     log_ai_copy_event(

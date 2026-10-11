@@ -73,16 +73,15 @@ def _vision_datauri(image_bytes: bytes, max_dim: int = 768, quality: int = 78) -
 # the photo. Everything below is either verified (the first four) or the same
 # Gemini-flash family/architecture as the verified ones.
 #
-# 2026-10-10: removed ag/gemini-3.7-flash-* as they 404. Replaced with ag/gemini-3.8-flash-* and expanded fallbacks.
+# 2026-10-11: removed retired ag/gemini-3.6/3.7-flash-* and 3.5-flash-high IDs.
 _VISION_MODEL_FALLBACKS = [
     "ag/gemini-3.8-flash-low",
     "ag/gemini-3.8-flash-medium",
     "ag/gemini-3.8-flash-high",
     "ag/gemini-3.8-flash",
-    "ag/gemini-3.6-flash-low",
-    "ag/gemini-3.6-flash-medium",
-    "ag/gemini-3.6-flash-high",
     "ag/gemini-3.5-flash-extra-low",
+    "ag/gemini-3.5-flash-low",
+    "ag/gemini-3-flash",
     "ag/gemini-3-flash-agent",
     "ag/gemini-pro-agent",
     "ag/gemini-3.1-pro-low",

@@ -75,9 +75,26 @@ def _process_radar_tick(db, r, db_settings):
     
     now = utcnow_naive()
     
-    # 1. Which usernames the radar tracks
-    # active radar_accounts
+    # 1. Which usernames the radar tracks. Never scrape radar accounts or
+    # viral-only sources unless an active fanpage actually has Radar enabled.
+    radar_fanpages = db.query(TargetFanpage).filter(
+        TargetFanpage.is_active == True,
+        TargetFanpage.radar_enabled == True,
+    ).all()
+    if not radar_fanpages:
+        return
+    enabled_niches = {
+        niche.strip().lower()
+        for fanpage in radar_fanpages
+        for niche in (fanpage.radar_niches or [])
+        if isinstance(niche, str) and niche.strip()
+    }
+
     radar_accs = db.query(RadarAccount).filter(RadarAccount.is_active == True).all()
+    radar_accs = [
+        account for account in radar_accs
+        if (account.niche or "").strip().lower() in enabled_niches
+    ]
     tracked = {acc.ig_username.lower(): {'radar_acc': acc, 'ig_source': None} for acc in radar_accs}
     
     # ig_sources with active fanpage_sources link (trigger == 'viral_only') to active fanpage
@@ -89,6 +106,7 @@ def _process_radar_tick(db, r, db_settings):
             FanpageSource.trigger == 'viral_only',
             FanpageSource.fanpage_id == TargetFanpage.id,
             TargetFanpage.is_active == True
+            ,TargetFanpage.radar_enabled == True
         )
     ).all()
     

@@ -250,13 +250,22 @@ from app.main import app
 from app.database import get_db
 
 def test_hermes_endpoints(db_session: Session, fanpage: TargetFanpage, hermes_token_read: str, hermes_token_write: str):
+    fanpage.ai_video_enabled = True
+    fanpage.ai_video_daily_count = 7
+    fanpage.ai_video_publish_mode = "auto"
+    fanpage.ai_video_template = "motorsport_tech_explainer"
+    db_session.commit()
     app.dependency_overrides[get_db] = lambda: db_session
     client = TestClient(app)
     # GET fanpages
     res = client.get("/hermes/fanpages", headers={"Authorization": f"Bearer {hermes_token_read}"})
     assert res.status_code == 200
     fps = res.json()
-    assert any(fp["id"] == fanpage.id for fp in fps)
+    returned = next(fp for fp in fps if fp["id"] == fanpage.id)
+    assert returned["ai_video_enabled"] is True
+    assert returned["ai_video_daily_count"] == 7
+    assert returned["ai_video_publish_mode"] == "auto"
+    assert returned["ai_video_template"] == "motorsport_tech_explainer"
     
     # GET with missing token
     res = client.get("/hermes/fanpages")
@@ -305,4 +314,3 @@ def test_hermes_endpoints(db_session: Session, fanpage: TargetFanpage, hermes_to
         db_session.delete(rec)
         db_session.commit()
     app.dependency_overrides.clear()
-

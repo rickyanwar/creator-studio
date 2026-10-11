@@ -592,7 +592,7 @@ function HistoryCard({
             className={`aspect-[9/16] max-h-[440px] object-contain ${blurred ? blurImg : ""}`}
           />
         ) : thumb ? (
-          <img src={thumb} alt="Post" className={`w-full aspect-[4/3] object-cover ${blurred ? blurImg : ""}`} />
+          <img src={thumb} alt="Post" loading="lazy" decoding="async" className={`w-full aspect-[4/3] object-cover ${blurred ? blurImg : ""}`} />
         ) : (
           <div className="w-full aspect-[4/3] flex items-center justify-center">
             <Icon icon="solar:gallery-bold-duotone" width={40} className="text-text-disabled" />
@@ -700,6 +700,8 @@ function HistoryLightbox({
             <img
               src={urls[idx]}
               alt={`Image ${idx + 1}`}
+              loading="lazy"
+              decoding="async"
               className={`absolute inset-0 w-full h-full object-contain ${blurred ? blurImg : ""}`}
             />
           ) : (
