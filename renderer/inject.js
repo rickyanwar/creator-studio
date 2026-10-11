@@ -133,7 +133,8 @@ window.renderTemplate = function renderTemplate(args) {
           titleObj.set("width", fixedW);
           titleObj.initDimensions();
           while ((titleObj.height > maxHeight || titleObj.width > fixedW + 1) && titleObj.fontSize > 12) {
-            titleObj.set("fontSize", titleObj.fontSize - 2);
+            const step = titleObj.titleFontSizeStep || 2;
+            titleObj.set("fontSize", titleObj.fontSize - step);
             titleObj.set("width", fixedW);   // undo fabric's word-overflow auto-expand
             titleObj.initDimensions();
           }
@@ -173,7 +174,8 @@ window.renderTemplate = function renderTemplate(args) {
               if (titleObj.textLines.length <= fallback && fallbackFontSize === null) {
                 fallbackFontSize = titleObj.fontSize;
               }
-              titleObj.set("fontSize", titleObj.fontSize - 2);
+              const step = titleObj.titleFontSizeStep || 2;
+              titleObj.set("fontSize", titleObj.fontSize - step);
               titleObj.set("width", fixedW);
               titleObj.initDimensions();
             }

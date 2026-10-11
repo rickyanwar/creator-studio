@@ -23,7 +23,7 @@ import time
 import uuid
 from collections import deque
 from random import randint, uniform, choice
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from urllib.parse import urlsplit
 
 from app.services.ig_media import IGMedia, normalise_post, is_video_node as _is_video_node
@@ -858,6 +858,89 @@ def _record_result(tier: str, username: str, ok: bool,
 
 # ── Main entry point ─────────────────────────────────────────────────────────
 
+def _fetch_for_username(context, ig_username: str, amount: int, tiers_to_run: list) -> list[IGMedia]:
+    tier_errors: dict[str, str] = {}
+
+    for idx, (tier_name, tier_fn) in enumerate(tiers_to_run):
+
+        # Jitter BEFORE trying this tier (not before the first, not after the last/winning)
+        if idx > 0:
+            time.sleep(uniform(2.0, _JITTER_MAX))
+
+        page = None
+        try:
+            page = _new_page(context)
+            raw_nodes = tier_fn(page, ig_username)
+
+            # Classify nodes by explicit video flags vs parse result
+            seen_codes: set[str] = set()
+            medias: list[IGMedia] = []
+            video_count = 0
+            parse_fail_count = 0
+
+            for node in raw_nodes:
+                if _is_video_node(node):
+                    video_count += 1
+                    continue
+                m = normalise_post(node)
+                if m is None:
+                    # Non-video node that failed to parse
+                    parse_fail_count += 1
+                    continue
+                if m.code and m.code in seen_codes:
+                    continue
+                if m.code:
+                    seen_codes.add(m.code)
+                medias.append(m)
+
+            # All nodes are explicitly video → genuine all-video account, success []
+            if raw_nodes and video_count == len(raw_nodes):
+                logger.info("Tier %s returned %d nodes, all video — success with []",
+                            tier_name, len(raw_nodes))
+                _record_result(tier_name, ig_username, True, posts=0)
+                return []
+
+            if medias:
+                # Sort newest first, cap to amount
+                medias.sort(key=lambda m: m.taken_at, reverse=True)
+                medias = medias[:amount]
+                logger.info("Tier %s won for @%s: %d posts",
+                            tier_name, ig_username, len(medias))
+                _record_result(tier_name, ig_username, True, posts=len(medias))
+                return medias
+
+            # 0 usable medias: check if non-video nodes failed to parse
+            if parse_fail_count > 0:
+                total = len(raw_nodes)
+                tier_errors[tier_name] = (
+                    f"parse failed for {parse_fail_count}/{total} nodes"
+                )
+                logger.info("Tier %s: parse failures %d/%d for @%s — falling through",
+                            tier_name, parse_fail_count, total, ig_username)
+            else:
+                tier_errors[tier_name] = "0 image posts after normalisation"
+            _record_result(tier_name, ig_username, False, "script", tier_errors[tier_name])
+
+        except ViewerTierError as exc:
+            tier_errors[tier_name] = sanitize_error(str(exc))
+            logger.info("Tier %s failed for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
+            _record_result(tier_name, ig_username, False, exc.kind, tier_errors[tier_name])
+        except Exception as exc:
+            tier_errors[tier_name] = sanitize_error(f"{type(exc).__name__}: {exc}")
+            logger.warning("Tier %s error for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
+            _record_result(tier_name, ig_username, False,
+                           "site_down" if _navigation_failure(exc, on_goto=False) else "script",
+                           tier_errors[tier_name])
+        finally:
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
+    raise ViewerScrapeError(tier_errors)
+
+
 def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Optional[list[str]] = None) -> list[IGMedia]:
     """Fetch recent image posts via login-free viewer sites.
 
@@ -878,86 +961,51 @@ def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Option
         if only_tiers:
             tiers_to_run = [(n, f) for n, f in _TIERS if n in only_tiers]
 
-        tier_errors: dict[str, str] = {}
+        return _fetch_for_username(context, ig_username, amount, tiers_to_run)
 
-        for idx, (tier_name, tier_fn) in enumerate(tiers_to_run):
-
-            # Jitter BEFORE trying this tier (not before the first, not after the last/winning)
-            if idx > 0:
-                time.sleep(uniform(2.0, _JITTER_MAX))
-
-            page = None
+    finally:
+        if context:
             try:
-                page = _new_page(context)
-                raw_nodes = tier_fn(page, ig_username)
+                context.close()
+            except Exception:
+                pass
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        if pw:
+            try:
+                pw.stop()
+            except Exception:
+                pass
+        _release_lock(lock_token, redis_client)
 
-                # Classify nodes by explicit video flags vs parse result
-                seen_codes: set[str] = set()
-                medias: list[IGMedia] = []
-                video_count = 0
-                parse_fail_count = 0
 
-                for node in raw_nodes:
-                    if _is_video_node(node):
-                        video_count += 1
-                        continue
-                    m = normalise_post(node)
-                    if m is None:
-                        # Non-video node that failed to parse
-                        parse_fail_count += 1
-                        continue
-                    if m.code and m.code in seen_codes:
-                        continue
-                    if m.code:
-                        seen_codes.add(m.code)
-                    medias.append(m)
+def fetch_many_recent_posts(usernames: Sequence[str], amount: int = 12, *, only_tiers: Optional[list[str]] = None) -> dict[str, list[IGMedia] | Exception]:
+    """Fetch recent image posts for multiple accounts via login-free viewer sites.
 
-                # All nodes are explicitly video → genuine all-video account, success []
-                if raw_nodes and video_count == len(raw_nodes):
-                    logger.info("Tier %s returned %d nodes, all video — success with []",
-                                tier_name, len(raw_nodes))
-                    _record_result(tier_name, ig_username, True, posts=0)
-                    return []
+    Uses a single browser session to reuse Cloudflare clearance cookies.
+    """
+    lock_token, redis_client = _acquire_lock()
+    pw = browser = context = None
+    try:
+        pw, browser, context = _launch_browser()
 
-                if medias:
-                    # Sort newest first, cap to amount
-                    medias.sort(key=lambda m: m.taken_at, reverse=True)
-                    medias = medias[:amount]
-                    logger.info("Tier %s won for @%s: %d posts",
-                                tier_name, ig_username, len(medias))
-                    _record_result(tier_name, ig_username, True, posts=len(medias))
-                    return medias
+        tiers_to_run = _TIERS
+        if only_tiers:
+            tiers_to_run = [(n, f) for n, f in _TIERS if n in only_tiers]
 
-                # 0 usable medias: check if non-video nodes failed to parse
-                if parse_fail_count > 0:
-                    total = len(raw_nodes)
-                    tier_errors[tier_name] = (
-                        f"parse failed for {parse_fail_count}/{total} nodes"
-                    )
-                    logger.info("Tier %s: parse failures %d/%d for @%s — falling through",
-                                tier_name, parse_fail_count, total, ig_username)
-                else:
-                    tier_errors[tier_name] = "0 image posts after normalisation"
-                _record_result(tier_name, ig_username, False, "script", tier_errors[tier_name])
-
-            except ViewerTierError as exc:
-                tier_errors[tier_name] = sanitize_error(str(exc))
-                logger.info("Tier %s failed for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
-                _record_result(tier_name, ig_username, False, exc.kind, tier_errors[tier_name])
+        results: dict[str, list[IGMedia] | Exception] = {}
+        for idx, username in enumerate(usernames):
+            if idx > 0:
+                time.sleep(uniform(3.0, 8.0))
+            try:
+                results[username] = _fetch_for_username(context, username, amount, tiers_to_run)
             except Exception as exc:
-                tier_errors[tier_name] = sanitize_error(f"{type(exc).__name__}: {exc}")
-                logger.warning("Tier %s error for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
-                _record_result(tier_name, ig_username, False,
-                               "site_down" if _navigation_failure(exc, on_goto=False) else "script",
-                               tier_errors[tier_name])
-            finally:
-                if page:
-                    try:
-                        page.close()
-                    except Exception:
-                        pass
+                results[username] = exc
 
-        raise ViewerScrapeError(tier_errors)
+        return results
 
     finally:
         if context:

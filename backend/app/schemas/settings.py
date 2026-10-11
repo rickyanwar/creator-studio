@@ -33,6 +33,18 @@ class SettingsUpdate(BaseModel):
     ai_video_vision_qc_enabled: Optional[bool] = None
     ai_video_credit_reserve: Optional[int] = Field(None, ge=0, le=10000)
 
+    # ── Viral Radar ──
+    radar_sleep_start_wib: Optional[int] = None
+    radar_sleep_end_wib: Optional[int] = None
+    radar_very_hot_interval_min: Optional[int] = None
+    radar_hot_interval_min: Optional[int] = None
+    radar_cold_interval_min: Optional[int] = None
+    radar_hot_window_h: Optional[int] = None
+    radar_track_max_age_h: Optional[int] = None
+    radar_story_sharing: Optional[str] = None
+    radar_share_max: Optional[int] = None
+    radar_news_stagger_max_min: Optional[int] = None
+
 
 class SettingsOut(BaseModel):
     crawl_interval_minutes: int
@@ -70,6 +82,18 @@ class SettingsOut(BaseModel):
     ai_video_worker_enabled: bool = True
     ai_video_vision_qc_enabled: bool = False
     ai_video_credit_reserve: int = Field(0, ge=0, le=10000)
+
+    # ── Viral Radar ──
+    radar_sleep_start_wib: Optional[int] = None
+    radar_sleep_end_wib: Optional[int] = None
+    radar_very_hot_interval_min: int = 8
+    radar_hot_interval_min: int = 12
+    radar_cold_interval_min: int = 50
+    radar_hot_window_h: int = 2
+    radar_track_max_age_h: int = 48
+    radar_story_sharing: str = "shared"
+    radar_share_max: int = 0
+    radar_news_stagger_max_min: int = 10
 
     model_config = {"from_attributes": False}
 

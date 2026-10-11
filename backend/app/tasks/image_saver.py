@@ -9,10 +9,80 @@ import httpx
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.config import get_settings
+from app.services.ig_media import is_ig_cdn_url, unwrap_proxy_url
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+def _validate_ig_url(url: str) -> bool:
+    """Validate that the URL points to an allowed CDN host to prevent SSRF."""
+    return is_ig_cdn_url(url)
+
+
+def download_ig_image(url: str, dest: Path | None = None) -> bytes | None:
+    """Download an IG image safely (SSRF protection). 
+    If dest is provided, saves to file and returns None.
+    If dest is None, returns bytes. Caps at 2 MB.
+    """
+    clean_url = unwrap_proxy_url(url)
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; MediaBot/1.0)",
+    }
+    
+    client = httpx.Client(timeout=15 if dest is None else 30, follow_redirects=False)
+    try:
+        current_url = clean_url
+        redirect_count = 0
+        
+        while True:
+            if not _validate_ig_url(current_url):
+                logger.warning("Blocked attempt to download non-IG CDN url: %s", current_url)
+                if dest is not None:
+                    raise ValueError(f"URL host not allowed: {current_url}")
+                return None
+                
+            req = client.build_request("GET", current_url, headers=headers)
+            resp = client.send(req, stream=True)
+            
+            if resp.is_redirect:
+                resp.close()
+                redirect_count += 1
+                if redirect_count > 3:
+                    if dest is not None:
+                        raise ValueError("Too many redirects")
+                    return None
+                current_url = str(resp.next_request.url)
+                continue
+                
+            resp.raise_for_status()
+            
+            if dest is not None:
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_bytes(chunk_size=8192):
+                        f.write(chunk)
+                resp.close()
+                return None
+            else:
+                data = bytearray()
+                for chunk in resp.iter_bytes(chunk_size=8192):
+                    data.extend(chunk)
+                    if len(data) > 2 * 1024 * 1024:
+                        resp.close()
+                        return None  # Exceeded 2 MB cap
+                resp.close()
+                return bytes(data)
+                
+    except Exception as e:
+        if dest is not None:
+            raise e
+        return None
+    finally:
+        client.close()
+
+def _download_image(url: str, dest: Path, timeout: int = 30):
+    """Legacy helper, uses safe download_ig_image internally."""
+    download_ig_image(url, dest)
 
 @celery_app.task(name="app.tasks.image_saver.save_post_images", bind=True, max_retries=3)
 def save_post_images(self, post_id: int, image_urls: list[str]):
@@ -73,16 +143,3 @@ def save_post_images(self, post_id: int, image_urls: list[str]):
     finally:
         db.close()
 
-
-
-
-def _download_image(url: str, dest: Path, timeout: int = 30):
-    """Download an image URL and save to dest path."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; MediaBot/1.0)",
-    }
-    with httpx.stream("GET", url, headers=headers, timeout=timeout, follow_redirects=True) as resp:
-        resp.raise_for_status()
-        with open(dest, "wb") as f:
-            for chunk in resp.iter_bytes(chunk_size=8192):
-                f.write(chunk)

@@ -230,6 +230,57 @@ def _crawl_source(db, source_id: int) -> None:
     fetch_amount = random.randint(9, 15)
     medias = _fetch_medias(source, backend, db, fetch_amount)
 
+    _ingest_mode1_medias(db, source, medias)
+
+    # Scrape once, feed both: Also ingest into Radar if tracked
+    _try_radar_ingest(db, source, medias)
+
+
+def _try_radar_ingest(db, source, medias):
+    from app.models.radar import RadarAccount
+    from app.services.radar_ingest import ingest_medias, default_thumb_fetcher
+    try:
+        ig_username_lower = source.ig_username.lower()
+        radar_acc = db.query(RadarAccount).filter(
+            RadarAccount.ig_username.ilike(ig_username_lower),
+            RadarAccount.is_active == True
+        ).first()
+        
+        # Check if source is viral_only tracked
+        from app.models.fanpage_sources import FanpageSource
+        from app.models.target_fanpages import TargetFanpage
+        from sqlalchemy import exists
+        
+        is_radar_tracked = radar_acc is not None
+        if not is_radar_tracked:
+            is_radar_tracked = db.query(
+                exists().where(
+                    FanpageSource.ig_source_id == source.id,
+                    FanpageSource.is_active == True,
+                    FanpageSource.trigger == 'viral_only',
+                    FanpageSource.fanpage_id == TargetFanpage.id,
+                    TargetFanpage.is_active == True
+                )
+            ).scalar()
+
+        if is_radar_tracked:
+            ingest_medias(
+                db, 
+                username=source.ig_username, 
+                radar_account_id=radar_acc.id if radar_acc else None,
+                ig_source_id=source.id,
+                medias=medias,
+                now=datetime.now(timezone.utc),
+                thumb_fetcher=default_thumb_fetcher
+            )
+    except Exception as exc:
+        db.rollback()
+        logger.error("Error cross-ingesting to Radar for @%s: %s", source.ig_username, exc, exc_info=True)
+
+
+def _ingest_mode1_medias(db, source, medias) -> None:
+    from app.models.posts import Post, MediaType, PostStatus
+
     new_count = 0
     from app.models.settings import Settings as DBSettings
     db_settings = db.query(DBSettings).filter_by(id=1).first()

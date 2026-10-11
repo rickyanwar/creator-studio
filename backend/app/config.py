@@ -59,10 +59,10 @@ class Settings(BaseSettings):
     # timing out instead of failing fast, which silently multiplied into
     # multi-hour gallery-download/render stalls before being found (see
     # design_images._VISION_MODEL_FALLBACKS for the other models confirmed
-    # broken the same way). "ag/gemini-3.7-flash-low" is the current
+    # broken the same way). "ag/gemini-3.8-flash-low" is the current
     # equivalent-tier replacement, confirmed working directly against a real
     # photo the same day (~2.5s).
-    nine_router_vision_model: str = "ag/gemini-3.7-flash-low"
+    nine_router_vision_model: str = "ag/gemini-3.8-flash-low"
 
     # ── AI Providers (fallback) ───────────────────
     gemini_api_key: str = ""

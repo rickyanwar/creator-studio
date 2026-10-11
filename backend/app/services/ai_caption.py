@@ -193,25 +193,23 @@ def _router_enabled() -> bool:
 # prevent. Gemini/Groq (outside 9Router entirely) is still the final
 # fallback after every model here is exhausted.
 #
-# 2026-09-02: direct testing found "ag/gemini-3-flash-agent" now 500s after
-# ~44s (provider retiring that generation — same root cause that separately
-# broke design_images._VISION_MODEL_FALLBACKS's primary that day) and
-# "ag/gemini-3.5-flash-high" 404s outright (fails fast, so harmless but
-# useless). Both DROPPED (not just deprioritized) and replaced with
-# ag/gemini-3.7-flash-medium and ag/gemini-3.6-flash-high — every model in
-# this list re-verified responding for real that day before being added.
-# ag/claude-opus-4-6-thinking put first per user request the same day
-# (confirmed responding, ~2.9s) — spans a 3rd model family ahead of
-# Gemini/GPT-OSS in case of a family-wide outage on either of the others.
+# 2026-10-10: removed 3.5-flash-high and 3.7-flash-* as they 404. Replaced with 3.8-flash-* and expanded.
 ROUTER_MODEL_FALLBACKS = [
-    "ag/claude-opus-4-6-thinking",     # confirmed working 2026-09-02 (~2.9s)
-    "ag/claude-sonnet-4-6",            # confirmed working 2026-09-02 (~1.8s)
-    "ag/gpt-oss-120b-medium",          # confirmed working 2026-09-02 (~1.2s)
-    "ag/gemini-pro-agent",             # confirmed working 2026-09-02 (~3.5s)
-    "ag/gemini-3.1-pro-low",           # confirmed working 2026-09-02 (~3.5s)
-    "ag/gemini-3.6-flash-medium",      # confirmed working 2026-09-02 (~2.1s)
-    "ag/gemini-3.7-flash-medium",      # confirmed working 2026-09-02 (~3.1s)
-    "ag/gemini-3.6-flash-high",        # confirmed working 2026-09-02 (~2.3s)
+    "ag/claude-opus-4-6-thinking",
+    "ag/claude-sonnet-4-6",
+    "ag/gpt-oss-120b-medium",
+    "ag/gemini-3.8-flash-low",
+    "ag/gemini-3.8-flash-medium",
+    "ag/gemini-3.8-flash-high",
+    "ag/gemini-3.8-flash",
+    "ag/gemini-3.6-flash-low",
+    "ag/gemini-3.6-flash-medium",
+    "ag/gemini-3.6-flash-high",
+    "ag/gemini-3.5-flash-extra-low",
+    "ag/gemini-3-flash-agent",
+    "ag/gemini-3-flash",
+    "ag/gemini-pro-agent",
+    "ag/gemini-3.1-pro-low",
 ]
 
 

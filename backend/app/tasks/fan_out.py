@@ -18,6 +18,76 @@ def _fanpage_stagger(slot: int) -> int:
     return 0 if slot == 0 else random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
 
 
+def fanout_link(db, post, link, countdown: int, radar_decision_id: int | None = None) -> bool:
+    """Executes fan-out for a single source link (recreate or plain repost).
+    
+    Returns True if a job was created or recreating was scheduled.
+    """
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+    # Mode 1 gate: skip fanpages that have disabled IG repost
+    if not link.fanpage.mode1_ig_repost_enabled:
+        logger.info(
+            "Post %d: skipping fanpage %d — mode1_ig_repost_enabled is false",
+            post.id, link.fanpage_id,
+        )
+        return False
+
+    # Idempotency: skip if job already exists
+    existing = db.query(PublishJob).filter_by(
+        post_id=post.id, fanpage_id=link.fanpage_id
+    ).first()
+    if existing:
+        return False
+
+    # Mode 3: classify the IG post image and rebuild it on a quote/news
+    # template instead of reposting the original. Per-source override
+    # (link.ig_recreate_enabled) wins when set; otherwise inherit the
+    # fanpage's blanket setting — lets a fanpage recreate some sources'
+    # posts while reposting others plain (caption-only).
+    recreate = link.ig_recreate_enabled
+    if recreate is None:
+        recreate = link.fanpage.ig_recreate_enabled
+    if recreate:
+        from app.tasks.ig_recreate import recreate_post_for_fanpage
+        # Same stagger as the plain-repost path below — without it,
+        # every fanpage recreating the same source's post would render
+        # and (if auto-publish) go live within seconds of each other.
+        recreate_post_for_fanpage.apply_async(args=[post.id, link.fanpage_id], kwargs={"radar_decision_id": radar_decision_id}, countdown=countdown)
+        return True
+
+    job = PublishJob(
+        post_id=post.id,
+        fanpage_id=link.fanpage_id,
+        status=PublishJobStatus.pending_caption,
+    )
+    db.add(job)
+    db.flush()
+
+    if radar_decision_id:
+        from app.models.radar import RadarStoryDecision, DecisionStatus
+        decision = db.query(RadarStoryDecision).filter_by(id=radar_decision_id).first()
+        if decision:
+            decision.publish_job_id = job.id
+            decision.status = DecisionStatus.CREATED
+
+    # Commit BEFORE queueing: with countdown=0 the caption worker can pick the
+    # task up immediately and must find the committed job row.
+    db.commit()
+
+    # Stagger caption generation (and therefore publishing) so fanpages
+    # sharing the same IG source don't all post at exactly the same time.
+    from app.tasks.ai_generator import generate_caption_for_job
+    generate_caption_for_job.apply_async(args=[job.id], countdown=countdown)
+
+    if countdown:
+        logger.info(
+            "Job %d (fanpage=%d) delayed %ds to avoid simultaneous posting",
+            job.id, link.fanpage_id, countdown,
+        )
+    return True
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +99,6 @@ def create_fanout_jobs(self, post_id: int):
         from app.models.posts import Post, PostStatus
         from app.models.fanpage_sources import FanpageSource
         from app.models.target_fanpages import TargetFanpage
-        from app.models.publish_jobs import PublishJob, PublishJobStatus
 
         post = db.query(Post).filter_by(id=post_id).first()
         if not post:
@@ -51,62 +120,22 @@ def create_fanout_jobs(self, post_id: int):
         created = 0
         slot = 0  # stagger slot index for fanpages sharing this source
         for link in fanpage_links:
-            # Mode 1 gate: skip fanpages that have disabled IG repost
-            if not link.fanpage.mode1_ig_repost_enabled:
+            # Skip viral_only links; they wait for radar dispatcher.
+            if getattr(link, "trigger", "every_post") == "viral_only":
                 logger.info(
-                    "Post %d: skipping fanpage %d — mode1_ig_repost_enabled is false",
+                    "Post %d: skipping fanpage %d — link trigger is viral_only",
                     post_id, link.fanpage_id,
                 )
                 continue
 
-            # Idempotency: skip if job already exists
-            existing = db.query(PublishJob).filter_by(
-                post_id=post_id, fanpage_id=link.fanpage_id
-            ).first()
-            if existing:
-                continue
-
-            # Mode 3: classify the IG post image and rebuild it on a quote/news
-            # template instead of reposting the original. Per-source override
-            # (link.ig_recreate_enabled) wins when set; otherwise inherit the
-            # fanpage's blanket setting — lets a fanpage recreate some sources'
-            # posts while reposting others plain (caption-only).
-            recreate = link.ig_recreate_enabled
-            if recreate is None:
-                recreate = link.fanpage.ig_recreate_enabled
-            if recreate:
-                from app.tasks.ig_recreate import recreate_post_for_fanpage
-                # Same stagger as the plain-repost path below — without it,
-                # every fanpage recreating the same source's post would render
-                # and (if auto-publish) go live within seconds of each other.
-                stagger = _fanpage_stagger(slot)
-                recreate_post_for_fanpage.apply_async(args=[post_id, link.fanpage_id], countdown=stagger)
-                slot += 1
-                continue
-
-            job = PublishJob(
-                post_id=post_id,
-                fanpage_id=link.fanpage_id,
-                status=PublishJobStatus.pending_caption,
-            )
-            db.add(job)
-            db.flush()
-            created += 1
-            db.commit()
-
-            # Stagger caption generation (and therefore publishing) so fanpages
-            # sharing the same IG source don't all post at exactly the same time.
             stagger = _fanpage_stagger(slot)
-
-            from app.tasks.ai_generator import generate_caption_for_job
-            generate_caption_for_job.apply_async(args=[job.id], countdown=stagger)
-
-            if stagger:
-                logger.info(
-                    "Job %d (fanpage=%d) delayed %ds to avoid simultaneous posting",
-                    job.id, link.fanpage_id, stagger,
-                )
-            slot += 1
+            if fanout_link(db, post, link, countdown=stagger):
+                # When fanout_link returns True, we might have created a PublishJob
+                # (if Mode 1). We should commit here inside the loop for the newly created job
+                # to be persisted immediately, just like the old code.
+                db.commit()
+                created += 1
+                slot += 1
 
         post.status = PostStatus.pending_fanout
         db.commit()

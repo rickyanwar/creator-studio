@@ -26,6 +26,19 @@ from app.models.post_metric_snapshots import PostMetricSnapshot
 from app.models.api_tokens import ApiToken
 from app.models.strategy import StrategyRecommendation, FanpageContentMemory
 from app.models.ai_video import GflowWorker, GflowAccount, VideoIdea, VideoJob
+from app.models.radar import (
+    RadarAccount,
+    RadarPost,
+    RadarSnapshot,
+    RadarStory,
+    RadarStoryDecision,
+    StoryContentHint,
+    StoryShelfKind,
+    StoryStatus,
+    DecisionRule,
+    DecisionStatus,
+)
+from app.models.f1_drivers import F1Driver
 
 __all__ = [
     "User",
@@ -71,4 +84,15 @@ __all__ = [
     "GflowAccount",
     "VideoIdea",
     "VideoJob",
+    "RadarAccount",
+    "RadarPost",
+    "RadarSnapshot",
+    "RadarStory",
+    "RadarStoryDecision",
+    "StoryContentHint",
+    "StoryShelfKind",
+    "StoryStatus",
+    "DecisionRule",
+    "DecisionStatus",
+    "F1Driver",
 ]

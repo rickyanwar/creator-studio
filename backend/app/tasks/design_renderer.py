@@ -26,6 +26,24 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+import copy
+
+def clean_title_for_render(title: str) -> str:
+    if not title:
+        return ""
+    return title.strip()
+
+def clear_template_text_objects(template_json: dict) -> dict:
+    if not template_json:
+        return template_json
+    tj = copy.deepcopy(template_json)
+    for obj in tj.get("objects", []):
+        role = obj.get("placeholderRole")
+        if role in ("title", "subtitle", "caption", "label"):
+            if "text" in obj:
+                obj["text"] = ""
+    return tj
+
 _RENDER_TIMEOUT = 120.0
 
 
@@ -91,7 +109,7 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
     subtitle = job.design_subtitle or ""
     title = f"{heading}. {subtitle}".strip(". ")
     try:
-        src, path = source_news_main(db, title, niche, exclude_path=excluded_local_path)
+        src, path = source_news_main(db, title, niche, exclude_paths={excluded_local_path} if excluded_local_path else None)
         if src:
             gi = db.query(GalleryImage).filter_by(local_path=path).first() if path else None
             return src, gi, (f"gallery:{gi.id}" if gi else "search")
@@ -346,6 +364,8 @@ def render_design(self, job_id: int):
         news_badge_text = _news_badge_text(fanpage) if category == "news" else ""
 
         # ── Render via Puppeteer + Fabric.js service ──
+        title = clean_title_for_render(title)
+        template_json = clear_template_text_objects(template_json)
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
             json={
@@ -494,7 +514,7 @@ def render_discussion(self, job_id: int):
                 logger.warning("Discussion: gallery lookup failed for %r (job %d): %s", subject, job_id, exc)
             if not image_src:
                 try:
-                    uri = fetch_subject_datauri(db, subject, "face", niche)
+                    uri, _ = fetch_subject_datauri(db, subject, "face", niche)
                     if uri:
                         image_src, image_marker = uri, "search"
                 except Exception as exc:
@@ -555,13 +575,15 @@ def render_discussion(self, job_id: int):
         if is_split:
             focus_points = align_split_focus_points(focus_points)
 
+        template_json = clear_template_text_objects(template_json)
+        d_title = clean_title_for_render(job.design_title or "")
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
             json={
                 "template_json": template_json,
                 "width": template.canvas_width,
                 "height": template.canvas_height,
-                "title": job.design_title or "",
+                "title": d_title,
                 "label": job.design_subtitle or "DISCUSSION",
                 "watermark": fanpage.watermark_text or "",
                 "watermark_image": watermark_datauri(fanpage),
@@ -754,11 +776,13 @@ def render_pinterest(self, job_id: int):
         # branch), so leaving this out cleanly removes the badge/pill from
         # Pinterest cards instead of showing a label that was never
         # actually about the reused template's own News/Discussion framing.
+        template_json = clear_template_text_objects(template_json)
+        d_title = clean_title_for_render(job.design_title or "")
         payload = {
             "template_json": template_json,
             "width": template.canvas_width,
             "height": template.canvas_height,
-            "title": job.design_title or "",
+            "title": d_title,
             "subtitle": "",
             "caption": job.design_caption or "",
             "watermark": fanpage.watermark_text or "",
@@ -869,7 +893,7 @@ def _select_facebook_photo_image(db, job, category: str, niche: str, exclude_mar
 
     grounding = _facebook_photo_grounding(category, job)
     try:
-        src, path = source_news_main(db, grounding, niche, exclude_path=excluded_path)
+        src, path = source_news_main(db, grounding, niche, exclude_paths={excluded_path} if excluded_path else None)
         if src:
             gi = db.query(GalleryImage).filter_by(local_path=path).first() if path else None
             return src, gi, (f"gallery:{gi.id}" if gi else "search")
@@ -1015,13 +1039,15 @@ def render_facebook_photo(self, job_id: int):
         else:
             subtitle, label = "", _news_badge_text(fanpage)
 
+        template_json = clear_template_text_objects(template_json)
+        d_title = clean_title_for_render(job.design_title or "")
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
             json={
                 "template_json": template_json,
                 "width": template.canvas_width,
                 "height": template.canvas_height,
-                "title": job.design_title or "",
+                "title": d_title,
                 "subtitle": subtitle,
                 "caption": "",
                 "label": label,

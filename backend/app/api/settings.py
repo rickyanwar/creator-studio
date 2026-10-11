@@ -55,6 +55,16 @@ def get_settings(db: DB, _: CurrentUser):
         ai_video_worker_enabled=row.ai_video_worker_enabled,
         ai_video_vision_qc_enabled=row.ai_video_vision_qc_enabled,
         ai_video_credit_reserve=row.ai_video_credit_reserve,
+        radar_sleep_start_wib=row.radar_sleep_start_wib,
+        radar_sleep_end_wib=row.radar_sleep_end_wib,
+        radar_very_hot_interval_min=row.radar_very_hot_interval_min,
+        radar_hot_interval_min=row.radar_hot_interval_min,
+        radar_cold_interval_min=row.radar_cold_interval_min,
+        radar_hot_window_h=row.radar_hot_window_h,
+        radar_track_max_age_h=row.radar_track_max_age_h,
+        radar_story_sharing=row.radar_story_sharing,
+        radar_share_max=row.radar_share_max,
+        radar_news_stagger_max_min=row.radar_news_stagger_max_min,
     )
 
 
