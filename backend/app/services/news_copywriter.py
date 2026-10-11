@@ -587,9 +587,15 @@ def _generate_with_fallback(
             raise
 
         from app.services.ai_caption import ROUTER_MODEL_FALLBACKS, call_router_model
+        from app.services.model_health import is_dead as _is_dead
+
+        # Skip known-dead models; fall back to full list if all would be skipped.
+        _live_fallbacks = [m for m in ROUTER_MODEL_FALLBACKS if not _is_dead(m)]
+        if not _live_fallbacks:
+            _live_fallbacks = list(ROUTER_MODEL_FALLBACKS)
 
         last_error: Exception = parse_exc
-        for model in ROUTER_MODEL_FALLBACKS:
+        for model in _live_fallbacks:
             models_tried.append(model)
             try:
                 raw = call_router_model(prompt, model)

@@ -1,4 +1,6 @@
 from functools import lru_cache
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -131,6 +133,11 @@ class Settings(BaseSettings):
     crawl_sleep_start_wib: int = 5   # 05:00 WIB — UK sleeping (BST 23:00)
     crawl_sleep_end_wib: int = 13    # 13:00 WIB — UK waking up (BST 07:00)
     max_post_age_days: int = 2       # Skip IG posts older than this many days
+
+    # Optional radar-specific sleep window overrides. DB settings take
+    # precedence; unset values leave radar crawling active all day.
+    radar_sleep_start_wib: Optional[int] = None
+    radar_sleep_end_wib: Optional[int] = None
 
     # ── Design renderer (Phase 2D) ────────────────
     renderer_url: str = "http://renderer:3001"

@@ -327,3 +327,63 @@ proposed ──┬──→ approved ──→ applied
 - **Exploration**: Dedicate ~10-20% of recommendations to bandit-style exploration to discover new optima.
 - **Prerequisites**: Never propose changes when `metrics.enabled` is `false` or `metrics.plan_status` != `ok`.
 - **Feedback Loop**: Periodically query `GET /hermes/recommendations` to learn from `approved` and `rejected` outcomes.
+
+## 8. Model Health Endpoint
+
+### GET /hermes/model-health
+Scope: `read`
+
+Returns the current health of all configured 9Router model chains, read from
+Redis (populated by the `check-model-health` Celery beat task every 6 h) plus
+one fresh `/v1/models` call. **Never triggers probes.**
+
+```bash
+curl -H "Authorization: Bearer $HERMES_STUDIO_TOKEN" "$STUDIO_URL/hermes/model-health"
+```
+
+```json
+{
+  "chains": {
+    "text": [
+      {"model": "ag/claude-opus-4-6-thinking", "status": "ok", "checked_at": "2026-10-11T06:00:00", "message": "pong"},
+      {"model": "ag/gemini-3.8-flash-low",     "status": "dead", "checked_at": "2026-10-11T06:00:00", "message": "404 NOT_FOUND"}
+    ],
+    "vision": [
+      {"model": "ag/gemini-3.8-flash-low",     "status": "ok",   "checked_at": "2026-10-11T06:00:00", "message": "pong"}
+    ]
+  },
+  "primaries": {
+    "text":       {"model": "auto", "status": "ok", "checked_at": "2026-10-11T06:00:00", "message": "pong"},
+    "discussion": {"model": "smart-combo", "status": "ok", "checked_at": "2026-10-11T06:00:00", "message": "pong"},
+    "vision":     {"model": "ag/gemini-3.8-flash-low", "status": "ok", "checked_at": "2026-10-11T06:00:00", "message": "pong"}
+  },
+  "dead": ["ag/gemini-3.8-flash-low"],
+  "live_router_models": ["ag/gemini-3.8-flash-low", "ag/claude-opus-4-6-thinking"],
+  "unused_live_models": ["ag/some-live-model-not-in-any-chain"]
+}
+```
+
+**Field reference**
+
+| Field | Type | Description |
+|---|---|---|
+| `chains.text` | array | Text fallback chain entries in fallback order |
+| `chains.vision` | array | Vision fallback chain entries in fallback order |
+| `primaries` | object | Health of each configured primary model |
+| `dead` | array | Model IDs currently classified as dead (within 26 h window) |
+| `live_router_models` | array | All IDs from `/v1/models` excluding `cx/*` |
+| `unused_live_models` | array | `ag/*` live IDs not in any configured chain |
+
+**Status values** for each chain/primary entry:
+
+| Status | Meaning |
+|---|---|
+| `ok` | Last probe succeeded within 40 s |
+| `dead` | 404 / NOT_FOUND / "Requested entity was not found" |
+| `unavailable` | 429 / 5xx / quota ("reset after", rate limit) — may recover |
+| `error` | Other probe failure |
+| `unknown` | Not yet probed (no Redis entry) |
+
+**Hermes usage guidance** — see `docs/hermes/skills/model-health/SKILL.md` for
+the full daily-check workflow: when to alert, how to build a cleanup PR, and
+the single-use SHA-bound approval flow before merging.

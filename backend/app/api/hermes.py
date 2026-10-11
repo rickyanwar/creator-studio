@@ -215,3 +215,32 @@ def list_video_ideas_hermes(db: DB, token: ApiToken = Depends(require_hermes_sco
     if fanpage_id: q = q.filter(VideoIdea.fanpage_id == fanpage_id)
     if status: q = q.filter(VideoIdea.status == status)
     return [_video_idea_item(db, idea) for idea in q.order_by(VideoIdea.created_at.desc()).limit(200).all()]
+
+
+_model_health_read_scope = require_hermes_scope("read")
+
+
+@router.get("/model-health")
+def get_model_health(token: ApiToken = Depends(_model_health_read_scope)):
+    """Current model health snapshot.
+
+    Reads from Redis + one /v1/models call — never triggers probes.
+
+    Response shape:
+    {
+      "chains": {
+        "text":   [{"model", "status", "checked_at", "message"}, ...],
+        "vision": [{"model", "status", "checked_at", "message"}, ...]
+      },
+      "primaries": {
+        "text":       {"model", "status", "checked_at", "message"} | null,
+        "discussion": {"model", "status", "checked_at", "message"} | null,
+        "vision":     {"model", "status", "checked_at", "message"} | null
+      },
+      "dead":               [model_id, ...],
+      "live_router_models": [model_id, ...],   // cx/* excluded
+      "unused_live_models": [model_id, ...]    // ag/* live but in no chain
+    }
+    """
+    from app.services.model_health import get_health_snapshot
+    return get_health_snapshot()

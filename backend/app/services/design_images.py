@@ -90,11 +90,19 @@ _VISION_MODEL_FALLBACKS = [
 
 def _vision_models() -> list[str]:
     from app.config import get_settings
+    from app.services.model_health import is_dead as _is_dead
 
     primary = get_settings().nine_router_vision_model
     ordered = [primary] + [m for m in _VISION_MODEL_FALLBACKS if m != primary]
     seen = set()
-    return [m for m in ordered if m and not (m in seen or seen.add(m))]
+    full_list = [
+        m for m in ordered
+        if m and not m.startswith("cx/") and not (m in seen or seen.add(m))
+    ]
+
+    # Skip known-dead models; if all would be dead, keep the full original list.
+    live = [m for m in full_list if not _is_dead(m)]
+    return live if live else full_list
 
 
 def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, context: str = "vision") -> str:

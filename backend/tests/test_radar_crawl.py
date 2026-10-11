@@ -44,6 +44,31 @@ def test_radar_crawl_tick_sleep_window(mock_process, mock_db, mock_redis):
         mock_process.assert_not_called()
         mock_redis.eval.assert_called()
 
+
+@patch("app.tasks.radar_crawl._process_radar_tick")
+def test_radar_crawl_tick_disabled_with_database_sleep_values_none(
+    mock_process, mock_db, mock_redis
+):
+    """Unset DB sleep windows must fall back safely when radar is disabled."""
+    db_settings = MagicMock(
+        radar_sleep_start_wib=None,
+        radar_sleep_end_wib=None,
+        radar_very_hot_interval_min=None,
+        radar_hot_window_h=None,
+        radar_hot_interval_min=None,
+        radar_cold_interval_min=None,
+    )
+    mock_db.query.return_value.filter_by.return_value.first.return_value = db_settings
+
+    with patch("app.tasks.radar_crawl.SessionLocal", return_value=mock_db), \
+         patch("app.tasks.radar_crawl._redis", return_value=mock_redis), \
+         patch("app.tasks.radar_crawl.settings.radar_sleep_start_wib", None), \
+         patch("app.tasks.radar_crawl.settings.radar_sleep_end_wib", None):
+        radar_crawl_tick()
+
+    mock_process.assert_called_once()
+    mock_redis.eval.assert_called()
+
 @patch("app.services.ig_viewer_scraper.fetch_many_recent_posts")
 @patch("app.services.radar_ingest.ingest_medias")
 def test_process_radar_tick_ordering_and_cap(mock_ingest, mock_fetch, mock_db, mock_redis):

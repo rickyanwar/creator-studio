@@ -14,6 +14,7 @@ Group=gflow
 WorkingDirectory=/opt/studio
 EnvironmentFile=/etc/gflow-worker.env
 ExecStart=/home/gflow/.local/bin/uv run --project /home/gflow/gflow-cli-083 python -m gflow_worker
+SuccessExitStatus=143
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=true

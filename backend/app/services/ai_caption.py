@@ -358,7 +358,26 @@ def generate_caption(
     if _router_enabled():
         last_router_exc: Exception | None = None
         models_to_try = ([preferred_router_model] if preferred_router_model else []) + [None, *ROUTER_MODEL_FALLBACKS]
+        from app.services.model_health import is_dead
+        from app.services.nine_router import get_nine_router_config
+
+        default_model = get_nine_router_config().model
+
+        # Health is advisory and fail-open. Keep the original chain as a
+        # safety net when every configured model is marked dead.
+        original_models_to_try = list(models_to_try)
+        models_to_try = [
+            model for model in models_to_try
+            if (
+                (model is None and not is_dead(default_model))
+                or (model is not None and not model.startswith("cx/") and not is_dead(model))
+            )
+        ]
+        if not models_to_try:
+            models_to_try = [m for m in original_models_to_try if not (m and m.startswith("cx/"))]
         for model in models_to_try:
+            if model and model.startswith("cx/"):
+                continue
             try:
                 text = _call_router(prompt, model=model)
                 return text, "router"

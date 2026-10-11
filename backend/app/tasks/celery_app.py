@@ -43,6 +43,7 @@ celery_app = Celery(
         "app.tasks.radar",
         "app.tasks.radar_crawl",
         "app.tasks.radar_dispatch",
+        "app.tasks.model_health",
     ],
 )
 
@@ -311,5 +312,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.radar_dispatch.radar_dispatch_tick",
         "schedule": 60,
         "options": {"expires": 55},
+    },
+    # Model health sweep: every 6 h — probes all configured 9Router models and
+    # caches results in Redis so fallback chains can skip dead models.  Logs a
+    # warning (and an ai_copy_event row) when a model newly becomes dead or a
+    # primary is dead — see model_health.py.
+    "check-model-health": {
+        "task": "app.tasks.model_health.check_model_health",
+        "schedule": crontab(minute=0, hour="*/6"),
     },
 }
