@@ -1,7 +1,8 @@
 import pytest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from app.models.gallery import GalleryImage
+from app.api.labeler import stats
 from app.services import muse_labeler
 
 
@@ -102,12 +103,91 @@ def test_claim_label_filter_restricts_candidates(db_session):
     assert [item["id"] for item in claimed] == [face.id]
 
 
+def test_date_only_attributes_are_claimable_and_muse_result_merges_metadata(db_session):
+    row = _image(10602, datetime.now(timezone.utc).replace(tzinfo=None))
+    row.keyword = "max verstappen f1"
+    row.captured_at = date(2026, 1, 2)
+    row.attributes = {
+        "captured_at_source": "getty_id",
+        "captured_at_confidence": "day",
+        "getty_hints": {"asset_id": "abc"},
+        "people": [{"name": "Keyword Person", "confidence": 0.8, "source": "keyword"}],
+    }
+    db_session.add(row)
+    db_session.commit()
+    redis = LeaseRedis()
+
+    assert [item["id"] for item in muse_labeler.claim_images(db_session, 50, "muse", redis)] == [row.id]
+
+    result = muse_labeler.process_results(
+        db_session,
+        {"results": [{"id": row.id, "shot_type": "portrait", "people": [], "keyword_mismatch": False}]},
+        "muse",
+        redis,
+    )
+
+    assert result["saved"] == 1
+    db_session.refresh(row)
+    assert row.labeled_at is not None
+    assert row.attributes["captured_at_source"] == "getty_id"
+    assert row.attributes["captured_at_confidence"] == "day"
+    assert row.attributes["getty_hints"] == {"asset_id": "abc"}
+    assert row.attributes["people"] == [{"name": "Keyword Person", "confidence": 0.8, "source": "keyword"}]
+
+
+def test_stats_use_labeled_at_not_attributes(db_session, monkeypatch):
+    remaining = _image(10603, datetime.now(timezone.utc).replace(tzinfo=None))
+    remaining.attributes = {"captured_at_source": "getty_id"}
+    labeled = _image(10604, datetime.now(timezone.utc).replace(tzinfo=None))
+    labeled.attributes = {"source": "muse"}
+    labeled.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_session.add_all([remaining, labeled])
+    db_session.commit()
+    redis = LeaseRedis()
+    monkeypatch.setattr(muse_labeler, "redis_client", lambda: redis)
+
+    before = stats(db_session, token=None)
+    assert before["labeled"] == 1
+    assert before["remaining"] == 1
+
+    remaining.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_session.commit()
+    after = stats(db_session, token=None)
+    assert after["labeled"] == 2
+    assert after["remaining"] == 0
+
+
+def test_muse_keyword_mismatch_drops_keyword_people(db_session):
+    row = _image(10605, datetime.now(timezone.utc).replace(tzinfo=None))
+    row.keyword = "max verstappen f1"
+    row.attributes = {
+        "people": [{"name": "Max Verstappen", "confidence": 0.8, "source": "keyword"}],
+    }
+    db_session.add(row)
+    db_session.commit()
+    redis = LeaseRedis()
+
+    result = muse_labeler.process_results(
+        db_session,
+        {"results": [{"id": row.id, "people": [], "keyword_mismatch": True}]},
+        "muse",
+        redis,
+    )
+
+    assert result["saved"] == 1
+    db_session.refresh(row)
+    assert row.attributes["keyword_mismatch"] is True
+    assert row.attributes["people"] == []
+
+
 def test_fill_people_from_keyword_is_idempotent_and_skips_mismatch(db_session):
     first = _image(10700, datetime.now(timezone.utc).replace(tzinfo=None))
     first.keyword = "max verstappen f1"
+    first.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
     first.attributes = {"people": [], "keyword_mismatch": False}
     mismatch = _image(10701, datetime.now(timezone.utc).replace(tzinfo=None))
     mismatch.keyword = "lebron james nba"
+    mismatch.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
     mismatch.attributes = {"people": [], "keyword_mismatch": True}
     db_session.add_all([first, mismatch])
     db_session.commit()
@@ -121,6 +201,7 @@ def test_fill_people_from_keyword_is_idempotent_and_skips_mismatch(db_session):
 def test_fill_people_from_keyword_dry_run_does_not_write(db_session):
     row = _image(10702, datetime.now(timezone.utc).replace(tzinfo=None))
     row.keyword = "max verstappen f1"
+    row.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
     row.attributes = {"people": [], "keyword_mismatch": False}
     db_session.add(row)
     db_session.commit()

@@ -238,6 +238,37 @@ def test_task_safety_net_15_minute_cutoff(db_session, tmp_path):
     assert img_old.attributes is not None
 
 
+def test_stage_one_labels_date_only_attributes_and_preserves_metadata(db_session, tmp_path):
+    s = db_session.query(Settings).filter_by(id=1).first()
+    now = datetime.now(timezone.utc)
+    s.gallery_labeling_enabled = True
+    s.gallery_labeling_daily_cap = 100
+    s.gallery_labeling_since = now - timedelta(days=1)
+    db_session.commit()
+
+    image_file = tmp_path / "date-only.jpg"
+    image_file.write_text("fake")
+    img = GalleryImage(
+        keyword="max verstappen f1", source_image_url=_unique_url("date-only"),
+        local_path=str(image_file), public_url="http://p", width=100, height=100,
+        source_engine="bing", downloaded_at=now - timedelta(minutes=20),
+        captured_at=datetime(2026, 1, 2).date(),
+        attributes={"captured_at_source": "getty_id", "getty_hints": {"asset_id": "abc"}},
+        label_attempts=0,
+    )
+    db_session.add(img)
+    db_session.commit()
+
+    output = {"shot_type": "portrait", "people_count": 1, "activity": "talking", "expression": "neutral", "context": {"session": "unknown", "rain": False, "night": False, "circuit_visible": False}, "livery_colors": [], "quality": {"blurry": False, "obstructed": False}, "caption": "", "people": []}
+    with patch("app.tasks.gallery_labels.label_image", return_value=output):
+        assert label_new_gallery_images() == 1
+
+    db_session.refresh(img)
+    assert img.labeled_at is not None
+    assert img.attributes["captured_at_source"] == "getty_id"
+    assert img.attributes["getty_hints"] == {"asset_id": "abc"}
+
+
 def test_label_gallery_image_skips_none_downloaded_at(db_session, tmp_path):
     s = db_session.query(Settings).filter_by(id=1).first()
     now = datetime.now(timezone.utc)

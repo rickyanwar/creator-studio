@@ -7,6 +7,7 @@ from app.database import SessionLocal
 from app.models.gallery import GalleryImage
 from app.models.settings import Settings
 from app.services.gallery_labeler import label_image, LabelerError, LabelerUnavailable
+from app.services.muse_labeler import merge_label_attributes
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,6 @@ def _get_daily_budget(db, s: Settings) -> int:
         db.query(GalleryImage)
         .filter(
             GalleryImage.labeled_at >= today_start,
-            GalleryImage.attributes.isnot(None),
         )
         .count()
     )
@@ -43,7 +43,7 @@ def label_gallery_image(image_id: int):
             return
 
         img = db.query(GalleryImage).filter_by(id=image_id).first()
-        if not img or img.is_deleted or img.attributes is not None:
+        if not img or img.is_deleted or img.labeled_at is not None:
             return
         if not img.downloaded_at or img.downloaded_at < s.gallery_labeling_since:
             return
@@ -52,7 +52,7 @@ def label_gallery_image(image_id: int):
 
         try:
             norm = label_image(img.local_path, provider="router", keyword=img.keyword)
-            img.attributes = norm
+            img.attributes = merge_label_attributes(img.attributes, norm)
             img.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
             img.label_error = None
             db.commit()
@@ -90,7 +90,7 @@ def label_new_gallery_images() -> int:
             db.query(GalleryImage)
             .filter(
                 GalleryImage.is_deleted == False,
-                GalleryImage.attributes.is_(None),
+                GalleryImage.labeled_at.is_(None),
                 GalleryImage.downloaded_at >= s.gallery_labeling_since,
                 GalleryImage.downloaded_at <= safety_cutoff,
                 GalleryImage.label_attempts < 3,
@@ -106,7 +106,7 @@ def label_new_gallery_images() -> int:
 
             try:
                 norm = label_image(img.local_path, provider="router", keyword=img.keyword)
-                img.attributes = norm
+                img.attributes = merge_label_attributes(img.attributes, norm)
                 img.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 img.label_error = None
                 db.commit()

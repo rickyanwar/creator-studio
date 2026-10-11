@@ -46,12 +46,12 @@ def results(body: ResultsRequest, db: DB, token=Depends(require_hermes_scope("la
 @router.get("/stats")
 def stats(db: DB, token=Depends(require_hermes_scope("labels:write"))):
     active = db.query(GalleryImage).filter(GalleryImage.is_deleted.is_(False))
-    labeled = active.filter(GalleryImage.attributes.is_not(None)).count()
+    labeled = active.filter(GalleryImage.labeled_at.is_not(None)).count()
     muse_labeled = active.filter(GalleryImage.attributes["source"].astext == "muse").count()
     failed = active.filter(GalleryImage.label_attempts >= 3).count()
     leased = 0
     client = muse_labeler.redis_client()
-    for row in active.filter(GalleryImage.attributes.is_(None), GalleryImage.label_attempts < 3).with_entities(GalleryImage.id):
+    for row in active.filter(GalleryImage.labeled_at.is_(None), GalleryImage.label_attempts < 3).with_entities(GalleryImage.id):
         if client.get(f"{muse_labeler.LEASE_PREFIX}{row.id}"):
             leased += 1
     hour_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)

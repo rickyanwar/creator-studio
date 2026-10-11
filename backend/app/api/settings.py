@@ -37,17 +37,17 @@ def get_settings(db: DB, _: CurrentUser):
         today_start = datetime(now_utc.year, now_utc.month, now_utc.day)
         labels_today = (
             db.query(GalleryImage)
-            .filter(GalleryImage.labeled_at >= today_start, GalleryImage.attributes.isnot(None))
+            .filter(GalleryImage.labeled_at >= today_start)
             .count()
         )
-        labels_total_query = db.query(GalleryImage).filter(GalleryImage.attributes.isnot(None))
+        labels_total_query = db.query(GalleryImage).filter(GalleryImage.labeled_at.isnot(None))
         if row.gallery_labeling_since:
             labels_total_query = labels_total_query.filter(GalleryImage.downloaded_at >= row.gallery_labeling_since)
         labels_total = labels_total_query.count()
 
         pending_query = db.query(GalleryImage).filter(
             GalleryImage.is_deleted == False,
-            GalleryImage.attributes.is_(None),
+            GalleryImage.labeled_at.is_(None),
             GalleryImage.label_attempts < 3,
         )
         if row.gallery_labeling_since:
@@ -58,7 +58,7 @@ def get_settings(db: DB, _: CurrentUser):
 
         failed_query = db.query(GalleryImage).filter(
             GalleryImage.is_deleted == False,
-            GalleryImage.attributes.is_(None),
+            GalleryImage.labeled_at.is_(None),
             GalleryImage.label_attempts >= 3,
         )
         if row.gallery_labeling_since:

@@ -172,6 +172,20 @@ def apply_captured_at(row, value: str, confidence: str) -> None:
     row.attributes["captured_at_confidence"] = confidence
 
 
+def merge_label_attributes(existing: dict | None, labelled: dict) -> dict:
+    """Overlay visual labels without dropping metadata from other pipelines."""
+    merged = dict(existing or {})
+    existing_people = merged.get("people")
+    merged.update(labelled)
+    labelled_people = labelled.get("people") or []
+    if labelled.get("keyword_mismatch") is True:
+        merged["people"] = [person for person in labelled_people if person.get("source") != "keyword"]
+        return merged
+    if existing_people and (not labelled_people or all(person.get("source") == "keyword" for person in labelled_people)):
+        merged["people"] = existing_people
+    return merged
+
+
 def claim_images(db, limit: int, worker: str, client=None, label: str | None = None) -> list[dict]:
     client = client or redis_client()
     if label is not None and label not in CLAIM_LABELS:
@@ -189,7 +203,7 @@ def claim_images(db, limit: int, worker: str, client=None, label: str | None = N
     )
     candidates = (db.query(GalleryImage)
         .outerjoin(usage, GalleryImage.keyword == usage.c.keyword)
-        .filter(GalleryImage.is_deleted.is_(False), GalleryImage.attributes.is_(None), GalleryImage.label_attempts < 3)
+        .filter(GalleryImage.is_deleted.is_(False), GalleryImage.labeled_at.is_(None), GalleryImage.label_attempts < 3)
         .order_by(func.coalesce(usage.c.usage_count, 0).desc(), GalleryImage.downloaded_at.desc())
     )
     if label is not None:
@@ -223,7 +237,7 @@ def process_results(db, payload: dict, worker: str, client=None) -> dict:
     for item in results:
         image_id = item.get("id")
         row = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
-        if not row or row.attributes is not None:
+        if not row or row.labeled_at is not None:
             skipped.append(image_id)
             continue
         try:
@@ -233,7 +247,7 @@ def process_results(db, payload: dict, worker: str, client=None) -> dict:
                 failed += 1
             else:
                 attrs = _normalise_result(item, keyword=row.keyword)
-                row.attributes = attrs
+                row.attributes = merge_label_attributes(row.attributes, attrs)
                 row.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 row.label_error = None
                 confidence = item.get("captured_at_confidence")
@@ -255,7 +269,7 @@ def process_results(db, payload: dict, worker: str, client=None) -> dict:
 def fill_people_from_keyword(db, dry_run: bool = False) -> int:
     """Fill empty people arrays for labeled, non-mismatched gallery rows."""
     changed = 0
-    rows = db.query(GalleryImage).filter(GalleryImage.attributes.is_not(None)).yield_per(500)
+    rows = db.query(GalleryImage).filter(GalleryImage.labeled_at.is_not(None)).yield_per(500)
     for row in rows:
         attributes = dict(row.attributes or {})
         if attributes.get("keyword_mismatch") is True or attributes.get("people"):
