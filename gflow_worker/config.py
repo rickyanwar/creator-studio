@@ -29,6 +29,8 @@ class Config:
     probe_prefix: str = ""
     probe_projects: dict[str, str] = field(default_factory=dict)
     probe_timeout_seconds: float = 300
+    lock_file: Path | None = None
+    lock_timeout_seconds: float = 1800
 
     @classmethod
     def from_env(cls):
@@ -53,6 +55,8 @@ class Config:
                       probe_prefix=os.getenv("GFLOW_PROBE_PREFIX", ""),
                       probe_projects=probe_projects,
                       probe_timeout_seconds=float(os.getenv("GFLOW_PROBE_TIMEOUT_SECONDS", "300")),
+                      lock_file=(Path(os.environ["GFLOW_LOCK_FILE"]).expanduser() if os.getenv("GFLOW_LOCK_FILE", "").strip() else None),
+                      lock_timeout_seconds=float(os.getenv("GFLOW_LOCK_TIMEOUT_SECONDS", "1800")),
                       work_dir=Path(os.getenv("GFLOW_WORK_DIR", "~/.gflow-worker")).expanduser().resolve(),
                       ffmpeg=os.getenv("FFMPEG", "ffmpeg"), ffprobe=os.getenv("FFPROBE", "ffprobe"))
         for name in ("max_concurrent", "mem_reserve_mb", "chrome_peak_mb", "seed_offset_ms"):
@@ -66,7 +70,8 @@ class Config:
             raise ValueError("GFLOW_CLI_DIR must be a directory")
         if cfg.max_concurrent < 1 or any(getattr(cfg, n) < 0 for n in ("mem_reserve_mb", "chrome_peak_mb", "seed_offset_ms", "keep_done_days")):
             raise ValueError("invalid worker limits")
-        if min(cfg.poll_seconds, cfg.credits_refresh_minutes, cfg.clip_timeout_seconds, cfg.probe_timeout_seconds) <= 0:
+        if min(cfg.poll_seconds, cfg.credits_refresh_minutes, cfg.clip_timeout_seconds, cfg.probe_timeout_seconds,
+               cfg.lock_timeout_seconds) <= 0:
             raise ValueError("worker intervals must be positive")
         if not shlex.split(cfg.probe_python_cmd) or shlex.split(cfg.probe_prefix) is None:
             raise ValueError("invalid probe command")

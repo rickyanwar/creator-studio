@@ -44,6 +44,8 @@ The worker is a standalone package and runs from the repository root as `python 
 | `GFLOW_PROBE_PREFIX` | empty | Optional command prefix, such as `xvfb-run -a` on a headless VPS |
 | `GFLOW_PROBE_PROJECTS` | empty | Optional comma-separated `profile=project_id` mappings |
 | `GFLOW_PROBE_TIMEOUT_SECONDS` | `300` | Maximum time for one UI credit probe |
+| `GFLOW_LOCK_FILE` | empty | Optional shared exclusive flock path; empty disables locking |
+| `GFLOW_LOCK_TIMEOUT_SECONDS` | `1800` | Maximum wait for the shared Flow lock |
 | `GFLOW_CLIP_TIMEOUT_SECONDS` | `1200` | Per-clip gflow timeout |
 | `GFLOW_SEED_OFFSET_MS` | `100` | Last-frame extraction offset |
 | `GFLOW_KEEP_DONE_DAYS` | `3` | Retention for uploaded local job directories |
@@ -116,21 +118,29 @@ An optional launchd plist may run the worker at login. Use the real paths and lo
 
 ## VPS Setup
 
-Run the service as the unprivileged user `gflow`. Install the CLI at `/home/gflow/gflow-cli`. Set `GFLOW_MAX_CONCURRENT=1` because Chrome is memory-heavy, retain `GFLOW_MEM_RESERVE_MB=1536`, and point `STUDIO_API_URL` at the local nginx API, for example `http://127.0.0.1/api`.
+Run the service as the unprivileged user `gflow`. Install the CLI at `/home/gflow/gflow-cli-083`. Set `GFLOW_MAX_CONCURRENT=1` because Chrome is memory-heavy, retain `GFLOW_MEM_RESERVE_MB=1536`, and point `STUDIO_API_URL` at the local nginx API, for example `http://127.0.0.1/api`.
 
 Example `/etc/gflow-worker.env`:
 
 ```text
 STUDIO_API_URL=http://127.0.0.1/api
 GFLOW_WORKER_TOKEN=hst_replace_me
-GFLOW_WORKER_ID=vps-gflow-1
-GFLOW_CMD=uv run gflow
-GFLOW_CLI_DIR=/home/gflow/gflow-cli
+GFLOW_CLI_DIR=/home/gflow/gflow-cli-083
+GFLOW_CMD="xvfb-run -a /home/gflow/.local/bin/uv run gflow"
+GFLOW_PYTHON_CMD="/home/gflow/.local/bin/uv run python"
+GFLOW_PROBE_PREFIX="xvfb-run -a"
+GFLOW_LOCK_FILE=/tmp/gflow-flow.lock
+GFLOW_WORK_DIR=/home/gflow/gflow-worker
 GFLOW_MAX_CONCURRENT=1
 GFLOW_MEM_RESERVE_MB=1536
+GFLOW_WORKER_ID=vps-gflow-1
 ```
 
-Example `/etc/systemd/system/gflow-worker.service`:
+The repository contains the matching unit at `deploy/gflow-worker.service`. Copy it to `/etc/systemd/system/gflow-worker.service`, create `/etc/gflow-worker.env` with mode `600`, then run `systemctl daemon-reload` and `systemctl enable --now gflow-worker.service`. Hermes and this worker share `/tmp/gflow-flow.lock`; every Flow subprocess and credit UI probe waits for that exclusive lock, so neither process runs Chrome at the same time. The lock file is owned by the process that creates it; ensure the `gflow` user can open the existing file or create it before starting the service.
+
+To add another Flow account later, log that profile in as user `gflow` using the CLI. The worker picks it up on the next credits refresh and automatically creates a `credit-probe` project for it.
+
+The unit is:
 
 ```ini
 [Unit]
@@ -141,11 +151,11 @@ Wants=network-online.target
 [Service]
 User=gflow
 Group=gflow
-WorkingDirectory=/home/gflow/gflow-video
+WorkingDirectory=/opt/studio
 EnvironmentFile=/etc/gflow-worker.env
-ExecStart=/usr/bin/uv run --project /home/gflow/gflow-cli python -m gflow_worker
+ExecStart=/home/gflow/.local/bin/uv run --project /home/gflow/gflow-cli-083 python -m gflow_worker
 Restart=on-failure
-RestartSec=10
+RestartSec=30
 NoNewPrivileges=true
 
 [Install]

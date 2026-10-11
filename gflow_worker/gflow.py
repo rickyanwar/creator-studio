@@ -6,6 +6,8 @@ import shlex
 import signal
 import subprocess
 
+from .lock import LockTimeout, flow_lock
+
 
 @dataclass
 class GflowResult:
@@ -59,15 +61,18 @@ class GflowRunner:
         # The studio token is never needed by the child CLI.
         env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
         try:
-            process = subprocess.Popen([*shlex.split(self.cfg.gflow_cmd), *map(str, args), "--json"],
-                                       cwd=self.cfg.cli_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       text=True, env=env, start_new_session=True)
-            try:
-                stdout, _ = process.communicate(timeout=self.cfg.clip_timeout_seconds)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.communicate()
-                return GflowResult(False, {}, -1, "TimeoutExpired", True, "gflow timed out")
+            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds):
+                process = subprocess.Popen([*shlex.split(self.cfg.gflow_cmd), *map(str, args), "--json"],
+                                           cwd=self.cfg.cli_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           text=True, env=env, start_new_session=True)
+                try:
+                    stdout, _ = process.communicate(timeout=self.cfg.clip_timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.communicate()
+                    return GflowResult(False, {}, -1, "TimeoutExpired", True, "gflow timed out")
+        except LockTimeout:
+            return GflowResult(False, {}, -1, "TimeoutExpired", True, "gflow lock timed out")
         except OSError:
             return GflowResult(False, {}, -1, "ProcessError", False, "could not start gflow")
         try:

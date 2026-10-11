@@ -1,0 +1,19 @@
+# Install: copy to /etc/systemd/system/gflow-worker.service, create the protected
+# /etc/gflow-worker.env, then run systemctl daemon-reload and enable --now.
+[Unit]
+Description=Studio Google Flow video worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gflow
+Group=gflow
+WorkingDirectory=/opt/studio
+EnvironmentFile=/etc/gflow-worker.env
+ExecStart=/home/gflow/.local/bin/uv run --project /home/gflow/gflow-cli-083 python -m gflow_worker
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

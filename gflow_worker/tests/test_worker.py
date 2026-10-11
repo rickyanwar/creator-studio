@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 import httpx
@@ -335,6 +336,71 @@ def test_config_env(cfg, monkeypatch):
     monkeypatch.setenv("GFLOW_WORKER_ID", "bad id")
     with pytest.raises(ValueError):
         Config.from_env()
+
+
+def _hold_lock(path, seconds):
+    return subprocess.Popen([sys.executable, "-c", """
+import fcntl, sys, time
+with open(sys.argv[1], 'a+') as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    time.sleep(float(sys.argv[2]))
+""", str(path), str(seconds)])
+
+
+def test_gflow_run_waits_for_shared_lock(cfg):
+    lock = cfg.work_dir / "flow.lock"
+    lock.parent.mkdir(parents=True)
+    holder = _hold_lock(lock, 0.25)
+    time.sleep(0.05)
+    started = time.monotonic()
+    result = GflowRunner(replace(cfg, lock_file=lock, lock_timeout_seconds=1)).credits_list()
+    assert result.ok and time.monotonic() - started >= 0.15
+    holder.wait(timeout=2)
+
+
+def test_gflow_lock_timeout_is_transient(cfg):
+    lock = cfg.work_dir / "flow.lock"
+    lock.parent.mkdir(parents=True)
+    holder = _hold_lock(lock, 0.5)
+    time.sleep(0.05)
+    result = GflowRunner(replace(cfg, lock_file=lock, lock_timeout_seconds=0.05)).credits_list()
+    assert not result.ok and result.error_class == "TimeoutExpired" and classify(result) == "transient"
+    assert calls(cfg) == []
+    holder.wait(timeout=2)
+
+
+def test_read_only_existing_lock_file_works(cfg):
+    lock = cfg.work_dir / "flow.lock"
+    lock.parent.mkdir(parents=True)
+    lock.touch()
+    lock.chmod(0o444)
+    try:
+        result = GflowRunner(replace(cfg, lock_file=lock)).credits_list()
+        assert result.ok
+    finally:
+        lock.chmod(0o644)
+
+
+def test_probe_waits_for_shared_lock(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    monkeypatch.setenv("FAKE_PROBE_MODE", "credits")
+    lock = cfg.work_dir / "flow.lock"
+    lock.parent.mkdir(parents=True)
+    holder = _hold_lock(lock, 0.25)
+    time.sleep(0.05)
+    worker = Worker(replace(cfg, profiles=("p2",), lock_file=lock, lock_timeout_seconds=1), studio.api)
+    try:
+        started = time.monotonic()
+        worker.tick()
+        assert worker.accounts[0]["credits"] == 638 and time.monotonic() - started >= 0.15
+    finally:
+        worker.executor.shutdown()
+        holder.wait(timeout=2)
+
+
+def test_empty_lock_path_does_not_lock(cfg):
+    result = GflowRunner(replace(cfg, lock_file=None)).credits_list()
+    assert result.ok
 
 
 def test_missing_env(monkeypatch):

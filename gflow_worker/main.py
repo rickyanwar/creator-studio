@@ -16,6 +16,7 @@ from . import __version__, memory
 from .api import JobLost, StudioClient, TransientApiError
 from .config import Config
 from .gflow import GflowRunner
+from .lock import LockTimeout, flow_lock
 from .media import Media
 from .runner import JobRunner
 from .state import cleanup
@@ -78,10 +79,11 @@ class Worker:
         command = [*shlex.split(self.cfg.probe_prefix), *shlex.split(self.cfg.probe_python_cmd),
                    str(script), project, str(out_dir)]
         try:
-            completed = subprocess.run(command, cwd=self.cfg.cli_dir, env=env, text=True,
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       timeout=self.cfg.probe_timeout_seconds, check=False)
-        except (OSError, subprocess.TimeoutExpired):
+            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds):
+                completed = subprocess.run(command, cwd=self.cfg.cli_dir, env=env, text=True,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           timeout=self.cfg.probe_timeout_seconds, check=False)
+        except (LockTimeout, OSError, subprocess.TimeoutExpired):
             return
         output = f"{completed.stdout}\n{completed.stderr}"
         match = re.search(r"^CREDITS:\s*(\d+)\s*$", output, re.MULTILINE)
