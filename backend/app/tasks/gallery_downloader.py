@@ -231,6 +231,18 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _enqueue_label_if_enabled(db, image_id: int):
+    """Enqueue rich label task if labeling is enabled."""
+    try:
+        from app.models.settings import Settings
+        s = db.query(Settings).filter_by(id=1).first()
+        if s and s.gallery_labeling_enabled:
+            from app.tasks.gallery_labels import label_gallery_image
+            label_gallery_image.delay(image_id)
+    except Exception as exc:
+        logger.warning("Failed to enqueue label_gallery_image for image %s: %s", image_id, exc)
+
+
 def _fresh_supply_status(db, keyword: str) -> tuple[int, int, int]:
     """(fresh_count, target, active_count) for one keyword.
 
@@ -519,6 +531,7 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
             try:
                 db.commit()
                 saved += 1
+                _enqueue_label_if_enabled(db, image.id)
             except IntegrityError:
                 # URL already stored under another keyword — drop the duplicate file
                 db.rollback()

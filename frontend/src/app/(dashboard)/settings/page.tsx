@@ -6,6 +6,7 @@ import { getSettings, updateSettings, testReplizCredentials, testProxies, testRe
 import { YouTubeSettingsCard } from "@/components/settings/YouTubeSettingsCard";
 import { HermesTokensCard } from "@/components/settings/HermesTokensCard";
 import { AiVideoSettingsCard } from "@/components/settings/AiVideoSettingsCard";
+import { GalleryLabelsSettingsCard } from "@/components/settings/GalleryLabelsSettingsCard";
 import { F1DriversSettings } from "@/components/settings/F1DriversSettings";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
@@ -582,6 +583,8 @@ export default function SettingsPage() {
       <YouTubeSettingsCard settings={settings} onChanged={() => mutate()} />
 
       <AiVideoSettingsCard settings={settings} onChanged={() => mutate()} />
+
+      <GalleryLabelsSettingsCard settings={settings} onChanged={() => mutate()} />
 
       <HermesTokensCard />
 

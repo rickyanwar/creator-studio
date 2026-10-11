@@ -126,6 +126,7 @@ export interface Fanpage {
   ai_video_min_score: number | null;
   ai_video_template: string | null;
   ai_video_clips: number;
+  ai_video_narrator: string | null;
 }
 
 export interface DiscussionTopicRef {
@@ -524,6 +525,13 @@ export interface AppSettings {
   ai_video_worker_enabled: boolean;
   ai_video_vision_qc_enabled: boolean;
   ai_video_credit_reserve: number;
+  gallery_labeling_enabled?: boolean;
+  gallery_labeling_daily_cap?: number;
+  gallery_labeling_since?: string | null;
+  gallery_labels_today?: number;
+  gallery_labels_total?: number;
+  gallery_labels_pending?: number;
+  gallery_labels_failed?: number;
 }
 
 export type AiVideoIdeaStatus = "proposed" | "approved" | "rejected" | "queued" | "done" | "failed";
@@ -614,6 +622,8 @@ export interface AiVideoTemplate {
   model: string;
   variables_by_clips: Record<string, string[]>;
   vehicle_presets: string[];
+  liveries: string[];
+  narrator_presets: string[];
   topic_ideas: string[];
 }
 

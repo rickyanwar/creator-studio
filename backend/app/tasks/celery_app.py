@@ -26,6 +26,7 @@ celery_app = Celery(
         "app.tasks.warmup",
         "app.tasks.news_scraper",
         "app.tasks.gallery_downloader",
+        "app.tasks.gallery_labels",
         "app.tasks.news_copywriter",
         "app.tasks.design_renderer",
         "app.tasks.discussion",
@@ -64,6 +65,7 @@ celery_app.conf.update(
     # they can never again block the main worker.
     task_routes={
         "app.tasks.gallery_downloader.*": {"queue": "gallery"},
+        "app.tasks.gallery_labels.*": {"queue": "gallery"},
         # Mode 7: YouTube analysis + clip renders are minutes of CPU/network
         # each — their own single-slot worker-video service, same reasoning
         # as the gallery queue above.
@@ -95,6 +97,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.gallery_downloader.download_all_keywords",
         "schedule": 1800,
         "options": {"expires": 1700},
+    },
+    # Gallery labels sweep: every 10 min, expires 590
+    "label-new-gallery-images": {
+        "task": "app.tasks.gallery_labels.label_new_gallery_images",
+        "schedule": 600,
+        "options": {"expires": 590},
     },
     # Event-calendar refresh: daily — keeps next_event_date current so the
     # gallery downloader knows when a keyword is in its press/practice/race
@@ -220,6 +228,11 @@ celery_app.conf.beat_schedule = {
     "cleanup-old-designs": {
         "task": "app.tasks.cleanup.cleanup_old_designs",
         "schedule": crontab(hour=20, minute=0),
+    },
+    # Mode 8 AI video retention: daily 04:00 WIB (21:00 UTC)
+    "cleanup-old-ai-videos": {
+        "task": "app.tasks.cleanup.cleanup_old_ai_videos",
+        "schedule": crontab(hour=21, minute=0),
     },
     # Mode 7 clip MP4 retention: daily 03:30 WIB (20:30 UTC) — see
     # yt_clip_render.cleanup_old_videos

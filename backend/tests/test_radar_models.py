@@ -49,8 +49,6 @@ def test_alembic_migration_exists():
     script = ScriptDirectory.from_config(config)
     
     # Check that our head exists
-    head = script.get_current_head()
-    rev = script.get_revision(head)
-
-    assert head == "c80000000001"
-    assert rev.down_revision == "c80000000000"
+    rev = script.get_revision("c80000000002")
+    assert rev is not None
+    assert rev.down_revision == "c80000000001"

@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, Date, DateTime, func
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Column, Integer, SmallInteger, String, Boolean, Date, DateTime, func, Index
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from app.database import Base
 
 
@@ -102,3 +102,13 @@ class GalleryImage(Base):
     # references even though the file on disk is removed.
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
     deleted_at = Column(DateTime, nullable=True)
+
+    # Rich label attributes & metadata
+    attributes = Column(JSONB(none_as_null=True), nullable=True)
+    labeled_at = Column(DateTime, nullable=True)
+    label_error = Column(String(300), nullable=True)
+    label_attempts = Column(SmallInteger, default=0, nullable=False, server_default="0")
+
+    __table_args__ = (
+        Index("ix_gallery_images_attributes", "attributes", postgresql_using="gin"),
+    )

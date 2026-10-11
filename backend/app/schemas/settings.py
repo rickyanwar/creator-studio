@@ -45,6 +45,10 @@ class SettingsUpdate(BaseModel):
     radar_share_max: Optional[int] = None
     radar_news_stagger_max_min: Optional[int] = None
 
+    # ── Gallery Labeling ──
+    gallery_labeling_enabled: Optional[bool] = None
+    gallery_labeling_daily_cap: Optional[int] = Field(None, ge=0, le=5000)
+
 
 class SettingsOut(BaseModel):
     crawl_interval_minutes: int
@@ -94,6 +98,17 @@ class SettingsOut(BaseModel):
     radar_story_sharing: str = "shared"
     radar_share_max: int = 0
     radar_news_stagger_max_min: int = 10
+
+    # ── Gallery Labeling ──
+    gallery_labeling_enabled: bool = False
+    gallery_labeling_daily_cap: int = 1000
+    gallery_labeling_since: Optional[datetime] = None
+
+    # ── Gallery Labeling Stats (optional for stats display) ──
+    gallery_labels_today: Optional[int] = None
+    gallery_labels_total: Optional[int] = None
+    gallery_labels_pending: Optional[int] = None
+    gallery_labels_failed: Optional[int] = None
 
     model_config = {"from_attributes": False}
 

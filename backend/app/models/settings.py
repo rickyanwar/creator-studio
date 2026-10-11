@@ -110,4 +110,9 @@ class Settings(Base):
     # ── Visual Engine ─────────────────────────────────────────────────────────
     visual_engine_daily_max = Column(Integer, default=60, nullable=False, server_default="60")
 
+    # ── Gallery Labeling ──────────────────────────────────────────────────────
+    gallery_labeling_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    gallery_labeling_daily_cap = Column(Integer, default=1000, nullable=False, server_default="1000")
+    gallery_labeling_since = Column(DateTime, nullable=True)
+
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

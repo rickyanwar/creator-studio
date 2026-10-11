@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     # older and already downloaded too. Set 0 to disable this early-stop.
     gallery_stop_after_consecutive_dupes: int = 20
 
+    # ── Gallery Labeler (external provider for backfill) ──
+    labeler_base_url: str = ""
+    labeler_api_key: str = ""
+    labeler_model: str = ""
+
     # ── Editorial AI gate (opt-in per fanpage, via 9Router web-fetch) ──
     # A general web-results search (NOT image search) used to ground the
     # fact-check pass in app/services/editorial_gate.py — plain Google results

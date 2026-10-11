@@ -22,7 +22,51 @@ def _get_or_create_settings(db):
 
 @router.get("", response_model=SettingsOut)
 def get_settings(db: DB, _: CurrentUser):
+    from datetime import datetime, timezone
+    from app.models.gallery import GalleryImage
+
     row = _get_or_create_settings(db)
+
+    # Gallery labeling stats
+    labels_today = 0
+    labels_total = 0
+    labels_pending = 0
+    labels_failed = 0
+    try:
+        now_utc = datetime.now(timezone.utc)
+        today_start = datetime(now_utc.year, now_utc.month, now_utc.day)
+        labels_today = (
+            db.query(GalleryImage)
+            .filter(GalleryImage.labeled_at >= today_start, GalleryImage.attributes.isnot(None))
+            .count()
+        )
+        labels_total_query = db.query(GalleryImage).filter(GalleryImage.attributes.isnot(None))
+        if row.gallery_labeling_since:
+            labels_total_query = labels_total_query.filter(GalleryImage.downloaded_at >= row.gallery_labeling_since)
+        labels_total = labels_total_query.count()
+
+        pending_query = db.query(GalleryImage).filter(
+            GalleryImage.is_deleted == False,
+            GalleryImage.attributes.is_(None),
+            GalleryImage.label_attempts < 3,
+        )
+        if row.gallery_labeling_since:
+            pending_query = pending_query.filter(GalleryImage.downloaded_at >= row.gallery_labeling_since)
+        else:
+            pending_query = pending_query.filter(False)
+        labels_pending = pending_query.count()
+
+        failed_query = db.query(GalleryImage).filter(
+            GalleryImage.is_deleted == False,
+            GalleryImage.attributes.is_(None),
+            GalleryImage.label_attempts >= 3,
+        )
+        if row.gallery_labeling_since:
+            failed_query = failed_query.filter(GalleryImage.downloaded_at >= row.gallery_labeling_since)
+        labels_failed = failed_query.count()
+    except Exception:
+        pass
+
     return SettingsOut(
         crawl_interval_minutes=row.crawl_interval_minutes,
         max_post_age_days=row.max_post_age_days if row.max_post_age_days is not None else 3,
@@ -65,6 +109,13 @@ def get_settings(db: DB, _: CurrentUser):
         radar_story_sharing=row.radar_story_sharing,
         radar_share_max=row.radar_share_max,
         radar_news_stagger_max_min=row.radar_news_stagger_max_min,
+        gallery_labeling_enabled=getattr(row, "gallery_labeling_enabled", False),
+        gallery_labeling_daily_cap=getattr(row, "gallery_labeling_daily_cap", 1000),
+        gallery_labeling_since=getattr(row, "gallery_labeling_since", None),
+        gallery_labels_today=labels_today,
+        gallery_labels_total=labels_total,
+        gallery_labels_pending=labels_pending,
+        gallery_labels_failed=labels_failed,
     )
 
 
@@ -110,6 +161,11 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
             data["scraper_mode"] = "viewer"
         elif mode not in ("auto", "instagrapi", "viewer", None):
             raise HTTPException(status_code=400, detail=f"Invalid scraper_mode: must be auto, instagrapi, or viewer")
+
+    # If toggling gallery_labeling_enabled from False to True, set gallery_labeling_since to now()
+    if data.get("gallery_labeling_enabled") and not row.gallery_labeling_enabled:
+        from datetime import datetime, timezone
+        row.gallery_labeling_since = datetime.now(timezone.utc).replace(tzinfo=None)
 
     for field, value in data.items():
         setattr(row, field, value)
