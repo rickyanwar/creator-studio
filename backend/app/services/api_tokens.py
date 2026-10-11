@@ -4,7 +4,7 @@ from typing import Tuple, List, Optional
 from sqlalchemy.orm import Session
 from app.models.api_tokens import ApiToken
 
-VALID_SCOPES = ("read", "memory:write", "recommendations:write")
+VALID_SCOPES = ("read", "memory:write", "recommendations:write", "ideas:write", "gflow:worker")
 
 def hash_token(plaintext: str) -> str:
     return hashlib.sha256(plaintext.encode()).hexdigest()

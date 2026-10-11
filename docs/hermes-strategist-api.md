@@ -7,7 +7,9 @@ Dashboard API prefix may differ. Check deployment.
 
 Hermes requires an API token to access the studio.
 - **Creation**: The owner creates it in the dashboard (Settings → Hermes API tokens) or via `POST /strategy/tokens` using an admin login.
-- **Scopes**: Select `read`, `memory:write`, and `recommendations:write`.
+- **Scopes**: Select `read`, `memory:write`, `recommendations:write`, and
+  `ideas:write` when Hermes will propose AI video ideas. A video-generation
+  worker uses a separate token with `gflow:worker`.
 - **Storage**: The plaintext token starts with `hst_` and is shown ONLY ONCE. Store it securely on the Hermes side in the `HERMES_STUDIO_TOKEN` environment variable.
 - **Revocation/Rotation**: If compromised, revoke the token in the Settings UI (or `DELETE /strategy/tokens/{id}` as admin) and create a new one.
 
@@ -164,6 +166,79 @@ curl -H "Authorization: Bearer $HERMES_STUDIO_TOKEN" "$STUDIO_URL/hermes/recomme
     "...": "..."
   }
 ]
+```
+
+### GET /hermes/video-templates
+Scope: `read`
+
+Returns the registered AI video templates:
+
+```json
+[
+  {
+    "key": "motorsport_tech_explainer",
+    "name": "Motorsport Tech Explainer",
+    "niches": ["f1", "motogp"],
+    "clip_options": [2, 3],
+    "default_clips": 2,
+    "clip_seconds": 10,
+    "credits_per_clip": 15,
+    "model": "omni-flash",
+    "variables_by_clips": {
+      "2": ["part", "mechanism_details", "mechanism_action", "narration_1", "effect_visual", "parts_list", "final_state", "narration_2", "vehicle_preset"],
+      "3": ["part", "mechanism_details", "mechanism_action", "narration_1", "effect_visual", "parts_list", "final_state", "narration_2", "vehicle_preset", "payoff_action", "narration_3"]
+    },
+    "vehicle_presets": ["f1_red", "motogp"],
+    "topic_ideas": []
+  }
+]
+```
+
+The `variables_by_clips` arrays contain the complete required variable names
+for each supported clip count. Use the values returned by the studio.
+
+### POST /hermes/video-ideas
+Scope: `ideas:write`
+
+Hermes proposes a scored idea for an enabled fanpage. `research_notes` is the
+source for specific facts and numbers used later by the fill step.
+
+```bash
+curl -X POST -H "Authorization: Bearer $HERMES_STUDIO_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "fanpage_id": 1,
+       "template_key": "motorsport_tech_explainer",
+       "topic": "Why a race car changes braking behaviour",
+       "angle": "Explain the mechanism in a short visual sequence.",
+       "research_notes": "Source: https://example.invalid/source",
+       "variables": {},
+       "clips": 2,
+       "score": 82,
+       "rationale": "Clear mechanism with strong visual potential.",
+       "evidence": {"n": 30, "period_days": 28}
+     }' \
+     "$STUDIO_URL/hermes/video-ideas"
+```
+
+The request fields are `fanpage_id`, `template_key`, `topic`, optional
+`angle`, `research_notes`, `variables`, and `clips`, plus required `score` and
+`rationale` and optional `evidence`. Responses are `201` for a created idea,
+`404` for an unknown fanpage, `409` for a duplicate, `422` for invalid input,
+and `429` when the proposed-idea limit is exceeded.
+
+### GET /hermes/video-ideas?fanpage_id=&status=
+Scope: `read`
+
+Returns video idea items. Completed items also include `publish_job_id` and
+`video_url`.
+
+The video idea item fields are:
+
+```text
+id, fanpage_id, fanpage_name, template_key, topic, angle, research_notes,
+variables, clips, score, rationale, evidence, source, status, error,
+created_at, decided_at, decided_by, video_job_id
 ```
 
 ## 3. Full Analytics JSON Shape

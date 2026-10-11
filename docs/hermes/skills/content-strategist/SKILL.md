@@ -20,6 +20,7 @@ Hermes skill for fanpage strategy optimization. Runs weekly per fanpage.
    - **Decide Proposals**: Decide on 0-2 proposals based on decision rules (see below).
    - **POST Recommendations**: Call `POST /hermes/recommendations` with full rationale and evidence.
    - **Notify**: Send ONE Telegram approval request per proposal ONLY IF the owner enabled `TELEGRAM_NOTIFICATIONS_ENABLED`. Otherwise, send none.
+   - **Video Ideas**: When the fanpage has Mode 8 enabled, propose at most 2 video ideas for that fanpage in the weekly run. Fetch `GET /hermes/video-templates`, avoid topics already proposed or completed for the fanpage, and call `POST /hermes/video-ideas` with source-backed `research_notes`, a score, and a rationale. Narration for every idea must be in English.
 
 ## Decision Rules
 
@@ -28,6 +29,7 @@ Hermes skill for fanpage strategy optimization. Runs weekly per fanpage.
   - Max 2 proposals per fanpage per weekly run.
   - Max 1 open (`proposed`) proposal per applicable kind (`sleep_window`, `daily_cap`).
 - **Exploration**: ~10-20% budget for exploration.
+- **Video Ideas**: At most 2 ideas per enabled fanpage per weekly run. Include sources in `research_notes`, score each idea, explain the score in `rationale`, do not repeat topics, and require English narration.
 
 ## Example Rationales
 
@@ -40,9 +42,13 @@ Hermes skill for fanpage strategy optimization. Runs weekly per fanpage.
 - **NEVER** exceed the 2 proposals per fanpage weekly limit.
 - **NEVER** send daily or weekly Telegram digests. Telegram is for approval requests or incidents only.
 - **NEVER** guess without data. Wait for minimum samples.
+- **NEVER** propose a video idea without source-backed `research_notes`, a score, and a rationale.
+- **NEVER** repeat a topic already proposed or completed for the fanpage.
+- **NEVER** write narration in a language other than English.
 
 ## Environment Variables
 
 - `STUDIO_URL`: Base API URL.
 - `HERMES_STUDIO_TOKEN`: API token (`hst_...`).
 - `TELEGRAM_NOTIFICATIONS_ENABLED`: Set to `true` to send single approval requests, otherwise `false`.
+The Hermes token needs the `ideas:write` scope to propose video ideas through `POST /hermes/video-ideas`.

@@ -60,6 +60,9 @@ from app.api.analytics import get_fanpage_analytics as internal_get_fanpage_anal
 from app.services import strategy
 from app.models.strategy import StrategyRecommendation
 from app.models.api_tokens import ApiToken
+from app.models.ai_video import VideoIdea, VideoJob
+from app.services import ai_video_ideas
+from app.services.video_templates import list_templates, required_variables, vehicle_presets
 
 class FanpageHermesResponse(BaseModel):
     id: int
@@ -154,3 +157,51 @@ def list_recommendations_hermes(db: DB, token: ApiToken = Depends(require_hermes
         q = q.filter(StrategyRecommendation.status == status)
         
     return q.order_by(StrategyRecommendation.created_at.desc()).all()
+
+
+def _video_template_items():
+    return [{"key": t.key, "name": t.name, "niches": list(t.niches), "clip_options": list(t.clip_options), "default_clips": t.default_clips, "clip_seconds": t.clip_seconds, "credits_per_clip": t.credits_per_clip, "model": t.model, "variables_by_clips": {str(n): required_variables(t, n) for n in t.clip_options}, "vehicle_presets": vehicle_presets(t), "topic_ideas": t.raw.get("topic_ideas", [])} for t in list_templates()]
+
+
+@router.get("/video-templates")
+def get_video_templates_hermes(token: ApiToken = Depends(require_hermes_scope("read"))):
+    return _video_template_items()
+
+
+class VideoIdeaHermesRequest(BaseModel):
+    fanpage_id: int
+    template_key: str
+    topic: str
+    angle: Optional[str] = None
+    research_notes: Optional[str] = None
+    variables: Optional[dict] = None
+    clips: Optional[int] = None
+    score: Optional[int] = None
+    rationale: Optional[str] = None
+    evidence: Optional[dict] = None
+
+
+def _video_idea_item(db, idea):
+    fanpage = db.query(TargetFanpage).filter_by(id=idea.fanpage_id).first()
+    job = db.query(VideoJob).filter_by(idea_id=idea.id).first()
+    return {"id": idea.id, "fanpage_id": idea.fanpage_id, "fanpage_name": fanpage.name if fanpage else "", "template_key": idea.template_key, "topic": idea.topic, "angle": idea.angle, "research_notes": idea.research_notes, "variables": idea.variables, "clips": idea.clips, "score": idea.score, "rationale": idea.rationale, "evidence": idea.evidence, "source": idea.source, "status": idea.status, "error": idea.error, "created_at": idea.created_at, "decided_at": idea.decided_at, "decided_by": idea.decided_by, "video_job_id": job.id if job else None, "publish_job_id": job.publish_job_id if job and job.status == "done" else None, "video_url": job.video_url if job and job.status == "done" else None}
+
+
+@router.post("/video-ideas", status_code=201)
+def create_video_idea_hermes(body: VideoIdeaHermesRequest, db: DB, token: ApiToken = Depends(require_hermes_scope("ideas:write"))):
+    if not db.query(TargetFanpage).filter_by(id=body.fanpage_id).first():
+        raise HTTPException(404, "Fanpage not found")
+    try:
+        idea = ai_video_ideas.create_idea(db, body.fanpage_id, body.model_dump(), "hermes", token_id=token.id)
+    except ai_video_ideas.ConflictError as exc: raise HTTPException(409, str(exc))
+    except ai_video_ideas.LimitExceededError as exc: raise HTTPException(429, str(exc))
+    except (ValueError, KeyError) as exc: raise HTTPException(422, str(exc))
+    return _video_idea_item(db, idea)
+
+
+@router.get("/video-ideas")
+def list_video_ideas_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("read")), fanpage_id: Optional[int] = None, status: Optional[str] = None):
+    q = db.query(VideoIdea)
+    if fanpage_id: q = q.filter(VideoIdea.fanpage_id == fanpage_id)
+    if status: q = q.filter(VideoIdea.status == status)
+    return [_video_idea_item(db, idea) for idea in q.order_by(VideoIdea.created_at.desc()).limit(200).all()]

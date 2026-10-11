@@ -12,7 +12,7 @@ export type PublishJobStatus =
   | "published"
   | "failed"
   | "skipped";
-export type ContentType = "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content" | "facebook_recreate" | "youtube_clip";
+export type ContentType = "ig_repost" | "news_content" | "ig_recreate" | "discussion" | "pinterest_content" | "facebook_recreate" | "youtube_clip" | "ai_video";
 export type AIProvider = "gemini" | "groq";
 export type MediaType = "image" | "album";
 export type PostStatus = "crawled" | "editing_image" | "stored" | "pending_fanout" | "done" | "cleaned";
@@ -105,6 +105,12 @@ export interface Fanpage {
   yt_clip_captions: boolean;
   yt_clip_watermark: boolean;
   yt_clip_action_crop: "smart" | "fit";
+  ai_video_enabled: boolean;
+  ai_video_publish_mode: PublishMode;
+  ai_video_daily_count: number;
+  ai_video_min_score: number | null;
+  ai_video_template: string | null;
+  ai_video_clips: number;
 }
 
 export interface DiscussionTopicRef {
@@ -407,6 +413,100 @@ export interface AppSettings {
   metrics_plan_status: string | null;
   metrics_plan_checked_at: string | null;
   metrics_last_error: string | null;
+  ai_video_worker_enabled: boolean;
+  ai_video_vision_qc_enabled: boolean;
+  ai_video_credit_reserve: number;
+}
+
+export type AiVideoIdeaStatus = "proposed" | "approved" | "rejected" | "queued" | "done" | "failed";
+export type AiVideoJobStatus = "queued" | "claimed" | "generating" | "uploaded" | "done" | "failed" | "cancelled";
+
+export interface AiVideoIdea {
+  id: number;
+  fanpage_id: number;
+  fanpage_name: string;
+  template_key: string;
+  topic: string;
+  angle: string | null;
+  research_notes: string | null;
+  variables: Record<string, unknown> | null;
+  clips: number | null;
+  score: number | null;
+  rationale: string | null;
+  evidence: Record<string, unknown> | null;
+  source: string;
+  status: AiVideoIdeaStatus;
+  error: string | null;
+  created_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+  video_job_id: number | null;
+}
+
+export interface AiVideoJob {
+  id: number;
+  fanpage_id: number;
+  fanpage_name: string;
+  idea_id: number | null;
+  template_key: string;
+  title: string;
+  status: AiVideoJobStatus;
+  clips_total: number;
+  clips_done: number;
+  credits_estimate: number;
+  account: { id: number; profile: string; email?: string | null } | null;
+  worker_id: string | null;
+  generation: number;
+  restarts: number;
+  error: string | null;
+  qc: { passed?: boolean; reasons?: string[]; technical?: { passed?: boolean }; vision?: { passed?: boolean; issues?: string[] } | null } | null;
+  video_url: string | null;
+  thumbnail_url: string | null;
+  publish_job_id: number | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface GflowAccount {
+  id: number;
+  worker_id: string;
+  profile: string;
+  email: string | null;
+  label: string | null;
+  enabled: boolean;
+  authenticated: boolean;
+  status: "ok" | "auth_error" | "no_access" | "error" | string;
+  credits: number | null;
+  credits_checked_at: string | null;
+  last_error: string | null;
+  last_seen_at: string | null;
+  last_used_at: string | null;
+  busy_job_id: number | null;
+}
+
+export interface GflowWorker {
+  worker_id: string;
+  last_seen_at: string | null;
+  online: boolean;
+  version: string | null;
+  max_concurrent: number | null;
+  mem_available_mb: number | null;
+  running_job_ids: number[];
+}
+
+export interface AiVideoTemplate {
+  key: string;
+  name: string;
+  niches: string[];
+  clip_options: number[];
+  default_clips: number;
+  clip_seconds: number;
+  credits_per_clip: number;
+  model: string;
+  variables_by_clips: Record<string, string[]>;
+  vehicle_presets: string[];
+  topic_ideas: string[];
 }
 
 export interface AnalyticsMetricsStatus {

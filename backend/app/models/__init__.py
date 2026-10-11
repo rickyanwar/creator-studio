@@ -25,6 +25,7 @@ from app.models.ai_copy_events import AICopyEvent
 from app.models.post_metric_snapshots import PostMetricSnapshot
 from app.models.api_tokens import ApiToken
 from app.models.strategy import StrategyRecommendation, FanpageContentMemory
+from app.models.ai_video import GflowWorker, GflowAccount, VideoIdea, VideoJob
 
 __all__ = [
     "User",
@@ -66,4 +67,8 @@ __all__ = [
     "ApiToken",
     "StrategyRecommendation",
     "FanpageContentMemory",
+    "GflowWorker",
+    "GflowAccount",
+    "VideoIdea",
+    "VideoJob",
 ]

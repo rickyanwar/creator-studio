@@ -13,7 +13,7 @@ export function HermesTokensCard() {
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const availableScopes = ["read", "memory:write", "recommendations:write"];
+  const availableScopes = ["read", "memory:write", "recommendations:write", "ideas:write", "gflow:worker"];
 
   const handleToggleScope = (s: string) => {
     setScopes((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);

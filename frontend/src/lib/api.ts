@@ -429,3 +429,19 @@ export const listApiTokens = () => api.get("/strategy/tokens");
 export const createApiToken = (data: { name: string; scopes: string[] }) =>
   api.post("/strategy/tokens", data);
 export const revokeApiToken = (id: number) => api.delete(`/strategy/tokens/${id}`);
+
+// ── AI video (Mode 8) ────────────────────────────────────────────────────────
+export const listAiVideoTemplates = () => api.get("/ai-video/templates");
+export const listAiVideoIdeas = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
+  api.get("/ai-video/ideas", { params });
+export const createAiVideoIdea = (data: Record<string, unknown>) => api.post("/ai-video/ideas", data);
+export const approveAiVideoIdea = (id: number) => api.post(`/ai-video/ideas/${id}/approve`);
+export const rejectAiVideoIdea = (id: number) => api.post(`/ai-video/ideas/${id}/reject`);
+export const listAiVideoJobs = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
+  api.get("/ai-video/jobs", { params });
+export const retryAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/retry`);
+export const cancelAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/cancel`);
+export const listGflowAccounts = () => api.get("/ai-video/accounts");
+export const updateGflowAccount = (id: number, data: { enabled?: boolean; label?: string }) =>
+  api.patch(`/ai-video/accounts/${id}`, data);
+export const listGflowWorkers = () => api.get("/ai-video/workers");

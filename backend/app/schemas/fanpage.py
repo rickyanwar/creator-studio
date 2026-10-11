@@ -101,6 +101,22 @@ class FanpageBase(BaseModel):
     yt_clip_watermark: bool = True
     yt_clip_action_crop: str = Field("smart", pattern="^(smart|fit)$")
 
+    # ── Mode 8: AI video ──
+    ai_video_enabled: bool = False
+    ai_video_publish_mode: PublishMode = PublishMode.manual_review
+    ai_video_daily_count: int = Field(1, ge=0, le=10)
+    ai_video_min_score: Optional[int] = Field(70, ge=0, le=100)
+    ai_video_template: Optional[str] = None
+    ai_video_clips: int = Field(2, ge=1, le=6)
+
+    @field_validator("ai_video_template")
+    def validate_ai_video_template(cls, value):
+        if value is not None:
+            from app.services.video_templates import get_template
+
+            get_template(value)
+        return value
+
 
 class FanpageUpdate(FanpageBase):
     @field_validator("timezone", mode="before")

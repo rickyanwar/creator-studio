@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { getSettings, updateSettings, testReplizCredentials, testProxies, testRelays } from "@/lib/api";
 import { YouTubeSettingsCard } from "@/components/settings/YouTubeSettingsCard";
 import { HermesTokensCard } from "@/components/settings/HermesTokensCard";
+import { AiVideoSettingsCard } from "@/components/settings/AiVideoSettingsCard";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -449,6 +450,8 @@ export default function SettingsPage() {
       </section>
 
       <YouTubeSettingsCard settings={settings} onChanged={() => mutate()} />
+
+      <AiVideoSettingsCard settings={settings} onChanged={() => mutate()} />
 
       <HermesTokensCard />
 

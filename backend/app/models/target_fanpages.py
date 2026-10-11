@@ -197,6 +197,14 @@ class TargetFanpage(Base):
     # (centred for a cockpit POV), "fit" = whole frame over a blurred copy.
     yt_clip_action_crop = Column(String(8), default="smart", nullable=False, server_default="smart")
 
+    # ── Mode 8: AI video ──────────────────────────
+    ai_video_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    ai_video_publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False, server_default="manual_review")
+    ai_video_daily_count = Column(Integer, default=1, nullable=False, server_default="1")
+    ai_video_min_score = Column(Integer, default=70, nullable=True, server_default="70")
+    ai_video_template = Column(String(64), nullable=True)
+    ai_video_clips = Column(Integer, default=2, nullable=False, server_default="2")
+
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
     caption_language = Column(String(8), default="en", nullable=False)

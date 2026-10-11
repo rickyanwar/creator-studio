@@ -39,10 +39,12 @@ import {
   updateFacebookPhotoIdea,
   deleteFacebookPhotoIdea,
 } from "@/lib/api";
-import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, DiscussionContentIdeaRef, PinterestSourceRef, PinterestContentIdeaRef, FacebookPhotoSourceRef, FacebookPhotoIdeaRef } from "@/lib/types";
+import { listAiVideoTemplates } from "@/lib/api";
+import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, DiscussionContentIdeaRef, PinterestSourceRef, PinterestContentIdeaRef, FacebookPhotoSourceRef, FacebookPhotoIdeaRef, AiVideoTemplate } from "@/lib/types";
 import { Icon } from "@iconify/react";
 import { CaptionCriteriaEditor, captionFromSource, captionToPayload, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
 import { YtClipSection } from "@/components/fanpages/YtClipSection";
+import { AiVideoSection } from "@/components/fanpages/AiVideoSection";
 
 
 const TARGET_COUNTRIES = [
@@ -326,6 +328,7 @@ export default function FanpageEditPage() {
   const fanpageId = parseInt(id);
   const router = useRouter();
   const { data: fp, mutate } = useSWR(`fanpage-${fanpageId}`, () => fetcher(fanpageId));
+  const { data: aiVideoTemplates } = useSWR("ai-video-templates", () => listAiVideoTemplates().then((r) => r.data as AiVideoTemplate[]));
 
   const [form, setForm] = useState<Partial<FanpageDetail>>({});
   const [saving, setSaving] = useState(false);
@@ -2544,6 +2547,8 @@ export default function FanpageEditPage() {
           if (fresh) setForm((prev) => ({ ...prev, yt_clip_sources: fresh.yt_clip_sources }));
         }}
       />
+
+      <AiVideoSection form={form} set={set} templates={aiVideoTemplates ?? []} />
 
       {/* ── Section: Image Framing (news + IG recreate) ── */}
       <section className="card space-y-4">

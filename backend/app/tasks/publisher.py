@@ -277,6 +277,9 @@ def publish_job(self, job_id: int):
         if job.content_type == ContentType.youtube_clip:
             _publish_video_job(db, job)
             return
+        if job.content_type == ContentType.ai_video:
+            _publish_video_job(db, job)
+            return
 
         post = db.query(Post).filter_by(id=job.post_id).first()
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
@@ -470,7 +473,7 @@ def _publish_video_job(db, job):
         job.status = PublishJobStatus.failed
         job.last_error = "No rendered clip"
         db.commit()
-        logger.error("Job %d: youtube_clip job has no video_url", job.id)
+        logger.error("Job %d: video job has no video_url", job.id)
         return
     if "localhost" in job.video_url or "127.0.0.1" in job.video_url:
         job.status = PublishJobStatus.pending_publish
@@ -498,7 +501,7 @@ def _publish_video_job(db, job):
     job.cleanup_at = scheduled_for + _VIDEO_KEEP_AFTER_GO_LIVE  # both naive UTC
     job.attempt_count = (job.attempt_count or 0) + 1
     db.commit()
-    logger.info("Job %d (clip) published to fanpage '%s' via Repliz (schedule=%s)", job.id, fanpage.name, schedule_id)
+    logger.info("Job %d (video) published to fanpage '%s' via Repliz (schedule=%s)", job.id, fanpage.name, schedule_id)
 
 
 def _maybe_mark_post_done(db, post):
@@ -598,10 +601,20 @@ def recover_stuck_auto_publishes():
             )
             .all()
         )
+        ai_video_jobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.content_type == ContentType.ai_video,
+                TargetFanpage.ai_video_publish_mode == PublishMode.auto,
+            )
+            .all()
+        )
         job_ids = (
             [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs]
             + [j for (j,) in pinterest_jobs] + [j for (j,) in facebook_photo_jobs]
-            + [j for (j,) in yt_clip_jobs]
+            + [j for (j,) in yt_clip_jobs] + [j for (j,) in ai_video_jobs]
         )
         for job_id in job_ids:
             publish_job.delay(job_id)

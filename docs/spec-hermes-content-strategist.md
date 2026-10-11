@@ -80,20 +80,34 @@ Europe/London, converting the WIB sleep hours to local hours. Must be live befor
 - Guardrails: minimum samples, insights cite n / period / uplift, ~10–20 % exploration budget.
 
 ### Phase 3 — scored ideas queue + GFlow video Mode 8
-- Unified `content_ideas` (source, fanpage, type, score, rationale, status) for NEW idea types
-  first (video); the existing Pinterest/Discussion/FB/YT queues are adapted later, not migrated
-  in one go.
-- Mode 8 pipeline: idea → concept → prompt (templates learned from `G-FLow_Automation_dekstop`,
-  e.g. motorsport-tech-explainer) → `video_jobs` (duration preset 15–20 / 20–30 / 30–60 s or
-  custom; N × 10 s clips) → GFlow worker → ffmpeg join → QC (sampled frames: identity,
-  artifacts, garbled text, watermark) → publish queue (Repliz video schedule, already proven by
-  Mode 7). Shadow mode first: owner reviews every video.
-- `gflow_accounts` pool: status, credits, last_used, failures, cooldown; per-step checkpoints so
-  a job resumes after a failure instead of re-paying credits.
-- **Recommended placement: the GFlow worker runs on the Mac app** (`G-FLow_Automation_dekstop`,
-  which already handles multi-account Chrome profiles) and pulls jobs from the studio API
-  (outbound only, no inbound ports), uploading finished clips back. The VPS keeps only the queue.
-  (Owner to confirm — alternative is gflow-cli on the VPS, limited by RAM.)
+- Mode 8 uses the studio's `video_ideas` and `video_jobs` flow. Hermes proposes
+  scored ideas through the scoped API; the planner fills one registered
+  template with one LLM text call that writes the template variables, title,
+  and caption. The worker then generates and uploads the video.
+- A video uses one Flow account and one Flow project. Clip 1 is text-to-video;
+  each later clip is image-to-video from the previous clip's last frame, with
+  the same profile and project. Clips are joined with ffmpeg and published as
+  Reels through the existing Mode 7 video path.
+- The worker is the standalone `gflow_worker` package and uses `gflow-cli`
+  only. It pulls jobs from the studio API over HTTP; it does not require
+  inbound ports or use the multi-profile Flask/Chrome approach from
+  `G-FLow_Automation_dekstop`. It can run on the Mac first and later on the
+  VPS as the `gflow` user with `GFLOW_MAX_CONCURRENT=1` and a
+  `GFLOW_MEM_RESERVE_MB=1536` memory reserve.
+- Account selection follows Flow credits: credits minus the global reserve
+  must cover the whole remaining video, and an account runs at most one video
+  at a time. Failed clips retry on the same account; if it cannot continue,
+  the whole video restarts from clip 1 on another account. Local and server
+  checkpoints allow a job to resume without mixing generations.
+- Free technical QC always runs. Vision QC is a global setting, off by
+  default; when on, it is one contact-sheet vision call per video and fails
+  closed. Each fanpage independently chooses Auto or Manual review. Mode 8 is
+  disabled by default per fanpage.
+- Hermes' weekly strategist step may submit at most two ideas per enabled
+  fanpage. Each idea needs source-backed `research_notes`, a score, and a
+  rationale; topics must not repeat, and narration is always English. The
+  Hermes token uses `ideas:write`; the worker has a separate `gflow:worker`
+  token.
 
 ### Phase 4 — closed loop
 Expected vs actual engagement per idea/schedule (age-normalised via snapshots), small controlled
@@ -107,8 +121,5 @@ experiments (bandit-style exploration), guarded auto-optimisation within owner-a
 - Statistics endpoint response shape must be confirmed with one real call after the Gold
   upgrade; the parser is tolerant and the raw JSON is stored.
 
-## Open questions for the owner
+## Open question for the owner
 1. Repliz Gold: when to buy (metrics start the moment it is active and the toggle is on)?
-2. GFlow worker placement: Mac app (recommended) or VPS gflow-cli?
-3. Video presets per niche (F1 / MotoGP / UFC) and which pages get Mode 8 first.
-4. Approval channel for Hermes recommendations: dashboard only, or Telegram too?

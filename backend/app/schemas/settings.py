@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SettingsUpdate(BaseModel):
@@ -29,6 +29,9 @@ class SettingsUpdate(BaseModel):
     youtube_cookies: Optional[str] = None   # Netscape cookies.txt text — encrypted before saving; "" clears
     youtube_proxy: Optional[str] = None
     metrics_ingestion_enabled: Optional[bool] = None
+    ai_video_worker_enabled: Optional[bool] = None
+    ai_video_vision_qc_enabled: Optional[bool] = None
+    ai_video_credit_reserve: Optional[int] = Field(None, ge=0, le=10000)
 
 
 class SettingsOut(BaseModel):
@@ -64,6 +67,9 @@ class SettingsOut(BaseModel):
     metrics_plan_status: Optional[str] = None
     metrics_plan_checked_at: Optional[datetime] = None
     metrics_last_error: Optional[str] = None
+    ai_video_worker_enabled: bool = True
+    ai_video_vision_qc_enabled: bool = False
+    ai_video_credit_reserve: int = Field(0, ge=0, le=10000)
 
     model_config = {"from_attributes": False}
 
