@@ -11,43 +11,68 @@ logger = logging.getLogger(__name__)
 
 SHOT_TYPES = {
     "face_closeup", "portrait", "half_body", "full_body",
-    "car_on_track", "car_static", "pitlane", "podium", "crowd", "other",
+    "car_on_track", "car_static", "pitlane", "podium", "crowd",
+    "athlete_in_action", "team_group", "vehicle_static", "other",
 }
 
 ACTIVITIES = {
     "driving", "celebrating", "interview", "walking", "talking", "posing",
     "working_on_car", "waiting", "spraying_champagne", "other",
+    "playing", "shooting", "dunking", "fighting", "striking", "grappling",
+    "training", "warming_up", "weigh_in", "face_off", "press_conference",
+    "walkout", "signing_autographs",
 }
 
 EXPRESSIONS = {
     "happy", "smiling", "serious", "focused", "celebrating", "disappointed",
     "neutral", "not_visible",
+    "angry", "shouting", "emotional",
+}
+
+SPORTS = {"motorsport", "basketball", "mma", "boxing", "football", "tennis", "other", "unknown"}
+VENUE_TYPES = {
+    "circuit", "court", "octagon", "ring", "pitch", "stadium", "arena", "gym",
+    "studio", "paddock", "garage", "pitlane", "street", "other", "unknown",
 }
 
 CONTEXT_SESSIONS = {
     "race", "qualifying", "practice", "pitlane", "podium", "paddock", "garage",
     "event", "unknown",
+    "game", "fight", "weigh_in", "training", "warm_up", "press_conference",
+    "media_day", "ceremony",
 }
+
+EVENT_SESSIONS = CONTEXT_SESSIONS
 
 LABEL_PROMPT = """Analyze this image and return a JSON object with the following fields strictly:
 {
-  "shot_type": "face_closeup" | "portrait" | "half_body" | "full_body" | "car_on_track" | "car_static" | "pitlane" | "podium" | "crowd" | "other",
+  "sport": "motorsport" | "basketball" | "mma" | "boxing" | "football" | "tennis" | "other" | "unknown",
+  "venue": {
+    "type": "circuit" | "court" | "octagon" | "ring" | "pitch" | "stadium" | "arena" | "gym" | "studio" | "paddock" | "garage" | "pitlane" | "street" | "other" | "unknown",
+    "visible": boolean
+  },
+  "shot_type": "face_closeup" | "portrait" | "half_body" | "full_body" | "car_on_track" | "car_static" | "pitlane" | "podium" | "crowd" | "athlete_in_action" | "team_group" | "vehicle_static" | "other",
   "people_count": integer from 0 to 20,
-  "activity": "driving" | "celebrating" | "interview" | "walking" | "talking" | "posing" | "working_on_car" | "waiting" | "spraying_champagne" | "other",
-  "expression": "happy" | "smiling" | "serious" | "focused" | "celebrating" | "disappointed" | "neutral" | "not_visible",
+  "activity": "driving" | "celebrating" | "interview" | "walking" | "talking" | "posing" | "working_on_car" | "waiting" | "spraying_champagne" | "playing" | "shooting" | "dunking" | "fighting" | "striking" | "grappling" | "training" | "warming_up" | "weigh_in" | "face_off" | "press_conference" | "walkout" | "signing_autographs" | "other",
+  "expression": "happy" | "smiling" | "serious" | "focused" | "celebrating" | "disappointed" | "neutral" | "not_visible" | "angry" | "shouting" | "emotional",
   "context": {
-    "session": "race" | "qualifying" | "practice" | "pitlane" | "podium" | "paddock" | "garage" | "event" | "unknown",
+    "session": "race" | "qualifying" | "practice" | "pitlane" | "podium" | "paddock" | "garage" | "event" | "game" | "fight" | "weigh_in" | "training" | "warm_up" | "press_conference" | "media_day" | "ceremony" | "unknown",
     "rain": boolean,
     "night": boolean,
     "circuit_visible": boolean
   },
   "livery_colors": ["color1", "color2", "color3"],
+  "kit_colors": ["color1", "color2", "color3"],
+  "event": {"series": "up to 40 chars", "event_name": "up to 80 chars", "year": 1950-2100, "season": "YYYY or YYYY-YY", "session": "context session enum"},
   "quality": {
     "blurry": boolean,
     "obstructed": boolean
   },
   "caption": "Short caption up to 160 characters"
 }
+Use livery_colors for motorsport and kit_colors for other sports, each with at most 3 colors.
+Use venue.type and venue.visible; keep context.circuit_visible true only when a circuit is visible.
+When evidence supports it, include event with series, event_name, year, optional season (YYYY or YYYY-YY), and session.
 Output only valid JSON with no extra commentary or Markdown formatting.
 """
 
@@ -99,6 +124,24 @@ def normalise_label_output(data: dict) -> dict:
     if not isinstance(data, dict):
         raise ValueError("input must be a dictionary")
 
+    sport = str(data.get("sport") or "").strip().lower()
+    sport = sport if sport in SPORTS else "unknown"
+
+    raw_venue = data.get("venue")
+    if not isinstance(raw_venue, dict):
+        raw_venue = {}
+    venue_type = str(raw_venue.get("type") or "").strip().lower()
+    venue_type = venue_type if venue_type in VENUE_TYPES else "unknown"
+    venue_visible = bool(raw_venue.get("visible", False))
+
+    # Legacy clients only know context.circuit_visible. Preserve it and derive
+    # the new venue visibility flag for circuit labels.
+    legacy_circuit_visible = bool((data.get("context") or {}).get("circuit_visible", False)) if isinstance(data.get("context"), dict) else False
+    if venue_type == "circuit" and legacy_circuit_visible:
+        venue_visible = True
+    if venue_type == "circuit":
+        legacy_circuit_visible = venue_visible
+
     # shot_type
     shot_type = str(data.get("shot_type") or "").strip().lower()
     shot_type = shot_type if shot_type in SHOT_TYPES else "other"
@@ -132,7 +175,7 @@ def normalise_label_output(data: dict) -> dict:
         "session": session,
         "rain": rain,
         "night": night,
-        "circuit_visible": circuit_visible,
+        "circuit_visible": legacy_circuit_visible if venue_type == "circuit" else circuit_visible,
     }
 
     # livery_colors
@@ -140,6 +183,10 @@ def normalise_label_output(data: dict) -> dict:
     if not isinstance(raw_colors, list):
         raw_colors = []
     livery_colors = [str(c).strip().lower() for c in raw_colors if str(c).strip()][:3]
+    raw_kit_colors = data.get("kit_colors") or []
+    if not isinstance(raw_kit_colors, list):
+        raw_kit_colors = []
+    kit_colors = [str(c).strip().lower() for c in raw_kit_colors if str(c).strip()][:3]
 
     # quality
     q = data.get("quality")
@@ -150,19 +197,49 @@ def normalise_label_output(data: dict) -> dict:
         "obstructed": bool(q.get("obstructed", False)),
     }
 
+    raw_event = data.get("event")
+    event_dict = None
+    if isinstance(raw_event, dict):
+        event_dict = {
+            "series": str(raw_event.get("series") or "").strip()[:40],
+            "event_name": str(raw_event.get("event_name") or "").strip()[:80],
+            "year": raw_event.get("year"),
+            "session": str(raw_event.get("session") or "").strip().lower(),
+        }
+        if event_dict["year"] is not None:
+            try:
+                event_dict["year"] = int(event_dict["year"])
+            except (TypeError, ValueError):
+                raise ValueError("event.year must be an integer")
+            if not 1950 <= event_dict["year"] <= 2100:
+                raise ValueError("event.year must be between 1950 and 2100")
+        if event_dict["session"] not in EVENT_SESSIONS:
+            event_dict["session"] = "unknown"
+        season = raw_event.get("season")
+        if season is not None and re.fullmatch(r"[0-9]{4}(-[0-9]{2})?", str(season)):
+            event_dict["season"] = str(season)
+        else:
+            event_dict.pop("season", None)
+
     # caption
     caption = str(data.get("caption") or "").strip()[:160]
 
-    return {
+    result = {
+        "sport": sport,
+        "venue": {"type": venue_type, "visible": venue_visible},
         "shot_type": shot_type,
         "people_count": people_count,
         "activity": activity,
         "expression": expression,
         "context": context_dict,
         "livery_colors": livery_colors,
+        "kit_colors": kit_colors,
         "quality": quality_dict,
         "caption": caption,
     }
+    if event_dict is not None:
+        result["event"] = event_dict
+    return result
 
 
 def label_image(path: str, provider: str = "router") -> dict:

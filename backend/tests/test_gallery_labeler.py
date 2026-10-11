@@ -41,7 +41,7 @@ def test_normaliser_unknown_enum_and_missing_defaults():
     raw_data = {
         "shot_type": "weird_shot",
         "activity": "flying",
-        "expression": "angry",
+        "expression": "unknown-expression",
         "context": {
             "session": "warmup_lap",
             "rain": "yes",  # truthy to bool
@@ -60,6 +60,72 @@ def test_normaliser_unknown_enum_and_missing_defaults():
     assert norm["people_count"] == 0
     assert norm["quality"] == {"blurry": False, "obstructed": False}
     assert norm["caption"] == ""
+
+
+def test_normaliser_accepts_sport_agnostic_values_and_venue():
+    norm = normalise_label_output({
+        "sport": "basketball",
+        "venue": {"type": "court", "visible": True},
+        "shot_type": "athlete_in_action",
+        "activity": "dunking",
+        "expression": "emotional",
+        "context": {"session": "game"},
+        "kit_colors": ["purple", "gold"],
+    })
+
+    assert norm["sport"] == "basketball"
+    assert norm["venue"] == {"type": "court", "visible": True}
+    assert norm["shot_type"] == "athlete_in_action"
+    assert norm["activity"] == "dunking"
+    assert norm["expression"] == "emotional"
+    assert norm["context"]["session"] == "game"
+    assert norm["kit_colors"] == ["purple", "gold"]
+
+
+def test_normaliser_preserves_legacy_values_and_maps_new_unknowns():
+    norm = normalise_label_output({
+        "sport": "motorsport",
+        "venue": {"type": "circuit", "visible": False},
+        "shot_type": "car_on_track",
+        "activity": "driving",
+        "expression": "not_visible",
+        "context": {"session": "race", "circuit_visible": True},
+        "livery_colors": ["red"],
+    })
+    assert norm["sport"] == "motorsport"
+    assert norm["venue"] == {"type": "circuit", "visible": True}
+    assert norm["shot_type"] == "car_on_track"
+    assert norm["activity"] == "driving"
+    assert norm["context"]["session"] == "race"
+    assert norm["livery_colors"] == ["red"]
+
+    unknown = normalise_label_output({
+        "sport": "curling",
+        "venue": {"type": "ice_rink", "visible": "yes"},
+        "shot_type": "unknown-shot",
+        "activity": "unknown-activity",
+        "expression": "unknown-expression",
+        "context": {"session": "unknown-session"},
+    })
+    assert unknown["sport"] == "unknown"
+    assert unknown["venue"] == {"type": "unknown", "visible": True}
+
+
+def test_normaliser_accepts_event_season_year_or_academic_style():
+    norm = normalise_label_output({
+        "event": {
+            "series": "NBA",
+            "event_name": "Finals",
+            "year": 2026,
+            "season": "2025-26",
+            "session": "game",
+        }
+    })
+    assert norm["event"]["season"] == "2025-26"
+
+    assert normalise_label_output({"event": {"season": "2026"}})["event"]["season"] == "2026"
+    assert "season" not in normalise_label_output({"event": {"season": "26/27"}})["event"]
+    assert "season" not in normalise_label_output({"event": {"season": "2025-2026"}})["event"]
 
 
 def test_normaliser_caption_truncated():
