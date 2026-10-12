@@ -27,7 +27,7 @@ def dummy_deps():
 def test_redesign_card_returns_false_on_qa_fail(
     mock_open, mock_check, mock_generate, mock_driver, mock_plan, mock_layout, mock_analyze, dummy_deps
 ):
-    """Test that redesign_card itself returns ok=False when QA fails twice."""
+    """Test that redesign_card returns the first QA failure without retrying."""
     post, fanpage = dummy_deps
     
     analysis = MagicMock(type="team_radio", main_subject="Max", radio_lines=[])
@@ -47,12 +47,9 @@ def test_redesign_card_returns_false_on_qa_fail(
     driver = MagicMock(name="Max", number="1", colour_hex="#000", team="RBR")
     mock_driver.return_value = driver
     
-    # generate succeeds but QA fails twice
+    # generate succeeds but QA fails
     mock_generate.return_value = b"gen"
-    mock_check.side_effect = [
-        MagicMock(passed=False, problems=["Bad1"]),
-        MagicMock(passed=False, problems=["Bad2"])
-    ]
+    mock_check.return_value = MagicMock(passed=False, problems=["Bad1"])
     
     db = MagicMock()
     mock_open.return_value.__enter__.return_value.read.return_value = b"source_image"
@@ -60,9 +57,10 @@ def test_redesign_card_returns_false_on_qa_fail(
     res = redesign_card(db, post=post, fanpage=fanpage, job=None, decision=None)
     
     assert res.ok is False
-    assert "Bad2" in res.problems or "Bad1" in res.problems
-    assert mock_generate.call_count == 2
-    assert mock_check.call_count == 2
+    assert "Bad1" in res.problems
+    assert "QA failed; no retry (single-call mode)" in res.notes
+    assert mock_generate.call_count == 1
+    assert mock_check.call_count == 1
 
 @patch("app.services.redesign_pipeline.analyze_ig_post")
 @patch("app.services.redesign_pipeline.choose_layout")
