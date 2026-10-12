@@ -1,7 +1,7 @@
 """add quote_shorten_enabled to target_fanpages
 
 Revision ID: c80000000007
-Revises: c80000000005
+Revises: c80000000006
 """
 
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 
 revision = "c80000000007"
-down_revision = "c80000000005"
+down_revision = "c80000000006"
 branch_labels = None
 depends_on = None
 

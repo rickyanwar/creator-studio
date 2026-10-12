@@ -105,7 +105,7 @@ def test_migration_c80000000010():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
     rev = script.get_revision("c80000000010")
-    assert rev.down_revision == "c80000000005"
+    assert rev.down_revision == "c80000000009"
     migration = rev.module
 
     with patch.object(migration.op, "execute") as mock_exec:

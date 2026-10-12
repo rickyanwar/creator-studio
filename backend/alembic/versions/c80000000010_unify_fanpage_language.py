@@ -1,7 +1,7 @@
 """unify fanpage language
 
 Revision ID: c80000000010
-Revises: c80000000005
+Revises: c80000000009
 """
 
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 
 revision = "c80000000010"
-down_revision = "c80000000005"
+down_revision = "c80000000009"
 branch_labels = None
 depends_on = None
 
