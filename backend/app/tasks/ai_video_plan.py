@@ -6,7 +6,7 @@ from app.database import SessionLocal
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_fill import fill_idea
-from app.services.video_templates import credits_estimate, get_template
+from app.services.video_templates import allowed_video_templates, credits_estimate, get_template
 from app.tasks.celery_app import celery_app
 from app.tasks.publisher import _fanpage_tz
 
@@ -33,9 +33,46 @@ def plan_ai_videos():
                 if fanpage.ai_video_min_score is not None and idea.score is not None and idea.score >= fanpage.ai_video_min_score:
                     idea.status, idea.decided_by, idea.decided_at = "approved", "auto", _now()
             db.commit()
-            idea = db.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id, VideoIdea.status == "approved").order_by(VideoIdea.score.desc().nullslast(), VideoIdea.created_at.asc()).first()
-            if not idea:
+
+            allowed = allowed_video_templates(fanpage)
+            approved_ideas = db.query(VideoIdea).filter(
+                VideoIdea.fanpage_id == fanpage.id,
+                VideoIdea.status == "approved"
+            ).order_by(VideoIdea.score.desc().nullslast(), VideoIdea.created_at.asc()).all()
+
+            if not approved_ideas:
                 continue
+
+            valid_ideas = []
+            for app_idea in approved_ideas:
+                if allowed and app_idea.template_key not in allowed:
+                    logger.warning(
+                        "Skipping idea %s for fanpage %s: template %s is no longer allowed",
+                        app_idea.id, fanpage.id, app_idea.template_key
+                    )
+                    continue
+                valid_ideas.append(app_idea)
+
+            if not valid_ideas:
+                continue
+
+            # Rotation across templates: choose approved idea whose template was used least recently
+            past_jobs = db.query(VideoJob.template_key, VideoJob.created_at).filter(
+                VideoJob.fanpage_id == fanpage.id
+            ).order_by(VideoJob.created_at.desc()).all()
+
+            last_used_map = {}
+            for t_key, c_at in past_jobs:
+                if t_key not in last_used_map:
+                    last_used_map[t_key] = c_at
+
+            # Least recently used template first; within it the best score, then the oldest idea
+            min_dt = datetime.min
+            idea = min(
+                valid_ideas,
+                key=lambda i: (last_used_map.get(i.template_key, min_dt), -(i.score or 0), i.created_at)
+            )
+
             template = get_template(idea.template_key)
             clips = idea.clips if idea.clips in template.clip_options else fanpage.ai_video_clips if fanpage.ai_video_clips in template.clip_options else template.default_clips
             try:

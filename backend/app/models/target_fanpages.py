@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Enum, Float, func
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Enum, Float, JSON, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -206,6 +206,7 @@ class TargetFanpage(Base):
     ai_video_daily_count = Column(Integer, default=1, nullable=False, server_default="1")
     ai_video_min_score = Column(Integer, default=70, nullable=True, server_default="70")
     ai_video_template = Column(String(64), nullable=True)
+    ai_video_templates = Column(JSON, nullable=True)
     ai_video_clips = Column(Integer, default=2, nullable=False, server_default="2")
     ai_video_narrator = Column(String(32), nullable=True)
     ai_video_title_max_chars = Column(Integer, default=100, nullable=False, server_default="100")

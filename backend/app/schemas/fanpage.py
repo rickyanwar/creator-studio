@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, field_validator, computed_field
+from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
 import zoneinfo
 import re
 from app.models.target_fanpages import PublishMode, AttributionPosition
@@ -111,6 +111,7 @@ class FanpageBase(BaseModel):
     ai_video_daily_count: int = Field(1, ge=0, le=10)
     ai_video_min_score: Optional[int] = Field(70, ge=0, le=100)
     ai_video_template: Optional[str] = None
+    ai_video_templates: Optional[list[str]] = None
     ai_video_clips: int = Field(2, ge=1, le=6)
     ai_video_narrator: Optional[str] = None
     ai_video_title_max_chars: int = Field(100, ge=20, le=5000)
@@ -132,6 +133,26 @@ class FanpageBase(BaseModel):
 
             get_template(value)
         return value
+
+    @field_validator("ai_video_templates")
+    def validate_ai_video_templates(cls, value):
+        if value is not None:
+            from app.services.video_templates import list_templates
+            valid_keys = {t.key for t in list_templates()}
+            for key in value:
+                if key not in valid_keys:
+                    raise ValueError(f"unknown template key: {key}")
+            return list(dict.fromkeys(value))
+        return value
+
+    @model_validator(mode="after")
+    def sync_ai_video_template(self):
+        if self.ai_video_templates is not None:
+            if len(self.ai_video_templates) > 0:
+                self.ai_video_template = self.ai_video_templates[0]
+            else:
+                self.ai_video_template = None
+        return self
 
     @field_validator("ai_video_narrator")
     @classmethod

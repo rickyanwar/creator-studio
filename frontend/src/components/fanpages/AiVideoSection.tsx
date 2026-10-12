@@ -12,10 +12,26 @@ type Props = {
 
 export function AiVideoSection({ form, set, templates = [] }: Props) {
   const enabled = !!form.ai_video_enabled;
-  const template = templates.find((item) => item.key === form.ai_video_template);
+  const selectedTemplates: string[] = form.ai_video_templates ?? (form.ai_video_template ? [form.ai_video_template] : []);
+  const firstKey = selectedTemplates[0] ?? form.ai_video_template;
+  const template = templates.find((item) => item.key === firstKey);
   const clips = form.ai_video_clips ?? template?.default_clips ?? 2;
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
+
+  const toggleTemplate = (key: string) => {
+    let next: string[];
+    if (selectedTemplates.includes(key)) {
+      if (enabled && selectedTemplates.length <= 1) {
+        return;
+      }
+      next = selectedTemplates.filter((k) => k !== key);
+    } else {
+      next = [...selectedTemplates, key];
+    }
+    set("ai_video_templates", next);
+    set("ai_video_template", next[0] || null);
+  };
 
   const preview = async () => {
     if (!form.id) return;
@@ -49,7 +65,15 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
         </div>
         <button
           type="button"
-          onClick={() => set("ai_video_enabled", !enabled)}
+          onClick={() => {
+            const nextEnabled = !enabled;
+            set("ai_video_enabled", nextEnabled);
+            if (nextEnabled && selectedTemplates.length === 0 && templates.length > 0) {
+              const defaultKey = templates[0].key;
+              set("ai_video_templates", [defaultKey]);
+              set("ai_video_template", defaultKey);
+            }
+          }}
           className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${enabled ? "bg-primary-main" : "bg-hairline"}`}
           aria-label="Toggle Mode 8"
         >
@@ -79,12 +103,35 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
               <input type="number" min={0} max={100} className="input w-full" placeholder="Empty = never auto-approve" value={form.ai_video_min_score ?? ""} onChange={(e) => set("ai_video_min_score", e.target.value === "" ? null : Number(e.target.value))} />
               <p className="text-[11px] text-text-secondary mt-1">Used only for automatic approval of Hermes ideas.</p>
             </div>
-            <div>
-              <label className="label">Video template</label>
-              <select className="input w-full" value={form.ai_video_template ?? ""} onChange={(e) => set("ai_video_template", e.target.value || null)}>
-                <option value="">Use idea template</option>
-                {templates.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
-              </select>
+            <div className="sm:col-span-2">
+              <label className="label">Allowed Video Templates</label>
+              <p className="text-[11px] text-text-secondary mb-2">
+                Select which templates are allowed for this fanpage. At least 1 must be checked when Mode 8 is enabled.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-hairline bg-surface-raised">
+                {templates.map((item) => {
+                  const isChecked = selectedTemplates.includes(item.key);
+                  return (
+                    <label
+                      key={item.key}
+                      className="flex items-start gap-2.5 p-2 rounded cursor-pointer hover:bg-surface-hover"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleTemplate(item.key)}
+                        className="accent-primary-main mt-0.5"
+                      />
+                      <div className="text-xs">
+                        <div className="font-medium text-text-primary">{item.name}</div>
+                        <div className="text-text-secondary text-[11px]">
+                          {item.niches.length > 0 ? item.niches.join(", ") : "All niches"}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
             <div>
               <label className="label">Default clips</label>

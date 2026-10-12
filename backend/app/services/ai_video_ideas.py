@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.models.ai_video import VideoIdea
-from app.services.video_templates import get_template
+from app.models.target_fanpages import TargetFanpage
+from app.services.video_templates import allowed_video_templates, get_template
 
 
 class ConflictError(Exception):
@@ -51,6 +52,11 @@ def _normalized_topic(topic: str) -> str:
 
 def create_idea(db: Session, fanpage_id: int, data: dict, source: str, token_id=None, username=None) -> VideoIdea:
     _validate(data)
+    fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if fanpage:
+        allowed = allowed_video_templates(fanpage)
+        if allowed and data.get("template_key") not in allowed:
+            raise ValueError(f"template_key '{data.get('template_key')}' is not allowed for fanpage {fanpage_id}")
     if source == "hermes" and (data.get("score") is None or not data.get("rationale")):
         raise ValueError("Hermes ideas require score and rationale")
     proposed = db.query(VideoIdea).filter_by(fanpage_id=fanpage_id, status="proposed").count()

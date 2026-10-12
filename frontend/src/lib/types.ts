@@ -132,6 +132,7 @@ export interface Fanpage {
   ai_video_daily_count: number;
   ai_video_min_score: number | null;
   ai_video_template: string | null;
+  ai_video_templates: string[] | null;
   ai_video_clips: number;
   ai_video_narrator: string | null;
   ai_video_title_max_chars?: number;
