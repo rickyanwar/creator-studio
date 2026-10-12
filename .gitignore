@@ -68,3 +68,6 @@ local_media/
 
 # local E2E/test data (never commit)
 .ref/
+
+# TLS certificates copied from Let's Encrypt by the renewal deploy hook (never commit)
+nginx/ssl/
