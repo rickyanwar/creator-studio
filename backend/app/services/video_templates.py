@@ -5,6 +5,36 @@ import json
 from pathlib import Path
 import re
 
+from app.services.fanpage_language import LANGUAGE_NAMES, language_name
+
+LANGUAGE_WORD_FACTORS: dict[str, float] = {
+    "fr": 0.82,
+    "es": 0.88,
+    "it": 0.88,
+    "pt": 0.88,
+    "de": 0.78,
+    "nl": 0.85,
+    "id": 0.85,
+}
+
+
+def get_narration_budget(clip_template: dict, lang_code: str | None = "en") -> str:
+    """Return narration word budget (e.g. '22-24' or '18-20') for a language code.
+    If language entry in narration_words exists, use it. Otherwise derive from 'en'
+    using factor and round to integer range.
+    """
+    code = (lang_code or "en").split("-")[0].lower()
+    words_dict = clip_template.get("narration_words") or {}
+    if code in words_dict:
+        return str(words_dict[code])
+
+    en_budget = words_dict.get("en", "22-24")
+    factor = LANGUAGE_WORD_FACTORS.get(code, 1.0)
+    lo, hi = map(int, en_budget.split("-"))
+    lo_derived = round(lo * factor)
+    hi_derived = round(hi * factor)
+    return f"{lo_derived}-{hi_derived}"
+
 
 BLOCK_VARS = {"style", "audio", "narrator", "narrator_followup", "vehicle", "vehicle_short"}
 _PLACEHOLDER = re.compile(r"\{([a-z_0-9]+)\}")
@@ -109,7 +139,7 @@ def sanitize_channel_name(name: str) -> str | None:
     return truncated or value[:24]
 
 
-def render_clips(t: VideoTemplate, variables: dict, clips: int) -> list[dict]:
+def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str | None = None) -> list[dict]:
     if clips not in t.clip_options:
         raise ValueError(f"clips must be one of {t.clip_options}")
     for name in required_variables(t, clips):
@@ -149,16 +179,37 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int) -> list[dict]:
             lettering=lettering,
             lettering_short=lettering_short,
         )
+    lang = lang_code or variables.get("language") or "en"
+    lang_display = language_name(lang)
+    lang_suffix = "" if (lang or "en").lower().startswith("en") else f", speaking natural, native-sounding {lang_display}"
+
     narrator_preset = variables.get("narrator_preset")
     if narrator_preset is None or narrator_preset == "EN-DOC":
-        narrator = blocks["narrator_en"]
-        narrator_followup = blocks["narrator_en_followup"]
+        base_narrator = blocks["narrator_en"]
+        base_followup = blocks["narrator_en_followup"]
+        if lang_suffix:
+            # Inject language before the trailing "says in English:" / "says:"
+            # e.g. "Voice-over: a confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, speaking natural, native-sounding French, says in French:"
+            narrator = base_narrator.replace("says in English:", f"speaking natural, native-sounding {lang_display}, says in {lang_display}:")
+            narrator_followup = base_followup.replace("says in English:", f"speaking natural, native-sounding {lang_display}, says in {lang_display}:")
+        else:
+            narrator = base_narrator
+            narrator_followup = base_followup
     else:
         if narrator_preset not in narrator_presets(t):
             raise ValueError(f"unknown narrator_preset {narrator_preset}")
         preset_text = blocks["narrator_presets"][narrator_preset]
-        narrator = "Voice-over: " + preset_text
-        narrator_followup = "Voice-over: " + ("the same " + preset_text[2:] if preset_text.startswith("a ") else preset_text)
+        if lang_suffix:
+            # preset_text ends with ", says:" or "says in English:"
+            if "says in English:" in preset_text:
+                custom_preset = preset_text.replace("says in English:", f"speaking natural, native-sounding {lang_display}, says in {lang_display}:")
+            else:
+                custom_preset = re.sub(r",?\s*says:\s*$", f", speaking natural, native-sounding {lang_display}, says in {lang_display}:", preset_text)
+            narrator = "Voice-over: " + custom_preset
+            narrator_followup = "Voice-over: " + ("the same " + custom_preset[2:] if custom_preset.startswith("a ") else custom_preset)
+        else:
+            narrator = "Voice-over: " + preset_text
+            narrator_followup = "Voice-over: " + ("the same " + preset_text[2:] if preset_text.startswith("a ") else preset_text)
     substitutions.update(
         style=blocks["style"], audio=blocks["audio"], narrator=narrator,
         narrator_followup=narrator_followup,
@@ -168,7 +219,8 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int) -> list[dict]:
     rendered = []
     for index, clip in enumerate(t.raw["clip_templates"][:clips], start=1):
         narration = f"narration_{index}"
-        lo, hi = map(int, clip["narration_words"]["en"].split("-"))
+        budget_str = get_narration_budget(clip, lang)
+        lo, hi = map(int, budget_str.split("-"))
         if not lo - 6 <= len(variables[narration].split()) <= hi:
             raise ValueError(f"{narration} must contain {lo - 6}–{hi} words")
         prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), clip["prompt"])

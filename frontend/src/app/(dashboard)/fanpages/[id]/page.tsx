@@ -44,7 +44,6 @@ import {
 import { listAiVideoTemplates } from "@/lib/api";
 import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, DiscussionContentIdeaRef, PinterestSourceRef, PinterestContentIdeaRef, FacebookPhotoSourceRef, FacebookPhotoIdeaRef, AiVideoTemplate } from "@/lib/types";
 import { Icon } from "@iconify/react";
-import { CaptionCriteriaEditor, captionFromSource, captionToPayload, type CaptionCriteria } from "@/components/CaptionCriteriaEditor";
 import { YtClipSection } from "@/components/fanpages/YtClipSection";
 import { AiVideoSection } from "@/components/fanpages/AiVideoSection";
 
@@ -148,25 +147,6 @@ function IGSourceCard({
       alert(err.response?.data?.detail || "Failed to update trigger");
     } finally {
       setTriggerSaving(false);
-    }
-  }
-
-  const [capOpen, setCapOpen] = useState(false);
-  const [capForm, setCapForm] = useState<CaptionCriteria>(captionFromSource(source));
-  const [capSaving, setCapSaving] = useState(false);
-  const capCount = [
-    source.caption_tone, source.caption_language, source.caption_max_length,
-    source.caption_hashtag_count, source.caption_cta_text, source.caption_custom_prompt,
-  ].filter((v) => v !== null && v !== "").length;
-
-  async function saveCaption() {
-    setCapSaving(true);
-    try {
-      await updateIGSource(source.id, captionToPayload(capForm));
-      onAlbumSaved();
-      setCapOpen(false);
-    } finally {
-      setCapSaving(false);
     }
   }
 
@@ -339,38 +319,6 @@ function IGSourceCard({
           })}
         </div>
       </div>
-
-      {/* Divider */}
-      <div className="border-t border-hairline" />
-
-      {/* Per-source caption criteria */}
-      <div className="space-y-2">
-        <button
-          onClick={() => { setCapForm(captionFromSource(source)); setCapOpen((o) => !o); }}
-          className="flex items-center justify-between w-full text-left"
-        >
-          <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary uppercase tracking-wide">
-            <Icon icon="solar:pen-new-square-bold-duotone" width={13} />
-            Caption criteria
-            {capCount > 0 && (
-              <span className="normal-case rounded-full bg-primary-main/15 text-primary-main px-1.5 py-0.5 text-[10px] font-semibold">{capCount} set</span>
-            )}
-          </span>
-          <Icon icon={capOpen ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={14} className="text-text-secondary" />
-        </button>
-        {capOpen && (
-          <div className="pt-1">
-            <CaptionCriteriaEditor
-              value={capForm}
-              onChange={setCapForm}
-              onSave={saveCaption}
-              saving={capSaving}
-              hint="Applies to this Instagram source across all fanpages. Empty fields inherit this fanpage's caption criteria below."
-            />
-          </div>
-        )}
-      </div>
-
     </div>
   );
 }
@@ -811,7 +759,11 @@ export default function FanpageEditPage() {
   async function handleSave() {
     setSaving(true);
     try {
-      await updateFanpage(fanpageId, form);
+      const payload = {
+        ...form,
+        mode2_caption_language: form.caption_language,
+      };
+      await updateFanpage(fanpageId, payload);
       // A save just committed, so the form now matches the server exactly —
       // safe (and correct) to let it resume following live server data again.
       hasEdited.current = false;
@@ -897,6 +849,180 @@ export default function FanpageEditPage() {
           <p className="text-xs text-text-secondary">{fp.repliz_account_id}</p>
         </div>
       </div>
+
+      {/* ── Section: Pengaturan Global ─────────────────────── */}
+      <section className="card space-y-5">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">Pengaturan Global</h2>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Satu set pengaturan caption per fanpage yang digunakan oleh semua mode konten (Mode 1 IG, Mode 2 Berita, Mode 3 IG Recreate, Mode 4 Diskusi, Mode 5 Pinterest, Mode 6 FB Photo, Mode 7 YT Clip, Mode 8 Video Narasi).
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Bahasa fanpage</label>
+            <select
+              className="input-rect w-full"
+              value={(form.caption_language as string) ?? "en"}
+              onChange={(e) => {
+                set("caption_language", e.target.value);
+                set("mode2_caption_language", e.target.value);
+              }}
+            >
+              <option value="en">English (en)</option>
+              <option value="fr">French (fr)</option>
+              <option value="es">Spanish (es)</option>
+              <option value="de">German (de)</option>
+              <option value="it">Italian (it)</option>
+              <option value="pt">Portuguese (pt)</option>
+              <option value="id">Indonesian (id)</option>
+              <option value="nl">Dutch (nl)</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Tone</label>
+            <input
+              className="input-rect w-full"
+              value={(form.caption_tone as string) ?? ""}
+              onChange={(e) => set("caption_tone", e.target.value)}
+              placeholder="engaging, inspirational, humorous…"
+            />
+          </div>
+          <div>
+            <label className="label">Max Length (chars)</label>
+            <input
+              className="input-rect w-full"
+              type="number"
+              value={(form.caption_max_length as number) ?? 500}
+              onChange={(e) => set("caption_max_length", parseInt(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="label">Hashtag Count</label>
+            <input
+              className="input-rect w-full"
+              type="number"
+              value={(form.caption_hashtag_count as number) ?? 5}
+              onChange={(e) => set("caption_hashtag_count", parseInt(e.target.value))}
+            />
+          </div>
+        </div>
+
+        {/* Must Include tags */}
+        <div>
+          <label className="label">Must Include Keywords</label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {((form.caption_must_include as string[]) ?? []).map((tag) => (
+              <span key={tag} className="badge badge-blue gap-1">
+                {tag}
+                <button onClick={() => removeTag("caption_must_include", tag)}>
+                  <Icon icon="solar:close-bold" width={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="input flex-1"
+              placeholder="Add keyword, press Enter"
+              value={mustIncludeInput}
+              onChange={(e) => setMustIncludeInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  addTag("caption_must_include", mustIncludeInput.trim());
+                  setMustIncludeInput("");
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Must Avoid tags */}
+        <div>
+          <label className="label">Must Avoid Words</label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {((form.caption_must_avoid as string[]) ?? []).map((tag) => (
+              <span key={tag} className="badge badge-red gap-1">
+                {tag}
+                <button onClick={() => removeTag("caption_must_avoid", tag)}>
+                  <Icon icon="solar:close-bold" width={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="input flex-1"
+              placeholder="Add word to avoid, press Enter"
+              value={mustAvoidInput}
+              onChange={(e) => setMustAvoidInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  addTag("caption_must_avoid", mustAvoidInput.trim());
+                  setMustAvoidInput("");
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* CTA text */}
+        <div>
+          <label className="label">Call-to-Action Text</label>
+          <input
+            className="input-rect w-full"
+            value={(form.caption_cta_text as string) ?? ""}
+            onChange={(e) => set("caption_cta_text", e.target.value)}
+            placeholder="Follow for more! / Link in bio"
+          />
+        </div>
+
+        {/* Attribution */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <input
+              id="use-attribution"
+              type="checkbox"
+              className="w-4 h-4 rounded accent-primary-main"
+              checked={(form.use_attribution as boolean) ?? true}
+              onChange={(e) => set("use_attribution", e.target.checked)}
+            />
+            <label htmlFor="use-attribution" className="text-xs text-text-primary cursor-pointer">
+              Add attribution
+            </label>
+          </div>
+          {form.use_attribution && (
+            <>
+              <input
+                className="input-rect flex-1"
+                value={(form.caption_attribution_template as string) ?? "via @{source_username}"}
+                onChange={(e) => set("caption_attribution_template", e.target.value)}
+                placeholder="via @{source_username}"
+              />
+              <select
+                className="input-rect"
+                value={(form.attribution_position as string) ?? "caption_end"}
+                onChange={(e) => set("attribution_position", e.target.value)}
+              >
+                <option value="caption_end">At end</option>
+                <option value="caption_start">At start</option>
+              </select>
+            </>
+          )}
+        </div>
+
+        {/* Custom prompt */}
+        <div>
+          <label className="label">Additional AI Instructions</label>
+          <textarea
+            className="input-rect w-full h-24 resize-none"
+            value={(form.caption_custom_prompt as string) ?? ""}
+            onChange={(e) => set("caption_custom_prompt", e.target.value)}
+            placeholder="e.g. Always mention our brand name. Keep it family-friendly."
+          />
+        </div>
+      </section>
 
       {/* ── Section 1: IG Sources ──────────────────────── */}
       <section className="card space-y-4">
@@ -1040,166 +1166,8 @@ export default function FanpageEditPage() {
       <section className="card space-y-5">
         <h2 className="text-base font-semibold text-text-primary">Mode 1: IG Repost — Caption Criteria</h2>
         <p className="text-sm text-text-secondary -mt-3">
-          Used by Mode 1 (IG repost) and Mode 3 (IG recreate). Mode 2 (News Content) has its own
-          separate criteria — including its own Hashtag Count — further down this page.
+          Caption mengikuti Pengaturan Global
         </p>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">Tone</label>
-            <input
-              className="input-rect"
-              value={(form.caption_tone as string) ?? ""}
-              onChange={(e) => set("caption_tone", e.target.value)}
-              placeholder="engaging, inspirational, humorous…"
-            />
-          </div>
-          <div>
-            <label className="label">Language</label>
-            <select
-              className="input-rect"
-              value={(form.caption_language as string) ?? "en"}
-              onChange={(e) => set("caption_language", e.target.value)}
-            >
-              <option value="en">English</option>
-              <option value="id">Indonesian</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Max Length (chars)</label>
-            <input
-              className="input-rect"
-              type="number"
-              value={(form.caption_max_length as number) ?? 500}
-              onChange={(e) => set("caption_max_length", parseInt(e.target.value))}
-            />
-          </div>
-          <div>
-            <label className="label">Hashtag Count</label>
-            <input
-              className="input-rect"
-              type="number"
-              value={(form.caption_hashtag_count as number) ?? 5}
-              onChange={(e) => set("caption_hashtag_count", parseInt(e.target.value))}
-            />
-          </div>
-        </div>
-
-        {/* Must Include tags */}
-        <div>
-          <label className="label">Must Include Keywords</label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            {((form.caption_must_include as string[]) ?? []).map((tag) => (
-              <span key={tag} className="badge badge-blue gap-1">
-                {tag}
-                <button onClick={() => removeTag("caption_must_include", tag)}>
-                  <Icon icon="solar:close-bold" width={10} />
-                </button>
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1"
-              placeholder="Add keyword, press Enter"
-              value={mustIncludeInput}
-              onChange={(e) => setMustIncludeInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  addTag("caption_must_include", mustIncludeInput.trim());
-                  setMustIncludeInput("");
-                }
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Must Avoid tags */}
-        <div>
-          <label className="label">Must Avoid Words</label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            {((form.caption_must_avoid as string[]) ?? []).map((tag) => (
-              <span key={tag} className="badge badge-red gap-1">
-                {tag}
-                <button onClick={() => removeTag("caption_must_avoid", tag)}>
-                  <Icon icon="solar:close-bold" width={10} />
-                </button>
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1"
-              placeholder="Add word to avoid, press Enter"
-              value={mustAvoidInput}
-              onChange={(e) => setMustAvoidInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  addTag("caption_must_avoid", mustAvoidInput.trim());
-                  setMustAvoidInput("");
-                }
-              }}
-            />
-          </div>
-        </div>
-
-        {/* CTA text */}
-        <div>
-          <label className="label">Call-to-Action Text</label>
-          <input
-            className="input-rect"
-            value={(form.caption_cta_text as string) ?? ""}
-            onChange={(e) => set("caption_cta_text", e.target.value)}
-            placeholder="Follow for more! / Link in bio"
-          />
-        </div>
-
-        {/* Attribution */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <input
-              id="use-attribution"
-              type="checkbox"
-              className="w-4 h-4 rounded accent-primary-main"
-              checked={(form.use_attribution as boolean) ?? true}
-              onChange={(e) => set("use_attribution", e.target.checked)}
-            />
-            <label htmlFor="use-attribution" className="text-xs text-text-primary cursor-pointer">
-              Add attribution
-            </label>
-          </div>
-          {form.use_attribution && (
-            <>
-              <input
-                className="input-rect flex-1"
-                value={(form.caption_attribution_template as string) ?? "via @{source_username}"}
-                onChange={(e) => set("caption_attribution_template", e.target.value)}
-                placeholder="via @{source_username}"
-              />
-              <select
-                className="input-rect"
-                value={(form.attribution_position as string) ?? "caption_end"}
-                onChange={(e) => set("attribution_position", e.target.value)}
-              >
-                <option value="caption_end">At end</option>
-                <option value="caption_start">At start</option>
-              </select>
-            </>
-          )}
-        </div>
-
-        {/* Custom prompt */}
-        <div>
-          <label className="label">Additional AI Instructions</label>
-          <textarea
-            className="input-rect h-24 resize-none"
-            value={(form.caption_custom_prompt as string) ?? ""}
-            onChange={(e) => set("caption_custom_prompt", e.target.value)}
-            placeholder="e.g. Always mention our brand name. Keep it family-friendly."
-          />
-        </div>
 
         {/* Watermark text (per fanpage) */}
         <div>
@@ -1585,52 +1553,15 @@ export default function FanpageEditPage() {
               )}
             </div>
 
-            {/* Mode 2 caption criteria */}
+            {/* Mode 2 caption criteria note */}
             <div className="border-t border-hairline pt-4 space-y-4">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                News Copywriting Criteria (separate from Mode 1)
+                News Copywriting Criteria
+              </p>
+              <p className="text-xs text-text-secondary italic">
+                Caption mengikuti Pengaturan Global
               </p>
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Tone</label>
-                  <input
-                    className="input-rect"
-                    value={(form.mode2_caption_tone as string) ?? ""}
-                    onChange={(e) => set("mode2_caption_tone", e.target.value)}
-                    placeholder="informative, breaking-news, casual…"
-                  />
-                </div>
-                <div>
-                  <label className="label">Language</label>
-                  <select
-                    className="input-rect"
-                    value={(form.mode2_caption_language as string) ?? "en"}
-                    onChange={(e) => set("mode2_caption_language", e.target.value)}
-                  >
-                    <option value="en">English</option>
-                    <option value="id">Indonesian</option>
-                    <option value="es">Spanish</option>
-                    <option value="fr">French</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Caption Max Length (chars)</label>
-                  <input
-                    className="input-rect"
-                    type="number"
-                    value={(form.mode2_caption_max_length as number) ?? 500}
-                    onChange={(e) => set("mode2_caption_max_length", parseInt(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label className="label">Hashtag Count</label>
-                  <input
-                    className="input-rect"
-                    type="number"
-                    value={(form.mode2_caption_hashtag_count as number) ?? 5}
-                    onChange={(e) => set("mode2_caption_hashtag_count", parseInt(e.target.value))}
-                  />
-                </div>
                 <div>
                   <label className="label">Design Title Max Chars</label>
                   <input
@@ -1657,36 +1588,6 @@ export default function FanpageEditPage() {
                     first Gallery Niche + &quot;NEWS&quot; automatically.
                   </p>
                 </div>
-                <div>
-                  <label className="label">Call-to-Action Text</label>
-                  <input
-                    className="input-rect"
-                    value={(form.mode2_caption_cta_text as string) ?? ""}
-                    onChange={(e) => set("mode2_caption_cta_text", e.target.value)}
-                    placeholder="Follow for more MotoGP news!"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  id="mode2-attribution"
-                  type="checkbox"
-                  className="w-4 h-4 rounded accent-primary-main"
-                  checked={(form.mode2_source_attribution as boolean) ?? true}
-                  onChange={(e) => set("mode2_source_attribution", e.target.checked)}
-                />
-                <label htmlFor="mode2-attribution" className="text-xs text-text-primary cursor-pointer">
-                  Add source attribution to caption (e.g. &quot;Source: Motosan&quot;)
-                </label>
-              </div>
-              <div>
-                <label className="label">Additional AI Instructions</label>
-                <textarea
-                  className="input-rect h-20 resize-none"
-                  value={(form.mode2_caption_custom_prompt as string) ?? ""}
-                  onChange={(e) => set("mode2_caption_custom_prompt", e.target.value)}
-                  placeholder="e.g. Never speculate beyond the article facts."
-                />
               </div>
             </div>
 
@@ -2424,34 +2325,24 @@ export default function FanpageEditPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="sm:col-span-2">
-                <label className="label">Persona / direction prompt</label>
-                <textarea
-                  className="input w-full text-sm"
-                  rows={2}
-                  placeholder='e.g. "You are a passionate Formula 1 historian and journalist covering the 1970s-90s golden era. Write with a nostalgic, knowledgeable tone."'
-                  value={(form.pinterest_custom_prompt as string | undefined) ?? ""}
-                  onChange={(e) => set("pinterest_custom_prompt", e.target.value)}
-                />
-                <p className="text-[11px] text-text-secondary mt-1">
-                  Steers both which topics the AI picks and the voice/tone of every idea&apos;s title, description, and hashtags for this page.
-                </p>
-              </div>
-              <div>
-                <label className="label">Hashtags per post</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={30}
-                  className="input w-full"
-                  value={(form.pinterest_hashtag_count as number | undefined) ?? 5}
-                  onChange={(e) => set("pinterest_hashtag_count", parseInt(e.target.value || "0"))}
-                />
-                <p className="text-[11px] text-text-secondary mt-1">
-                  Appended to the Facebook caption only — never drawn on the card image.
-                </p>
-              </div>
+            <div>
+              <label className="label">Fokus konten Pinterest (apa yang dicari/dipilih)</label>
+              <textarea
+                className="input w-full text-sm"
+                rows={2}
+                placeholder='e.g. "ONLY elite-level UFC/boxing" atau "focus on the golden eras 1950s-2000s"'
+                value={(form.pinterest_custom_prompt as string | undefined) ?? ""}
+                onChange={(e) => set("pinterest_custom_prompt", e.target.value)}
+              />
+              <p className="text-[11px] text-text-secondary mt-1">
+                Mengatur konten apa yang diambil dari Pinterest. Caption tetap mengikuti Pengaturan Global.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs text-text-secondary italic">
+                Caption mengikuti Pengaturan Global
+              </p>
             </div>
 
             <label className="flex items-start gap-3 rounded-lg border border-hairline p-3 cursor-pointer">

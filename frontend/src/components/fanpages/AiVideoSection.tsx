@@ -104,7 +104,32 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
                 <option value="EN-US-ENG">American race engineer</option>
               </select>
             </div>
+            <div>
+              <label className="label">Panjang judul (karakter)</label>
+              <input
+                type="number"
+                min={20}
+                max={5000}
+                className="input w-full"
+                value={form.ai_video_title_max_chars ?? 100}
+                onChange={(e) => set("ai_video_title_max_chars", Number(e.target.value))}
+              />
+            </div>
+            <div>
+              <label className="label">Panjang deskripsi (karakter)</label>
+              <input
+                type="number"
+                min={20}
+                max={5000}
+                className="input w-full"
+                value={form.ai_video_description_max_chars ?? 600}
+                onChange={(e) => set("ai_video_description_max_chars", Number(e.target.value))}
+              />
+            </div>
           </div>
+          <p className="text-xs text-text-secondary italic">
+            Caption mengikuti Pengaturan Global
+          </p>
           <div className="border-t border-hairline pt-4 space-y-4">
             <div className="flex items-center justify-between">
               <div>

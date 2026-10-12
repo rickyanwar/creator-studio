@@ -62,12 +62,7 @@ def is_similar(clip: tuple[float, float], taken: list[tuple[float, float]]) -> b
     return any(overlap_fraction(clip, t) >= _SIMILAR_OVERLAP for t in taken)
 
 
-LANGUAGE_NAMES = {
-    "en": "English", "id": "Indonesian", "ms": "Malay", "es": "Spanish", "pt": "Portuguese",
-    "fr": "French", "de": "German", "it": "Italian", "nl": "Dutch", "ar": "Arabic", "tr": "Turkish",
-    "th": "Thai", "vi": "Vietnamese", "tl": "Filipino", "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
-    "hi": "Hindi", "ru": "Russian", "pl": "Polish",
-}
+from app.services.fanpage_language import LANGUAGE_NAMES, language_name
 
 
 @dataclass(frozen=True)
@@ -93,10 +88,6 @@ class ClipRules:
     min_s: int
     max_s: int
     min_score: int
-
-
-def language_name(code: str | None) -> str:
-    return LANGUAGE_NAMES.get((code or "en").split("-")[0].lower(), code or "English")
 
 
 _PROMPT = """You are a top-tier short-form editor for the Facebook page "{page}" ({niche} niche), cutting viral clips from YouTube videos for Reels, TikTok and Shorts.
@@ -153,7 +144,7 @@ REQUIRED FIELDS (EXACTLY 7)
 
 1. "start_time"     (string)  -> "HH:MM:SS,mmm"
 2. "end_time"       (string)  -> "HH:MM:SS,mmm"
-3. "title"          (string)  -> max 60 characters, {language}, click-worthy; MUST name the main person (surname is enough); NO two-part "X — Y" / "X - Y" / "X: Y" pattern; NO source, credit, channel name, URL or "@handle"
+3. "title"          (string)  -> max {title_max} characters, {language}, click-worthy; MUST name the main person (surname is enough); NO two-part "X — Y" / "X - Y" / "X: Y" pattern; NO source, credit, channel name, URL or "@handle"
 4. "description"    (string)  -> max 150 characters, {language}, why it travels
 5. "virality_score" (integer) -> 1-10, a bare number
 6. "hook_text"      (string)  -> max 15 words, {language}, names the person speaking; a quote or sharp statement, never a summary; no emoji
@@ -191,7 +182,7 @@ Transcript:
 FINAL CHECK
 ===========
 
-1. Exactly {num_clips} objects. 2. Every clip runs {min_s}-{max_s} seconds by its own timestamps. 3. No overlaps, spread across the video. 4. title/description/hook_text in {language}. 5. Exactly the 7 fields, virality_score a bare integer. 6. No double quote inside any value. 7. title max 60 chars, names the main person, no two-part pattern, no source/credit/URL.
+1. Exactly {num_clips} objects. 2. Every clip runs {min_s}-{max_s} seconds by its own timestamps. 3. No overlaps, spread across the video. 4. title/description/hook_text in {language}. 5. Exactly the 7 fields, virality_score a bare integer. 6. No double quote inside any value. 7. title max {title_max} chars, names the main person, no two-part pattern, no source/credit/URL.
 
 Answer with the JSON array and nothing else."""
 
@@ -224,7 +215,8 @@ def _fmt_range(start: float, end: float) -> str:
 
 def build_prompt(*, page: str, niche: str, language: str, context: str, transcript: str,
                  rules: ClipRules, direction: str | None,
-                 taken: list[tuple[float, float]] | None = None) -> str:
+                 taken: list[tuple[float, float]] | None = None,
+                 title_max_chars: int = 60) -> str:
     direction_text = " ".join((direction or "").split())[:500]
     taken_block = ""
     if taken:
@@ -236,6 +228,7 @@ def build_prompt(*, page: str, niche: str, language: str, context: str, transcri
         num_clips=rules.count + _EXTRA_CANDIDATES,
         min_s=rules.min_s, max_s=rules.max_s, aim_s=(rules.min_s + rules.max_s) // 2,
         direction=_DIRECTION_BLOCK.format(text=direction_text) if direction_text else "",
+        title_max=title_max_chars,
     ) + taken_block
 
 

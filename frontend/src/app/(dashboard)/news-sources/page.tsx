@@ -15,7 +15,6 @@ import {
   testNewsRss,
   listNewsArticles,
 } from "@/lib/api";
-import { CaptionCriteriaEditor } from "@/components/CaptionCriteriaEditor";
 
 type NewsSource = {
   id: number;
@@ -519,22 +518,6 @@ export default function NewsSourcesPage() {
           </div>
           </>
           )}
-
-          <div className="border-t border-hairline pt-4">
-            <h3 className="text-sm font-semibold text-ink mb-2">Caption Criteria (this source)</h3>
-            <CaptionCriteriaEditor
-              value={{
-                caption_tone: form.caption_tone,
-                caption_language: form.caption_language,
-                caption_max_length: form.caption_max_length,
-                caption_hashtag_count: form.caption_hashtag_count,
-                caption_cta_text: form.caption_cta_text,
-                caption_custom_prompt: form.caption_custom_prompt,
-              }}
-              onChange={(next) => setForm((f) => ({ ...f, ...next }))}
-              hint="Caption criteria for this news source (global — used by every fanpage subscribed to it). Empty fields inherit the fanpage's Mode-2 news criteria."
-            />
-          </div>
 
           <div className="flex justify-end gap-2 border-t border-hairline pt-4">
             <button onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>

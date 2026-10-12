@@ -11,6 +11,8 @@ from typing import Literal
 import redis as _redis
 
 from app.config import get_settings
+from app.services.fanpage_caption import caption_settings
+from app.services.fanpage_language import fanpage_language
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -120,22 +122,23 @@ def build_caption_prompt(
     line regardless of use_attribution — for callers with no source account
     to credit (Mode 6 recreates the whole card, and its only name to hand
     was the fanpage's own, which rendered as "via @<this fanpage>")."""
+    cs = caption_settings(fanpage)
     attribution_line = ""
-    if fanpage.use_attribution and with_attribution:
+    if cs.use_attribution and with_attribution:
         attribution_line = (
-            f'- Attribution: add line "{fanpage.caption_attribution_template.format(source_username=source_username)}" '
-            f"at the {fanpage.attribution_position}"
+            f'- Attribution: add line "{cs.attribution_template.format(source_username=source_username)}" '
+            f"at the {cs.attribution_position}"
         )
 
-    must_include = ", ".join(fanpage.caption_must_include) if fanpage.caption_must_include else "none"
-    must_avoid = ", ".join(fanpage.caption_must_avoid) if fanpage.caption_must_avoid else "none"
+    must_include = ", ".join(cs.must_include) if cs.must_include else "none"
+    must_avoid = ", ".join(cs.must_avoid) if cs.must_avoid else "none"
 
-    language = _eff(source, fanpage, "caption_language")
-    tone = _eff(source, fanpage, "caption_tone")
-    max_length = _eff(source, fanpage, "caption_max_length")
-    hashtag_count = _eff(source, fanpage, "caption_hashtag_count")
-    cta_text = _eff(source, fanpage, "caption_cta_text")
-    custom_prompt = _eff(source, fanpage, "caption_custom_prompt")
+    language = cs.language
+    tone = cs.tone
+    max_length = cs.max_length
+    hashtag_count = cs.hashtag_count
+    cta_text = cs.cta_text
+    custom_prompt = cs.custom_prompt
 
     quote_line = (
         f'- This post\'s IMAGE already shows the quote: "{quote_text}". The caption MUST '
@@ -155,6 +158,7 @@ TASK: Rewrite the caption for the Facebook Fanpage above with these criteria:
 - Language: {language}
 - Tone: {tone}
 - Maximum length: {max_length} characters
+- The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
 - Must include keywords: {must_include}
 - Must avoid words: {must_avoid}
 - Include {hashtag_count} relevant hashtags at the end

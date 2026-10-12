@@ -78,11 +78,6 @@ export function CaptionCriteriaEditor({
             value={value.caption_tone} onChange={(e) => set("caption_tone", e.target.value)} />
         </div>
         <div>
-          <label className="label">Language</label>
-          <input className="input w-full" placeholder="inherit (e.g. id / en)"
-            value={value.caption_language} onChange={(e) => set("caption_language", e.target.value)} />
-        </div>
-        <div>
           <label className="label">Max length</label>
           <input className="input w-full" type="number" placeholder="inherit"
             value={value.caption_max_length} onChange={(e) => set("caption_max_length", e.target.value)} />

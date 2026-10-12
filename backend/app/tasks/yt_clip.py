@@ -196,7 +196,8 @@ def _skip_reason(meta, video, fanpage) -> str | None:
 
 def _highlight_prompt(fanpage, video, meta, srt: str, direction: str | None,
                       taken: list[tuple[float, float]] | None = None):
-    from app.services.yt_highlights import ClipRules, build_prompt, language_name
+    from app.services.yt_highlights import ClipRules, build_prompt
+    from app.services.fanpage_language import fanpage_language, language_name
 
     rules = ClipRules(
         count=max(1, fanpage.yt_clip_per_video or 3),
@@ -209,10 +210,13 @@ def _highlight_prompt(fanpage, video, meta, srt: str, direction: str | None,
         f"Title: {meta.title}\nChannel: {meta.channel}\n"
         f"Duration: {meta.duration_s // 60}:{meta.duration_s % 60:02d}"
     )
+    title_val = getattr(fanpage, "yt_clip_title_max_chars", None)
+    title_max = int(title_val) if isinstance(title_val, (int, float, str)) and str(title_val).isdigit() else 60
     prompt = build_prompt(
-        page=fanpage.name, niche=niche, language=language_name(fanpage.caption_language),
+        page=fanpage.name, niche=niche, language=language_name(fanpage_language(fanpage)),
         context=context, transcript=srt, rules=rules, direction=direction,
         taken=taken or [],
+        title_max_chars=title_max,
     )
     return prompt, rules
 
@@ -282,10 +286,13 @@ def _save_ideas(db, fanpage, video, highlights) -> int:
                 video.video_id, h.start, h.end,
             )
             continue
+        title_val = getattr(fanpage, "yt_clip_title_max_chars", None)
+        title_max = int(title_val) if isinstance(title_val, (int, float, str)) and str(title_val).isdigit() else 60
         cleaned_title = clean_clip_title(
             h.title,
             people=h.people,
             forbidden_channel=video.channel_name,
+            max_title_len=title_max,
         )
         if cleaned_title is None:
             logger.warning(
@@ -455,6 +462,12 @@ def _clip_caption_prompt(fanpage, idea, video) -> str:
     comments, followed by exactly mode2_caption_hashtag_count hashtags on the
     SAME line.  No paragraphs, no line breaks.
     """
+    from app.services.fanpage_caption import caption_settings
+    cs = caption_settings(fanpage)
+
+    desc_val = getattr(fanpage, "yt_clip_description_max_chars", None)
+    desc_max = int(desc_val) if isinstance(desc_val, (int, float, str)) and str(desc_val).isdigit() else 180
+
     return f"""You are the social media editor of the Facebook page "{fanpage.name}". Write the caption for a short video clip (a Reel) cut from a YouTube video.
 
 CLIP TITLE: {idea.title}
@@ -465,12 +478,13 @@ WHAT IS SAID IN THE CLIP (transcript excerpt, may contain speech-recognition err
 {(idea.transcript_excerpt or "")[:1200]}
 
 Caption rules:
-- Language: {fanpage.mode2_caption_language}
-- Tone: {fanpage.mode2_caption_tone}
+- Language: {cs.language}
+- Tone: {cs.tone}
+- The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
 - Output is ONE single line — no paragraphs, no line breaks, no blank lines.
-  The line must be: one short sentence (hook + context, max 180 characters before the
+  The line must be: one short sentence (hook + context, max {desc_max} characters before the
   hashtags) that names the person in the clip, ending with a short question that invites
-  viewers to comment, then exactly {fanpage.mode2_caption_hashtag_count} hashtags
+  viewers to comment, then exactly {cs.hashtag_count} hashtags
   appended on the SAME line separated by spaces.
   Example format: «Person does X in event — would you have done the same? #Niche #Person #Event»
 - Allowed sources for hashtags (pick ONLY from these three):
@@ -483,9 +497,9 @@ Caption rules:
     any tag containing "game", "gaming", "gameplay", "esport", or "simracing";
     the YouTube channel name or creator handle;
     generic engagement tags: #fyp #viral #reels #foryou #trending #explore #tiktok.
-- Call-to-action: {fanpage.mode2_caption_cta_text or "invite viewers to comment"}
+- Call-to-action: {cs.cta_text or "invite viewers to comment"}
 - No source, credit, channel name or 'via' anywhere — this is a clip, not an article.
-- Additional notes: {fanpage.mode2_caption_custom_prompt or "none"}
+- Additional notes: {cs.custom_prompt or "none"}
 
 OUTPUT: only the final single-line caption, no explanation, no quotes around it."""
 
@@ -511,8 +525,10 @@ def _consume_one(db, fanpage) -> bool:
     # S7: remove forbidden hashtags and ensure the niche tag is present.
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     cleaned_caption = clean_clip_hashtags(cleaned_caption, niche=niche, channel_name=video.channel_name)
-    # S12: collapse to a single line (body ≤ 180 chars + hashtags on same line).
-    cleaned_caption = one_line_caption(cleaned_caption)
+    # S12: collapse to a single line (body ≤ yt_clip_description_max_chars + hashtags on same line).
+    desc_val = getattr(fanpage, "yt_clip_description_max_chars", None)
+    desc_max = int(desc_val) if isinstance(desc_val, (int, float, str)) and str(desc_val).isdigit() else 180
+    cleaned_caption = one_line_caption(cleaned_caption, max_body=desc_max)
 
     # idea.title is already cleaned by _save_ideas (S2f applied at idea-creation time).
     job = PublishJob(
