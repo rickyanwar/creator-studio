@@ -8,6 +8,7 @@ from app.models.gallery import GalleryImage
 from app.models.settings import Settings
 from app.services.gallery_labeler import label_image, LabelerError, LabelerUnavailable
 from app.services.muse_labeler import merge_label_attributes
+from app.services.gallery_label_budget import reserve, release
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -37,11 +38,6 @@ def label_gallery_image(image_id: int, force: bool = False, relabel: bool = Fals
         if not s or (not force and (not s.gallery_labeling_enabled or not s.gallery_labeling_since)):
             return
 
-        budget = _get_daily_budget(db, s) if not force else 1
-        if budget <= 0:
-            logger.info("label_gallery_image: daily cap reached, skipping image %d", image_id)
-            return
-
         img = db.query(GalleryImage).filter_by(id=image_id).first()
         if not img or img.is_deleted or (img.labeled_at is not None and not relabel):
             return
@@ -50,6 +46,12 @@ def label_gallery_image(image_id: int, force: bool = False, relabel: bool = Fals
         if not os.path.exists(img.local_path):
             return
 
+        if not force:
+            if not reserve(s.gallery_labeling_daily_cap, db=db):
+                logger.info("label_gallery_image: daily cap reached, skipping image %d", image_id)
+                return
+
+        reserved = not force
         try:
             attrs = img.attributes or {}
             hints = dict(attrs.get("owner_hints") or {})
@@ -73,7 +75,13 @@ def label_gallery_image(image_id: int, force: bool = False, relabel: bool = Fals
             db.commit()
             logger.warning("label_gallery_image: error on image %d: %s", image_id, exc)
         except LabelerUnavailable as exc:
+            if reserved:
+                release()
             logger.warning("label_gallery_image: labeler unavailable for image %d: %s", image_id, exc)
+        except Exception:
+            if reserved:
+                release()
+            raise
 
     finally:
         db.close()
@@ -81,7 +89,7 @@ def label_gallery_image(image_id: int, force: bool = False, relabel: bool = Fals
 
 @celery_app.task(name="app.tasks.gallery_labels.label_new_gallery_images")
 def label_new_gallery_images() -> int:
-    """Safety net task: picks up to min(budget, 40) unlabeled images and labels them."""
+    """Safety net task: picks up to min(cap, 40) unlabeled images and labels them."""
     db = SessionLocal()
     processed = 0
     try:
@@ -89,12 +97,7 @@ def label_new_gallery_images() -> int:
         if not s or not s.gallery_labeling_enabled or not s.gallery_labeling_since:
             return 0
 
-        budget = _get_daily_budget(db, s)
-        if budget <= 0:
-            logger.info("label_new_gallery_images: daily cap reached")
-            return 0
-
-        limit = min(budget, 40)
+        limit = min(s.gallery_labeling_daily_cap, 40)
         safety_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=15)
         candidates = (
             db.query(GalleryImage)
@@ -114,6 +117,10 @@ def label_new_gallery_images() -> int:
             if not os.path.exists(img.local_path):
                 continue
 
+            if not reserve(s.gallery_labeling_daily_cap, db=db):
+                logger.info("label_new_gallery_images: daily cap reached")
+                break
+
             try:
                 norm = label_image(img.local_path, provider="router", keyword=img.keyword)
                 img.attributes = merge_label_attributes(img.attributes, norm)
@@ -129,9 +136,13 @@ def label_new_gallery_images() -> int:
                 logger.warning("label_new_gallery_images: error on image %d: %s", img.id, exc)
                 time.sleep(0.5)
             except LabelerUnavailable as exc:
-                # Do not increment attempts, stop the tick
+                # Do not increment attempts, release slot, stop the tick
+                release()
                 logger.warning("label_new_gallery_images: labeler unavailable on image %d: %s, stopping tick", img.id, exc)
                 break
+            except Exception:
+                release()
+                raise
 
         return processed
     finally:
