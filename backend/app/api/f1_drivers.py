@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -9,8 +10,27 @@ from app.api.deps import get_current_user
 from app.models.f1_drivers import F1Driver
 from app.schemas.f1_drivers import F1DriverCreate, F1DriverUpdate, F1DriverOut
 from app.config import get_settings
+from app.services.f1_drivers_sync import fetch_openf1_drivers, sync_f1_drivers
 
 router = APIRouter()
+
+@router.post("/sync")
+def sync_f1_drivers_endpoint(
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            drivers = fetch_openf1_drivers(client)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenF1 fetch error: {exc}")
+
+    try:
+        counts = sync_f1_drivers(db, drivers)
+        return counts
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Sync error: {exc}")
 
 @router.get("", response_model=List[F1DriverOut])
 def list_f1_drivers(
