@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
+from enum import Enum
 
 from app.api.deps import CurrentUser, DB
 from app.config import get_settings
@@ -96,6 +97,8 @@ def _serialize_image(img):
         "license_info": img.license_info,
         "is_used": img.is_used,
         "downloaded_at": img.downloaded_at.replace(tzinfo=timezone.utc).isoformat() if img.downloaded_at else None,
+        "attributes": img.attributes or {},
+        "labeled_at": img.labeled_at.replace(tzinfo=timezone.utc).isoformat() if img.labeled_at else None,
     }
 
 
@@ -319,6 +322,43 @@ class AIFilterScanBody(BaseModel):
     keyword: Optional[str] = None  # None/omitted = scan the whole gallery
 
 
+class ImportLinksBody(BaseModel):
+    links: str
+    keyword: Optional[str] = None
+    people: Optional[str] = None
+    session: Optional[str] = None
+    event_name: Optional[str] = None
+    year: Optional[int] = Field(default=None, ge=1950, le=2100)
+    note: Optional[str] = Field(default=None, max_length=300)
+
+
+@router.post("/images/import-links")
+def start_import_links(body: ImportLinksBody, db: DB, _: CurrentUser):
+    from app.services.gallery_link_import import parse_links
+    from app.tasks.gallery_link_import import import_gallery_links
+    try:
+        links = parse_links(body.links)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not links:
+        raise HTTPException(status_code=400, detail="at least one link is required")
+    hints = {key: value for key, value in {"people": [name.strip() for name in (body.people or "").split(",") if name.strip()], "session": body.session, "event_name": body.event_name, "year": body.year, "note": body.note}.items() if value not in (None, "", [])}
+    task = import_gallery_links.delay(links, (body.keyword or "").strip().lower() or None, hints or None)
+    return {"task_id": task.id}
+
+
+@router.get("/images/import-links/{task_id}")
+def get_import_links_status(task_id: str, _: CurrentUser):
+    from celery.result import AsyncResult
+    from app.tasks.celery_app import celery_app
+    result = AsyncResult(task_id, app=celery_app)
+    if not result.ready():
+        return {"state": result.state}
+    if result.failed():
+        return {"state": "FAILURE"}
+    return {"state": result.state, "results": (result.result or {}).get("results", [])}
+
+
 @router.post("/ai-filter/scan")
 def start_ai_filter_scan(body: AIFilterScanBody, db: DB, _: CurrentUser):
     """Kick off a read-only AI pass over the gallery (or one keyword, if
@@ -417,6 +457,80 @@ class ExtraKeywordsBody(BaseModel):
     extra_keywords: list[str]
 
 
+class ShotType(str, Enum):
+    car_on_track = "car_on_track"
+    half_body = "half_body"
+    face_closeup = "face_closeup"
+    full_body = "full_body"
+    portrait = "portrait"
+    athlete_in_action = "athlete_in_action"
+    pitlane = "pitlane"
+    podium = "podium"
+    car_static = "car_static"
+    team_group = "team_group"
+    vehicle_static = "vehicle_static"
+    crowd = "crowd"
+    other = "other"
+
+
+class ManualLabelsBody(BaseModel):
+    people: list[str] | None = Field(default=None, max_length=4)
+    shot_type: ShotType | None = None
+    session: str | None = Field(default=None, min_length=1)
+    year: int | None = Field(default=None, ge=1950, le=2100)
+    event_name: str | None = Field(default=None, min_length=1)
+    archival_photo: bool | None = None
+    people_count: int | None = Field(default=None, ge=0, le=20)
+    label: str | None = None
+
+    @field_validator("people")
+    @classmethod
+    def validate_people(cls, values):
+        if values is not None and any(not 2 <= len(name.strip()) <= 60 for name in values):
+            raise ValueError("people names must be 2-60 characters")
+        return [name.strip() for name in values] if values is not None else values
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value):
+        if value is not None and value not in {"face", "action", "other"}:
+            raise ValueError("label must be face, action, or other")
+        return value
+
+
+@router.patch("/images/{image_id}/labels")
+def update_image_labels(image_id: int, body: ManualLabelsBody, db: DB, _: CurrentUser, relabel: bool = False):
+    from app.models.gallery import GalleryImage
+    image = db.query(GalleryImage).filter_by(id=image_id, is_deleted=False).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    attributes = dict(image.attributes or {})
+    manual_fields = set(attributes.get("manual_fields") or [])
+    changes = body.model_dump(exclude_none=True)
+    if "people" in changes:
+        attributes["people"] = [{"name": name, "confidence": 1.0, "source": "manual"} for name in changes.pop("people")]
+    event = dict(attributes.get("event") or {})
+    for field in ("session", "year", "event_name"):
+        if field in changes:
+            event[field] = changes.pop(field)
+            manual_fields.add(f"event.{field}")
+    if event:
+        attributes["event"] = event
+    for field, value in changes.items():
+        attributes[field] = value.value if isinstance(value, Enum) else value
+    manual_fields.update(body.model_dump(exclude_none=True).keys())
+    attributes["manual_fields"] = sorted(manual_fields)
+    image.attributes = attributes
+    if image.labeled_at is None:
+        image.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    db.refresh(image)
+    if relabel:
+        from app.tasks.gallery_labels import label_gallery_image
+        label_gallery_image.delay(image.id, force=True, relabel=True)
+    return _serialize_image(image)
+
+
 @router.patch("/images/{image_id}/keywords")
 def update_image_keywords(image_id: int, body: ExtraKeywordsBody, db: DB, _: CurrentUser):
     """Tag an image with additional keywords — a photo can feature more than
@@ -448,6 +562,11 @@ async def upload_image(
     _: CurrentUser,
     file: UploadFile = File(...),
     keyword: str = Form(...),
+    people: str = Form(""),
+    session: str = Form(""),
+    event_name: str = Form(""),
+    year: Optional[int] = Form(None),
+    note: str = Form(""),
 ):
     """Manually upload an image into the gallery under a keyword."""
     from app.models.gallery import GalleryImage
@@ -478,9 +597,14 @@ async def upload_image(
         source_engine="manual",
         license_info="manual-upload",
     )
+    owner_hints = {key: value for key, value in {"people": [name.strip() for name in people.split(",") if name.strip()], "session": session.strip() or None, "event_name": event_name.strip() or None, "year": year, "note": note.strip()[:300] or None}.items() if value not in (None, "", [])}
+    if owner_hints:
+        image.attributes = {"owner_hints": owner_hints, "manual_fields": sorted((["people"] if owner_hints.get("people") else []) + [f"event.{field}" for field in ("session", "event_name", "year") if owner_hints.get(field)])}
     db.add(image)
     db.commit()
     db.refresh(image)
+    from app.tasks.gallery_labels import label_gallery_image
+    label_gallery_image.delay(image.id, force=True)
     return _serialize_image(image)
 
 

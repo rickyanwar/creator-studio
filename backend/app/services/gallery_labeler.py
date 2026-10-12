@@ -274,7 +274,32 @@ def normalise_label_output(data: dict, keyword: str | None = None) -> dict:
     return result
 
 
-def label_image(path: str, provider: str = "router", keyword: str | None = None) -> dict:
+def _hint_prompt(hints: dict) -> str:
+    values = []
+    for key in ("people", "session", "event_name", "year", "shot_type", "archival_photo", "note"):
+        if hints.get(key) not in (None, "", []):
+            values.append(f"{key}={hints[key]}")
+    return "\nOwner hints (treat as ground truth, do not contradict; use them to fill related fields): " + ", ".join(values)[:600]
+
+
+def _apply_hints(result: dict, hints: dict | None) -> dict:
+    if not hints:
+        return result
+    if hints.get("people"):
+        result["people"] = [{"name": name, "confidence": 1.0, "source": "manual"} for name in hints["people"]]
+    event = dict(result.get("event") or {})
+    for key in ("session", "event_name", "year"):
+        if hints.get(key) not in (None, ""):
+            event[key] = hints[key]
+    if event:
+        result["event"] = event
+    for key in ("shot_type", "archival_photo"):
+        if hints.get(key) not in (None, ""):
+            result[key] = hints[key]
+    return result
+
+
+def label_image(path: str, provider: str = "router", keyword: str | None = None, hints: dict | None = None) -> dict:
     """Label a local image file using provider ('router' or 'external')."""
     datauri = _image_to_datauri(path, max_dim=512)
 
@@ -282,7 +307,7 @@ def label_image(path: str, provider: str = "router", keyword: str | None = None)
         from app.services.design_images import _vision_chat
 
         content = [
-            {"type": "text", "text": LABEL_PROMPT},
+            {"type": "text", "text": LABEL_PROMPT + (_hint_prompt(hints) if hints else "")},
             {"type": "image_url", "image_url": {"url": datauri}},
         ]
         try:
@@ -312,7 +337,7 @@ def label_image(path: str, provider: str = "router", keyword: str | None = None)
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": LABEL_PROMPT},
+                         {"type": "text", "text": LABEL_PROMPT + (_hint_prompt(hints) if hints else "")},
                         {"type": "image_url", "image_url": {"url": datauri}},
                     ],
                 }
@@ -338,4 +363,4 @@ def label_image(path: str, provider: str = "router", keyword: str | None = None)
         raise LabelerError(f"Unknown labeler provider: {provider}")
 
     parsed = _parse_json(raw)
-    return normalise_label_output(parsed, keyword=keyword)
+    return _apply_hints(normalise_label_output(parsed, keyword=keyword), hints)

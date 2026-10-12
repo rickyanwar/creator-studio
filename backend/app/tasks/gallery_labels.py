@@ -29,29 +29,39 @@ def _get_daily_budget(db, s: Settings) -> int:
 
 
 @celery_app.task(name="app.tasks.gallery_labels.label_gallery_image")
-def label_gallery_image(image_id: int):
+def label_gallery_image(image_id: int, force: bool = False, relabel: bool = False):
     """Label one gallery image by ID."""
     db = SessionLocal()
     try:
         s = db.query(Settings).filter_by(id=1).first()
-        if not s or not s.gallery_labeling_enabled or not s.gallery_labeling_since:
+        if not s or (not force and (not s.gallery_labeling_enabled or not s.gallery_labeling_since)):
             return
 
-        budget = _get_daily_budget(db, s)
+        budget = _get_daily_budget(db, s) if not force else 1
         if budget <= 0:
             logger.info("label_gallery_image: daily cap reached, skipping image %d", image_id)
             return
 
         img = db.query(GalleryImage).filter_by(id=image_id).first()
-        if not img or img.is_deleted or img.labeled_at is not None:
+        if not img or img.is_deleted or (img.labeled_at is not None and not relabel):
             return
-        if not img.downloaded_at or img.downloaded_at < s.gallery_labeling_since:
+        if not img.downloaded_at or (not force and (not s.gallery_labeling_since or img.downloaded_at < s.gallery_labeling_since)):
             return
         if not os.path.exists(img.local_path):
             return
 
         try:
-            norm = label_image(img.local_path, provider="router", keyword=img.keyword)
+            attrs = img.attributes or {}
+            hints = dict(attrs.get("owner_hints") or {})
+            event = attrs.get("event") or {}
+            if "session" in attrs.get("manual_fields", []) or "event.session" in attrs.get("manual_fields", []):
+                hints["session"] = event.get("session")
+            for key in ("event_name", "year"):
+                if f"event.{key}" in attrs.get("manual_fields", []):
+                    hints[key] = event.get(key)
+            if "people" in attrs.get("manual_fields", []):
+                hints["people"] = [person.get("name") for person in attrs.get("people", [])]
+            norm = label_image(img.local_path, provider="router", keyword=img.keyword, hints=hints or None)
             img.attributes = merge_label_attributes(img.attributes, norm)
             img.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
             img.label_error = None

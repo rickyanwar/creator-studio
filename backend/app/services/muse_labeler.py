@@ -173,15 +173,27 @@ def apply_captured_at(row, value: str, confidence: str) -> None:
 
 
 def merge_label_attributes(existing: dict | None, labelled: dict) -> dict:
-    """Overlay visual labels without dropping metadata from other pipelines."""
+    """Overlay labels while preserving deployed people rules and manual edits."""
     merged = dict(existing or {})
+    manual_fields = set(merged.get("manual_fields") or [])
     existing_people = merged.get("people")
-    merged.update(labelled)
     labelled_people = labelled.get("people") or []
-    if labelled.get("keyword_mismatch") is True:
+    for field, value in labelled.items():
+        if field in manual_fields:
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(field), dict):
+            current = dict(merged[field])
+            for child, child_value in value.items():
+                if f"{field}.{child}" not in manual_fields:
+                    current[child] = child_value
+            merged[field] = current
+        else:
+            merged[field] = value
+    if "people" in manual_fields:
+        merged["people"] = existing_people
+    elif labelled.get("keyword_mismatch") is True:
         merged["people"] = [person for person in labelled_people if person.get("source") != "keyword"]
-        return merged
-    if existing_people and (not labelled_people or all(person.get("source") == "keyword" for person in labelled_people)):
+    elif existing_people and (not labelled_people or all(person.get("source") == "keyword" for person in labelled_people)):
         merged["people"] = existing_people
     return merged
 
@@ -272,7 +284,7 @@ def fill_people_from_keyword(db, dry_run: bool = False) -> int:
     rows = db.query(GalleryImage).filter(GalleryImage.labeled_at.is_not(None)).yield_per(500)
     for row in rows:
         attributes = dict(row.attributes or {})
-        if attributes.get("keyword_mismatch") is True or attributes.get("people"):
+        if attributes.get("keyword_mismatch") is True or attributes.get("people") or "people" in set(attributes.get("manual_fields") or []):
             continue
         name = keyword_name_from_gallery_keyword(row.keyword)
         if not name:

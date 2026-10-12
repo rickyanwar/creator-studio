@@ -371,6 +371,8 @@ def _fetch_and_store(
     subject: str | None = None,
     captured_dates: dict[str, date] | None = None,
     allow_low_quality: bool = False,
+    precheck=None,
+    fetcher=None,
 ) -> list[DownloadedImage]:
     import time
 
@@ -400,9 +402,8 @@ def _fetch_and_store(
         seen_keys.add(key)
 
         try:
-            resp = httpx.get(url, headers={"User-Agent": _UA}, timeout=_FETCH_TIMEOUT, follow_redirects=True)
-            resp.raise_for_status()
-            img = Image.open(io.BytesIO(resp.content))
+            content = fetcher(url) if fetcher is not None else httpx.get(url, headers={"User-Agent": _UA}, timeout=_FETCH_TIMEOUT, follow_redirects=True).content
+            img = Image.open(io.BytesIO(content))
             img.load()
         except Exception as exc:
             logger.debug("Gallery: skipping %s (%s)", url, exc)
@@ -416,14 +417,22 @@ def _fetch_and_store(
         # Upscale small images (e.g. Getty 612px comps). HQ mode (opt-in) uses
         # UltraSharpV2 + GFPGAN for detailed bikes/gear/faces (slow, CPU); else
         # the fast FSRCNN x2 + sharpen.
-        final_bytes = resp.content
+        final_bytes = content
+        if precheck is not None:
+            try:
+                if precheck(content):
+                    logger.info("Gallery: rejecting %s — precheck failed", url)
+                    continue
+            except Exception:
+                logger.info("Gallery: rejecting %s — precheck errored", url)
+                continue
         _s = get_settings()
         if _s.hq_upscale_enabled:
             from app.services.hq_upscale import enhance_image_bytes
-            final_bytes = enhance_image_bytes(resp.content)
+            final_bytes = enhance_image_bytes(content)
         elif _s.gallery_upscale_enabled:
             from app.services.upscaler import upscale_image_bytes
-            final_bytes = upscale_image_bytes(resp.content)
+            final_bytes = upscale_image_bytes(content)
 
         filename = f"{uuid.uuid4().hex}.jpg"
         path = dest / filename
