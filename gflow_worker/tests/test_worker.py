@@ -3,6 +3,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
@@ -172,7 +173,7 @@ def test_credits_filter_and_interval(cfg, studio, monkeypatch):
     try:
         worker.tick()
         worker.tick()
-        assert len(calls(cfg)) == 2  # credits list plus the one-time probe project
+        assert len(calls(cfg)) == 1  # credits list only; probe does not create projects
         assert worker.accounts == [{"profile": "p2", "email": None, "authenticated": False, "credits": None, "error": "no access", "error_class": "FlowAccessUnavailableError"}]
     finally:
         worker.executor.shutdown()
@@ -227,14 +228,15 @@ def test_probe_project_resolution_and_token_isolation(cfg, studio, monkeypatch):
         cached_worker.cfg.work_dir.mkdir(parents=True, exist_ok=True)
         (cached_worker.cfg.work_dir / "probe_projects.json").write_text('{"p2": "cached-project"}')
         cached_worker.tick()
+        assert "project=cached-project" in env_file.read_text()
         assert not any(command[:2] == ["project", "create"] for command in calls(cfg)[2:])
         cached_worker.executor.shutdown()
 
-        create_worker = Worker(replace(cfg, profiles=("p2",), work_dir=cfg.work_dir / "create"), studio.api)
-        create_worker.tick()
-        create_worker.tick()
-        assert len([command for command in calls(cfg) if command[:2] == ["project", "create"]]) == 1
-        create_worker.executor.shutdown()
+        none_worker = Worker(replace(cfg, profiles=("p2",), work_dir=cfg.work_dir / "create"), studio.api)
+        none_worker.tick()
+        assert "project=(none)" in env_file.read_text()
+        assert not any(command[:2] == ["project", "create"] for command in calls(cfg))
+        none_worker.executor.shutdown()
     finally:
         worker.executor.shutdown()
 
@@ -289,7 +291,7 @@ def test_main_claim_and_cancel(cfg, studio, monkeypatch):
     try:
         worker.tick()
         worker.jobs[1][1].result(timeout=10)
-        assert len(calls(cfg)) == 2  # credits plus probe project; job cancelled before video CLI
+        assert len(calls(cfg)) == 1  # credits only; probe project not created; job cancelled before video CLI
         worker.stop.set()
         worker.tick()
         assert studio.events("/heartbeat")[-1]["running_job_ids"] == []
@@ -637,5 +639,52 @@ def test_claim_skips_locally_busy_account_in_worker(cfg, studio, monkeypatch):
         assert fail_events[0]["message"] == "profile busy"
     finally:
         worker.executor.shutdown(wait=False)
+
+
+def test_credit_regex_patterns():
+    credit_patterns = [
+        re.compile(r"(\d[\d.,]*)\s*(kredit|credits?)\s*(google\s*flow)?", re.I),
+        re.compile(r"(\d[\d.,]*)\s*google\s*flow\s*(kredit|credits?)", re.I),
+    ]
+
+    def extract_credits(text):
+        for line in text.splitlines():
+            for pat in credit_patterns:
+                match = pat.search(line)
+                if match and "refund" not in line.lower() and "additional" not in line.lower():
+                    raw_val = match.group(1)
+                    return int(re.sub(r"[.,]", "", raw_val))
+        return None
+
+    assert extract_credits("910 Google Flow credits") == 910
+    assert extract_credits("1.050 kredit Google Flow") == 1050
+
+
+def test_credits_list_fails_discovers_profiles_and_probes(cfg, studio, monkeypatch, tmp_path):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    monkeypatch.setenv("FAKE_GF_MODE", "37")  # credits_list fails
+    monkeypatch.setenv("FAKE_PROBE_MODE", "credits")
+
+    cli_home = tmp_path / "gflow-cli"
+    cli_home.mkdir(parents=True)
+    (cli_home / "profile_default").mkdir()
+    (cli_home / "profile_life").mkdir()
+    (cli_home / "profile_other").mkdir()
+    (cli_home / "not_a_profile").mkdir()
+    (cli_home / "profile_file.txt").touch()
+
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(cli_home))
+
+    worker = Worker(replace(cfg, profiles=("life",)), studio.api)
+    try:
+        worker.tick()
+        assert len(worker.accounts) == 1
+        acc = worker.accounts[0]
+        assert acc["profile"] == "life"
+        assert acc["authenticated"] is True
+        assert acc["credits"] == 638
+    finally:
+        worker.executor.shutdown()
+
 
 

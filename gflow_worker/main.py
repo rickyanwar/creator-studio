@@ -53,22 +53,11 @@ class Worker:
             cached = {}
         if profile in cached:
             return cached[profile]
-        result = self.gflow.create_project(profile, "credit-probe")
-        project = result.payload.get("project_id") if result.ok else None
-        if not project:
-            return None
-        self.cfg.work_dir.mkdir(parents=True, exist_ok=True)
-        cached[profile] = project
-        temporary = cache_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(cached, sort_keys=True))
-        os.replace(temporary, cache_path)
-        return project
+        return None
 
     def _probe_credits(self, account):
         profile = account["profile"]
-        project = self._probe_project(profile)
-        if not project:
-            return
+        project = self._probe_project(profile) or "(none)"
         out_dir = self.cfg.work_dir / "probes" / re.sub(r"[^A-Za-z0-9._-]", "-", profile)
         if out_dir.exists():
             shutil.rmtree(out_dir)
@@ -95,10 +84,23 @@ class Worker:
     def _refresh_accounts(self):
         result = self.gflow.credits_list()
         profiles = result.payload.get("profiles", []) if isinstance(result.payload, dict) else []
-        self.accounts = [dict(profile=p["profile"], email=p.get("email"),
-                              authenticated=bool(p.get("authenticated")), credits=p.get("credits"),
-                              error=p.get("error"), error_class=p.get("error_class") or p.get("error_type"))
-                         for p in profiles if not self.cfg.profiles or p["profile"] in self.cfg.profiles]
+        if profiles:
+            self.accounts = [dict(profile=p["profile"], email=p.get("email"),
+                                  authenticated=bool(p.get("authenticated")), credits=p.get("credits"),
+                                  error=p.get("error"), error_class=p.get("error_class") or p.get("error_type"))
+                             for p in profiles if not self.cfg.profiles or p["profile"] in self.cfg.profiles]
+        else:
+            cli_home = Path(os.getenv("GFLOW_CLI_HOME", "/home/gflow/.local/share/gflow-cli"))
+            discovered = []
+            if cli_home.is_dir():
+                for entry in sorted(cli_home.iterdir()):
+                    if entry.is_dir() and entry.name.startswith("profile_") and entry.name != "profile_default":
+                        name = entry.name[len("profile_"):]
+                        if not self.cfg.profiles or name in self.cfg.profiles:
+                            discovered.append(name)
+            self.accounts = [dict(profile=name, email=None, authenticated=False, credits=None,
+                                  error=None, error_class=None)
+                             for name in discovered]
         for account in self.accounts:
             if account["credits"] is None:
                 self._probe_credits(account)
