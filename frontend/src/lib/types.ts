@@ -65,6 +65,7 @@ export interface Fanpage {
   news_visual_engine: "off" | "chatgpt";
   fb_visual_engine: "off" | "chatgpt";
   quote_shorten_enabled: boolean;
+  ig_mode?: "repost" | "recreate_template" | "recreate_chatgpt";
 
   // ── Content modes (Feature 2) ──
   mode1_ig_repost_enabled: boolean;

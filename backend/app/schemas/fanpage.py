@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Literal
+from pydantic import BaseModel, Field, field_validator, computed_field
 import zoneinfo
 import re
 from app.models.target_fanpages import PublishMode, AttributionPosition
+from app.services.ig_mode import ig_mode, IGMode
 
 
 class FanpageBase(BaseModel):
@@ -172,6 +173,8 @@ class FanpageBase(BaseModel):
 
 
 class FanpageUpdate(FanpageBase):
+    ig_mode: Optional[Literal["repost", "recreate_template", "recreate_chatgpt"]] = None
+
     @field_validator("timezone", mode="before")
     def validate_timezone(cls, v):
         if v not in zoneinfo.available_timezones():
@@ -216,6 +219,11 @@ class FanpageOut(FanpageBase):
     is_connected: bool
     last_synced_at: Optional[datetime] = None
     created_at: datetime
+
+    @computed_field
+    @property
+    def ig_mode(self) -> str:
+        return ig_mode(self)
 
     model_config = {"from_attributes": True}
 

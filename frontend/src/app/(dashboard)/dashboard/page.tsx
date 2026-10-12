@@ -84,7 +84,7 @@ export default function DashboardPage() {
             onClick={handleCrawl}
             disabled={loadingCrawl}
             className="btn-primary"
-            title="Checks Instagram source accounts (Mode 1 repost) for new posts — not the news scraper"
+            title="Checks Instagram source accounts (IG repost) for new posts — not the news scraper"
           >
             <Icon icon={loadingCrawl ? "solar:refresh-bold-duotone" : "solar:play-bold-duotone"} width={14} className={loadingCrawl ? "animate-spin" : ""} />
             {loadingCrawl ? "Crawling…" : "Crawl IG Sources"}
@@ -372,7 +372,7 @@ function CrawlerHealthCard({
           onClick={onCrawlNow}
           disabled={crawling}
           className="btn-primary text-xs py-1.5 px-3"
-          title="Checks Instagram source accounts (Mode 1 repost) for new posts — not the news scraper"
+          title="Checks Instagram source accounts (IG repost) for new posts — not the news scraper"
         >
           <Icon icon={crawling ? "solar:refresh-bold-duotone" : "solar:play-bold-duotone"} width={13} className={crawling ? "animate-spin" : ""} />
           {crawling ? "Crawling…" : "Run IG Crawl"}
