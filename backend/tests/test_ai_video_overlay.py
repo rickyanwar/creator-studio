@@ -511,6 +511,6 @@ def test_migration_single_head():
     cfg = Config("alembic.ini")
     scripts = ScriptDirectory.from_config(cfg)
     heads = scripts.get_heads()
-    assert "c80000000004" in heads
+    assert len(heads) == 1
     rev = scripts.get_revision("c80000000004")
     assert rev.down_revision == "c80000000003"

@@ -1393,6 +1393,21 @@ export default function FanpageEditPage() {
 
         {form.mode2_news_content_enabled && (
           <>
+            <div>
+              <label className="label">News (Mode 2) AI design</label>
+              <select
+                className="input w-full mt-1"
+                value={(form.news_visual_engine as string) ?? "off"}
+                onChange={(e) => set("news_visual_engine", e.target.value)}
+              >
+                <option value="off">Off</option>
+                <option value="chatgpt">ChatGPT</option>
+              </select>
+              <p className="text-[10px] text-text-secondary mt-1">
+                1 ChatGPT image per post; falls back to the normal template on failure.
+              </p>
+            </div>
+
             {/* News source subscriptions */}
             <div>
               <label className="label">News Sources</label>
@@ -2556,6 +2571,21 @@ export default function FanpageEditPage() {
 
         {form.facebook_photo_enabled && (
           <>
+            <div>
+              <label className="label">Facebook recreate (Mode 6) AI design</label>
+              <select
+                className="input w-full mt-1"
+                value={(form.fb_visual_engine as string) ?? "off"}
+                onChange={(e) => set("fb_visual_engine", e.target.value)}
+              >
+                <option value="off">Off</option>
+                <option value="chatgpt">ChatGPT</option>
+              </select>
+              <p className="text-[10px] text-text-secondary mt-1">
+                1 ChatGPT image per post; falls back to the normal template on failure.
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="label">Posts per day</label>
