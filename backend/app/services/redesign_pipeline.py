@@ -386,6 +386,7 @@ def redesign_card(
                             image_srcs, safe_cy_ceiling=_safe_face_cy_ceiling(template_json, tpl.canvas_height)
                         ),
                         "scale": settings.design_render_scale,
+                        "accent": fanpage.accent_color,
                     },
                     timeout=_RENDER_TIMEOUT,
                 )

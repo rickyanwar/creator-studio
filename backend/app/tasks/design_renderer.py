@@ -469,15 +469,9 @@ def render_design(self, job_id: int):
             focus_points = align_split_focus_points(focus_points)
 
         # Small pill badge above the headline on News templates (e.g. "F1
-        # NEWS") — user's own explicit ask, scoped to "news" only (this
-        # function also renders "quote"-category ig_recreate jobs, which
-        # have no labelBadge/label objects to begin with, so this would be
-        # a harmless no-op there anyway — gated regardless, to keep the
-        # intent explicit rather than relying on that no-op). Admin-set
-        # fanpage.mode2_badge_text always wins; otherwise falls back to
-        # "{niche} NEWS" computed fresh here (not stored), so editing the
-        # fanpage's niches later doesn't leave a stale baked-in badge string.
-        news_badge_text = _news_badge_text(fanpage) if category == "news" else ""
+        # NEWS" or "BREAKING").
+        breaking = getattr(job, "is_breaking", False)
+        news_badge_text = _news_badge_text(fanpage, breaking=breaking) if category == "news" else ""
 
         # ── Render via Puppeteer + Fabric.js service ──
         title = clean_title_for_render(title)
@@ -501,6 +495,7 @@ def render_design(self, job_id: int):
                 "focus_points": focus_points,
                 "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
+                "accent": fanpage.accent_color,
             },
             timeout=_RENDER_TIMEOUT,
         )
@@ -711,6 +706,7 @@ def render_discussion(self, job_id: int):
                 "focus_points": focus_points,
                 "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
+                "accent": fanpage.accent_color,
             },
             timeout=_RENDER_TIMEOUT,
         )
@@ -911,6 +907,7 @@ def render_pinterest(self, job_id: int):
             "focus_points": focus_points,
             "image_zooms": None,
             "scale": settings.design_render_scale,
+            "accent": fanpage.accent_color,
         }
 
         resp = httpx.post(f"{settings.renderer_url.rstrip('/')}/render", json=payload, timeout=_RENDER_TIMEOUT)
@@ -959,13 +956,14 @@ def render_pinterest(self, job_id: int):
 _FB_DISCUSSION_LABELS = ("DISCUSSION", "HOT TAKE")
 
 
-def _news_badge_text(fanpage) -> str:
+def _news_badge_text(fanpage, breaking: bool = False) -> str:
     """The small pill badge above a News template's headline (e.g. "F1
-    NEWS") — see render_design's note on why it's computed fresh, not
-    stored."""
-    if fanpage.mode2_badge_text:
+    NEWS" or "BREAKING")."""
+    if breaking:
+        return "BREAKING"
+    if getattr(fanpage, "mode2_badge_text", None):
         return fanpage.mode2_badge_text
-    if fanpage.mode2_gallery_niches:
+    if getattr(fanpage, "mode2_gallery_niches", None):
         return f"{fanpage.mode2_gallery_niches[0]} NEWS"
     return ""
 
@@ -1192,6 +1190,7 @@ def render_facebook_photo(self, job_id: int):
                 "focus_points": focus_points,
                 "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
+                "accent": fanpage.accent_color,
             },
             timeout=_RENDER_TIMEOUT,
         )

@@ -74,6 +74,7 @@ export interface Fanpage {
   mode2_default_template_id: number | null;
   default_quote_template_id: number | null;
   default_news_template_id: number | null;
+  accent_color: string | null;
   ig_recreate_enabled: boolean;
   ig_recreate_quote_template_id: number | null;
   ig_recreate_news_template_id: number | null;

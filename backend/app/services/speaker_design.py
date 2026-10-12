@@ -137,8 +137,8 @@ def _read_photo(row: GalleryImage) -> bytes:
     return Path(row.local_path).read_bytes()
 
 
-HEAD_AND_SHOULDERS_FRAMING = "Tight head-and-shoulders, top of the head about 8-12 percent from the top edge, face about 40-45 percent of the card width, eyes in the upper third"
-HALF_BODY_FRAMING = "HALF-BODY portrait from the top of the head down to the waist, the top of the head about 5-8 percent from the top edge, head and shoulders high in the frame, face about 28-32 percent of the card width"
+HEAD_AND_SHOULDERS_FRAMING = "Tight head-and-shoulders, top of the head about 8-12 percent from the top edge, face about 40-45 percent of the card width, eyes in the upper third; shoulders and chest continue down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
+HALF_BODY_FRAMING = "HALF-BODY portrait from the top of the head down to the waist, the top of the head about 4-6 percent from the top edge, head and shoulders high in the frame, face about 34-38 percent of the card width; the body continues down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
 
 _CRASH_WORDS = {"crash", "crashed", "crashes", "fall", "fell", "fallen", "clash", "collision", "contact", "incident", "highside", "lowside", "crashing"}
 _WIN_WORDS = {"win", "won", "victory", "winner", "podium", "trophy", "celebrate", "celebrates", "celebration", "champion"}
@@ -412,6 +412,7 @@ ASIS = "Real photos used inside insets or behind the speaker must be used AS IS:
 COMMON = ASIS + '''
 Keep every real sponsor logo, patch, number and printed text on the clothing, caps, suits, helmets and motorcycles exactly as in the photos; never remove, blur or simplify them; do not add any new text or logo. If an official MotoGP logo appears in a background, leave it out.
 Lighting and colour: natural neutral light with true-to-life colours like a real Getty press photo composited by a professional designer. NO golden hour, NO yellow or orange tint, NO haze, NO glow, NO lens flare, NO dramatic grading. The light on the speaker's face matches Image 1.
+Keep every face, the inset circle and any important detail ABOVE the lower 37 percent band of the card; the bottom 37 percent may hold only the speaker's body/torso and background, because the headline text is placed there.
 The bottom 30 percent fades to deep navy almost black and stays empty for text.
 Do not invent or change any person, face, clothing, bike or pose; no extra people beyond those in the photos; natural skin texture with visible pores and subtle film grain; no HDR look, no over-sharpening, no beauty filter. NO text at all.'''
 def _photo_description(row, fallback: str) -> str:

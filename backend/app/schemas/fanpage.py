@@ -41,6 +41,7 @@ class FanpageBase(BaseModel):
     mode2_default_template_id: Optional[int] = None  # deprecated — superseded by default_news_template_id
     default_quote_template_id: Optional[int] = None
     default_news_template_id: Optional[int] = None
+    accent_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
 
     # ── Mode 2 caption criteria (separate from Mode 1) ──
     mode2_caption_tone: str = "informative"

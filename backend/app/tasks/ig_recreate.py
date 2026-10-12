@@ -626,6 +626,7 @@ def render_ig_recreate(self, job_id: int):
                     image_srcs, safe_cy_ceiling=_safe_face_cy_ceiling(template_json, template.canvas_height)
                 ),
                 "scale": settings.design_render_scale,
+                "accent": fanpage.accent_color,
             },
             timeout=_RENDER_TIMEOUT,
         )
