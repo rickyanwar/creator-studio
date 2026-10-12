@@ -7,6 +7,14 @@ from app.models.settings import Settings
 from app.tasks.gallery_labels import label_gallery_image, label_new_gallery_images
 from app.services.gallery_labeler import LabelerUnavailable, LabelerError
 from app.database import Base, engine, SessionLocal
+from tests.test_gallery_label_budget import FakeBudgetRedis
+
+
+@pytest.fixture(autouse=True)
+def _mock_budget_redis():
+    fake_r = FakeBudgetRedis()
+    with patch("app.services.gallery_label_budget.get_budget_redis_client", return_value=fake_r):
+        yield fake_r
 
 
 @pytest.fixture(scope="module")
