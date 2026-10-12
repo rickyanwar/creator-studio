@@ -1408,6 +1408,73 @@ export default function FanpageEditPage() {
               </p>
             </div>
 
+            {/* Warna aksen template */}
+            <div>
+              <label className="label">Warna aksen template</label>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                {[
+                  { name: "merah", hex: "#E8362B" },
+                  { name: "kuning", hex: "#FFC400" },
+                  { name: "hijau", hex: "#91F64C" },
+                  { name: "oranye", hex: "#FF7A1A" },
+                  { name: "biru", hex: "#2F80ED" },
+                  { name: "cyan", hex: "#22D3EE" },
+                  { name: "ungu", hex: "#9B5CFF" },
+                  { name: "pink", hex: "#FF3E8A" },
+                ].map((swatch) => {
+                  const isSelected = (form.accent_color as string | null)?.toUpperCase() === swatch.hex;
+                  return (
+                    <button
+                      key={swatch.hex}
+                      type="button"
+                      title={`${swatch.name} (${swatch.hex})`}
+                      onClick={() => set("accent_color", swatch.hex)}
+                      className={`w-7 h-7 rounded-full border-2 transition-transform flex items-center justify-center ${
+                        isSelected ? "scale-110 border-white shadow-md" : "border-transparent hover:scale-105"
+                      }`}
+                      style={{ backgroundColor: swatch.hex }}
+                    >
+                      {isSelected && (
+                        <Icon icon="solar:check-bold" width={14} className="text-white drop-shadow" />
+                      )}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => set("accent_color", null)}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                    !form.accent_color
+                      ? "border-primary-main bg-primary-main/10 text-primary-main font-semibold"
+                      : "border-hairline text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  Default template
+                </button>
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  type="color"
+                  className="w-8 h-8 rounded border border-hairline cursor-pointer bg-transparent"
+                  value={(form.accent_color as string | null) ?? "#FFC400"}
+                  onChange={(e) => set("accent_color", e.target.value.toUpperCase())}
+                />
+                <input
+                  type="text"
+                  className="input-rect w-32 font-mono text-xs uppercase"
+                  placeholder="#RRGGBB"
+                  value={(form.accent_color as string | null) ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    set("accent_color", val ? val.toUpperCase() : null);
+                  }}
+                />
+                <span className="text-[11px] text-text-secondary">
+                  GP News &amp; Quote template accent color (hex or null)
+                </span>
+              </div>
+            </div>
+
             {/* News source subscriptions */}
             <div>
               <label className="label">News Sources</label>

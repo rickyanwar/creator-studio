@@ -68,6 +68,7 @@ class TargetFanpage(Base):
     default_quote_template_id = Column(Integer, nullable=True)  # FK to design_templates
     default_news_template_id = Column(Integer, nullable=True)   # FK to design_templates
     default_discussion_template_id = Column(Integer, nullable=True)  # FK to design_templates (Mode 4)
+    accent_color = Column(String(9), nullable=True)
 
     # ── Mode 2 caption criteria (separate set from Mode 1) ──
     mode2_caption_tone = Column(String(64), default="informative", nullable=False, server_default="informative")

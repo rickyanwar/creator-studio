@@ -619,12 +619,20 @@ def test_speaker_framing_text(monkeypatch):
     # Half-body
     monkeypatch.setattr(speaker_design, "face_info", lambda _: {"box": (100, 100, 200, 200)})
     text = speaker_design.speaker_framing(source)
-    assert text == "HALF-BODY portrait from the top of the head down to the waist, the top of the head about 5-8 percent from the top edge, head and shoulders high in the frame, face about 28-32 percent of the card width"
+    assert text == speaker_design.HALF_BODY_FRAMING
+    assert "face about 34-38 percent of the card width" in text
+    assert "the body continues down to the bottom edge" in text
 
     # Close-up
     monkeypatch.setattr(speaker_design, "face_info", lambda _: {"box": (100, 100, 400, 400)})
     text_close = speaker_design.speaker_framing(source)
     assert "Tight head-and-shoulders" in text_close
+    assert "shoulders and chest continue down to the bottom edge" in text_close
+
+
+def test_composition_band_line_present():
+    expected_line = "Keep every face, the inset circle and any important detail ABOVE the lower 37 percent band of the card; the bottom 37 percent may hold only the speaker's body/torso and background, because the headline text is placed there."
+    assert expected_line in speaker_design.COMMON
 
 
 def test_pick_bike_photos_race_number_priority(monkeypatch):
