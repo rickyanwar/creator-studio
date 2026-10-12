@@ -62,7 +62,14 @@ from app.models.strategy import StrategyRecommendation
 from app.models.api_tokens import ApiToken
 from app.models.ai_video import VideoIdea, VideoJob
 from app.services import ai_video_ideas
-from app.services.video_templates import list_templates, liveries, narrator_presets, required_variables, vehicle_presets
+from app.services.video_templates import (
+    allowed_video_templates,
+    list_templates,
+    liveries,
+    narrator_presets,
+    required_variables,
+    vehicle_presets,
+)
 
 class FanpageHermesResponse(BaseModel):
     id: int
@@ -79,6 +86,7 @@ class FanpageHermesResponse(BaseModel):
     ai_video_daily_count: int
     ai_video_publish_mode: str
     ai_video_template: Optional[str]
+    ai_video_templates: List[str]
     ai_video_narrator: Optional[str]
 
 @router.get("/fanpages", response_model=List[FanpageHermesResponse])
@@ -101,6 +109,7 @@ def get_fanpages_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("
             "ai_video_daily_count": f.ai_video_daily_count,
             "ai_video_publish_mode": f.ai_video_publish_mode.value,
             "ai_video_template": f.ai_video_template,
+            "ai_video_templates": allowed_video_templates(f),
             "ai_video_narrator": f.ai_video_narrator,
         })
     return res
@@ -169,13 +178,57 @@ def list_recommendations_hermes(db: DB, token: ApiToken = Depends(require_hermes
     return q.order_by(StrategyRecommendation.created_at.desc()).all()
 
 
-def _video_template_items():
-    return [{"key": t.key, "name": t.name, "niches": list(t.niches), "clip_options": list(t.clip_options), "default_clips": t.default_clips, "clip_seconds": t.clip_seconds, "credits_per_clip": t.credits_per_clip, "model": t.model, "variables_by_clips": {str(n): required_variables(t, n) for n in t.clip_options}, "vehicle_presets": vehicle_presets(t), "liveries": liveries(t), "narrator_presets": narrator_presets(t), "topic_ideas": t.raw.get("topic_ideas", [])} for t in list_templates()]
+def _video_template_items(templates=None):
+    if templates is None:
+        templates = list_templates()
+    items = []
+    for t in templates:
+        raw = t.raw
+        generation = raw.get("generation", {})
+        item = {
+            "key": t.key,
+            "name": t.name,
+            "niches": list(t.niches),
+            "clip_options": list(t.clip_options),
+            "default_clips": t.default_clips,
+            "clip_seconds": t.clip_seconds,
+            "credits_per_clip": t.credits_per_clip,
+            "model": t.model,
+            "variables_by_clips": {str(n): required_variables(t, n) for n in t.clip_options},
+            "vehicle_presets": vehicle_presets(t),
+            "liveries": liveries(t),
+            "narrator_presets": narrator_presets(t),
+            "topic_ideas": raw.get("topic_ideas", []),
+            "description": raw.get("description", raw.get("purpose", "")),
+            "purpose": raw.get("purpose", raw.get("description", "")),
+            "status": raw.get("status"),
+            "inspiration": raw.get("inspiration"),
+            "example_output": raw.get("example_output"),
+            "keywords_that_worked": raw.get("keywords_that_worked", []),
+            "rules": raw.get("rules", []),
+            "blocks": raw.get("blocks", {}),
+            "generation": generation,
+        }
+        items.append(item)
+    return items
 
 
 @router.get("/video-templates")
-def get_video_templates_hermes(token: ApiToken = Depends(require_hermes_scope("read"))):
-    return _video_template_items()
+def get_video_templates_hermes(
+    fanpage_id: Optional[int] = Query(None),
+    db: DB = None,
+    token: ApiToken = Depends(require_hermes_scope("read")),
+):
+    all_templates = list_templates()
+    if fanpage_id is not None:
+        fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+        if not fanpage:
+            raise HTTPException(404, "Fanpage not found")
+        allowed = allowed_video_templates(fanpage)
+        templates = [t for t in all_templates if t.key in allowed]
+    else:
+        templates = all_templates
+    return _video_template_items(templates)
 
 
 class VideoIdeaHermesRequest(BaseModel):

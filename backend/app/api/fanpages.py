@@ -166,6 +166,9 @@ def update_fanpage(fanpage_id: int, body: FanpageUpdate, db: DB, _: CurrentUser)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(fp, field, value)
 
+    if fp.ai_video_templates is not None:
+        fp.ai_video_template = fp.ai_video_templates[0] if fp.ai_video_templates else None
+
     db.commit()
     db.refresh(fp)
     return fp

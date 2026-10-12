@@ -466,7 +466,13 @@ function NewIdeaForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const template = templates.find((item) => item.key === form.template_key);
+  const selectedFanpage = fanpages.find((fp) => String(fp.id) === form.fanpage_id);
+  const allowedTemplateKeys: string[] = selectedFanpage?.ai_video_templates ?? (selectedFanpage?.ai_video_template ? [selectedFanpage.ai_video_template] : []);
+  const availableTemplates = allowedTemplateKeys.length > 0
+    ? templates.filter((item) => allowedTemplateKeys.includes(item.key))
+    : templates;
+
+  const template = availableTemplates.find((item) => item.key === form.template_key);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -510,7 +516,7 @@ function NewIdeaForm({
         required
         className="input w-full"
         value={form.fanpage_id}
-        onChange={(e) => setForm({ ...form, fanpage_id: e.target.value })}
+        onChange={(e) => setForm({ ...form, fanpage_id: e.target.value, template_key: "", clips: "" })}
       >
         <option value="">Fanpage</option>
         {fanpages.map((fp) => (
@@ -529,7 +535,7 @@ function NewIdeaForm({
         }
       >
         <option value="">Template</option>
-        {templates.map((item) => (
+        {availableTemplates.map((item) => (
           <option key={item.key} value={item.key}>
             {item.name}
           </option>

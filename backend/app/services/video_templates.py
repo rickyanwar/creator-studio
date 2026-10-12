@@ -87,6 +87,16 @@ def get_template(key: str) -> VideoTemplate:
     raise ValueError(f"unknown template {key}")
 
 
+def allowed_video_templates(fanpage) -> list[str]:
+    templates = getattr(fanpage, "ai_video_templates", None)
+    if templates:
+        return list(templates)
+    single = getattr(fanpage, "ai_video_template", None)
+    if single:
+        return [single]
+    return []
+
+
 def required_variables(t: VideoTemplate, clips: int) -> list[str]:
     names = []
     for clip in t.raw["clip_templates"][:clips]:
