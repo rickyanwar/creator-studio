@@ -300,4 +300,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.model_health.check_model_health",
         "schedule": crontab(minute=0, hour="*/6"),
     },
+    # Thumbnails cleanup: weekly — deletes generated webp thumbnails older than 30 days
+    "cleanup-old-thumbs": {
+        "task": "app.tasks.cleanup.cleanup_old_thumbs",
+        "schedule": crontab(minute=0, hour=3, day_of_week="sunday"),
+    },
 }

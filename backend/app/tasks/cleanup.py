@@ -26,6 +26,7 @@ _STUCK_POST_MAX_AGE_HOURS = 12
 # cleanup run the same day (user's choice — freed 5.48GB/1475 files).
 _DESIGN_RETENTION_DAYS = 21
 _AI_VIDEO_RETENTION_DAYS = 14
+_THUMB_RETENTION_DAYS = 30
 
 
 @celery_app.task(name="app.tasks.cleanup.cleanup_old_media")
@@ -253,3 +254,32 @@ def cleanup_old_ai_videos():
         logger.error("AI video cleanup task error: %s", exc, exc_info=True)
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.cleanup.cleanup_old_thumbs")
+def cleanup_old_thumbs() -> int:
+    """Delete cached thumbnails older than 30 days from storage_base_path/thumbs/."""
+    import time
+    thumbs_dir = Path(settings.storage_base_path) / "thumbs"
+    if not thumbs_dir.is_dir():
+        return 0
+
+    cutoff_ts = time.time() - (_THUMB_RETENTION_DAYS * 86400)
+    cleaned = 0
+
+    try:
+        for file_path in thumbs_dir.rglob("*.webp"):
+            if not file_path.is_file():
+                continue
+            try:
+                if file_path.stat().st_mtime < cutoff_ts:
+                    file_path.unlink(missing_ok=True)
+                    cleaned += 1
+            except OSError as exc:
+                logger.warning("Failed to delete old thumbnail %s: %s", file_path, exc)
+
+        logger.info("Thumb cleanup: removed %d cached thumbnail(s) older than %d days", cleaned, _THUMB_RETENTION_DAYS)
+    except Exception as exc:
+        logger.error("Thumbnail cleanup task error: %s", exc, exc_info=True)
+
+    return cleaned

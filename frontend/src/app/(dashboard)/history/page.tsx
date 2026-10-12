@@ -9,6 +9,7 @@ import { format } from "date-fns";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Toast, { type ToastData } from "@/components/ui/Toast";
 import ClipPlayer from "@/components/ClipPlayer";
+import { getThumbUrl } from "@/lib/thumb";
 
 const parseUtc = (s: string) =>
   new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
@@ -463,7 +464,24 @@ function HistoryCard({
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const color = avatarColor(fanpage);
   const urls = resolveUrls(job);
-  const thumb = urls[0];
+  const fullUrl = urls[0];
+  const thumbUrl = getThumbUrl(fullUrl, 480);
+  const [imgSrc, setImgSrc] = useState<string | null>(thumbUrl || fullUrl || null);
+  const [failedThumb, setFailedThumb] = useState(false);
+
+  useEffect(() => {
+    setImgSrc(thumbUrl || fullUrl || null);
+    setFailedThumb(false);
+  }, [thumbUrl, fullUrl]);
+
+  const handleImgError = () => {
+    if (!failedThumb && fullUrl && imgSrc !== fullUrl) {
+      setFailedThumb(true);
+      setImgSrc(fullUrl);
+    }
+  };
+
+  const thumb = imgSrc;
   const albumCount = urls.length;
   const caption = job.ai_generated_caption ?? "";
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
@@ -592,7 +610,7 @@ function HistoryCard({
             className={`aspect-[9/16] max-h-[440px] object-contain ${blurred ? blurImg : ""}`}
           />
         ) : thumb ? (
-          <img src={thumb} alt="Post" loading="lazy" decoding="async" className={`w-full aspect-[4/3] object-cover ${blurred ? blurImg : ""}`} />
+          <img src={thumb} alt="Post" loading="lazy" decoding="async" onError={handleImgError} className={`w-full aspect-[4/3] object-cover ${blurred ? blurImg : ""}`} />
         ) : (
           <div className="w-full aspect-[4/3] flex items-center justify-center">
             <Icon icon="solar:gallery-bold-duotone" width={40} className="text-text-disabled" />
