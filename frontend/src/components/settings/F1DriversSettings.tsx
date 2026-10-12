@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { F1Driver } from "@/lib/types";
-import { listF1Drivers, createF1Driver, updateF1Driver, deleteF1Driver, uploadF1DriverLogo } from "@/lib/api";
+import { listF1Drivers, syncF1Drivers, createF1Driver, updateF1Driver, deleteF1Driver, uploadF1DriverLogo } from "@/lib/api";
 import { Icon } from "@iconify/react";
 
 export function F1DriversSettings() {
@@ -11,6 +11,7 @@ export function F1DriversSettings() {
   const [drivers, setDrivers] = useState<F1Driver[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<F1Driver>>({});
   
@@ -68,6 +69,20 @@ export function F1DriversSettings() {
     }
   };
 
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await syncF1Drivers();
+      const { inserted, updated, unchanged } = res.data;
+      alert(`Sync completed: ${inserted} inserted, ${updated} updated, ${unchanged} unchanged.`);
+      loadDrivers();
+    } catch (e: any) {
+      alert(e.response?.data?.detail || "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleLogoUpload = async (id: number, file: File) => {
     if (!file) return;
     try {
@@ -94,6 +109,13 @@ export function F1DriversSettings() {
               </option>
             ))}
           </select>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="btn btn-sm btn-outline"
+          >
+            <Icon icon="mdi:refresh" className={syncing ? "animate-spin" : ""} /> Sync from OpenF1
+          </button>
           <button onClick={handleAdd} className="btn btn-sm btn-primary">
             <Icon icon="mdi:plus" /> Add
           </button>

@@ -42,6 +42,7 @@ celery_app = Celery(
         "app.tasks.radar_crawl",
         "app.tasks.radar_dispatch",
         "app.tasks.model_health",
+        "app.tasks.f1_drivers_sync",
     ],
 )
 
@@ -299,5 +300,10 @@ celery_app.conf.beat_schedule = {
     "check-model-health": {
         "task": "app.tasks.model_health.check_model_health",
         "schedule": crontab(minute=0, hour="*/6"),
+    },
+    # F1 Drivers sync: weekly Monday 06:00 UTC
+    "sync-f1-drivers-weekly": {
+        "task": "app.tasks.f1_drivers_sync.sync_f1_drivers_task",
+        "schedule": crontab(minute=0, hour=6, day_of_week="monday"),
     },
 }

@@ -480,6 +480,9 @@ import { F1Driver } from "./types";
 export const listF1Drivers = (season?: number) =>
   api.get<F1Driver[]>("/api/f1-drivers", { params: { season } });
 
+export const syncF1Drivers = () =>
+  api.post<{ inserted: number; updated: number; unchanged: number }>("/api/f1-drivers/sync");
+
 export const createF1Driver = (data: Record<string, unknown>) =>
   api.post<F1Driver>("/api/f1-drivers", data);
 
