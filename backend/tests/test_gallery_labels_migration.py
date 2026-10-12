@@ -7,7 +7,7 @@ def test_migration_heads_single():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
-    assert heads == ["c80000000012"]
+    assert heads == ["c80000000014"]
 
 
 def test_speaker_design_migration_upgrade_and_downgrade():

@@ -189,7 +189,6 @@ def add_ig_source(fanpage_id: int, body: FanpageSourceAdd, db: DB, _: CurrentUse
     if not source:
         source = IGSource(
             ig_username=username,
-            burner_account_id=None,
             is_active=True,
         )
         db.add(source)

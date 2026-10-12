@@ -25,11 +25,10 @@ def _make_db(global_scraper_mode="auto"):
     return db
 
 
-def _make_source(username="testuser", scraper_backend=None, burner_account_id=None):
+def _make_source(username="testuser", scraper_backend=None):
     src = MagicMock()
     src.ig_username = username
     src.scraper_backend = scraper_backend
-    src.burner_account_id = burner_account_id
     src.last_crawl_error = "old error"
     return src
 
@@ -114,7 +113,6 @@ class TestFetchMediasAllBackendsUseViewer:
         """auto, instagrapi, flashapi, viewer all use the viewer path."""
         db = self._db()
         source = _make_source()
-        source.burner_account_id = None
 
         fake_medias = [MagicMock(), MagicMock()]
         fetch_mock = MagicMock(return_value=fake_medias)
@@ -357,7 +355,6 @@ class TestCrawlSourceImageSourceUrls:
         source.ig_username = "testuser"
         source.is_active = True
         source.scraper_backend = ScraperBackend.viewer
-        source.burner_account_id = None
         source.last_seen_post_id = None
         source.album_image_indices = album_indices
 
