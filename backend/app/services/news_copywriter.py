@@ -107,7 +107,34 @@ def _eff_news(source, fanpage, src_field: str, fp_field: str):
     return getattr(fanpage, fp_field)
 
 
-def build_news_copy_prompt(fanpage, article) -> str:
+def template_title_fit_chars(db, fanpage, category: str = "news") -> int | None:
+    """Resolve the fanpage's template for `category` and extract titleFitChars from
+    the placeholderRole == "title" object. Never raises (any error -> None).
+    """
+    try:
+        from app.services.design_images import resolve_template
+
+        template = resolve_template(db, category, fanpage=fanpage)
+        if not template:
+            return None
+        t_json = getattr(template, "template_json", None)
+        if isinstance(t_json, str):
+            t_json = json.loads(t_json)
+        if not isinstance(t_json, dict):
+            return None
+        for obj in t_json.get("objects", []):
+            if isinstance(obj, dict) and obj.get("placeholderRole") == "title":
+                fit = obj.get("titleFitChars")
+                if isinstance(fit, int) and fit > 0:
+                    return fit
+    except Exception:
+        pass
+    return None
+
+
+def build_news_copy_prompt(
+    fanpage, article, fit_chars: int | None = None, quote_fit_chars: int | None = None
+) -> str:
     news_source = article.news_source if article else None
     source_name = news_source.name if news_source else "the original source"
     attribution_line = (
@@ -122,6 +149,45 @@ def build_news_copy_prompt(fanpage, article) -> str:
     hashtag_count = _eff_news(news_source, fanpage, "caption_hashtag_count", "mode2_caption_hashtag_count")
     cta_text = _eff_news(news_source, fanpage, "caption_cta_text", "mode2_caption_cta_text")
     custom_prompt = _eff_news(news_source, fanpage, "caption_custom_prompt", "mode2_caption_custom_prompt")
+
+    if fit_chars is not None:
+        news_title_rules = f"""1. "title" — the headline that will be printed ON the image design.
+   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Translate to {language} if needed.
+   - The headline is printed in big letters in a fixed space: it MUST be at most {fit_chars} characters and should USE most of that space: aim for {fit_chars - 16} to {fit_chars} characters (the ** markers do not count).
+   - Make it MORE engaging, not flatter: lead with the name or the hook, use a strong active verb, cut filler words (articles, 'that', 'very', redundant qualifiers, the competition name when obvious), prefer the concrete result/claim. Keep every NAME and the key FACT. Never invent or exaggerate.
+   - Always keep the key context a fan needs: the event/place (e.g. Mandalika, Indonesian GP), the result or the concrete injury/fact. Cut filler, never context.
+   - Details that do not fit go into the caption, not lost.
+   - Do NOT start with 'BREAKING:' / 'OFFICIAL:' / 'CONFIRMED:' — the design already shows a label badge (BREAKING or the page's news label).
+   - GOOD example: "Bagnaia crashes out in Indonesia: **No feeling, no grip**" (49 chars)
+   - BAD example: "Francesco Bagnaia has officially confirmed after the race that he suffered from terrible tire grip issues and crashed out of the Indonesian Grand Prix" (152 chars, way too long for the space)
+   - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 4 words) in double asterisks so it renders in red. Mark exactly ONE phrase; leave the rest unmarked.
+   - No hashtags, no emoji, no quote marks"""
+    else:
+        news_title_rules = f"""1. "title" — the headline that will be printed ON the image design.
+   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a hook ("BREAKING:" / "OFFICIAL:" / "CONFIRMED:" when it genuinely fits), a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Translate to {language} if needed.
+   - Keep roughly the SAME LENGTH as the source TITLE (or slightly longer with the hook) — do NOT shorten it or compress it into a vague topic label.
+   - GOOD example: source "Di Giannantonio to join Red Bull KTM Factory Racing" → "BREAKING: Fabio Di Giannantonio is officially joining Red Bull KTM Factory Racing!"
+   - BAD example: "MotoGP Shake-Up" (dropped the facts, too short)
+   - BAD example: "You Won't Believe What Marquez Just Did" (withholds the actual news — this is the "far from the original title" failure mode to avoid)
+   - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 5 words) in double asterisks so it renders in red, e.g. "Marc Marquez takes **his first pole** at Sachsenring". Mark exactly ONE phrase; leave the rest unmarked.
+   - Maximum {_effective_title_max_chars(fanpage, article)} characters (the ** markers do not count)
+   - No hashtags, no emoji, no quote marks"""
+
+    quote_shorten = getattr(fanpage, "quote_shorten_enabled", False)
+    if quote_shorten:
+        q_limit = quote_fit_chars if quote_fit_chars is not None else 120
+        quote_title_rules = f"""1. "title" — the quote itself, printed on the image next to a large quote-mark icon.
+   - Translate to {language} if needed. You may shorten the quote to at most {q_limit} characters by keeping the most important contiguous part(s) of what was actually said; use '…' where words were cut. Never add, paraphrase into new claims, or change the meaning.
+   - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
+   - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
+   - Maximum {q_limit} characters.
+   - IMPORTANT: this exact text (words, language) is reused verbatim as the caption's 🗣️ line below — write it as a real, accurate quote, not a mashed-up paraphrase that adds claims from elsewhere in the article."""
+    else:
+        quote_title_rules = f"""1. "title" — the quote itself, printed on the image next to a large quote-mark icon.
+   - Translate to {language} if needed. Use the speaker's EXACT words from the article, word for word. If the article is in another language, translate faithfully sentence by sentence. Do NOT shorten, summarise, merge sentences or drop clauses.
+   - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
+   - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
+   - IMPORTANT: this exact text (words, language) is reused verbatim as the caption's 🗣️ line below — write it as a real, accurate quote, not a mashed-up paraphrase that adds claims from elsewhere in the article."""
 
     return f"""Act as a professional sports journalist and social media editor — the caliber of ESPN, Bleacher Report, or a top motorsport/combat-sports fan page — writing for the Facebook Fanpage "{fanpage.name}". You've covered this sport for years: you know the storylines, the rivalries, and how a real beat reporter phrases things. Sharp, credible, and highly readable. Never generic, never robotic, never clickbait-fake.
 
@@ -140,26 +206,13 @@ TASK 1B — IS THIS BREAKING? Set "is_breaking" true ONLY for the kind of story 
 TASK 2 — WRITE THE COPY, substantially rewritten in your own words (do not copy sentences from the source). The fields depend on the type you chose:
 
 IF "type" is "news":
-1. "title" — the headline that will be printed ON the image design.
-   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a hook ("BREAKING:" / "OFFICIAL:" / "CONFIRMED:" when it genuinely fits), a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Translate to {language} if needed.
-   - Keep roughly the SAME LENGTH as the source TITLE (or slightly longer with the hook) — do NOT shorten it or compress it into a vague topic label.
-   - GOOD example: source "Di Giannantonio to join Red Bull KTM Factory Racing" → "BREAKING: Fabio Di Giannantonio is officially joining Red Bull KTM Factory Racing!"
-   - BAD example: "MotoGP Shake-Up" (dropped the facts, too short)
-   - BAD example: "You Won't Believe What Marquez Just Did" (withholds the actual news — this is the "far from the original title" failure mode to avoid)
-   - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 5 words) in double asterisks so it renders in red, e.g. "Marc Marquez takes **his first pole** at Sachsenring". Mark exactly ONE phrase; leave the rest unmarked.
-   - Maximum {_effective_title_max_chars(fanpage, article)} characters (the ** markers do not count)
-   - No hashtags, no emoji, no quote marks
+{news_title_rules}
 2. "subtitle" — one short supporting sentence printed under the headline on the image.
    - Max 120 characters, same language as the title, plain factual detail that supports the headline.
    - HIGHLIGHT the key phrase (2 to 6 words) in double asterisks, same as the title.
 
 IF "type" is "quote":
-1. "title" — the quote itself, printed on the image next to a large quote-mark icon.
-   - Translate to {language} if needed, tightened for punch but keep the original meaning and claim — do not soften or invent words.
-   - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
-   - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
-   - Maximum 140 characters.
-   - IMPORTANT: this exact text (words, language) is reused verbatim as the caption's 🗣️ line below — write it as a real, accurate quote, not a mashed-up paraphrase that adds claims from elsewhere in the article.
+{quote_title_rules}
 2. "subtitle" — ONLY the speaker's full name, exactly as it appears in the article, and NOTHING else — no role, title, team, or descriptor of any kind, and no comma.
    - GOOD: "Marc Marquez"
    - BAD: "Marc Marquez World Champion", "Marc Marquez, MotoGP Champion", "Marc Marquez (Ducati)"
@@ -690,11 +743,50 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     Raises on AI failure (both providers down) or unparseable output —
     the calling task owns retry/backoff.
     """
-    prompt = build_news_copy_prompt(fanpage, article)
+    fit_chars = None
+    quote_fit_chars = None
+    try:
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            fit_chars = template_title_fit_chars(db, fanpage, "news")
+            quote_fit_chars = template_title_fit_chars(db, fanpage, "quote")
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    prompt = build_news_copy_prompt(fanpage, article, fit_chars=fit_chars, quote_fit_chars=quote_fit_chars)
     (category, is_breaking, title, subtitle, caption), provider = _generate_with_fallback(
         prompt, _parse_news_copy, force_provider,
         context="news_copy", fanpage_id=fanpage.id, article_id=article.id,
     )
+
+    quote_shorten = getattr(fanpage, "quote_shorten_enabled", False)
+    budget = None
+    if category == "news" and fit_chars is not None:
+        budget = fit_chars
+    elif category == "quote" and quote_shorten:
+        budget = quote_fit_chars if quote_fit_chars is not None else 120
+
+    if budget is not None:
+        title_len = len(title.replace("**", ""))
+        if title_len > budget:
+            logger.info(
+                "News copywriter: title length %d exceeds budget %d for %s (fanpage %s, article %s) — retrying once",
+                title_len, budget, category, getattr(fanpage, "id", None), getattr(article, "id", None),
+            )
+            correction_line = f"\n\nIMPORTANT CORRECTION: Your title was {title_len} characters; rewrite ONLY the title to at most {budget} characters, same facts, same highlight rule."
+            retry_prompt = prompt + correction_line
+            try:
+                (retry_cat, retry_breaking, retry_title, _retry_sub, _retry_cap), retry_provider = _generate_with_fallback(
+                    retry_prompt, _parse_news_copy, force_provider,
+                    context="news_copy_retry", fanpage_id=fanpage.id, article_id=article.id,
+                )
+                title = retry_title
+                provider = retry_provider
+            except Exception as exc:
+                logger.warning("News copywriter retry failed, keeping first answer: %s", exc)
 
     if category == "quote" and subtitle:
         subtitle = _clean_quote_subtitle(subtitle)
@@ -702,9 +794,16 @@ def generate_news_copy(fanpage, article, force_provider: AIProviderName | None =
     # Length check ignores the ** highlight markers; if we must truncate we drop
     # the markers (rare) rather than risk splitting a pair. Quote titles use a
     # fixed short cap (they're a punchy standalone line, not a headline).
-    title_max = 140 if category == "quote" else _effective_title_max_chars(fanpage, article)
-    if len(title.replace("**", "")) > title_max:
-        title = title.replace("**", "")[: title_max - 1].rstrip() + "…"
+    if category == "news" and fit_chars is not None:
+        pass  # Never cut text mid-word or truncate in code when template fit is enabled
+    elif category == "quote" and quote_shorten:
+        pass  # In quote shorten mode, accept retry as is, do not hard truncate
+    elif category == "quote" and not quote_shorten:
+        pass  # Toggle off: no maximum on quote title
+    else:
+        title_max = 140 if category == "quote" else _effective_title_max_chars(fanpage, article)
+        if len(title.replace("**", "")) > title_max:
+            title = title.replace("**", "")[: title_max - 1].rstrip() + "…"
 
     if category == "quote":
         caption = _sync_caption_quote(caption, title)

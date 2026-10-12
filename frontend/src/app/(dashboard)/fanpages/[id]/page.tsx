@@ -1475,6 +1475,24 @@ export default function FanpageEditPage() {
               </div>
             </div>
 
+            <div className="flex items-center justify-between p-3 rounded-lg border border-hairline">
+              <div>
+                <label htmlFor="quote-shorten" className="text-xs font-medium text-text-primary cursor-pointer">
+                  Ringkas kutipan (quote)
+                </label>
+                <p className="text-[11px] text-text-secondary mt-0.5">
+                  Off: quotes stay word-for-word (template shrinks the font). On: the AI may shorten a quote to fit the template, keeping its meaning — never adds words.
+                </p>
+              </div>
+              <input
+                id="quote-shorten"
+                type="checkbox"
+                className="w-4 h-4 rounded accent-primary-main shrink-0 cursor-pointer ml-3"
+                checked={(form.quote_shorten_enabled as boolean) ?? false}
+                onChange={(e) => set("quote_shorten_enabled", e.target.checked)}
+              />
+            </div>
+
             {/* News source subscriptions */}
             <div>
               <label className="label">News Sources</label>

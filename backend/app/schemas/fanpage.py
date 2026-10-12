@@ -152,6 +152,7 @@ class FanpageBase(BaseModel):
     visual_engine: str = Field("off", pattern="^(off|gflow|chatgpt|auto)$")
     news_visual_engine: str = Field("off", pattern="^(off|chatgpt)$")
     fb_visual_engine: str = Field("off", pattern="^(off|chatgpt)$")
+    quote_shorten_enabled: bool = False
 
     @field_validator("radar_niches", mode="before")
     @classmethod

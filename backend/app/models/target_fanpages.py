@@ -230,6 +230,7 @@ class TargetFanpage(Base):
     visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
     news_visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
     fb_visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
+    quote_shorten_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)
