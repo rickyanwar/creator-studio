@@ -21,9 +21,6 @@ celery_app = Celery(
         "app.tasks.status_sync",
         "app.tasks.cleanup",
         "app.tasks.fanpage_sync",
-        "app.tasks.story_poster",
-        "app.tasks.comment_poster",
-        "app.tasks.warmup",
         "app.tasks.news_scraper",
         "app.tasks.gallery_downloader",
         "app.tasks.gallery_labels",
@@ -247,26 +244,6 @@ celery_app.conf.beat_schedule = {
     "sync-fanpages": {
         "task": "app.tasks.fanpage_sync.sync_fanpages_from_repliz",
         "schedule": crontab(minute=0, hour="*/6"),
-    },
-    # Reset burner request counters at midnight WIB (17:00 UTC)
-    "reset-burner-counters": {
-        "task": "app.tasks.crawler.reset_burner_request_counters",
-        "schedule": crontab(hour=17, minute=0),
-    },
-    # Story poster: check daily at 08:00 WIB (01:00 UTC) — posts only if 2-3 days passed
-    "post-burner-stories": {
-        "task": "app.tasks.story_poster.post_stories_for_all_burners",
-        "schedule": crontab(hour=1, minute=0),
-    },
-    # Comment poster: check daily at 10:00 WIB (03:00 UTC) — posts only if 2-3 days passed
-    "post-burner-comments": {
-        "task": "app.tasks.comment_poster.post_comments_for_all_burners",
-        "schedule": crontab(hour=3, minute=0),
-    },
-    # Warmup: random profile browse + occasional like every 3 hours (human-like behaviour)
-    "warmup-burners": {
-        "task": "app.tasks.warmup.run_warmup",
-        "schedule": crontab(minute=30, hour="*/3"),
     },
     "collect-post-metrics": {
         "task": "app.tasks.post_metrics.collect_post_metrics",

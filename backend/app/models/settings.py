@@ -31,10 +31,8 @@ class Settings(Base):
     telegram_chat_id = Column(String(64), nullable=True)
 
     # ── Scraper mode ──────────────────────────────────────────────────────────
-    # "auto"       → per-source scraper_backend field governs
-    # "instagrapi" → always use burner accounts (ignore per-source setting)
-    # "viewer"     → always use login-free web viewers (ignore per-source setting)
-    # Legacy "flashapi" rows are treated as "viewer" at runtime.
+    # Deprecated: all scraper modes ("auto", "instagrapi", "flashapi", "viewer")
+    # resolve to login-free web viewers at runtime. Column kept for compatibility.
     scraper_mode = Column(String(32), default="auto", nullable=False, server_default="auto")
     flashapi_api_key_encrypted = Column(String(512), nullable=True)  # legacy, unused
 

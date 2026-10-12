@@ -177,7 +177,6 @@ def add_ig_source(fanpage_id: int, body: FanpageSourceAdd, db: DB, _: CurrentUse
     from app.models.target_fanpages import TargetFanpage
     from app.models.ig_sources import IGSource
     from app.models.fanpage_sources import FanpageSource
-    from app.services.ig_session_manager import get_least_used_burner
 
     fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
     if not fp:
@@ -188,10 +187,9 @@ def add_ig_source(fanpage_id: int, body: FanpageSourceAdd, db: DB, _: CurrentUse
     # Upsert IGSource
     source = db.query(IGSource).filter_by(ig_username=username).first()
     if not source:
-        burner = get_least_used_burner(db)
         source = IGSource(
             ig_username=username,
-            burner_account_id=burner.id if burner else None,
+            burner_account_id=None,
             is_active=True,
         )
         db.add(source)

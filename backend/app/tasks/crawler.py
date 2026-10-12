@@ -3,18 +3,16 @@
 Anti-ban rules:
 - Sleep window 01:00-06:00 WIB: skip entirely.
 - Delay 30-90s random between wave steps.
-- Max 200 req/day per burner.
 - Jitter ±5 min built in via Celery countdown randomisation.
 
-Scraper backends:
-- instagrapi  — logged-in burner account (fastest, needs a burner slot).
-- viewer      — login-free web viewers (GramSnap → AnonyIG → IGStoryViewer).
-               Redis lock ig_viewer:browser_lock prevents concurrent browser sessions.
-               ViewerBusyError retries single-source tasks or defers wave steps.
-- auto        — instagrapi if a burner is available, otherwise viewer.
+Scraper backend:
+- Login-free web viewers (GramSnap → AnonyIG → IGStoryViewer).
+  Redis lock ig_viewer:browser_lock prevents concurrent browser sessions.
+  ViewerBusyError retries single-source tasks or defers wave steps.
 
-Legacy "flashapi" values (per-source enum or global scraper_mode) are treated as
-viewer at runtime; the DB column / enum value is kept for backward-compat.
+Legacy "auto", "instagrapi", and "flashapi" values (per-source enum or global
+scraper_mode) are treated as viewer at runtime; the DB column / enum values are
+kept for backward-compat.
 """
 
 import logging
@@ -360,128 +358,17 @@ def _ingest_mode1_medias(db, source, medias) -> None:
 
 
 def _resolve_effective_backend(source_backend, db):
-    """Return the effective ScraperBackend, applying the global scraper_mode override.
+    """Return ScraperBackend.viewer.
 
-    Legacy "flashapi" values (global or per-source) are normalised to viewer.
+    All scraper modes ("auto", "instagrapi", "flashapi", "viewer") resolve to
+    the login-free web viewer path.
     """
     from app.models.ig_sources import ScraperBackend
-    from app.models.settings import Settings as DBSettings
-
-    db_settings = db.query(DBSettings).filter_by(id=1).first()
-    global_mode = (db_settings.scraper_mode if db_settings and db_settings.scraper_mode else "auto")
-
-    if global_mode in ("viewer", "flashapi"):
-        return ScraperBackend.viewer
-    if global_mode == "instagrapi":
-        return ScraperBackend.instagrapi
-    # "auto" → honour per-source setting; remap legacy flashapi → viewer
-    effective = source_backend or ScraperBackend.auto
-    if effective == ScraperBackend.flashapi:
-        return ScraperBackend.viewer
-    return effective
+    return ScraperBackend.viewer
 
 
 def _fetch_medias(source, backend, db, amount: int) -> list:
-    """Fetch recent posts using the appropriate backend for this source.
-
-    Global scraper_mode in DB Settings overrides the per-source backend.
-    Falls back to viewer (login-free web viewers) when no burner is available.
-    """
-    from app.models.ig_sources import ScraperBackend
-    from app.models.burner_accounts import BurnerAccount, BurnerStatus
-    from app.services.ig_session_manager import IGSessionManager
-
-    effective = _resolve_effective_backend(backend, db)
-
-    # ── instagrapi path (burner only) ──────────────────────────────────────
-    if effective == ScraperBackend.instagrapi:
-        burner = None
-        if source.burner_account_id:
-            assigned = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
-            if assigned and assigned.status == BurnerStatus.active and assigned.requests_today < 200:
-                burner = assigned
-
-        if burner is None:
-            available = (
-                db.query(BurnerAccount)
-                .filter(
-                    BurnerAccount.status == BurnerStatus.active,
-                    BurnerAccount.requests_today < 200,
-                )
-                .all()
-            )
-            if available:
-                burner = random.choice(available)
-                source.burner_account_id = burner.id
-                db.commit()
-                logger.info("Re-assigned @%s to burner @%s", source.ig_username, burner.ig_username)
-            else:
-                logger.warning("No available burners to crawl @%s — all busy or at limit", source.ig_username)
-                source.last_crawl_error = "No active burner available"
-                db.commit()
-                return []
-
-        manager = IGSessionManager(burner, db)
-        medias = manager.fetch_recent_posts(source.ig_username, amount=amount)
-        burner.requests_today = (burner.requests_today or 0) + 1
-
-        # Warmup: 15% chance to like 1 already-fetched post
-        if medias and random.random() < 0.15:
-            try:
-                post_to_like = random.choice(medias[:5])
-                manager.client.media_like(post_to_like.id)
-                burner.requests_today += 1
-                logger.debug("Warmup like on @%s", source.ig_username)
-            except Exception:
-                pass
-
-        db.commit()
-        return medias
-
-    # ── auto path: burner if available, else viewer ────────────────────────
-    if effective == ScraperBackend.auto:
-        burner = None
-        if source.burner_account_id:
-            assigned = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
-            if assigned and assigned.status == BurnerStatus.active and assigned.requests_today < 200:
-                burner = assigned
-
-        if burner is None:
-            available = (
-                db.query(BurnerAccount)
-                .filter(
-                    BurnerAccount.status == BurnerStatus.active,
-                    BurnerAccount.requests_today < 200,
-                )
-                .all()
-            )
-            if available:
-                burner = random.choice(available)
-                source.burner_account_id = burner.id
-                db.commit()
-                logger.info("Re-assigned @%s to burner @%s", source.ig_username, burner.ig_username)
-
-        if burner is not None:
-            manager = IGSessionManager(burner, db)
-            medias = manager.fetch_recent_posts(source.ig_username, amount=amount)
-            burner.requests_today = (burner.requests_today or 0) + 1
-
-            if medias and random.random() < 0.15:
-                try:
-                    post_to_like = random.choice(medias[:5])
-                    manager.client.media_like(post_to_like.id)
-                    burner.requests_today += 1
-                    logger.debug("Warmup like on @%s", source.ig_username)
-                except Exception:
-                    pass
-
-            db.commit()
-            return medias
-
-        # No burner — fall through to viewer
-        logger.info("No burner available for @%s — trying viewer fallback", source.ig_username)
-
-    # ── viewer path (ScraperBackend.viewer, or auto with no burner) ────────
+    """Fetch recent posts using the login-free web viewer path."""
     from app.services.ig_viewer_scraper import fetch_recent_posts, ViewerBusyError, ViewerScrapeError
     try:
         medias = fetch_recent_posts(source.ig_username, amount=amount)
@@ -515,15 +402,3 @@ def _extract_image_urls(media) -> list[str]:
     url = getattr(media, "thumbnail_url", None) or getattr(media, "url", None)
     return [str(url)] if url else []
 
-
-@celery_app.task(name="app.tasks.crawler.reset_burner_request_counters")
-def reset_burner_request_counters():
-    """Reset requests_today counter for all burners at midnight WIB."""
-    db = SessionLocal()
-    try:
-        from app.models.burner_accounts import BurnerAccount
-        db.query(BurnerAccount).update({BurnerAccount.requests_today: 0})
-        db.commit()
-        logger.info("Burner request counters reset")
-    finally:
-        db.close()

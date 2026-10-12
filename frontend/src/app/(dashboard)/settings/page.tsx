@@ -250,7 +250,7 @@ export default function SettingsPage() {
       <section className="card space-y-4">
         <h2 className="text-base font-semibold text-text-primary">Instagram Scraper</h2>
         <p className="text-xs text-text-secondary">
-          How often the crawler runs and how it fetches posts. <strong>Auto</strong> tries your burner accounts first and falls back to the Web Viewer scraper (GramSnap / AnonyIG / IGStoryViewer) when no burner is available.
+          How often the crawler runs and how it fetches posts. The crawler uses the Web Viewer scraper (GramSnap / AnonyIG / IGStoryViewer).
         </p>
 
         <div className="grid grid-cols-2 gap-4">
@@ -266,33 +266,6 @@ export default function SettingsPage() {
               value={form.max_post_age_days as number} onChange={(e) => set("max_post_age_days", parseInt(e.target.value))} />
             <p className="text-xs text-text-secondary mt-1">Skip posts older than this — e.g. 1 = today only</p>
           </div>
-        </div>
-
-        <div>
-          <label className="label">Scraper Mode</label>
-          <div className="flex gap-3 mt-1">
-            {(["auto", "instagrapi", "viewer"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => set("scraper_mode", mode)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
-                  form.scraper_mode === mode
-                    ? "bg-primary-main text-white border-primary-main"
-                    : "bg-surface-secondary text-text-secondary border-border-default hover:border-primary-main"
-                }`}
-              >
-                {mode === "auto" && "Auto"}
-                {mode === "instagrapi" && "Burner Accounts"}
-                {mode === "viewer" && "Web Viewer (no login)"}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-text-secondary mt-2">
-            {form.scraper_mode === "auto" && "Tries burner accounts first; falls back to Web Viewer if none are available."}
-            {form.scraper_mode === "instagrapi" && "Always uses burner accounts. Stops crawling if all burners are rate-limited."}
-            {form.scraper_mode === "viewer" && "Always uses Web Viewer (GramSnap / AnonyIG / IGStoryViewer). No login or burner accounts needed."}
-          </p>
         </div>
       </section>
 

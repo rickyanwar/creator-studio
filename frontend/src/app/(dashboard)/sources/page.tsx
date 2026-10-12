@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { listIGSources, listBurners, assignBurnerToSource, deleteIGSource, autoAssignBurners, getCrawlerHealth, getScraperHealth } from "@/lib/api";
+import { listIGSources, deleteIGSource, getCrawlerHealth, getScraperHealth } from "@/lib/api";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import type { CrawlerHealth, ScraperHealth } from "@/lib/types";
 import { useState } from "react";
@@ -10,19 +10,10 @@ import { Icon } from "@iconify/react";
 type IGSourceRow = {
   id: number;
   ig_username: string;
-  burner_id: number | null;
-  burner_username: string | null;
-  burner_status: string | null;
   is_active: boolean;
   last_checked_at: string | null;
   active_fanpage_count: number;
   last_crawl_error: string | null;
-};
-
-type Burner = {
-  id: number;
-  ig_username: string;
-  status: string;
 };
 
 const viewerTiers = [
@@ -44,10 +35,6 @@ export default function SourcesPage() {
     () => listIGSources().then((r) => r.data as IGSourceRow[]),
     { refreshInterval: 30000 }
   );
-  const { data: burnersData } = useSWR<{ burners: Burner[] }>(
-    "burners-list",
-    () => listBurners().then((r) => r.data)
-  );
   const { data: health } = useSWR<CrawlerHealth>(
     "crawler-health",
     () => getCrawlerHealth().then((r) => r.data),
@@ -59,12 +46,7 @@ export default function SourcesPage() {
     { refreshInterval: 60000 }
   );
 
-  const burners: Burner[] = burnersData?.burners ?? (Array.isArray(burnersData) ? burnersData as Burner[] : []);
-  const activeBurners = burners.filter((b) => b.status === "active");
-
-  const [assigning, setAssigning] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
-  const [autoAssigning, setAutoAssigning] = useState(false);
   const orphans = sources.filter((s) => s.active_fanpage_count === 0);
 
   async function handleDelete(sourceId: number, username: string) {
@@ -75,30 +57,6 @@ export default function SourcesPage() {
       mutate();
     } finally {
       setDeleting(null);
-    }
-  }
-
-  async function handleAutoAssign() {
-    setAutoAssigning(true);
-    try {
-      const res = await autoAssignBurners();
-      mutate();
-      const count = res.data?.reassigned?.length ?? 0;
-      alert(count > 0 ? `Reassigned ${count} source(s) to active burners.` : "All sources already have active burners.");
-    } catch {
-      alert("Auto-assign failed.");
-    } finally {
-      setAutoAssigning(false);
-    }
-  }
-
-  async function handleAssign(sourceId: number, burnerId: string) {
-    setAssigning(sourceId);
-    try {
-      await assignBurnerToSource(sourceId, burnerId ? parseInt(burnerId) : null);
-      mutate();
-    } finally {
-      setAssigning(null);
     }
   }
 
@@ -119,40 +77,12 @@ export default function SourcesPage() {
             )}
           </p>
         </div>
-        {activeBurners.length > 0 && (
-          <button
-            onClick={handleAutoAssign}
-            disabled={autoAssigning}
-            className="btn btn-secondary flex items-center gap-2 shrink-0"
-          >
-            {autoAssigning
-              ? <Icon icon="svg-spinners:ring-resize" width={14} />
-              : <Icon icon="solar:refresh-bold-duotone" width={14} />}
-            Auto-assign Burners
-          </button>
-        )}
       </div>
 
-      {scraperHealth?.scraper_mode === "viewer" ? (
-        <div className="rounded-xl border border-info-main/30 bg-info-lighter p-4 flex items-start gap-3 text-info-darker">
-          <Icon icon="solar:info-circle-bold-duotone" className="mt-0.5 shrink-0" width={18} />
-          <p className="text-sm">Web Viewer mode is on — burner accounts are not needed.</p>
-        </div>
-      ) : activeBurners.length === 0 && !isLoading && scraperHealth?.scraper_mode === "auto" ? (
-        <div className="rounded-xl border border-info-main/30 bg-info-lighter p-4 flex items-start gap-3 text-info-darker">
-          <Icon icon="solar:info-circle-bold-duotone" className="mt-0.5 shrink-0" width={18} />
-          <p className="text-sm">No active burner accounts — the crawler uses the Web Viewer automatically (GramSnap → AnonyIG → IGStoryViewer).</p>
-        </div>
-      ) : activeBurners.length === 0 && !isLoading && scraperHealth?.scraper_mode === "instagrapi" ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-warning-main/30 dark:bg-warning-lighter p-4 flex items-start gap-3">
-          <Icon icon="solar:danger-triangle-bold-duotone" className="text-amber-500 mt-0.5 shrink-0" width={18} />
-          <p className="text-sm text-amber-800 dark:text-warning-darker">
-            No active burner accounts found. Go to{" "}
-            <a href="/burners" className="font-semibold underline">Burners</a>{" "}
-            and import a session first, then come back to assign burners to sources.
-          </p>
-        </div>
-      ) : null}
+      <div className="rounded-xl border border-info-main/30 bg-info-lighter p-4 flex items-start gap-3 text-info-darker">
+        <Icon icon="solar:info-circle-bold-duotone" className="mt-0.5 shrink-0" width={18} />
+        <p className="text-sm">Web Viewer crawler is active (GramSnap → AnonyIG → IGStoryViewer). Login-free.</p>
+      </div>
 
       <section className="card-sm space-y-3" aria-labelledby="scraper-health-heading">
         <div className="flex flex-wrap items-baseline gap-2">
@@ -227,7 +157,6 @@ export default function SourcesPage() {
             <thead className="bg-parchment border-b border-hairline">
               <tr>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">IG Username</th>
-                <th className="px-5 py-3 text-left text-ink-80 font-semibold">Assigned Burner</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Fanpages</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Checked</th>
                 <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
@@ -238,29 +167,6 @@ export default function SourcesPage() {
               {sources.map((s) => (
                 <tr key={s.id} className="hover:bg-parchment/50 transition-colors">
                   <td className="px-5 py-3 text-ink font-medium">@{s.ig_username}</td>
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2">
-                      <select
-                        className="input-rect py-1 text-xs min-w-[160px]"
-                        value={s.burner_id ?? ""}
-                        disabled={assigning === s.id}
-                        onChange={(e) => handleAssign(s.id, e.target.value)}
-                      >
-                        <option value="">— No burner —</option>
-                        {activeBurners.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            @{b.ig_username}
-                          </option>
-                        ))}
-                      </select>
-                      {assigning === s.id && (
-                        <Icon icon="svg-spinners:ring-resize" className="text-primary-main" width={14} />
-                      )}
-                      {s.burner_status && s.burner_status !== "active" && (
-                        <span className="badge badge-yellow text-[10px]">{s.burner_status}</span>
-                      )}
-                    </div>
-                  </td>
                   <td className="px-5 py-3">
                     {s.active_fanpage_count > 0 ? (
                       <span className="badge-green">{s.active_fanpage_count} active</span>
@@ -320,7 +226,7 @@ export default function SourcesPage() {
               ))}
               {sources.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-5 py-10 text-center text-ink-48">
+                  <td colSpan={5} className="px-5 py-10 text-center text-ink-48">
                     No IG sources yet. Add them via the{" "}
                     <a href="/fanpages" className="text-primary">Fanpages</a> configure page.
                   </td>

@@ -46,7 +46,6 @@ def list_ig_sources(
 ):
     from app.models.ig_sources import IGSource
     from app.models.fanpage_sources import FanpageSource
-    from app.models.burner_accounts import BurnerAccount
 
     q = db.query(IGSource)
     sources = q.order_by(IGSource.ig_username).all()
@@ -57,15 +56,13 @@ def list_ig_sources(
         if orphan_only and active_links > 0:
             continue
 
-        burner = db.query(BurnerAccount).filter_by(id=s.burner_account_id).first() if s.burner_account_id else None
-
         result.append({
             "id": s.id,
             "ig_username": s.ig_username,
             "ig_user_id": s.ig_user_id,
-            "burner_id": s.burner_account_id,
-            "burner_username": burner.ig_username if burner else None,
-            "burner_status": burner.status.value if burner else None,
+            "burner_id": None,
+            "burner_username": None,
+            "burner_status": None,
             "is_active": s.is_active,
             "last_checked_at": s.last_checked_at.replace(tzinfo=timezone.utc).isoformat() if s.last_checked_at else None,
             "last_seen_post_id": s.last_seen_post_id,
@@ -86,20 +83,7 @@ def list_ig_sources(
 
 @router.patch("/{source_id}/assign-burner")
 def assign_burner(source_id: int, body: AssignBurnerRequest, db: DB, _: CurrentUser):
-    from app.models.ig_sources import IGSource
-    from app.models.burner_accounts import BurnerAccount
-
-    source = db.query(IGSource).filter_by(id=source_id).first()
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-
-    if body.burner_id is not None:
-        burner = db.query(BurnerAccount).filter_by(id=body.burner_id).first()
-        if not burner:
-            raise HTTPException(status_code=404, detail="Burner not found")
-
-    source.burner_account_id = body.burner_id
-    db.commit()
+    # Deprecated endpoint: burner assignment is disabled
     return {"ok": True}
 
 
@@ -147,36 +131,8 @@ def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: Cur
 
 @router.post("/auto-assign-burners")
 def auto_assign_burners(db: DB, _: CurrentUser):
-    """Reassign all sources whose burner is challenged/missing to a random active burner."""
-    from app.models.ig_sources import IGSource
-    from app.models.burner_accounts import BurnerAccount, BurnerStatus
-    import random
-
-    active_burners = (
-        db.query(BurnerAccount)
-        .filter(BurnerAccount.status == BurnerStatus.active)
-        .all()
-    )
-    if not active_burners:
-        raise HTTPException(status_code=400, detail="No active burners available")
-
-    sources = db.query(IGSource).all()
-    reassigned = []
-
-    for source in sources:
-        needs_reassign = True
-        if source.burner_account_id:
-            assigned = db.query(BurnerAccount).filter_by(id=source.burner_account_id).first()
-            if assigned and assigned.status == BurnerStatus.active:
-                needs_reassign = False
-
-        if needs_reassign:
-            new_burner = random.choice(active_burners)
-            source.burner_account_id = new_burner.id
-            reassigned.append({"source": source.ig_username, "burner": new_burner.ig_username})
-
-    db.commit()
-    return {"ok": True, "reassigned": reassigned}
+    # Deprecated endpoint: burner assignment is disabled
+    return {"ok": True, "reassigned": []}
 
 
 @router.delete("/{source_id}")

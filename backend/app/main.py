@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.utils.logger import setup_logging
-from app.api import auth, fanpages, burners, publish_jobs, settings as settings_router, jobs, ig_sources, dashboard, notifications, logs, news_sources, gallery, templates, yt_clips, scraper_health, analytics, strategy, hermes, ai_video_ideas, gflow_worker, ai_video_jobs, radar, f1_drivers, labeler
+from app.api import auth, fanpages, publish_jobs, settings as settings_router, jobs, ig_sources, dashboard, notifications, logs, news_sources, gallery, templates, yt_clips, scraper_health, analytics, strategy, hermes, ai_video_ideas, gflow_worker, ai_video_jobs, radar, f1_drivers, labeler
 
 
 @asynccontextmanager
@@ -30,7 +30,6 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(fanpages.router)
-app.include_router(burners.router)
 app.include_router(publish_jobs.router)
 app.include_router(settings_router.router)
 app.include_router(jobs.router)

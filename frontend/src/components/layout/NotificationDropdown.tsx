@@ -230,7 +230,7 @@ export default function NotificationDropdown({ open, onClose }: Props) {
         {/* ── Footer ── */}
         <div className="flex-shrink-0 py-4 text-center border-t border-divider-soft">
           <button
-            onClick={() => { onClose(); router.push("/burners"); }}
+            onClick={() => { onClose(); router.push("/queue"); }}
             className="text-sm font-bold text-text-primary hover:text-primary-main transition-colors"
           >
             View all
