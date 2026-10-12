@@ -75,7 +75,7 @@ def test_redesign_team_radio(
 @patch("app.services.redesign_pipeline.upscale_image_bytes")
 @patch("builtins.open")
 @patch("os.makedirs")
-def test_redesign_qa_fail_retry(
+def test_redesign_qa_fail_single_call(
     mock_makedirs, mock_open, mock_upscale, mock_check, mock_generate, mock_driver, mock_plan, mock_layout, mock_analyze, dummy_deps
 ):
     post, fanpage = dummy_deps
@@ -98,14 +98,13 @@ def test_redesign_qa_fail_retry(
     mock_generate.return_value = b"gen"
     mock_upscale.return_value = b"upscaled"
     
-    # QA fails first time, succeeds second time
-    mock_check.side_effect = [
-        MagicMock(passed=False, problems=["Bad"]),
-        MagicMock(passed=True, problems=[])
-    ]
+    # QA fails and the single-call pipeline returns without retrying.
+    mock_check.return_value = MagicMock(passed=False, problems=["Bad"])
     
     res = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
     
-    assert res.ok is True
-    assert mock_generate.call_count == 2
-    assert mock_check.call_count == 2
+    assert res.ok is False
+    assert "Bad" in res.problems
+    assert "QA failed; no retry (single-call mode)" in res.notes
+    assert mock_generate.call_count == 1
+    assert mock_check.call_count == 1

@@ -303,41 +303,7 @@ def redesign_card(
         )
 
         if not qa_res.passed:
-            notes.append("QA failed, retrying once")
-            if time.time() - start_time > 1200:
-                problems.append("Budget exceeded")
-                return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
-            
-            try:
-                gen_bytes = generate(db, req, timeout=300, fanpage_id=fanpage.id)
-                inset_ref_paths = []
-                inset_modes = []
-                if layout in ('inset', 'inset2'):
-                    if whatif_target_team:
-                        pass
-                    else:
-                        for inst in getattr(plan, 'insets', []):
-                            if inst.mode in ('real', 'asset', 'imagined'):
-                                if inst.pick and inst.pick.path:
-                                    inset_ref_paths.append(inst.pick.path)
-                                inset_modes.append(inst.mode)
-                                
-                qa_res = check_generated(
-                    gen_bytes,
-                    layout=layout,
-                    hero_ref_path=refs[0],
-                    inset_ref_paths=tuple(inset_ref_paths),
-                    inset_modes=tuple(inset_modes),
-                    expected_lines=expected_lines,
-                    expected_header=expected_header,
-                    whatif_target_team=whatif_target_team,
-                    source_branding=source_branding
-                )
-            except VisualEngineError as e:
-                problems.append(f"Retry VisualEngineError: {str(e)}")
-                return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
-
-        if not qa_res.passed:
+            notes.append("QA failed; no retry (single-call mode)")
             problems.extend(qa_res.problems)
             return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
 
