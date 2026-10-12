@@ -428,7 +428,7 @@ export interface DashboardStats {
   pending_review: number;
   active_fanpages: number;
   total_fanpages: number;
-  burners: Array<{
+  burners?: Array<{
     id: number;
     ig_username: string;
     status: BurnerStatus;

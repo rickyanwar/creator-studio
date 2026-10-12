@@ -13,7 +13,6 @@ const nav = [
   { href: "/ai-video",  label: "AI Video",    icon: "solar:videocamera-record-bold-duotone" },
   { href: "/fanpages",  label: "Fanpages",     icon: "mingcute:facebook-fill" },
   { href: "/queue",     label: "Queue",        icon: "solar:clock-circle-bold-duotone" },
-  { href: "/burners",   label: "Burners",      icon: "solar:users-group-rounded-bold-duotone" },
   { href: "/sources",   label: "IG Sources",   icon: "solar:global-bold-duotone" },
   { href: "/news-sources", label: "News Sources", icon: "solar:documents-bold-duotone" },
   { href: "/radar",     label: "Viral Radar",  icon: "solar:radar-2-bold-duotone" },

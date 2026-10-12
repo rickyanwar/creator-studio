@@ -64,173 +64,67 @@ class TestResolveEffectiveBackend:
         result = _resolve_effective_backend(ScraperBackend.instagrapi, db)
         assert result == ScraperBackend.viewer
 
-    def test_global_instagrapi_returns_instagrapi(self):
+    def test_global_instagrapi_returns_viewer(self):
         db = _make_db(global_scraper_mode="instagrapi")
         result = _resolve_effective_backend(ScraperBackend.viewer, db)
-        assert result == ScraperBackend.instagrapi
+        assert result == ScraperBackend.viewer
 
     def test_global_auto_per_source_flashapi_returns_viewer(self):
         db = _make_db(global_scraper_mode="auto")
         result = _resolve_effective_backend(ScraperBackend.flashapi, db)
         assert result == ScraperBackend.viewer
 
-    def test_global_auto_per_source_auto_returns_auto(self):
+    def test_global_auto_per_source_auto_returns_viewer(self):
         db = _make_db(global_scraper_mode="auto")
         result = _resolve_effective_backend(ScraperBackend.auto, db)
-        assert result == ScraperBackend.auto
+        assert result == ScraperBackend.viewer
 
-    def test_missing_settings_row_returns_per_source(self):
-        """No Settings row → global_mode defaults to 'auto' → per-source wins."""
+    def test_missing_settings_row_returns_viewer(self):
+        """No Settings row → still resolves to viewer."""
         db = MagicMock()
         db.query.return_value.filter_by.return_value.first.return_value = None
         result = _resolve_effective_backend(ScraperBackend.instagrapi, db)
-        assert result == ScraperBackend.instagrapi
+        assert result == ScraperBackend.viewer
 
-    def test_missing_settings_row_per_source_none_returns_auto(self):
-        """No Settings row, per-source None → auto."""
+    def test_missing_settings_row_per_source_none_returns_viewer(self):
+        """No Settings row, per-source None → viewer."""
         db = MagicMock()
         db.query.return_value.filter_by.return_value.first.return_value = None
         result = _resolve_effective_backend(None, db)
-        assert result == ScraperBackend.auto
+        assert result == ScraperBackend.viewer
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 2. _fetch_medias
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _make_burner(requests_today=0):
-    b = MagicMock()
-    from app.models.burner_accounts import BurnerStatus
-    b.status = BurnerStatus.active
-    b.requests_today = requests_today
-    b.ig_username = "burner_account"
-    return b
+class TestFetchMediasAllBackendsUseViewer:
 
-
-class TestFetchMediasAuto:
-
-    def _db_with_burner(self, burner):
-        """DB that returns global_mode=auto and one available burner."""
+    def _db(self):
         db = MagicMock()
-
-        settings_row = MagicMock()
-        settings_row.scraper_mode = "auto"
-
-        from app.models.settings import Settings as DBSettings
-        from app.models.burner_accounts import BurnerAccount
-
-        def _query(model):
-            q = MagicMock()
-            if model is DBSettings:
-                q.filter_by.return_value.first.return_value = settings_row
-            elif model is BurnerAccount:
-                # filter().all() returns [burner]
-                q.filter.return_value.all.return_value = [burner] if burner else []
-                q.filter_by.return_value.first.return_value = None
-            else:
-                q.filter_by.return_value.first.return_value = None
-                q.filter.return_value.all.return_value = []
-            return q
-
-        db.query.side_effect = _query
         return db
 
-    def _db_no_burner(self):
-        return self._db_with_burner(None)
-
-    def test_auto_with_burner_uses_session_manager_not_viewer(self):
-        """auto + available burner → IGSessionManager used, viewer NOT called."""
-        burner = _make_burner()
-        db = self._db_with_burner(burner)
-        source = _make_source()
-        source.burner_account_id = None  # no pre-assigned burner
-
-        fake_medias = [MagicMock()]
-        mock_manager = MagicMock()
-        mock_manager.fetch_recent_posts.return_value = fake_medias
-        mock_manager.client.media_like.side_effect = Exception("skip")
-
-        fetch_mock = MagicMock(return_value=[])  # viewer should NOT be called
-
-        # IGSessionManager is imported lazily inside _fetch_medias — patch at source
-        with (
-            patch("app.services.ig_session_manager.IGSessionManager", return_value=mock_manager),
-            patch.object(
-                _viewer_mod,
-                "fetch_recent_posts",
-                fetch_mock,
-            ),
-            patch("random.random", return_value=1.0),  # skip warmup like
-        ):
-            result = _fetch_medias(source, ScraperBackend.auto, db, 10)
-
-        assert result == fake_medias
-        fetch_mock.assert_not_called()
-
-    def test_auto_no_burner_calls_viewer_and_clears_error(self):
-        """auto + no burner → viewer fetch_recent_posts called, last_crawl_error = None."""
-        db = self._db_no_burner()
+    @pytest.mark.parametrize("backend", [
+        ScraperBackend.auto,
+        ScraperBackend.instagrapi,
+        ScraperBackend.flashapi,
+        ScraperBackend.viewer,
+    ])
+    def test_all_backends_call_viewer_fetch_recent_posts(self, backend):
+        """auto, instagrapi, flashapi, viewer all use the viewer path."""
+        db = self._db()
         source = _make_source()
         source.burner_account_id = None
 
         fake_medias = [MagicMock(), MagicMock()]
         fetch_mock = MagicMock(return_value=fake_medias)
 
-        with patch.object(
-            _viewer_mod,
-            "fetch_recent_posts",
-            fetch_mock,
-        ):
-            result = _fetch_medias(source, ScraperBackend.auto, db, 10)
+        with patch.object(_viewer_mod, "fetch_recent_posts", fetch_mock):
+            result = _fetch_medias(source, backend, db, 10)
 
         fetch_mock.assert_called_once_with(source.ig_username, amount=10)
         assert result == fake_medias
         assert source.last_crawl_error is None
-
-
-class TestFetchMediasInstagrapi:
-
-    def _db_no_burner(self):
-        db = MagicMock()
-        settings_row = MagicMock()
-        settings_row.scraper_mode = "auto"  # won't override instagrapi per-source
-
-        from app.models.settings import Settings as DBSettings
-        from app.models.burner_accounts import BurnerAccount
-
-        def _query(model):
-            q = MagicMock()
-            if model is DBSettings:
-                q.filter_by.return_value.first.return_value = settings_row
-            elif model is BurnerAccount:
-                q.filter.return_value.all.return_value = []
-                q.filter_by.return_value.first.return_value = None
-            else:
-                q.filter_by.return_value.first.return_value = None
-                q.filter.return_value.all.return_value = []
-            return q
-
-        db.query.side_effect = _query
-        return db
-
-    def test_instagrapi_no_burner_returns_empty_and_sets_error(self):
-        """instagrapi + no burner → [] and last_crawl_error set, viewer NOT called."""
-        db = self._db_no_burner()
-        source = _make_source()
-        source.burner_account_id = None
-
-        fetch_mock = MagicMock(return_value=[MagicMock()])  # should not be called
-
-        with patch.object(
-            _viewer_mod,
-            "fetch_recent_posts",
-            fetch_mock,
-        ):
-            result = _fetch_medias(source, ScraperBackend.instagrapi, db, 10)
-
-        assert result == []
-        assert source.last_crawl_error == "No active burner available"
-        fetch_mock.assert_not_called()
 
 
 class TestFetchMediasViewer:
@@ -532,3 +426,42 @@ class TestCrawlSourceImageSourceUrls:
         """image_source_urls on the Post equals what was passed to save_post_images.delay."""
         posts, saved = self._run(media_type=1)
         assert posts[0].image_source_urls == saved["image_urls"]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 4. Beat schedule & Celery import checks (no burner tasks)
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestBeatScheduleAndImports:
+
+    def test_no_burner_tasks_in_beat_schedule(self):
+        from app.tasks.celery_app import celery_app
+        beat_keys = set(celery_app.conf.beat_schedule.keys())
+        deleted_entries = {
+            "reset-burner-counters",
+            "post-burner-stories",
+            "post-burner-comments",
+            "warmup-burners",
+        }
+        for entry in deleted_entries:
+            assert entry not in beat_keys, f"Deleted beat entry {entry} still in schedule"
+
+    def test_all_beat_schedule_tasks_registered_and_importable(self):
+        from app.tasks.celery_app import celery_app
+        import app.main  # noqa: F401
+        for include_mod in celery_app.conf.include:
+            __import__(include_mod)
+        for name, entry in celery_app.conf.beat_schedule.items():
+            task_name = entry["task"]
+            assert task_name in celery_app.tasks, f"Beat entry {name} task {task_name} is not registered in celery_app.tasks"
+
+    def test_no_deleted_modules_in_celery_include(self):
+        from app.tasks.celery_app import celery_app
+        deleted_modules = {
+            "app.tasks.story_poster",
+            "app.tasks.comment_poster",
+            "app.tasks.warmup",
+        }
+        for mod in deleted_modules:
+            assert mod not in celery_app.conf.include, f"Deleted task module {mod} still in celery include"
+

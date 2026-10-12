@@ -3,22 +3,8 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { getDashboardStats, getCrawlerHealth, triggerCrawl, triggerFanpageSync, restartBeat } from "@/lib/api";
-import type { DashboardStats, BurnerStatus, CrawlerHealth } from "@/lib/types";
+import type { DashboardStats, CrawlerHealth } from "@/lib/types";
 import { Icon } from "@iconify/react";
-
-const BURNER_STATUS_STYLE: Record<BurnerStatus, string> = {
-  active:       "badge-green",
-  challenged:   "badge-yellow",
-  rate_limited: "badge-yellow",
-  banned:       "badge-red",
-};
-
-const BURNER_STATUS_ICON: Record<BurnerStatus, string> = {
-  active:       "solar:wifi-bold-duotone",
-  challenged:   "solar:danger-circle-bold-duotone",
-  rate_limited: "solar:danger-circle-bold-duotone",
-  banned:       "solar:shield-cross-bold-duotone",
-};
 
 const fetcher = () => getDashboardStats().then((r) => r.data as DashboardStats);
 const healthFetcher = () => getCrawlerHealth().then((r) => r.data as CrawlerHealth);
@@ -184,153 +170,83 @@ export default function DashboardPage() {
         <CrawlerHealthCard health={health} onCrawlNow={handleCrawl} crawling={loadingCrawl} crawlMsg={crawlMsg} onRestartBeat={handleRestartBeat} restartingBeat={restartingBeat} restartMsg={restartMsg} />
       )}
 
-      {/* ── Lower row: burners + disk ──────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Burner accounts — takes 2 columns */}
-        <div className="lg:col-span-2 card">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h2 className="text-base font-bold text-text-primary">Burner Accounts</h2>
-              <p className="text-xs text-text-secondary mt-0.5">Instagram session status</p>
-            </div>
-            <a href="/burners" className="text-xs text-primary-main hover:underline font-medium">
-              Manage →
-            </a>
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-3">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-14 bg-bg-paper-hover rounded-lg animate-pulse" />
-              ))}
-            </div>
-          ) : (data?.burners ?? []).length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-center">
-              <Icon icon="solar:users-group-rounded-bold-duotone" width={40} className="text-text-disabled mb-3" />
-              <p className="text-sm text-text-secondary">No burner accounts configured</p>
-              <a href="/burners" className="mt-2 text-xs text-primary-main hover:underline">Add one →</a>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {(data?.burners ?? []).map((b) => (
-                <div
-                  key={b.id}
-                  className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-bg-default hover:bg-bg-paper-hover transition-colors"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-full bg-bg-paper-hover flex items-center justify-center flex-shrink-0">
-                      <Icon
-                        icon={BURNER_STATUS_ICON[b.status]}
-                        width={16}
-                        className={
-                          b.status === "active" ? "text-primary-main"
-                          : b.status === "banned" ? "text-error-main"
-                          : "text-warning-main"
-                        }
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-text-primary truncate">
-                        @{b.ig_username}
-                      </div>
-                      <div className="text-xs text-text-secondary">
-                        {b.requests_today} req today
-                        {b.cooldown_until && (
-                          <span className="ml-2 text-warning-main">
-                            cooldown until {new Date(b.cooldown_until).toLocaleTimeString()}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <span className={BURNER_STATUS_STYLE[b.status]}>
-                    {b.status.replace("_", " ")}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Right column: disk + quick links */}
-        <div className="space-y-5">
-          {/* Disk usage card */}
-          {data && data.disk_total_mb > 0 && (
-            <div className="card">
-              <div className="flex items-center gap-2 mb-4">
-                <Icon icon="solar:server-minimalistic-bold-duotone" width={18} className="text-text-secondary" />
-                <h2 className="text-sm font-bold text-text-primary">Media Storage</h2>
-              </div>
-
-              {/* Radial-style progress */}
-              <div className="flex items-center gap-4">
-                <div className="relative w-16 h-16 flex-shrink-0">
-                  <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90">
-                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(145,158,171,0.12)" strokeWidth="3" />
-                    <circle
-                      cx="18" cy="18" r="15.9"
-                      fill="none"
-                      stroke={diskPct > 80 ? "#FF5630" : "#00A76F"}
-                      strokeWidth="3"
-                      strokeDasharray={`${diskPct} 100`}
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-text-primary">
-                    {diskPct}%
-                  </span>
-                </div>
-                <div>
-                  <div className="text-lg font-bold text-text-primary">
-                    {data.disk_used_mb >= 1024
-                      ? `${(data.disk_used_mb / 1024).toFixed(1)} GB`
-                      : `${data.disk_used_mb} MB`}
-                  </div>
-                  <div className="text-xs text-text-secondary">
-                    of {data.disk_total_mb >= 1024
-                      ? `${(data.disk_total_mb / 1024).toFixed(0)} GB`
-                      : `${data.disk_total_mb} MB`} used
-                  </div>
-                </div>
-              </div>
-
-              {data.disk_gallery_mb > 0 && (
-                <div className="mt-4 pt-4 border-t border-hairline flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Icon icon="solar:gallery-bold-duotone" width={14} className="text-text-secondary" />
-                    <span className="text-xs text-text-secondary">Image Gallery</span>
-                  </div>
-                  <span className="text-xs font-semibold text-text-primary">
-                    {data.disk_gallery_mb >= 1024
-                      ? `${(data.disk_gallery_mb / 1024).toFixed(1)} GB`
-                      : `${data.disk_gallery_mb} MB`}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Quick links */}
+      {/* ── Lower row: disk + quick links ──────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Disk usage card */}
+        {data && data.disk_total_mb > 0 && (
           <div className="card">
-            <h2 className="text-sm font-bold text-text-primary mb-4">Quick Actions</h2>
-            <div className="space-y-1">
-              {[
-                { href: "/fanpages", icon: "solar:megaphone-bold-duotone",  label: "Manage Fanpages" },
-                { href: "/burners",  icon: "solar:users-group-rounded-bold-duotone", label: "Burner Accounts" },
-                { href: "/queue",    icon: "solar:clock-circle-bold-duotone", label: "Review Queue" },
-                { href: "/sources",  icon: "solar:global-bold-duotone",      label: "IG Sources" },
-              ].map(({ href, icon, label }) => (
-                <a
-                  key={href}
-                  href={href}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-bg-paper-hover transition-colors group"
-                >
-                  <Icon icon={icon} width={18} className="text-text-secondary group-hover:text-primary-main transition-colors" />
-                  <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">{label}</span>
-                  <Icon icon="solar:alt-arrow-right-bold-duotone" width={14} className="ml-auto text-text-disabled group-hover:text-text-secondary transition-colors" />
-                </a>
-              ))}
+            <div className="flex items-center gap-2 mb-4">
+              <Icon icon="solar:server-minimalistic-bold-duotone" width={18} className="text-text-secondary" />
+              <h2 className="text-sm font-bold text-text-primary">Media Storage</h2>
             </div>
+
+            {/* Radial-style progress */}
+            <div className="flex items-center gap-4">
+              <div className="relative w-16 h-16 flex-shrink-0">
+                <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90">
+                  <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(145,158,171,0.12)" strokeWidth="3" />
+                  <circle
+                    cx="18" cy="18" r="15.9"
+                    fill="none"
+                    stroke={diskPct > 80 ? "#FF5630" : "#00A76F"}
+                    strokeWidth="3"
+                    strokeDasharray={`${diskPct} 100`}
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-text-primary">
+                  {diskPct}%
+                </span>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-text-primary">
+                  {data.disk_used_mb >= 1024
+                    ? `${(data.disk_used_mb / 1024).toFixed(1)} GB`
+                    : `${data.disk_used_mb} MB`}
+                </div>
+                <div className="text-xs text-text-secondary">
+                  of {data.disk_total_mb >= 1024
+                    ? `${(data.disk_total_mb / 1024).toFixed(0)} GB`
+                    : `${data.disk_total_mb} MB`} used
+                </div>
+              </div>
+            </div>
+
+            {data.disk_gallery_mb > 0 && (
+              <div className="mt-4 pt-4 border-t border-hairline flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Icon icon="solar:gallery-bold-duotone" width={14} className="text-text-secondary" />
+                  <span className="text-xs text-text-secondary">Image Gallery</span>
+                </div>
+                <span className="text-xs font-semibold text-text-primary">
+                  {data.disk_gallery_mb >= 1024
+                    ? `${(data.disk_gallery_mb / 1024).toFixed(1)} GB`
+                    : `${data.disk_gallery_mb} MB`}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Quick links */}
+        <div className="card">
+          <h2 className="text-sm font-bold text-text-primary mb-4">Quick Actions</h2>
+          <div className="space-y-1">
+            {[
+              { href: "/fanpages", icon: "solar:megaphone-bold-duotone",  label: "Manage Fanpages" },
+              { href: "/queue",    icon: "solar:clock-circle-bold-duotone", label: "Review Queue" },
+              { href: "/sources",  icon: "solar:global-bold-duotone",      label: "IG Sources" },
+            ].map(({ href, icon, label }) => (
+              <a
+                key={href}
+                href={href}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-bg-paper-hover transition-colors group"
+              >
+                <Icon icon={icon} width={18} className="text-text-secondary group-hover:text-primary-main transition-colors" />
+                <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">{label}</span>
+                <Icon icon="solar:alt-arrow-right-bold-duotone" width={14} className="ml-auto text-text-disabled group-hover:text-text-secondary transition-colors" />
+              </a>
+            ))}
           </div>
         </div>
       </div>
@@ -407,7 +323,7 @@ function CrawlerHealthCard({
             </span>
             {status === "dead" && (
               <span className="text-xs text-error-main bg-[rgba(255,86,48,0.12)] px-2 py-0.5 rounded-full font-medium">
-                Crawls not updating — check burner status or worker logs
+                Crawls not updating — check worker logs
               </span>
             )}
             {status === "sleep" && (

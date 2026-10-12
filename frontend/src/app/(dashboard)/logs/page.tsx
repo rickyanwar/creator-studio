@@ -7,12 +7,11 @@ import { Icon } from "@iconify/react";
 import { clsx } from "clsx";
 import { useRouter } from "next/navigation";
 
-type Category = "all" | "burner" | "publish" | "ai";
+type Category = "all" | "publish" | "ai";
 type Severity  = "all" | "error" | "warning";
 
 const CATEGORY_TABS: { value: Category; label: string; icon: string }[] = [
   { value: "all",     label: "All",     icon: "solar:list-bold-duotone" },
-  { value: "burner",  label: "Burner",  icon: "solar:users-group-rounded-bold-duotone" },
   { value: "publish", label: "Publish", icon: "solar:rocket-bold-duotone" },
   { value: "ai",      label: "AI",      icon: "solar:cpu-bolt-bold-duotone" },
 ];
@@ -29,11 +28,11 @@ const TYPE_META: Record<string, { icon: string; color: string; label: string }> 
 };
 
 const ACTION_LABEL: Record<string, string> = {
-  challenge:      "Submit OTP",
-  ban:            "View Burner",
-  rate_limit:     "View Burner",
-  session_error:  "Import Session",
-  no_session:     "Import Session",
+  challenge:      "View Issue",
+  ban:            "View Issue",
+  rate_limit:     "View Issue",
+  session_error:  "View Issue",
+  no_session:     "View Issue",
   publish_failed: "View History",
   ai_failed:      "Check 9Router",
   ai_recovered:   "Check 9Router",

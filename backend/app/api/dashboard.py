@@ -19,7 +19,6 @@ WIB = pytz.timezone("Asia/Jakarta")
 @router.get("/stats")
 def get_dashboard_stats(db: DB, _: CurrentUser):
     from app.models.publish_jobs import PublishJob, PublishJobStatus
-    from app.models.burner_accounts import BurnerAccount, BurnerStatus
     from app.models.target_fanpages import TargetFanpage
     from app.models.posts import Post
     from app.models.ai_copy_events import AICopyEvent
@@ -46,19 +45,8 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         db.query(PublishJob).filter(PublishJob.status == PublishJobStatus.pending_review).count()
     )
 
-    # Burner statuses
-    burners = db.query(BurnerAccount).all()
-    burner_stats = [
-        {
-            "id": b.id,
-            "ig_username": b.ig_username,
-            "status": b.status,
-            "requests_today": b.requests_today,
-            "cooldown_until": b.cooldown_until,
-            "last_error": b.last_error,
-        }
-        for b in burners
-    ]
+    # Burner statuses (deprecated feature: return empty list for frontend compatibility)
+    burner_stats = []
 
     # Active fanpages
     active_fanpages = db.query(TargetFanpage).filter_by(is_active=True).count()
