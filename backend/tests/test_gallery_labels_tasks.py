@@ -303,3 +303,43 @@ def test_label_gallery_image_skips_none_downloaded_at(db_session, tmp_path):
             with patch("app.tasks.gallery_labels.label_image") as mock_label:
                 label_gallery_image(img.id)
                 mock_label.assert_not_called()
+
+
+def test_label_gallery_image_force_bypasses_settings(db_session, tmp_path):
+    s = db_session.query(Settings).filter_by(id=1).first()
+    s.gallery_labeling_enabled = False
+    s.gallery_labeling_since = None
+    db_session.commit()
+    image_file = tmp_path / "force.jpg"
+    image_file.write_text("fake")
+    img = GalleryImage(
+        keyword="forced", source_image_url=_unique_url("forced"), local_path=str(image_file),
+        public_url="http://p", width=100, height=100, source_engine="manual",
+        downloaded_at=datetime.now(timezone.utc), attributes=None,
+    )
+    db_session.add(img)
+    db_session.commit()
+    with patch("app.tasks.gallery_labels.label_image", return_value={"shot_type": "portrait"}):
+        label_gallery_image(img.id, force=True)
+    db_session.refresh(img)
+    assert img.labeled_at is not None
+
+
+def test_label_gallery_image_passes_owner_hints_when_relabeling(db_session, tmp_path):
+    s = db_session.query(Settings).filter_by(id=1).first()
+    s.gallery_labeling_enabled = False
+    s.gallery_labeling_since = None
+    db_session.commit()
+    image_file = tmp_path / "relabel.jpg"
+    image_file.write_text("fake")
+    img = GalleryImage(
+        keyword="forced", source_image_url=_unique_url("relabel"), local_path=str(image_file),
+        public_url="http://p", width=100, height=100, source_engine="manual",
+        downloaded_at=datetime.now(timezone.utc), labeled_at=datetime.now(timezone.utc),
+        attributes={"owner_hints": {"session": "race"}, "manual_fields": ["event.session"], "event": {"session": "race"}},
+    )
+    db_session.add(img)
+    db_session.commit()
+    with patch("app.tasks.gallery_labels.label_image", return_value={"shot_type": "portrait"}) as mock_label:
+        label_gallery_image(img.id, force=True, relabel=True)
+    assert mock_label.call_args.kwargs["hints"] == {"session": "race"}

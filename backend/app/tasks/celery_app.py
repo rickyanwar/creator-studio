@@ -27,6 +27,7 @@ celery_app = Celery(
         "app.tasks.news_scraper",
         "app.tasks.gallery_downloader",
         "app.tasks.gallery_labels",
+        "app.tasks.gallery_link_import",
         "app.tasks.news_copywriter",
         "app.tasks.design_renderer",
         "app.tasks.discussion",
@@ -67,6 +68,7 @@ celery_app.conf.update(
     task_routes={
         "app.tasks.gallery_downloader.*": {"queue": "gallery"},
         "app.tasks.gallery_labels.*": {"queue": "gallery"},
+        "app.tasks.gallery_link_import.*": {"queue": "gallery"},
         # Mode 7: YouTube analysis + clip renders are minutes of CPU/network
         # each — their own single-slot worker-video service, same reasoning
         # as the gallery queue above.

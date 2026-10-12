@@ -18,8 +18,11 @@ import {
   bulkImportGalleryKeywords,
   listGalleryImages,
   uploadGalleryImage,
+  importGalleryLinks,
+  getGalleryLinkImportStatus,
   deleteGalleryImage,
   updateGalleryImageKeywords,
+  updateGalleryImageLabels,
   getSettings,
   updateSettings,
 } from "@/lib/api";
@@ -55,6 +58,8 @@ type GalleryImage = {
   source_engine: string;
   is_used: boolean;
   downloaded_at: string | null;
+  attributes: Record<string, any>;
+  labeled_at: string | null;
 };
 
 type FilterCandidate = { id: number; public_url: string; keyword: string; confidence: number };
@@ -169,6 +174,14 @@ export default function GalleryPage() {
 
   // ── Lightbox ──
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const [showLinkImport, setShowLinkImport] = useState(false);
+  const [linkText, setLinkText] = useState("");
+  const [linkKeyword, setLinkKeyword] = useState("");
+  const [linkHints, setLinkHints] = useState({ people: "", session: "", event_name: "", year: "", note: "" });
+  const [linkImporting, setLinkImporting] = useState(false);
+  const [linkResults, setLinkResults] = useState<Array<{ url: string; status: string; reason?: string | null }>>([]);
+  const [editingLabels, setEditingLabels] = useState(false);
+  const [labelForm, setLabelForm] = useState<Record<string, string>>({});
   const closeLightbox = useCallback(() => setLightboxIdx(null), []);
   const showPrev = useCallback(() => setLightboxIdx((i) => (i === null ? i : Math.max(0, i - 1))), []);
   const showNext = useCallback(
@@ -185,6 +198,41 @@ export default function GalleryPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lightboxIdx, closeLightbox, showPrev, showNext]);
+
+  async function handleLinkImport() {
+    if (!linkText.trim()) { notify("Paste at least one link.", "error"); return; }
+    setLinkImporting(true);
+    try {
+      const { data } = await importGalleryLinks(linkText, linkKeyword, { ...linkHints, year: linkHints.year ? Number(linkHints.year) : undefined });
+      let done = false;
+      while (!done) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const poll = await getGalleryLinkImportStatus(data.task_id);
+        done = ["SUCCESS", "FAILURE"].includes(poll.data.state);
+        if (done) setLinkResults(poll.data.results || []);
+      }
+      mutateImages();
+      notify("Link import finished.", "success");
+    } catch (err: any) {
+      notify(`Link import failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
+    } finally { setLinkImporting(false); }
+  }
+
+  async function saveLabels(relabel = false) {
+    if (lightboxIdx === null) return;
+    const image = images[lightboxIdx];
+    try {
+      await updateGalleryImageLabels(image.id, {
+        ...labelForm,
+        year: labelForm.year ? Number(labelForm.year) : undefined,
+        people_count: labelForm.people_count ? Number(labelForm.people_count) : undefined,
+        archival_photo: labelForm.archival_photo === "true" ? true : labelForm.archival_photo === "false" ? false : undefined,
+      }, relabel);
+      await mutateImages();
+      setEditingLabels(false);
+      notify("Labels updated.", "success");
+    } catch (err: any) { notify(`Label update failed: ${err.response?.data?.detail ?? "unknown error"}`, "error"); }
+  }
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -606,6 +654,10 @@ export default function GalleryPage() {
           >
             {uploading ? <Icon icon="svg-spinners:ring-resize" width={16} /> : <Icon icon="solar:upload-bold-duotone" width={16} />}
             Upload Image
+          </button>
+          <button onClick={() => setShowLinkImport(true)} className="btn btn-secondary flex items-center gap-2">
+            <Icon icon="solar:link-bold-duotone" width={16} />
+            Download from Link
           </button>
           <button onClick={openAIFilterSetup} className="btn btn-secondary flex items-center gap-2">
             <Icon icon="solar:filter-bold-duotone" width={16} />
@@ -1034,6 +1086,52 @@ export default function GalleryPage() {
               {" · "}{images[lightboxIdx].source_engine}
               {" · "}{lightboxIdx + 1}/{images.length}
             </div>
+            <div className="mt-4 w-full max-w-xl rounded-lg bg-black/50 p-4 text-left text-sm text-white/85">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-semibold text-white">Labels</span>
+                <button
+                  className="text-xs text-white/70 hover:text-white"
+                  onClick={() => {
+                    const attrs = images[lightboxIdx].attributes || {};
+                    const event = attrs.event || {};
+                    setLabelForm({ shot_type: attrs.shot_type || "", session: event.session || "", year: event.year ? String(event.year) : "", event_name: event.event_name || "", archival_photo: attrs.archival_photo == null ? "" : String(attrs.archival_photo), people_count: attrs.people_count == null ? "" : String(attrs.people_count), label: "" });
+                    setEditingLabels(true);
+                  }}
+                >Edit</button>
+              </div>
+              {!editingLabels ? (
+                <div className="grid grid-cols-2 gap-1 text-xs">
+                  <span>People: {(images[lightboxIdx].attributes.people || []).map((p: any) => p.name).join(", ") || "—"}</span>
+                  <span>Shot: {images[lightboxIdx].attributes.shot_type || "—"}</span>
+                  <span>Event: {images[lightboxIdx].attributes.event?.event_name || "—"}</span>
+                  <span>Session: {images[lightboxIdx].attributes.event?.session || "—"}</span>
+                  <span>Year: {images[lightboxIdx].attributes.event?.year || "—"}</span>
+                  <span>Archival: {images[lightboxIdx].attributes.archival_photo == null ? "—" : String(images[lightboxIdx].attributes.archival_photo)}</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input className="input-rect py-1 text-ink" placeholder="Shot type" value={labelForm.shot_type || ""} onChange={(e) => setLabelForm({ ...labelForm, shot_type: e.target.value })} />
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["session", "event_name", "year", "people_count"] as const).map((field) => <input key={field} className="input-rect py-1 text-ink" placeholder={field.replace("_", " ")} value={labelForm[field] || ""} onChange={(e) => setLabelForm({ ...labelForm, [field]: e.target.value })} />)}
+                  </div>
+                  <select className="input-rect py-1 text-ink" value={labelForm.archival_photo || ""} onChange={(e) => setLabelForm({ ...labelForm, archival_photo: e.target.value })}><option value="">Archival photo</option><option value="true">Yes</option><option value="false">No</option></select>
+                  <div className="flex justify-end gap-2"><button className="btn btn-secondary text-xs" onClick={() => setEditingLabels(false)}>Cancel</button><button className="btn btn-secondary text-xs" onClick={() => saveLabels(true)}>Save + re-label with AI</button><button className="btn btn-primary text-xs" onClick={() => saveLabels(false)}>Save</button></div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLinkImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !linkImporting && setShowLinkImport(false)}>
+          <div className="card w-full max-w-lg p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between"><h2 className="text-base font-bold text-ink">Download from Link</h2><button onClick={() => setShowLinkImport(false)} className="text-ink-48 hover:text-ink"><Icon icon="solar:close-circle-bold-duotone" width={20} /></button></div>
+            <textarea className="input-rect min-h-[150px]" value={linkText} onChange={(e) => setLinkText(e.target.value)} placeholder="one link per line, max 20 — Getty page links or direct image links" />
+            <input className="input-rect" value={linkKeyword} onChange={(e) => setLinkKeyword(e.target.value)} placeholder="Keyword (optional; auto-detect Getty caption)" />
+            <div className="grid grid-cols-2 gap-2"><input className="input-rect" value={linkHints.people} onChange={(e) => setLinkHints({ ...linkHints, people: e.target.value })} placeholder="People (comma separated)" /><input className="input-rect" value={linkHints.session} onChange={(e) => setLinkHints({ ...linkHints, session: e.target.value })} placeholder="Session" /><input className="input-rect" value={linkHints.event_name} onChange={(e) => setLinkHints({ ...linkHints, event_name: e.target.value })} placeholder="Event name" /><input className="input-rect" value={linkHints.year} onChange={(e) => setLinkHints({ ...linkHints, year: e.target.value })} placeholder="Year" /><input className="input-rect col-span-2" value={linkHints.note} onChange={(e) => setLinkHints({ ...linkHints, note: e.target.value })} maxLength={300} placeholder="Owner note (optional)" /></div>
+            {linkResults.length > 0 && <div className="max-h-40 overflow-auto space-y-1 text-xs">{linkResults.map((result) => <div key={result.url} className="flex justify-between gap-2"><span className="truncate">{result.url}</span><span className={result.status === "saved" ? "text-green-600" : "text-red-600"}>{result.status}{result.reason ? `: ${result.reason}` : ""}</span></div>)}</div>}
+            <div className="flex justify-end gap-2"><button className="btn btn-secondary" onClick={() => setShowLinkImport(false)} disabled={linkImporting}>Close</button><button className="btn btn-primary" onClick={handleLinkImport} disabled={linkImporting}>{linkImporting ? "Importing…" : "Download"}</button></div>
           </div>
         </div>
       )}

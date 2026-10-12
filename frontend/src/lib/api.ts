@@ -203,10 +203,16 @@ export const uploadGalleryImage = (file: File, keyword: string) => {
     headers: { "Content-Type": "multipart/form-data" },
   });
 };
+export const importGalleryLinks = (links: string, keyword?: string, hints?: Record<string, unknown>) =>
+  api.post<{ task_id: string }>("/gallery/images/import-links", { links, keyword: keyword || undefined, ...(hints || {}) });
+export const getGalleryLinkImportStatus = (taskId: string) =>
+  api.get(`/gallery/images/import-links/${taskId}`);
 export const deleteGalleryImage = (id: number) =>
   api.delete(`/gallery/images/${id}`);
 export const updateGalleryImageKeywords = (id: number, extra_keywords: string[]) =>
   api.patch(`/gallery/images/${id}/keywords`, { extra_keywords });
+export const updateGalleryImageLabels = (id: number, data: Record<string, unknown>, relabel = false) =>
+  api.patch(`/gallery/images/${id}/labels`, data, { params: relabel ? { relabel: true } : undefined });
 
 // ── Fanpage Mode 2 (news content) ────────────────────────────────────────────
 export const addFanpageNewsSource = (fanpageId: number, newsSourceId: number) =>
