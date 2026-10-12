@@ -2649,7 +2649,10 @@ def vision_check_pin_description(image_bytes: bytes, description: str, niche: st
                 'Reply with ONLY a JSON object {"valid": true|false, '
                 '"title": "short name/subject, max 60 chars, empty string '
                 'if invalid", "description": "a clean 1-2 sentence version '
-                'of the description if valid, else empty string"}.'
+                'of the description if valid, else empty string. The FIRST sentence '
+                'is the hook a reader sees before \'See more\' on Facebook mobile: '
+                'at most 125 characters, concrete and specific (who + what), '
+                'no generic opener."}.'
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
         ]
@@ -2694,7 +2697,10 @@ def vision_identify_pin_subject(image_bytes: bytes, niche: str = "", custom_prom
                 "should NOT be identified.\n"
                 'Reply with ONLY a JSON object {"identified": true|false, '
                 '"title": "short name/subject, max 60 chars", "description": '
-                '"1-2 sentence caption suitable for a social media post"}.'
+                '"1-2 sentence caption suitable for a social media post. The FIRST '
+                'sentence is the hook a reader sees before \'See more\' on Facebook '
+                'mobile: at most 125 characters, concrete and specific (who + what), '
+                'no generic opener."}.'
             )},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
         ]

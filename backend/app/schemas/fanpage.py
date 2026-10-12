@@ -100,6 +100,8 @@ class FanpageBase(BaseModel):
     yt_clip_captions: bool = True
     yt_clip_watermark: bool = True
     yt_clip_action_crop: str = Field("smart", pattern="^(smart|fit)$")
+    yt_clip_title_max_chars: int = Field(60, ge=20, le=5000)
+    yt_clip_description_max_chars: int = Field(180, ge=20, le=5000)
 
     # ── Mode 8: AI video ──
     ai_video_enabled: bool = False
@@ -109,6 +111,8 @@ class FanpageBase(BaseModel):
     ai_video_template: Optional[str] = None
     ai_video_clips: int = Field(2, ge=1, le=6)
     ai_video_narrator: Optional[str] = None
+    ai_video_title_max_chars: int = Field(100, ge=20, le=5000)
+    ai_video_description_max_chars: int = Field(600, ge=20, le=5000)
     # ── Mode 8 overlay (logo + captions) ──
     ai_video_logo_enabled: bool = True
     ai_video_logo_size_pct: int = Field(14, ge=5, le=30)

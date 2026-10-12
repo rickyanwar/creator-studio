@@ -196,6 +196,8 @@ class TargetFanpage(Base):
     # Shots without a dominant face: "smart" = 9:16 crop following the action
     # (centred for a cockpit POV), "fit" = whole frame over a blurred copy.
     yt_clip_action_crop = Column(String(8), default="smart", nullable=False, server_default="smart")
+    yt_clip_title_max_chars = Column(Integer, default=60, nullable=False, server_default="60")
+    yt_clip_description_max_chars = Column(Integer, default=180, nullable=False, server_default="180")
 
     # ── Mode 8: AI video ──────────────────────────
     ai_video_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
@@ -205,6 +207,8 @@ class TargetFanpage(Base):
     ai_video_template = Column(String(64), nullable=True)
     ai_video_clips = Column(Integer, default=2, nullable=False, server_default="2")
     ai_video_narrator = Column(String(32), nullable=True)
+    ai_video_title_max_chars = Column(Integer, default=100, nullable=False, server_default="100")
+    ai_video_description_max_chars = Column(Integer, default=600, nullable=False, server_default="600")
     # ── Mode 8 overlay (logo + captions) ──────────────────────────────────────
     ai_video_logo_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     ai_video_logo_size_pct = Column(Integer, default=14, nullable=False, server_default="14")

@@ -126,10 +126,30 @@ function YtClipSettings({ form, set }: Pick<Props, "form" | "set">) {
           </div>
         </div>
       </div>
+      <div className="border-t border-hairline pt-4 space-y-3">
+        <p className="text-xs text-text-secondary italic">
+          Caption mengikuti Pengaturan Global
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <NumberField
+            label="Panjang judul (karakter)"
+            value={num("yt_clip_title_max_chars", 60)}
+            min={20}
+            max={5000}
+            onChange={(v) => set("yt_clip_title_max_chars", v)}
+          />
+          <NumberField
+            label="Panjang deskripsi (karakter)"
+            value={num("yt_clip_description_max_chars", 180)}
+            min={20}
+            max={5000}
+            onChange={(v) => set("yt_clip_description_max_chars", v)}
+          />
+        </div>
+      </div>
       <p className="text-[11px] text-text-secondary">
         Captions are word-by-word in the video&apos;s own language (they&apos;re what the speaker says). The watermark
-        uses this fanpage&apos;s logo, or its watermark text. The Facebook caption uses the News/Mode 2 caption
-        settings above. Facebook may claim official race/fight footage — interviews and press conferences are safer.
+        uses this fanpage&apos;s logo, or its watermark text. Facebook may claim official race/fight footage — interviews and press conferences are safer.
       </p>
     </>
   );

@@ -122,6 +122,8 @@ export interface Fanpage {
   yt_clip_captions: boolean;
   yt_clip_watermark: boolean;
   yt_clip_action_crop: "smart" | "fit";
+  yt_clip_title_max_chars?: number;
+  yt_clip_description_max_chars?: number;
   ai_video_enabled: boolean;
   ai_video_publish_mode: PublishMode;
   ai_video_daily_count: number;
@@ -129,6 +131,8 @@ export interface Fanpage {
   ai_video_template: string | null;
   ai_video_clips: number;
   ai_video_narrator: string | null;
+  ai_video_title_max_chars?: number;
+  ai_video_description_max_chars?: number;
   ai_video_logo_enabled: boolean;
   ai_video_logo_size_pct: number;
   ai_video_logo_position: "top_right" | "top_left" | "bottom_right" | "bottom_left";

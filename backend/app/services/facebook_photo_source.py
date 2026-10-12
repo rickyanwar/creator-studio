@@ -27,6 +27,8 @@ import httpx
 from PIL import Image
 from sqlalchemy.exc import IntegrityError
 
+from app.services.fanpage_language import fanpage_language
+
 logger = logging.getLogger(__name__)
 
 # A Facebook CDN photo can be well under a typical gallery-keyword floor —
@@ -244,10 +246,11 @@ def _localize_discussion(text: str, fanpage) -> str:
     from app.services.ai_caption import generate_caption
     from app.services.news_copywriter import _DISCUSSION_MAX_QUESTION_CHARS
 
+    lang = fanpage_language(fanpage)
     prompt = (
         f'Rewrite this fan-debate line for the Facebook page "{fanpage.name}".\n'
         f'LINE: "{text}"\n'
-        f"- Language: {fanpage.caption_language}\n"
+        f"- Language: {lang}\n"
         f"- Keep the same debate, names and facts — do not add anything new.\n"
         f"- Keep its form (a question stays a question) and make it punchy.\n"
         f"- Normal sentence case, NOT all caps.\n"
@@ -271,11 +274,12 @@ def _localize_quote(text: str, fanpage) -> str:
     stay accurate, so it's never summarized."""
     from app.services.ai_caption import generate_caption
 
+    lang = fanpage_language(fanpage)
     prompt = (
-        f'Translate this quote to {fanpage.caption_language} for the Facebook page "{fanpage.name}".\n'
+        f'Translate this quote to {lang} for the Facebook page "{fanpage.name}".\n'
         f"QUOTE: {text}\n"
         f"- Preserve the exact meaning — do not paraphrase or embellish. If it's already in "
-        f"{fanpage.caption_language}, keep the wording.\n"
+        f"{lang}, keep the wording.\n"
         f"- Write it in normal sentence case, NOT all caps — the source graphic's capitals are only styling.\n"
         f"- If it's longer than {_QUOTE_MAX_CHARS} characters, keep only its most striking complete "
         f"sentence(s), word-for-word, so it fits. Never summarize.\n"

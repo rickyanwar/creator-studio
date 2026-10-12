@@ -172,7 +172,9 @@ def _consume_one(db, fanpage) -> bool:
     # rather than idea-creation time so a later pinterest_custom_prompt edit
     # still applies to ideas that were already queued.
     post_caption = idea.description
-    if fanpage.pinterest_hashtag_count:
+    from app.services.fanpage_caption import caption_settings
+    cs = caption_settings(fanpage)
+    if cs.hashtag_count:
         try:
             from app.services.news_copywriter import generate_pinterest_hashtags
             hashtags = generate_pinterest_hashtags(fanpage, idea.title, idea.description)

@@ -5,12 +5,27 @@ import re
 
 from app.models.ai_video import VideoIdea
 from app.services import news_copywriter
-from app.services.video_templates import get_template, liveries, narrator_presets, render_clips, required_variables, resolve_narrator, sanitize_channel_name, vehicle_presets
+from app.services.fanpage_caption import caption_settings
+from app.services.fanpage_language import fanpage_language, language_name
+from app.services.video_templates import (
+    get_narration_budget,
+    get_template,
+    liveries,
+    narrator_presets,
+    render_clips,
+    required_variables,
+    resolve_narrator,
+    sanitize_channel_name,
+    vehicle_presets,
+)
 
 
 def build_fill_prompt(t, idea, fanpage, clips) -> str:
+    cs = caption_settings(fanpage)
+    lang = cs.language
+    lang_display = language_name(lang)
     example = t.raw.get("example", {}).get("variables", {})
-    budgets = {f"narration_{i + 1}": c["narration_words"]["en"] for i, c in enumerate(t.raw["clip_templates"][:clips])}
+    budgets = {f"narration_{i + 1}": get_narration_budget(c, lang) for i, c in enumerate(t.raw["clip_templates"][:clips])}
     page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
     niche_text = " ".join(str(value) for value in page_niches) + " " + getattr(fanpage, "name", "")
     niche = "motogp" if "motogp" in niche_text.lower() else "f1"
@@ -20,12 +35,15 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
     else:
         # F1/car niche: prefer classic_gp or f1
         presets = [p for p in available_presets if "motogp" not in p] or available_presets
+    title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
+    desc_max = getattr(fanpage, "ai_video_description_max_chars", None) or 600
     return f"""Fill this video template as strict JSON with keys variables, title, caption.
 Template rules: {json.dumps(t.raw.get('rules', t.raw.get('description', '')))}
 Format example variables: {json.dumps(example)}
 Required variables: {json.dumps(required_variables(t, clips))}; narration word budgets: {json.dumps(budgets)}
-Vehicle preset choices for this page: {json.dumps(presets)}. Narration must be English.
-Title and caption must be in {getattr(fanpage, 'caption_language', 'en')}; title <= 100 chars, caption <= 600 chars and <= 5 hashtags.
+Vehicle preset choices for this page: {json.dumps(presets)}. Narration must be in {lang_display}.
+Title and caption must be in {lang}; title <= {title_max} chars, caption <= {desc_max} chars and <= {cs.hashtag_count} hashtags.
+The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
 Do not output livery or channel_name; the system sets them.
 Mechanical accuracy requirements:
 1. Physical placement: every visible component must be placed where it really is on the real vehicle (e.g. in F1, MGU-K is on the engine power unit driving the crankshaft, NOT inside wheel hubs; brake-by-wire hydraulic block is in the chassis/sidepod, brake calipers/discs are on wheel uprights).
@@ -43,7 +61,7 @@ Never name real teams, sponsors, or brands. Research notes: {idea.research_notes
     return prompt
 
 
-def _parse(raw: str) -> dict:
+def _parse(raw: str, title_max: int = 100, desc_max: int = 600, hashtag_max: int = 5) -> dict:
     cleaned = raw.strip()
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
     try:
@@ -59,10 +77,10 @@ def _parse(raw: str) -> dict:
     if not isinstance(value, dict) or not isinstance(value.get("variables"), dict):
         raise ValueError("output must contain variables object")
     title, caption = value.get("title"), value.get("caption")
-    if not isinstance(title, str) or not title.strip() or len(title) > 100:
-        raise ValueError("title must be a non-empty string of at most 100 characters")
-    if not isinstance(caption, str) or len(caption) > 600 or sum(1 for word in caption.split() if word.startswith("#")) > 5:
-        raise ValueError("caption must be at most 600 characters and 5 hashtags")
+    if not isinstance(title, str) or not title.strip() or len(title) > title_max:
+        raise ValueError(f"title must be a non-empty string of at most {title_max} characters")
+    if not isinstance(caption, str) or len(caption) > desc_max or sum(1 for word in caption.split() if word.startswith("#")) > hashtag_max:
+        raise ValueError(f"caption must be at most {desc_max} characters and {hashtag_max} hashtags")
     return value
 
 
@@ -105,13 +123,17 @@ def fill_idea(db, idea, fanpage, clips):
             variables.pop("channel_name", None)
         return variables
 
+    lang = fanpage_language(fanpage)
+    title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
+    desc_max = getattr(fanpage, "ai_video_description_max_chars", None) or 600
+    cs = caption_settings(fanpage)
     def parse(raw):
-        result = _parse(raw)
+        result = _parse(raw, title_max=title_max, desc_max=desc_max, hashtag_max=cs.hashtag_count)
         merged_vars = dict(result["variables"])
         if isinstance(idea.variables, dict):
             merged_vars.update(idea.variables)
         variables = apply_system_look(merged_vars)
-        render_clips(template, variables, clips)
+        render_clips(template, variables, clips, lang_code=lang)
         result["variables"] = variables
         return result
 
@@ -122,5 +144,5 @@ def fill_idea(db, idea, fanpage, clips):
     if isinstance(idea.variables, dict):
         merged_vars.update(idea.variables)
     result["variables"] = apply_system_look(merged_vars)
-    rendered = render_clips(template, result["variables"], clips)
+    rendered = render_clips(template, result["variables"], clips, lang_code=lang)
     return result["variables"], result["title"], result["caption"], rendered, provider

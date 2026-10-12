@@ -147,6 +147,7 @@ def clean_clip_title(
     title: str,
     people: list[str],
     forbidden_channel: str | None = None,
+    max_title_len: int = _MAX_TITLE_LEN,
 ) -> str | None:
     """Apply S2f title rules and return the cleaned title, or None to drop the clip.
 
@@ -156,10 +157,10 @@ def clean_clip_title(
     3. Reject / strip source markers (Source, Sumber, Credit, via, ©, @handle, URL).
     4. Strip the YouTube channel name if it appears (forbidden_channel).
     5. Must contain a name from `people`; if missing and people is non-empty,
-       prefix with the main person's surname — only if the result fits ≤ 60 chars,
+       prefix with the main person's surname — only if the result fits ≤ max_title_len chars,
        else return None (drop the clip).
     6. If `people` is empty → return None (drop the clip).
-    7. Enforce max 60 chars.
+    7. Enforce max max_title_len chars.
     """
     if not title:
         return None
@@ -213,7 +214,7 @@ def clean_clip_title(
         # Try to prefix with the main person's surname.
         main_surname = people[0].strip().split()[-1]
         candidate = _normalise_ws(f"{main_surname} {title}")
-        if len(candidate) <= _MAX_TITLE_LEN:
+        if len(candidate) <= max_title_len:
             title = candidate
             logger.debug("clean_clip_title: prefixed surname %r → %r", main_surname, title)
         else:
@@ -224,10 +225,10 @@ def clean_clip_title(
             return None
 
     # Step 7: hard cap.
-    if len(title) > _MAX_TITLE_LEN:
+    if len(title) > max_title_len:
         logger.info(
             "clean_clip_title: dropping — title too long (%d > %d): %r",
-            len(title), _MAX_TITLE_LEN, title,
+            len(title), max_title_len, title,
         )
         return None
 

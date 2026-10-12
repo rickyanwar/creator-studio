@@ -23,6 +23,8 @@ from dataclasses import dataclass
 
 from app.services.ai_caption import AIProviderName, generate_caption
 from app.services.ai_caption import log_ai_copy_event as _log_ai_copy_event
+from app.services.fanpage_caption import caption_settings
+from app.services.fanpage_language import fanpage_language, language_name
 
 logger = logging.getLogger(__name__)
 
@@ -108,20 +110,21 @@ def _eff_news(source, fanpage, src_field: str, fp_field: str):
 
 
 def build_news_copy_prompt(fanpage, article) -> str:
+    cs = caption_settings(fanpage)
     news_source = article.news_source if article else None
     source_name = news_source.name if news_source else "the original source"
     attribution_line = (
         f"- End the caption with a source attribution line: \"Source: {source_name}\""
-        if fanpage.mode2_source_attribution else ""
+        if cs.use_attribution else ""
     )
     content = (article.scraped_content or "")[:_MAX_CONTENT_CHARS]
 
-    language = _eff_news(news_source, fanpage, "caption_language", "mode2_caption_language")
-    tone = _eff_news(news_source, fanpage, "caption_tone", "mode2_caption_tone")
-    max_length = _eff_news(news_source, fanpage, "caption_max_length", "mode2_caption_max_length")
-    hashtag_count = _eff_news(news_source, fanpage, "caption_hashtag_count", "mode2_caption_hashtag_count")
-    cta_text = _eff_news(news_source, fanpage, "caption_cta_text", "mode2_caption_cta_text")
-    custom_prompt = _eff_news(news_source, fanpage, "caption_custom_prompt", "mode2_caption_custom_prompt")
+    language = cs.language
+    tone = cs.tone
+    max_length = cs.max_length
+    hashtag_count = cs.hashtag_count
+    cta_text = cs.cta_text
+    custom_prompt = cs.custom_prompt
 
     return f"""Act as a professional sports journalist and social media editor — the caliber of ESPN, Bleacher Report, or a top motorsport/combat-sports fan page — writing for the Facebook Fanpage "{fanpage.name}". You've covered this sport for years: you know the storylines, the rivalries, and how a real beat reporter phrases things. Sharp, credible, and highly readable. Never generic, never robotic, never clickbait-fake.
 
@@ -169,6 +172,7 @@ IF "type" is "quote":
    - Language: {language}
    - Tone: {tone}
    - Maximum length: {max_length} characters
+   - The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
    - Formatting: write in short paragraphs (1-3 sentences each) separated by a blank line — never one dense block.
    - If "type" is "quote": the 🗣️ quoted line is REQUIRED, on its own line with a blank line before and after (e.g. a blank line, then the 🗣️ line, then a blank line), and it MUST be word-for-word the same text as the "title" field above (strip the ** markers, same {language} wording — do not re-translate it separately, re-phrase it, or fall back to the source language). The image and the caption must show the reader the exact same quote.
    - If "type" is "news" and you choose to quote the source directly anywhere in the body, that quote is optional, may be any relevant line from the source (not tied to "title"), and follows the same 🗣️ on-its-own-line formatting.
@@ -220,20 +224,22 @@ class DiscussionCopy:
 
 
 def _discussion_caption_block(fanpage, source_name: str | None) -> str:
-    """Caption-writing instructions for a discussion card, reusing the fanpage's
-    Mode-2 caption criteria (language/tone/length/hashtags/CTA/custom)."""
+    """Caption-writing instructions for a discussion card, using the fanpage's
+    global caption criteria (language/tone/length/hashtags/CTA/custom)."""
+    cs = caption_settings(fanpage)
     attribution_line = ""
-    if source_name and fanpage.mode2_source_attribution:
+    if source_name and cs.use_attribution:
         attribution_line = f'\n   - End the caption with a source attribution line: "Source: {source_name}"'
-    cta_text = fanpage.mode2_caption_cta_text
-    custom_prompt = fanpage.mode2_caption_custom_prompt
+    cta_text = cs.cta_text
+    custom_prompt = cs.custom_prompt
     return f"""3. "caption" — the Facebook post text that accompanies the image (no ** markers here).
-   - Language: {fanpage.mode2_caption_language}
-   - Tone: {fanpage.mode2_caption_tone}
-   - Maximum length: {fanpage.mode2_caption_max_length} characters
+   - Language: {cs.language}
+   - Tone: {cs.tone}
+   - Maximum length: {cs.max_length} characters
+   - The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
    - Formatting: short paragraphs (1-3 sentences), separated by a blank line — never one dense block.
    - It MUST invite the reader to take a side and comment their opinion — this is a debate post. End by explicitly asking readers to drop their verdict in the comments (this REPLACES the old yes/no buttons).
-   - Hashtags: a blank line, then EXACTLY {fanpage.mode2_caption_hashtag_count} specific, relevant hashtags on one line — never generic filler (#love #viral #instagood).
+   - Hashtags: a blank line, then EXACTLY {cs.hashtag_count} specific, relevant hashtags on one line — never generic filler (#love #viral #instagood).
    - Call-to-action: {cta_text if cta_text else "ask readers to comment their take"}{attribution_line}
    - Additional notes: {custom_prompt if custom_prompt else "none"}"""
 
@@ -259,7 +265,7 @@ def build_discussion_news_prompt(fanpage, article) -> str:
     news_source = article.news_source if article else None
     source_name = news_source.name if news_source else "the original source"
     content = (article.scraped_content or "")[:_MAX_CONTENT_CHARS]
-    language = fanpage.mode2_caption_language
+    language = fanpage_language(fanpage)
     label_point = _discussion_label_point(
         fanpage,
         discussion_example='an open question, e.g. "Is George the most hated driver on the grid?"',
@@ -295,7 +301,7 @@ def build_discussion_evergreen_prompt(fanpage, seed_text: str, subject_hint: str
     against, so the model is told to avoid hard facts (specific stats, dates,
     results) that it might get wrong, and stick to subjective debate.
     """
-    language = fanpage.mode2_caption_language
+    language = fanpage_language(fanpage)
     hint_line = f'\nSUBJECT HINT: {subject_hint}' if subject_hint else ""
     label_point = _discussion_label_point(
         fanpage,
@@ -357,7 +363,7 @@ def build_discussion_general_prompt(
     softer week-long guidance — user's explicit ask (2026-08-22): a single
     day's whole batch must read as genuinely different card-to-card, which
     is a tighter bar than merely not repeating within the week."""
-    language = fanpage.mode2_caption_language
+    language = fanpage_language(fanpage)
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     label_point = _discussion_label_point(
         fanpage,
@@ -748,8 +754,9 @@ def generate_pinterest_search_keyword(fanpage, avoid_keywords: list[str] | None 
     if avoid_keywords:
         avoid_line = f"\nAVOID these — already searched recently, pick something else: {', '.join(avoid_keywords)}"
     persona_line = ""
-    if fanpage.pinterest_custom_prompt:
-        persona_line = f"\n{fanpage.pinterest_custom_prompt.strip()}"
+    pin_prompt = getattr(fanpage, "pinterest_custom_prompt", None) or ""
+    if pin_prompt:
+        persona_line = f"\n{pin_prompt.strip()}"
 
     prompt = f"""Act as a content researcher for a Facebook Fanpage in the "{niche}" niche.{persona_line} Pick ONE specific, evocative Pinterest search phrase that would surface great EVERGREEN photos for this niche — a legendary figure, an iconic car/livery, a historic team, a memorable moment or era. Favor something specific (a name + team/era) over a generic category.{avoid_line}
 
@@ -779,14 +786,14 @@ def generate_pinterest_hashtags(fanpage, title: str, description: str) -> str:
     the design image, appended separately at consume time (see
     app/tasks/pinterest.py's _consume_one) since the idea's own
     title/description (shown on the card + editable in the queue) should
-    stay clean. Mirrors mode2_caption_hashtag_count's "exactly N specific,
-    relevant hashtags, no generic filler" convention.
+    stay clean. Uses global CaptionSettings hashtag count and custom prompt.
 
     Raises on AI failure — caller should treat a failed call as
     "no hashtags this time" rather than block the post over it."""
+    cs = caption_settings(fanpage)
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
-    count = fanpage.pinterest_hashtag_count or 0
-    persona_line = f"\n{fanpage.pinterest_custom_prompt.strip()}" if fanpage.pinterest_custom_prompt else ""
+    count = cs.hashtag_count
+    persona_line = f"\n{cs.custom_prompt.strip()}" if cs.custom_prompt else ""
 
     prompt = f"""Act as a social media editor for a Facebook Fanpage in the "{niche}" niche.{persona_line}
 

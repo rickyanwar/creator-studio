@@ -205,6 +205,8 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
     if not allow_low_quality and not vision_check_photo_quality(image_bytes):
         return _reject("vision quality failed")
 
+    # Content-sourcing persona for Pinterest (what to search/pick) is a mode-specific
+    # setting, not a caption setting, so it stays per-mode (owner decision 2026-10-12).
     custom_prompt = fanpage.pinterest_custom_prompt or ""
     if candidate.description:
         result = vision_check_pin_description(image_bytes, candidate.description, niche, custom_prompt)
