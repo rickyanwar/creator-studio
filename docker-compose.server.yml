@@ -31,6 +31,7 @@ services:
 
   # ── FastAPI Backend ───────────────────────────
   api:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -48,6 +49,7 @@ services:
 
   # ── Celery Worker ─────────────────────────────
   worker:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -66,6 +68,7 @@ services:
   #    download_keyword run can never starve render/publish/crawl tasks
   #    on the main worker, see task_routes in celery_app.py) ──────────
   worker-gallery:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -81,6 +84,7 @@ services:
         condition: service_healthy
 
   worker-visual:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -104,6 +108,7 @@ services:
   #    Isolated for the same reason as worker-gallery. The long stop grace
   #    lets a deploy finish the in-flight render (acks_late re-queues it anyway).
   worker-video:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -127,6 +132,7 @@ services:
 
   # ── Celery Beat ───────────────────────────────
   beat:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -139,6 +145,7 @@ services:
 
   # ── Design Renderer (headless Fabric.js) ──────
   renderer:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./renderer
       dockerfile: Dockerfile
@@ -147,6 +154,7 @@ services:
 
   # ── Next.js Frontend ──────────────────────────
   frontend:
+    init: true  # reap orphaned child processes (headless Chrome zombies)
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
