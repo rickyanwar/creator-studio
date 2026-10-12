@@ -14,7 +14,7 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/media", tags=["media"])
+router = APIRouter(prefix="/media", tags=["media"])  # nginx strips /api before proxying
 
 ALLOWED_WIDTHS = {240, 360, 480}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
