@@ -14,7 +14,9 @@ mode; render_design itself can also be triggered manually from the UI.
 import base64
 import logging
 import os
+import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -45,6 +47,113 @@ def clear_template_text_objects(template_json: dict) -> dict:
     return tj
 
 _RENDER_TIMEOUT = 120.0
+_HEADLINE_NAME_RE = re.compile(
+    r"^\s*([A-Z][A-Za-zÀ-ſ.'’-]+(?:\s+[A-Z][A-Za-zÀ-ſ.'’-]+){0,3})\s*:\s+\S"
+)
+
+
+def _name_badge(value: str | None) -> str | None:
+    value = (value or "").replace("**", "").strip()
+    if not value or len(value) > 40 or any(char in value for char in ".?,;!"):
+        return None
+    words = value.split()
+    if not 1 <= len(words) <= 4 or any(not word[0].isupper() for word in words):
+        return None
+    return value
+
+
+def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str) -> bytes | None:
+    """Return a speaker-led image when the per-mode toggle is enabled."""
+    toggle = getattr(fanpage, "news_visual_engine" if mode == "news" else "fb_visual_engine", "off")
+    if toggle != "chatgpt":
+        return None
+
+    from app.services.design_images import extract_secondary_subject, extract_two_subjects
+    from app.services.speaker_design import compose_speaker_design, pick_speaker_photos
+
+    niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
+    article_title = getattr(article, "scraped_title", "") or ""
+    title = job.design_title or article_title
+    speaker = _name_badge(job.design_subtitle)
+    if not speaker:
+        match = _HEADLINE_NAME_RE.match(article_title) or _HEADLINE_NAME_RE.match(title)
+        speaker = match.group(1).strip() if match else ""
+
+    extraction_title = " — ".join(
+        part for part in (job.design_subtitle, getattr(article, "scraped_title", None), title) if part
+    ) or title
+    primary, secondary = extract_two_subjects(extraction_title, niche)
+    if not speaker:
+        speaker = (primary or "").strip()
+    subjects = [name for name in (primary, secondary) if name and name.strip() and name.strip().lower() != speaker.lower()]
+    if not subjects and speaker:
+        secondary_name = extract_secondary_subject(extraction_title, niche)
+        if secondary_name and secondary_name.strip().lower() != speaker.lower():
+            subjects = [secondary_name.strip()]
+    if not speaker:
+        return None
+    if not pick_speaker_photos(db, speaker):
+        return None
+
+    article_text = "\n".join(
+        part for part in (
+            getattr(article, "scraped_title", None),
+            getattr(article, "scraped_content", None),
+        ) if part
+    )[:2000]
+    around = (
+        getattr(article, "article_published_at", None)
+        or getattr(article, "scraped_at", None)
+        or getattr(job, "created_at", None)
+        or datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    niche_lower = niche.lower()
+    sport = "MotoGP" if any(term in niche_lower for term in ("motogp", "motorsport", "motorcycle", "bike")) else niche
+
+    story_photo_path: str | None = None
+    story_photo_desc: str | None = None
+    if article is not None:
+        try:
+            import io
+            from PIL import Image
+            from app.config import get_settings
+            from app.services.story_photo import describe_story_photo, fetch_story_photo
+
+            photo_bytes = fetch_story_photo(article)
+            if photo_bytes:
+                fmt = (Image.open(io.BytesIO(photo_bytes)).format or "JPEG").upper()
+                ext = ".png" if fmt == "PNG" else (".webp" if fmt == "WEBP" else ".jpg")
+                designs_dir = Path(get_settings().storage_base_path) / "designs"
+                designs_dir.mkdir(parents=True, exist_ok=True)
+                job_id = getattr(job, "id", None) or "tmp"
+                p = designs_dir / f"story_photo_{job_id}_{uuid.uuid4().hex[:8]}{ext}"
+                p.write_bytes(photo_bytes)
+                story_photo_path = str(p)
+                story_photo_desc = describe_story_photo(photo_bytes, article_title)
+        except Exception as exc:
+            logger.info("Story photo inset preparation failed: %s", exc)
+            story_photo_path = None
+            story_photo_desc = None
+
+    try:
+        res = compose_speaker_design(
+            db,
+            fanpage,
+            speaker=speaker,
+            subjects=subjects,
+            article_text=article_text,
+            sport=sport,
+            around=around,
+            story_photo_path=story_photo_path,
+            story_photo_desc=story_photo_desc,
+        )
+        return res
+    finally:
+        if story_photo_path:
+            try:
+                Path(story_photo_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None = None) -> tuple[str | None, object | None, str | None]:
@@ -247,28 +356,35 @@ def render_design(self, job_id: int):
         # already uses — capped so a niche with only bad photos still lands
         # on manual review instead of looping forever.
         image_src = gallery_image = image_marker = None
-        exclude_marker = job.last_image_marker
-        for _attempt in range(3):
-            cand_src, cand_gi, cand_marker = select_image_for_job(
-                db, job, fanpage, article, exclude_marker=exclude_marker,
-            )
-            if not cand_src:
-                break
-            try:
-                cand_bytes = base64.b64decode(cand_src.split(",", 1)[1])
-                fits = single_photo_face_fits(
-                    cand_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+        speaker_gallery_images = []
+        speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="news")
+        if speaker_design:
+            speaker_gallery_images = getattr(speaker_design, "used_gallery_images", [])
+            image_src = f"data:image/png;base64,{base64.b64encode(speaker_design).decode()}"
+            image_marker = "speaker_design"
+        else:
+            exclude_marker = job.last_image_marker
+            for _attempt in range(3):
+                cand_src, cand_gi, cand_marker = select_image_for_job(
+                    db, job, fanpage, article, exclude_marker=exclude_marker,
                 )
-            except Exception:
-                fits = True  # can't decode to check — don't block over a hiccup
-            if fits:
-                image_src, gallery_image, image_marker = cand_src, cand_gi, cand_marker
-                break
-            logger.info(
-                "Design: job %d rejected candidate %s — face too large for this template's safe zone",
-                job_id, cand_marker,
-            )
-            exclude_marker = cand_marker
+                if not cand_src:
+                    break
+                try:
+                    cand_bytes = base64.b64decode(cand_src.split(",", 1)[1])
+                    fits = single_photo_face_fits(
+                        cand_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+                    )
+                except Exception:
+                    fits = True  # can't decode to check — don't block over a hiccup
+                if fits:
+                    image_src, gallery_image, image_marker = cand_src, cand_gi, cand_marker
+                    break
+                logger.info(
+                    "Design: job %d rejected candidate %s — face too large for this template's safe zone",
+                    job_id, cand_marker,
+                )
+                exclude_marker = cand_marker
         if not image_src:
             job.status = PublishJobStatus.pending_design
             job.last_error = "needs manual image — no gallery match and no article hero image"
@@ -404,6 +520,10 @@ def render_design(self, job_id: int):
         job.last_error = None
         if gallery_image:
             gallery_image.is_used = True
+            gallery_image.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        for s_gi in speaker_gallery_images:
+            s_gi.is_used = True
+            s_gi.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
         article.status = ArticleStatus.designed
         db.commit()
 
@@ -970,6 +1090,11 @@ def render_facebook_photo(self, job_id: int):
             db.commit()
             return
 
+        article = None
+        if fanpage.fb_visual_engine == "chatgpt" and job.source_article_id:
+            from app.models.scraped_articles import ScrapedArticle
+            article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
+
         from app.services.design_images import (
             resolve_template, prepare_design_images, focus_points_for, watermark_datauri,
             align_split_focus_points, find_role_object, _safe_face_cy_ceiling,
@@ -990,7 +1115,17 @@ def render_facebook_photo(self, job_id: int):
             return
 
         niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
-        image_src, gallery_image, image_marker = _pick_fitting_facebook_photo(db, job, template, category, niche)
+        speaker_gallery_images = []
+        speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="facebook")
+        if speaker_design:
+            speaker_gallery_images = getattr(speaker_design, "used_gallery_images", [])
+            image_src, gallery_image, image_marker = (
+                f"data:image/png;base64,{base64.b64encode(speaker_design).decode()}",
+                None,
+                "speaker_design",
+            )
+        else:
+            image_src, gallery_image, image_marker = _pick_fitting_facebook_photo(db, job, template, category, niche)
         if not image_src:
             job.status = PublishJobStatus.pending_design
             job.last_error = f"needs manual image — no clean {category} photo found for this card"
@@ -1076,6 +1211,10 @@ def render_facebook_photo(self, job_id: int):
         job.last_error = None
         if gallery_image:
             gallery_image.is_used = True
+            gallery_image.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        for s_gi in speaker_gallery_images:
+            s_gi.is_used = True
+            s_gi.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
 
         logger.info(

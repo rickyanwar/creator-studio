@@ -227,6 +227,8 @@ class TargetFanpage(Base):
     radar_burst_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     radar_daily_max = Column(Integer, default=3, nullable=False, server_default="3")
     visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
+    news_visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
+    fb_visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

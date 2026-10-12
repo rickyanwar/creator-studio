@@ -149,6 +149,8 @@ class FanpageBase(BaseModel):
     radar_burst_enabled: bool = True
     radar_daily_max: int = Field(3, ge=0, le=100)
     visual_engine: str = Field("off", pattern="^(off|gflow|chatgpt|auto)$")
+    news_visual_engine: str = Field("off", pattern="^(off|chatgpt)$")
+    fb_visual_engine: str = Field("off", pattern="^(off|chatgpt)$")
 
     @field_validator("radar_niches", mode="before")
     @classmethod

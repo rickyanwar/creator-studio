@@ -62,6 +62,8 @@ export interface Fanpage {
   radar_burst_enabled: boolean;
   radar_daily_max: number;
   visual_engine: "off" | "gflow" | "chatgpt" | "auto";
+  news_visual_engine: "off" | "chatgpt";
+  fb_visual_engine: "off" | "chatgpt";
 
   // ── Content modes (Feature 2) ──
   mode1_ig_repost_enabled: boolean;
