@@ -306,4 +306,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.f1_drivers_sync.sync_f1_drivers_task",
         "schedule": crontab(minute=0, hour=6, day_of_week="monday"),
     },
+    # Thumbnails cleanup: weekly — deletes generated webp thumbnails older than 30 days
+    "cleanup-old-thumbs": {
+        "task": "app.tasks.cleanup.cleanup_old_thumbs",
+        "schedule": crontab(minute=0, hour=3, day_of_week="sunday"),
+    },
 }
