@@ -215,9 +215,9 @@ function IGSourceCard({
         </div>
         <div className="flex gap-1">
           {([
-            { v: null, label: `Inherit (${fanpageRecreateEnabled ? "recreate" : "plain"})` },
+            { v: null, label: `Ikuti mode fanpage (${fanpageRecreateEnabled ? "recreate" : "repost"})` },
             { v: true, label: "Always recreate" },
-            { v: false, label: "Always plain" },
+            { v: false, label: "Always repost" },
           ] as const).map((opt) => (
             <button
               key={String(opt.v)}
@@ -234,7 +234,7 @@ function IGSourceCard({
           ))}
         </div>
         <p className="text-[10px] text-text-secondary">
-          Plain = repost the original image, only the caption is AI-written. Recreate = redesign onto a quote/news template (Mode 3).
+          Repost = gambar asli + caption baru. Recreate = render ulang ke template quote/news (IG Recreate).
         </p>
       </div>
 
@@ -786,9 +786,21 @@ export default function FanpageEditPage() {
     } catch {
       // Revert optimistic update
       setForm((prev) => ({ ...prev, mode1_ig_repost_enabled: !value }));
-      alert("Failed to update Mode 1. Please try again.");
+      alert("Failed to update IG Mode. Please try again.");
     } finally {
       setMode1Saving(false);
+    }
+  }
+
+  function handleIgModeChange(mode: "repost" | "recreate_template" | "recreate_chatgpt") {
+    if (mode === "repost") {
+      set("ig_recreate_enabled", false);
+    } else if (mode === "recreate_template") {
+      set("ig_recreate_enabled", true);
+      set("visual_engine", "off");
+    } else if (mode === "recreate_chatgpt") {
+      set("ig_recreate_enabled", true);
+      set("visual_engine", "chatgpt");
     }
   }
 
@@ -855,7 +867,7 @@ export default function FanpageEditPage() {
         <div>
           <h2 className="text-base font-semibold text-text-primary">Pengaturan Global</h2>
           <p className="text-xs text-text-secondary mt-0.5">
-            Satu set pengaturan caption per fanpage yang digunakan oleh semua mode konten (Mode 1 IG, Mode 2 Berita, Mode 3 IG Recreate, Mode 4 Diskusi, Mode 5 Pinterest, Mode 6 FB Photo, Mode 7 YT Clip, Mode 8 Video Narasi).
+            Satu set pengaturan caption per fanpage yang digunakan oleh semua mode konten (IG Repost/Recreate, Berita, Diskusi, Pinterest, FB Photo, YT Clip, Video Narasi).
           </p>
         </div>
 
@@ -1025,23 +1037,24 @@ export default function FanpageEditPage() {
       </section>
 
       {/* ── Section 1: IG Sources ──────────────────────── */}
+      {/* ── Section: IG (Instagram) ── */}
       <section className="card space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-text-primary">Instagram Sources</h2>
+            <h2 className="text-base font-semibold text-text-primary">IG (Instagram)</h2>
             <p className="text-xs text-text-secondary mt-0.5">
-              Automatically repost new posts from the Instagram accounts below.
+              Crawl dan proses postingan dari akun Instagram sumber di bawah.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs text-text-secondary whitespace-nowrap">Mode 1 — IG Repost</span>
+            <span className="text-xs text-text-secondary whitespace-nowrap">IG Mode</span>
             <button
               onClick={() => !mode1Saving && handleMode1Toggle(!form.mode1_ig_repost_enabled)}
               disabled={mode1Saving}
               className={`relative w-11 h-6 rounded-full transition-colors ${
                 form.mode1_ig_repost_enabled ? "bg-primary-main" : "bg-hairline"
               } ${mode1Saving ? "opacity-50 cursor-not-allowed" : ""}`}
-              aria-label="Toggle Mode 1 — IG Repost"
+              aria-label="Toggle IG Mode"
             >
               {mode1Saving ? (
                 <span className="absolute inset-0 flex items-center justify-center">
@@ -1058,14 +1071,121 @@ export default function FanpageEditPage() {
           </div>
         </div>
 
-        {!form.mode1_ig_repost_enabled && (
+        {!form.mode1_ig_repost_enabled ? (
           <p className="text-xs text-text-secondary italic">
-            Mode 1 is off — these accounts are not crawled or reposted for this fanpage.
+            IG Mode is off — akun sumber tidak akan di-crawl atau diposting untuk fanpage ini.
           </p>
+        ) : (
+          <div className="space-y-4 border-t border-hairline pt-3">
+            <div>
+              <label className="label">Pilihan Format IG</label>
+              {(() => {
+                const currentMode = !form.ig_recreate_enabled
+                  ? "repost"
+                  : form.visual_engine === "chatgpt" || form.visual_engine === "auto" || form.visual_engine === "gflow"
+                  ? "recreate_chatgpt"
+                  : "recreate_template";
+
+                const options = [
+                  {
+                    id: "repost",
+                    title: "Repost apa adanya",
+                    desc: "Gambar asli + caption baru",
+                  },
+                  {
+                    id: "recreate_template",
+                    title: "Recreate dengan template",
+                    desc: "Teks ditempelkan ke template News/Quote fanpage",
+                  },
+                  {
+                    id: "recreate_chatgpt",
+                    title: "Recreate dengan edit ChatGPT",
+                    desc: "1 panggilan gambar ChatGPT membersihkan/merestyling gambar sumber, lalu template kami menaruh teks",
+                  },
+                ] as const;
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1.5">
+                    {options.map((opt) => (
+                      <label
+                        key={opt.id}
+                        className={`flex flex-col p-3 rounded-lg border cursor-pointer transition-all ${
+                          currentMode === opt.id
+                            ? "border-primary-main bg-primary-50/10 shadow-sm"
+                            : "border-hairline bg-bg-paper hover:border-text-secondary/30"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="ig_mode_choice"
+                            value={opt.id}
+                            checked={currentMode === opt.id}
+                            onChange={() => handleIgModeChange(opt.id)}
+                            className="text-primary-main focus:ring-primary-main"
+                          />
+                          <span className="text-xs font-semibold text-text-primary">
+                            {opt.title}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-text-secondary mt-1 pl-5">
+                          {opt.desc}
+                        </p>
+                      </label>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Smart layout if recreate is chosen */}
+            {form.ig_recreate_enabled && (
+              <div className="border border-hairline rounded-lg p-3 bg-bg-subtle/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="label mb-0">Smart layout (2-photo / split) <span className="text-[10px] text-amber-500">experimental</span></label>
+                    <p className="text-[11px] text-text-secondary mt-0.5">
+                      AI menentukan 1 vs 2 orang → single+inset atau split, memilih foto wajah/aksi.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => set("ig_recreate_smart_layout", !form.ig_recreate_smart_layout)}
+                    className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+                      form.ig_recreate_smart_layout ? "bg-primary-main" : "bg-hairline"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                        form.ig_recreate_smart_layout ? "translate-x-5" : ""
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {form.ig_recreate_smart_layout && (
+                  <div>
+                    <label className="label">Split Template (2-person news)</label>
+                    <select
+                      className="input w-full"
+                      value={(form.ig_recreate_split_template_id as number | null) ?? ""}
+                      onChange={(e) => set("ig_recreate_split_template_id", e.target.value ? parseInt(e.target.value) : null)}
+                    >
+                      <option value="">— none (falls back to News Template) —</option>
+                      {allTemplates.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.canvas_width}×{t.canvas_height})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         {(fp.ig_sources ?? []).length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
             {(fp.ig_sources ?? []).map((src) => (
               <IGSourceCard
                 key={src.id}
@@ -1094,14 +1214,14 @@ export default function FanpageEditPage() {
         </div>
       </section>
 
-      {/* ── Section: Design Templates (shared by Mode 2 news + Mode 3 ig_recreate) ── */}
+      {/* ── Section: Design Templates (shared by Mode 2 news + IG recreate) ── */}
       <section className="card space-y-5">
         <div>
           <h2 className="text-base font-semibold text-text-primary">Design Templates</h2>
           <p className="text-xs text-text-secondary mt-0.5">
             One setting per category, used everywhere that category of content is rendered — news designs from
-            Mode 2 (news-scrape) and Mode 3 (IG recreate, classified &quot;news&quot;) share the News Template;
-            Mode 3 posts classified &quot;quote&quot; use the Quote Template; Mode 4 debate cards use the
+            Mode 2 (news-scrape) and IG recreate (classified &quot;news&quot;) share the News Template;
+            IG recreate posts classified &quot;quote&quot; use the Quote Template; Mode 4 debate cards use the
             Discussion Template. If no Discussion Template is set, it falls back to the News Template.
           </p>
         </div>
@@ -1164,7 +1284,7 @@ export default function FanpageEditPage() {
 
       {/* ── Section 2: Caption Criteria ────────────────── */}
       <section className="card space-y-5">
-        <h2 className="text-base font-semibold text-text-primary">Mode 1: IG Repost — Caption Criteria</h2>
+        <h2 className="text-base font-semibold text-text-primary">IG Repost — Caption Criteria</h2>
         <p className="text-sm text-text-secondary -mt-3">
           Caption mengikuti Pengaturan Global
         </p>
@@ -1661,88 +1781,7 @@ export default function FanpageEditPage() {
         )}
       </section>
 
-      {/* ── Section: Mode 3 — IG Recreate ─────────────── */}
-      <section className="card space-y-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">Mode 3: IG Recreate</h2>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Classify each scraped IG post (9Router vision) → rebuild it on a quote/news template
-            </p>
-          </div>
-          <button
-            onClick={() => set("ig_recreate_enabled", !form.ig_recreate_enabled)}
-            className={`relative w-11 h-6 rounded-full transition-colors ${
-              form.ig_recreate_enabled ? "bg-primary-main" : "bg-hairline"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                form.ig_recreate_enabled ? "translate-x-5" : ""
-              }`}
-            />
-          </button>
-        </div>
-
-        {form.ig_recreate_enabled && (
-          <>
-            <p className="text-[11px] text-text-secondary">
-              Each IG post image is classified as <strong>quote</strong>, <strong>news</strong>, or{" "}
-              <strong>other</strong>. Quotes and news are rebuilt using the fanpage&apos;s Quote/News Template
-              (set above in <strong>Design Templates</strong>) — using the IG image as the photo; news headlines
-              are AI-rewritten; anything else is skipped. Uses the fanpage&apos;s Mode 1 caption criteria for the
-              Facebook post text.
-            </p>
-
-            {/* Smart layout (opt-in, experimental) */}
-            <div className="border-t border-hairline pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <label className="label mb-0">Smart layout (2-photo / split) <span className="text-[10px] text-amber-500">experimental</span></label>
-                  <p className="text-[11px] text-text-secondary mt-0.5">
-                    AI decides 1 vs 2 people → single+inset or split, picks face/action photos, face-aware crop.
-                  </p>
-                </div>
-                <button
-                  onClick={() => set("ig_recreate_smart_layout", !form.ig_recreate_smart_layout)}
-                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-                    form.ig_recreate_smart_layout ? "bg-primary-main" : "bg-hairline"
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                      form.ig_recreate_smart_layout ? "translate-x-5" : ""
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {form.ig_recreate_smart_layout && (
-                <div className="mt-3">
-                  <label className="label">Split Template (2-person news)</label>
-                  <select
-                    className="input w-full"
-                    value={(form.ig_recreate_split_template_id as number | null) ?? ""}
-                    onChange={(e) => set("ig_recreate_split_template_id", e.target.value ? parseInt(e.target.value) : null)}
-                  >
-                    <option value="">— none (falls back to News Template) —</option>
-                    {allTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({t.canvas_width}×{t.canvas_height})
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-text-secondary mt-1">
-                    Used when a news headline is about two people. Should be a two-slot split template.
-                  </p>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* ── Section: Mode 3 — Viral Radar (Feature 3) ───────── */}
+      {/* ── Section: Viral Radar (Feature 3) ───────── */}
       <section className="card space-y-5">
         <div className="flex items-center justify-between">
           <div>
@@ -2613,7 +2652,7 @@ export default function FanpageEditPage() {
             </div>
             <p className="text-[11px] text-text-secondary">
               Renders on the News/Quote/Discussion Templates set above (Design Templates section) — no
-              separate template setting for Mode 6. Captions use the Mode 1 caption settings, without the
+              separate template setting for Mode 6. Captions use the IG Repost caption settings, without the
               &quot;via @source&quot; attribution line. No like-count/growth check in this version — a photo not seen
               before on the source page&apos;s public gallery is the only filter.
             </p>

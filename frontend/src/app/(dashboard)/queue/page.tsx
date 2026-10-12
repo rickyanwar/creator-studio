@@ -8,7 +8,7 @@ import type { PublishJob } from "@/lib/types";
 import { Icon } from "@iconify/react";
 import ClipPlayer from "@/components/ClipPlayer";
 
-/* Review queue = Mode 1 jobs awaiting caption approval + Mode 2 news jobs
+/* Review queue = IG Repost jobs awaiting caption approval + Mode 2 news jobs
    awaiting design (pending_design) or publish approval (pending_publish). */
 const fetcher = async () => {
   const [review, design, publish] = await Promise.all([

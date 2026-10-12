@@ -158,12 +158,18 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
 @router.put("/{fanpage_id}", response_model=FanpageOut)
 def update_fanpage(fanpage_id: int, body: FanpageUpdate, db: DB, _: CurrentUser):
     from app.models.target_fanpages import TargetFanpage
+    from app.services.ig_mode import apply_ig_mode
 
     fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
     if not fp:
         raise HTTPException(status_code=404, detail="Fanpage not found")
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    dump = body.model_dump(exclude_unset=True)
+    mode = dump.pop("ig_mode", None)
+    if mode is not None:
+        apply_ig_mode(fp, mode)
+
+    for field, value in dump.items():
         setattr(fp, field, value)
 
     db.commit()
