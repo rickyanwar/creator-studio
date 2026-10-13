@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Text, func
 from app.database import Base
 
 
@@ -93,6 +93,14 @@ class Settings(Base):
     ai_video_worker_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     ai_video_vision_qc_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     ai_video_credit_reserve = Column(Integer, default=0, nullable=False, server_default="0")
+    # Who researches Mode 8 ideas: "muse" (research desk API) or "hermes". Muse only gets work
+    # when it is the researcher; "pilot" mode holds its ideas for review instead of producing them.
+    ai_video_researcher = Column(String(16), default="muse", nullable=False, server_default="muse")
+    muse_research_mode = Column(String(16), default="pilot", nullable=False, server_default="pilot")
+    muse_pilot_packs = Column(Integer, default=3, nullable=False, server_default="3")
+    # {"f1": {"video_style": [{"url", "note"}], "topic_signals": [...]}, "motogp": {...}}; NULL = built-in defaults
+    research_references = Column(JSON, nullable=True)
+    research_last_report = Column(JSON, nullable=True)
     # ── Viral Radar ───────────────────────────────────────────────────────────
     radar_sleep_start_wib = Column(Integer, nullable=True)
     radar_sleep_end_wib = Column(Integer, nullable=True)

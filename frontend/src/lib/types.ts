@@ -544,6 +544,12 @@ export interface AppSettings {
   ai_video_worker_enabled: boolean;
   ai_video_vision_qc_enabled: boolean;
   ai_video_credit_reserve: number;
+  ai_video_researcher?: "muse" | "hermes";
+  muse_research_mode?: string;
+  muse_pilot_packs?: number;
+  research_references?: ResearchReferences | null;
+  research_last_report?: Record<string, unknown> | null;
+  research_last_call_at?: string | null;
   gallery_labeling_enabled?: boolean;
   gallery_labeling_daily_cap?: number;
   gallery_labeling_since?: string | null;
@@ -553,7 +559,28 @@ export interface AppSettings {
   gallery_labels_failed?: number;
 }
 
-export type AiVideoIdeaStatus = "proposed" | "approved" | "rejected" | "queued" | "done" | "failed";
+export type AiVideoIdeaStatus = "pilot" | "proposed" | "approved" | "rejected" | "queued" | "done" | "failed";
+
+export interface ResearchLink {
+  url: string;
+  note?: string;
+}
+
+export type ResearchReferences = Record<string, { video_style: ResearchLink[]; topic_signals: ResearchLink[] }>;
+
+export interface ResearchFeedbackItem {
+  id: number;
+  created_at: string;
+  author: "studio" | "muse";
+  kind: "comment" | "rejected" | "note";
+  message: string;
+  username: string | null;
+}
+
+export interface ResearchActivity {
+  calls: { id: number; created_at: string; endpoint: string; action: string; detail: Record<string, unknown> | null }[];
+  notes: { id: number; created_at: string; client_ref: string | null; message: string }[];
+}
 export type AiVideoJobStatus = "queued" | "claimed" | "generating" | "uploaded" | "done" | "failed" | "cancelled";
 
 export interface AiVideoIdea {
@@ -576,6 +603,9 @@ export interface AiVideoIdea {
   decided_at: string | null;
   decided_by: string | null;
   video_job_id: number | null;
+  client_ref?: string | null;
+  title?: string | null;
+  caption?: string | null;
 }
 
 export interface AiVideoJob {

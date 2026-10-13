@@ -25,6 +25,7 @@ from app.models.post_metric_snapshots import PostMetricSnapshot
 from app.models.api_tokens import ApiToken
 from app.models.strategy import StrategyRecommendation, FanpageContentMemory
 from app.models.ai_video import GflowWorker, GflowAccount, VideoIdea, VideoJob
+from app.models.research import ResearchCall, ResearchFeedback
 from app.models.radar import (
     RadarAccount,
     RadarPost,

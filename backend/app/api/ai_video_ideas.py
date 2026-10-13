@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import CurrentUser, DB
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
-from app.services import ai_video_ideas
+from app.services import ai_video_ideas, research_desk
 from app.services.video_templates import list_templates, liveries, narrator_presets, required_variables, vehicle_presets
 
 router = APIRouter(prefix="/ai-video", tags=["ai-video"])
@@ -26,7 +26,7 @@ class IdeaCreate(BaseModel):
 def _item(db, idea):
     fanpage = db.query(TargetFanpage).filter_by(id=idea.fanpage_id).first()
     job = db.query(VideoJob).filter_by(idea_id=idea.id).first()
-    return {"id": idea.id, "fanpage_id": idea.fanpage_id, "fanpage_name": fanpage.name if fanpage else "", "template_key": idea.template_key, "topic": idea.topic, "angle": idea.angle, "research_notes": idea.research_notes, "variables": idea.variables, "clips": idea.clips, "score": idea.score, "rationale": idea.rationale, "evidence": idea.evidence, "source": idea.source, "status": idea.status, "error": idea.error, "created_at": idea.created_at, "decided_at": idea.decided_at, "decided_by": idea.decided_by, "video_job_id": job.id if job else None}
+    return {"id": idea.id, "fanpage_id": idea.fanpage_id, "fanpage_name": fanpage.name if fanpage else "", "template_key": idea.template_key, "topic": idea.topic, "angle": idea.angle, "research_notes": idea.research_notes, "variables": idea.variables, "clips": idea.clips, "score": idea.score, "rationale": idea.rationale, "evidence": idea.evidence, "source": idea.source, "status": idea.status, "error": idea.error, "created_at": idea.created_at, "decided_at": idea.decided_at, "decided_by": idea.decided_by, "video_job_id": job.id if job else None, "client_ref": idea.client_ref, "title": idea.title, "caption": idea.caption}
 
 
 @router.get("/templates")
@@ -64,5 +64,37 @@ def _decide(idea_id, db, user, action):
 def approve_idea(idea_id: int, db: DB, user: CurrentUser): return _decide(idea_id, db, user, "approve")
 
 
+class RejectBody(BaseModel):
+    reason: Optional[str] = Field(None, max_length=2000)
+
+
+class FeedbackBody(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
 @router.post("/ideas/{idea_id}/reject")
-def reject_idea(idea_id: int, db: DB, user: CurrentUser): return _decide(idea_id, db, user, "reject")
+def reject_idea(idea_id: int, db: DB, user: CurrentUser, body: Optional[RejectBody] = None):
+    idea = _decide(idea_id, db, user, "reject")
+    if body and body.reason and body.reason.strip():
+        stored = db.query(VideoIdea).filter_by(id=idea_id).first()
+        if stored is not None and stored.source == "muse":
+            research_desk.add_feedback(db, author="studio", kind="rejected", message=body.reason,
+                                       client_ref=stored.client_ref, idea_id=stored.id, username=user)
+    return idea
+
+
+@router.get("/ideas/{idea_id}/feedback")
+def idea_feedback(idea_id: int, db: DB, _: CurrentUser):
+    idea = db.query(VideoIdea).filter_by(id=idea_id).first()
+    if not idea: raise HTTPException(404, "Idea not found")
+    return research_desk.feedback_thread(db, idea)
+
+
+@router.post("/ideas/{idea_id}/feedback", status_code=201)
+def add_idea_feedback(idea_id: int, body: FeedbackBody, db: DB, user: CurrentUser):
+    idea = db.query(VideoIdea).filter_by(id=idea_id).first()
+    if not idea: raise HTTPException(404, "Idea not found")
+    if idea.source != "muse": raise HTTPException(422, "Feedback goes to research desk (Muse) ideas only")
+    research_desk.add_feedback(db, author="studio", kind="comment", message=body.message,
+                               client_ref=idea.client_ref, idea_id=idea.id, username=user)
+    return research_desk.feedback_thread(db, idea)

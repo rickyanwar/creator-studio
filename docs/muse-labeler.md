@@ -4,7 +4,7 @@ This temporary API lets the external Muse agent label downloaded gallery photos.
 
 ## Connection
 
-- Base URL: `http://109.123.232.184/api`
+- Base URL: `https://autostudio.pro/api` (HTTPS only)
 - Header: `Authorization: Bearer <token>`
 - Required scope: `labels:write`
 

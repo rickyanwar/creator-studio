@@ -101,27 +101,48 @@ def pick_livery(db, fanpage_id, t):
     return random.choice(available or liveries(t))
 
 
+def apply_system_look(db, fanpage, template, variables):
+    """The studio's own slots: narrator voice, livery and channel lettering."""
+    variables = dict(variables)
+    if variables.get("narrator_preset") not in narrator_presets(template):
+        variables["narrator_preset"] = resolve_narrator(fanpage, template)
+    preset = variables.get("vehicle_preset")
+    if preset in {"f1", "classic_gp", "motogp_livery"}:
+        if variables.get("livery") not in liveries(template):
+            variables["livery"] = pick_livery(db, fanpage.id, template)
+        channel_name = sanitize_channel_name(fanpage.name)
+        if channel_name is None:
+            variables.pop("channel_name", None)
+        else:
+            variables["channel_name"] = channel_name
+    else:
+        variables.pop("livery", None)
+        variables.pop("channel_name", None)
+    return variables
+
+
+def research_ready(idea, template, clips) -> bool:
+    """A research-desk idea that already carries every slot plus its own title and caption."""
+    return bool(
+        idea.source == "muse" and idea.title and idea.caption and isinstance(idea.variables, dict)
+        and set(required_variables(template, clips)) <= set(idea.variables)
+    )
+
+
+def fill_from_research(db, idea, fanpage, clips):
+    """Use the slots, title and caption the research desk wrote, with the studio's look; no LLM call."""
+    template = get_template(idea.template_key)
+    variables = apply_system_look(db, fanpage, template, idea.variables)
+    rendered = render_clips(template, variables, clips, lang_code=fanpage_language(fanpage))
+    return variables, idea.title, idea.caption, rendered, "research_desk"
+
+
 def fill_idea(db, idea, fanpage, clips):
     template = get_template(idea.template_key)
     prompt = build_fill_prompt(template, idea, fanpage, clips)
 
-    def apply_system_look(variables):
-        variables = dict(variables)
-        if variables.get("narrator_preset") not in narrator_presets(template):
-            variables["narrator_preset"] = resolve_narrator(fanpage, template)
-        preset = variables.get("vehicle_preset")
-        if preset in {"f1", "classic_gp", "motogp_livery"}:
-            if variables.get("livery") not in liveries(template):
-                variables["livery"] = pick_livery(db, fanpage.id, template)
-            channel_name = sanitize_channel_name(fanpage.name)
-            if channel_name is None:
-                variables.pop("channel_name", None)
-            else:
-                variables["channel_name"] = channel_name
-        else:
-            variables.pop("livery", None)
-            variables.pop("channel_name", None)
-        return variables
+    def apply_look(variables):
+        return apply_system_look(db, fanpage, template, variables)
 
     lang = fanpage_language(fanpage)
     title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
@@ -132,7 +153,7 @@ def fill_idea(db, idea, fanpage, clips):
         merged_vars = dict(result["variables"])
         if isinstance(idea.variables, dict):
             merged_vars.update(idea.variables)
-        variables = apply_system_look(merged_vars)
+        variables = apply_look(merged_vars)
         render_clips(template, variables, clips, lang_code=lang)
         result["variables"] = variables
         return result
@@ -143,6 +164,6 @@ def fill_idea(db, idea, fanpage, clips):
     merged_vars = dict(result["variables"])
     if isinstance(idea.variables, dict):
         merged_vars.update(idea.variables)
-    result["variables"] = apply_system_look(merged_vars)
+    result["variables"] = apply_look(merged_vars)
     rendered = render_clips(template, result["variables"], clips, lang_code=lang)
     return result["variables"], result["title"], result["caption"], rendered, provider

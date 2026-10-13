@@ -465,7 +465,12 @@ export const listAiVideoIdeas = (params?: { status?: string; fanpage_id?: number
   api.get("/ai-video/ideas", { params });
 export const createAiVideoIdea = (data: Record<string, unknown>) => api.post("/ai-video/ideas", data);
 export const approveAiVideoIdea = (id: number) => api.post(`/ai-video/ideas/${id}/approve`);
-export const rejectAiVideoIdea = (id: number) => api.post(`/ai-video/ideas/${id}/reject`);
+export const rejectAiVideoIdea = (id: number, reason?: string) =>
+  api.post(`/ai-video/ideas/${id}/reject`, reason ? { reason } : undefined);
+export const listIdeaFeedback = (id: number) => api.get(`/ai-video/ideas/${id}/feedback`);
+export const addIdeaFeedback = (id: number, message: string) =>
+  api.post(`/ai-video/ideas/${id}/feedback`, { message });
+export const getResearchActivity = (limit = 50) => api.get("/settings/research-activity", { params: { limit } });
 export const listAiVideoJobs = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
   api.get("/ai-video/jobs", { params });
 export const retryAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/retry`);

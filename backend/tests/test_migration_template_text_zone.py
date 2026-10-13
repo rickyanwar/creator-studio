@@ -26,7 +26,7 @@ def test_single_alembic_head():
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "c80000000016"
+    assert heads[0] == "c80000000017"
 
 
 def test_migration_c15_structure():

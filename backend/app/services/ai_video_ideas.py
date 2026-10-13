@@ -64,7 +64,8 @@ def create_idea(db: Session, fanpage_id: int, data: dict, source: str, token_id=
         raise LimitExceededError("Maximum of 30 proposed ideas allowed per fanpage")
     cutoff = _now() - timedelta(days=30)
     normalized = _normalized_topic(data["topic"])
-    for idea in db.query(VideoIdea).filter(VideoIdea.created_at >= cutoff, VideoIdea.status != "rejected").all():
+    # Research-desk pilot ideas wait for review and must not block production topics.
+    for idea in db.query(VideoIdea).filter(VideoIdea.created_at >= cutoff, VideoIdea.status.notin_(["rejected", "pilot"])).all():
         if _normalized_topic(idea.topic) == normalized:
             raise ConflictError(f"topic already used on fanpage {idea.fanpage_id} in the last 30 days")
     approved = source == "owner"
@@ -83,7 +84,7 @@ def create_idea(db: Session, fanpage_id: int, data: dict, source: str, token_id=
 
 
 def approve(db: Session, idea: VideoIdea, username: str) -> VideoIdea:
-    if idea.status != "proposed":
+    if idea.status not in ("proposed", "pilot"):
         raise ConflictError(f"Cannot approve idea with status {idea.status}")
     idea.status, idea.decided_by, idea.decided_at = "approved", username, _now()
     db.commit()
@@ -92,7 +93,7 @@ def approve(db: Session, idea: VideoIdea, username: str) -> VideoIdea:
 
 
 def reject(db: Session, idea: VideoIdea, username: str) -> VideoIdea:
-    if idea.status != "proposed":
+    if idea.status not in ("proposed", "pilot"):
         raise ConflictError(f"Cannot reject idea with status {idea.status}")
     idea.status, idea.decided_by, idea.decided_at = "rejected", username, _now()
     db.commit()

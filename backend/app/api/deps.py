@@ -39,7 +39,8 @@ def get_current_user(
 CurrentUser = Annotated[str, Depends(get_current_user)]
 DB = Annotated[Session, Depends(get_db)]
 
-def require_hermes_scope(scope: str):
+def require_hermes_scope(*scopes: str):
+    """API-token auth; the token needs at least one of the given scopes."""
     def dependency(
         credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
         db: Session = Depends(get_db)
@@ -48,7 +49,7 @@ def require_hermes_scope(scope: str):
         if not token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked token")
         
-        if scope not in token.scopes:
+        if not any(scope in token.scopes for scope in scopes):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing required scope")
         
         now = datetime.now(timezone.utc).replace(tzinfo=None)
