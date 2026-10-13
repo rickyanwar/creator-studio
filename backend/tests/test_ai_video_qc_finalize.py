@@ -311,3 +311,34 @@ def test_recovery_includes_only_auto_ai_videos(db):
     assert db.query(PublishJob.id).filter_by(fanpage_id=manual.id, status=PublishJobStatus.pending_publish).scalar() not in called_ids
     assert db.query(PublishJob.id).filter_by(fanpage_id=auto.id, status=PublishJobStatus.pending_review).scalar() not in called_ids
     assert db.query(PublishJob.id).filter_by(fanpage_id=auto.id, status=PublishJobStatus.pending_publish).scalar() in called_ids
+
+
+def test_sibling_url():
+    base = "https://autostudio.pro/media"
+    # 1. normal URL
+    url = ai_video_finalize._sibling_url(
+        "https://autostudio.pro/media/ai_videos/job_9_raw.mp4",
+        "/var/media/ai_videos/job_9_raw.mp4",
+        Path("job_9_raw_branded_123.mp4"),
+        base,
+    )
+    assert url == "https://autostudio.pro/media/ai_videos/job_9_raw_branded_123.mp4"
+
+    # 2. None URL -> base_url + /ai_videos/
+    url_none = ai_video_finalize._sibling_url(
+        None,
+        None,
+        Path("job_9_raw_branded_123.mp4"),
+        base,
+    )
+    assert url_none == "https://autostudio.pro/media/ai_videos/job_9_raw_branded_123.mp4"
+
+    # 3. trailing-slash base_url
+    url_slash = ai_video_finalize._sibling_url(
+        None,
+        None,
+        Path("job_9_raw_branded_123.mp4"),
+        f"{base}/",
+    )
+    assert url_slash == "https://autostudio.pro/media/ai_videos/job_9_raw_branded_123.mp4"
+

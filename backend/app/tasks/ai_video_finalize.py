@@ -11,6 +11,13 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+def _sibling_url(original_url: str | None, original_path: str | None, new_path: Path, base_url: str) -> str:
+    """URL of a file written next to an already-published file (same folder, new name)."""
+    if original_url and "/" in original_url:
+        return f"{original_url.rsplit('/', 1)[0]}/{new_path.name}"
+    return f"{base_url.rstrip('/')}/ai_videos/{new_path.name}"
+
+
 @celery_app.task(name="app.tasks.ai_video_finalize.finalize_ai_video", queue="video", soft_time_limit=600)
 def finalize_ai_video(video_job_id: int):
     from app.models.ai_video import VideoIdea, VideoJob
@@ -83,8 +90,10 @@ def finalize_ai_video(video_job_id: int):
                 import subprocess
                 subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(branded), "-frames:v", "1", "-q:v", "3", str(thumbnail)], check=True, timeout=60)
                 s = get_settings()
-                publish_video_path, publish_video_url = str(branded), f"{s.storage_base_url.rstrip('/')}/videos/{branded.name}"
-                publish_thumbnail_path, publish_thumbnail_url = str(thumbnail), f"{s.storage_base_url.rstrip('/')}/videos/{thumbnail.name}"
+                publish_video_path = str(branded)
+                publish_video_url = _sibling_url(job.video_url, job.video_path, branded, s.storage_base_url)
+                publish_thumbnail_path = str(thumbnail)
+                publish_thumbnail_url = _sibling_url(job.video_url, job.video_path, thumbnail, s.storage_base_url)
                 raw_path.unlink(missing_ok=True)
                 if job.thumbnail_path:
                     Path(job.thumbnail_path).unlink(missing_ok=True)
