@@ -690,6 +690,36 @@ def _new_page(context):
 
 # ── Tier implementations ─────────────────────────────────────────────────────
 
+def _anonyig_item_to_node(item: dict) -> dict:
+    media_list = item.get("media") or []
+    is_video = item.get("type") == "video"
+    sidecar_edges = []
+    if item.get("type") == "carousel" and len(media_list) > 1:
+        for m in media_list:
+            m_url = m.get("url") or m.get("urlDownloadable") or m.get("thumbnailUrl") or ""
+            sidecar_edges.append({
+                "node": {
+                    "is_video": m.get("type") == "video",
+                    "display_url": m_url,
+                    "display_resources": [{"src": m_url}] if m_url else [],
+                }
+            })
+    first_url = (media_list[0].get("url") or media_list[0].get("urlDownloadable") or media_list[0].get("thumbnailUrl") or "") if media_list else ""
+    return {
+        "id": item.get("id"),
+        "shortcode": item.get("shortcode"),
+        "taken_at_timestamp": item.get("takenAt"),
+        "is_video": is_video,
+        "__typename": "GraphSidecar" if item.get("type") == "carousel" else ("GraphVideo" if is_video else "GraphImage"),
+        "display_url": first_url,
+        "display_resources": [{"src": first_url}] if first_url else [],
+        "edge_media_to_caption": {"edges": [{"node": {"text": item.get("caption") or ""}}]},
+        "edge_media_preview_like": {"count": item.get("likeCount", 0)},
+        "edge_media_to_comment": {"count": item.get("commentCount", 0)},
+        "edge_sidecar_to_children": {"edges": sidecar_edges} if sidecar_edges else None,
+    }
+
+
 def _tier_profile_viewer(page, username: str, url: str, name: str) -> list[dict]:
     """GramSnap/AnonyIG reference page_action; return intercepted postsV2 nodes."""
     deadline = time.monotonic() + _TIER_TIMEOUT
@@ -698,14 +728,20 @@ def _tier_profile_viewer(page, username: str, url: str, name: str) -> list[dict]
     def _on_response(resp):
         if time.monotonic() > deadline:
             return
-        if "postsV2" in resp.url:
+        if "postsV2" in resp.url or "posts" in resp.url:
             try:
                 js = resp.json()
-                edges = js.get("result", {}).get("edges", [])
-                for edge in edges:
-                    node = edge.get("node")
-                    if isinstance(node, dict):
-                        captured.append(node)
+                res = js.get("result", {})
+                edges = res.get("edges", [])
+                if edges:
+                    for edge in edges:
+                        node = edge.get("node")
+                        if isinstance(node, dict):
+                            captured.append(node)
+                elif "items" in res:
+                    for it in res.get("items", []):
+                        if isinstance(it, dict):
+                            captured.append(_anonyig_item_to_node(it))
             except Exception:
                 pass
 
