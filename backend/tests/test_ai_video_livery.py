@@ -14,6 +14,8 @@ def _variables(preset="f1", **extra):
         "part": "rear wing",
         "mechanism_details": "the actuator",
         "mechanism_action": "the flap moves visibly",
+        "moving_part": "upper flap",
+        "fixed_parts": "endplates and pillar",
         "effect_visual": "airflow lines glow around the assembly",
         "parts_list": "the flap, actuator, bolts, and supports",
         "final_state": "the complete assembly locks back into place",

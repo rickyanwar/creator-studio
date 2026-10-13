@@ -114,6 +114,12 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
                     + ". Expected mechanism: " + clean(expectations["mechanism_action"])
                     + ". Final state: " + clean(expectations["final_state"]) + "."
                 )
+            if expectations.get("fixed_parts") is not None:
+                lines.append(
+                    "Only " + clean(expectations.get("moving_part") or "the named part")
+                    + " may move. These parts must stay completely still and level the whole time: "
+                    + clean(expectations["fixed_parts"]) + "."
+                )
             lines.append("Frames are in time order, left to right, top row then bottom row.")
             has_exploded = expectations.get("parts_list") is not None
             if has_exploded:
@@ -122,10 +128,16 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
                     + clean(expectations["parts_list"])
                     + " visibly separated and floating apart, then reassembled."
                 )
-                lines.append(
-                    "During the exploded view, separated parts floating in mid-air and visible screws/bolts "
-                    "are intended and are not artifacts."
-                )
+                if expectations.get("fixed_parts") is not None:
+                    lines.append(
+                        "During the exploded view, the listed parts floating apart in mid-air "
+                        "are intended and are not artifacts."
+                    )
+                else:
+                    lines.append(
+                        "During the exploded view, separated parts floating in mid-air and visible screws/bolts "
+                        "are intended and are not artifacts."
+                    )
             if expectations.get("channel_name") is not None:
                 lines.append(
                     'If the car shows lettering, it must read exactly "'
@@ -138,6 +150,8 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
             ]
             if has_mechanism:
                 fail_clauses.append("the shown part or motion contradicts the expected mechanism")
+            if expectations.get("fixed_parts") is not None:
+                fail_clauses.append("a part that must stay still moves, tilts or rotates")
             if has_exploded:
                 fail_clauses.append("the exploded view is missing")
             prompt += "Fail if: " + "; ".join(fail_clauses) + ". Also fail on any of the following. "

@@ -1,0 +1,37 @@
+{
+  "drs": {
+    "keywords": ["drs", "drag reduction"],
+    "moving_part": "upper rear-wing flap",
+    "fixed_parts": "the lower main plane, both vertical endplates and the central support pillar",
+    "motion": "only the upper flap rotates to a flatter angle, opening a wider gap between it and the main plane; when it closes it rotates back to its steep angle",
+    "narration_note": "DRS was used in Formula 1 up to the 2025 season; from 2026 it was replaced by active aerodynamics, so describe it in the past tense or as the pre-2026 system"
+  },
+  "active_aero_2026": {
+    "keywords": ["active aero", "2026 aero", "x-mode", "z-mode", "straight mode", "corner mode"],
+    "moving_part": "movable front-wing and rear-wing flaps",
+    "fixed_parts": "the car body, the floor, the wing main planes and the endplates",
+    "motion": "on straights the movable front-wing and rear-wing flaps rotate to a flatter low-drag angle; before corners they rotate back to the steeper high-downforce angle",
+    "narration_note": "this is the 2026 Formula 1 system; do not call it DRS"
+  },
+  "holeshot": {
+    "keywords": ["holeshot", "ride-height", "ride height", "start device"],
+    "moving_part": "rear suspension (the rear shock compresses and the swingarm angle changes)",
+    "fixed_parts": "the frame, the fairing, the aero wings, the fuel tank and the front fork",
+    "motion": "the rear shock is held compressed so the rear of the bike sits lower for launch and corner exit, then it releases and the rear rises back to normal ride height",
+    "narration_note": "describe it as a MotoGP device; do not claim specific seasons or bans"
+  },
+  "seamless_gearbox": {
+    "keywords": ["seamless", "gearbox", "gear change", "quickshift"],
+    "moving_part": "the selector dog rings sliding along the gearbox shaft",
+    "fixed_parts": "the gearbox casing and the positions of the shafts and gears",
+    "motion": "the next gear's dog ring engages before the previous one releases, so drive never drops; the dog rings slide along the shaft while the gears keep spinning in place",
+    "narration_note": ""
+  },
+  "brake_by_wire": {
+    "keywords": ["brake-by-wire", "brake by wire", "rear brake", "brake balance"],
+    "moving_part": "the rear brake caliper pistons clamping the spinning rear disc",
+    "fixed_parts": "the caliper body mounted on the upright, the upright itself and the car body",
+    "motion": "the control unit sets rear brake pressure, blending with energy recovery; the caliper pistons squeeze the pads onto the spinning disc while the caliper body stays fixed",
+    "narration_note": ""
+  }
+}

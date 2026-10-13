@@ -83,6 +83,8 @@ def test_mode8_render_clips_budget_validation_and_narrator():
         "narrator_preset": "EN-DOC",
         "part": "aileron arriere",
         "mechanism_action": "s'ouvre pour reduire la trainee",
+        "moving_part": "upper rear-wing flap",
+        "fixed_parts": "the lower main plane and both endplates",
         "mechanism_details": "verin hydraulique et volet superieur",
         "parts_list": "verin hydraulique et volet",
         "effect_visual": "flux d'air visible",

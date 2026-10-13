@@ -161,6 +161,7 @@ def test_fill_prompt_niche_and_parse_formats(fanpage):
 def _valid_variables():
     return {
         "vehicle_preset": "f1_red", "part": "rear wing", "mechanism_details": "the actuator", "mechanism_action": "the flap moves visibly",
+        "moving_part": "upper rear-wing flap", "fixed_parts": "the lower main plane and both endplates",
         "narration_1": "This is a rear wing mechanism working inside a modern racing car during a fast lap on circuit.",
         "effect_visual": "Airflow lines glow around the assembly.", "parts_list": "the flap, actuator, bolts, and supports",
         "final_state": "the complete assembly locks back into place", "narration_2": "The parts separate clearly, then return together as the airflow settles around the car and the mechanism locks shut.",

@@ -1,4 +1,5 @@
 """LLM-backed variable filling for approved video ideas."""
+from functools import lru_cache
 import json
 import random
 import re
@@ -8,6 +9,7 @@ from app.services import news_copywriter
 from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language, language_name
 from app.services.video_templates import (
+    _TEMPLATE_DIR,
     get_narration_budget,
     get_template,
     liveries,
@@ -18,6 +20,25 @@ from app.services.video_templates import (
     sanitize_channel_name,
     vehicle_presets,
 )
+
+
+@lru_cache(maxsize=1)
+def _mechanism_refs() -> dict:
+    path = _TEMPLATE_DIR / "_mechanisms.json"
+    if not path.is_file():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def matching_mechanisms(text: str) -> list[dict]:
+    t = (text or "").lower()
+    refs = _mechanism_refs()
+    matches = []
+    for entry in refs.values():
+        if any(kw.lower() in t for kw in entry.get("keywords", [])):
+            matches.append(entry)
+    return matches
 
 
 def build_fill_prompt(t, idea, fanpage, clips) -> str:
@@ -37,7 +58,9 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
         presets = [p for p in available_presets if "motogp" not in p] or available_presets
     title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
     desc_max = getattr(fanpage, "ai_video_description_max_chars", None) or 600
-    return f"""Fill this video template as strict JSON with keys variables, title, caption.
+    matches = matching_mechanisms((idea.topic or "") + " " + (idea.angle or ""))
+    ref_line = f"Reference for this topic (follow it exactly): {json.dumps(matches)}\n" if matches else ""
+    prompt = f"""Fill this video template as strict JSON with keys variables, title, caption.
 Template rules: {json.dumps(t.raw.get('rules', t.raw.get('description', '')))}
 Format example variables: {json.dumps(example)}
 Required variables: {json.dumps(required_variables(t, clips))}; narration word budgets: {json.dumps(budgets)}
@@ -50,7 +73,8 @@ Mechanical accuracy requirements:
 2. Mechanism action: mechanism_action must state exactly what moves, around which pivot/axis, in which direction, and what stays fixed (e.g. DRS: only the upper flap pivots up around its forward hinge; the main plane and vertical endplates stay completely rigid, horizontal, and level).
 3. Parts simplicity: mechanism_details and parts_list must contain only 3 to 4 major, large, clearly distinct components that can visibly separate in an exploded view (e.g. for rear wing: "fixed lower main plane, movable upper flap, central actuator cylinder, side endplates"; for brake-by-wire: "cockpit brake master cylinder, chassis electronic control unit, rear carbon brake disc, rear brake caliper"). Do NOT list tiny internal linkages or screws that an AI video model cannot separate cleanly.
 4. Grounded anatomy: prefer well-known, simple, mechanically correct anatomy over invented detail.
-Use research_notes as the ONLY source of specific facts and numbers. If absent, explain the mechanism without specific numbers or season claims.
+5. moving_part names the ONE part that moves; fixed_parts lists the nearby parts that must stay completely still. Both are written into the video prompt.
+{ref_line}Use research_notes as the ONLY source of specific facts and numbers. If absent, explain the mechanism without specific numbers or season claims.
 Never name real teams, sponsors, or brands. Research notes: {idea.research_notes or '(none)'}
     Topic: {idea.topic}; angle: {idea.angle or '(none)'}
     """

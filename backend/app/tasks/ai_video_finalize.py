@@ -42,7 +42,10 @@ def finalize_ai_video(video_job_id: int):
             try:
                 expectations = None
                 if idea and isinstance(idea.variables, dict):
-                    expectation_keys = ("part", "mechanism_action", "final_state", "parts_list", "channel_name")
+                    expectation_keys = (
+                        "part", "mechanism_action", "final_state", "parts_list", "channel_name",
+                        "moving_part", "fixed_parts",
+                    )
                     expectations = {
                         key: idea.variables[key]
                         for key in expectation_keys
