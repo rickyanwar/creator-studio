@@ -719,6 +719,47 @@ class TestLockReleaseSafety:
         assert call_kwargs[0][1] == "12345678-1234-5678-1234-567812345678"
 
 
+def test_anonyig_items_response_handling():
+    page = MagicMock()
+    handlers = {}
+    page.on.side_effect = lambda event, handler: handlers.setdefault(event, handler)
+    response = MagicMock(url="https://api-wh.anonyig.com/api/v2/instagram/posts")
+    response.json.return_value = {
+        "result": {
+            "items": [
+                {
+                    "id": "12345",
+                    "type": "carousel",
+                    "shortcode": "CODE123",
+                    "caption": "test caption",
+                    "takenAt": 1791715833,
+                    "likeCount": 100,
+                    "commentCount": 10,
+                    "media": [
+                        {"type": "image", "url": "https://scontent.cdninstagram.com/p1.jpg"},
+                        {"type": "image", "url": "https://scontent.cdninstagram.com/p2.jpg"}
+                    ]
+                }
+            ]
+        }
+    }
+
+    def wait_with_response(milliseconds):
+        if milliseconds == 1000 and "response" in handlers:
+            handlers["response"](response)
+
+    with (patch.object(_scraper_mod, "_navigate"),
+          patch.object(_scraper_mod, "_after_page_action")):
+        page.wait_for_timeout.side_effect = wait_with_response
+        nodes = _scraper_mod._tier_anonyig(page, "test")
+        assert len(nodes) == 1
+        node = nodes[0]
+        assert node["id"] == "12345"
+        assert node["shortcode"] == "CODE123"
+        assert node["taken_at_timestamp"] == 1791715833
+        assert len(node["edge_sidecar_to_children"]["edges"]) == 2
+
+
 def test_igstoryviewer_posts_response_and_failure_hint():
     page = MagicMock()
     handlers = {}
