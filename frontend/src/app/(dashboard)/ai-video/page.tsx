@@ -45,6 +45,8 @@ const badge: Record<string, string> = {
   done: "bg-emerald-100 text-emerald-800",
   rejected: "bg-gray-200 text-gray-700",
   failed: "bg-red-100 text-red-800",
+  needs_terms: "bg-amber-100 text-amber-800",
+  ok: "bg-emerald-100 text-emerald-800",
 };
 
 function Status({ value }: { value: string }) {
@@ -598,7 +600,7 @@ function AccountCard({
   const [label, setLabel] = useState(account.label ?? "");
   const [error, setError] = useState<string | null>(null);
 
-  async function save(data: { enabled?: boolean; label?: string }) {
+  async function save(data: { enabled?: boolean; label?: string; terms_accepted?: boolean }) {
     setError(null);
     try {
       await updateGflowAccount(account.id, data);
@@ -635,6 +637,19 @@ function AccountCard({
           : "Never"}
         {account.busy_job_id ? ` · Job #${account.busy_job_id} busy` : ""}
       </p>
+
+      {account.status === "needs_terms" && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+          <p className="text-xs text-amber-900">
+            Google Flow is asking this account to accept its upload terms, so it is skipped for
+            videos. Sign in to flow.google.com with this account, open any project, upload one
+            image and accept the terms. Then click the button below.
+          </p>
+          <button type="button" className="btn-secondary text-xs" onClick={() => save({ terms_accepted: true })}>
+            Terms accepted — use this account again
+          </button>
+        </div>
+      )}
 
       {error && (
         <p className="text-xs text-error-main bg-red-50 rounded p-2">

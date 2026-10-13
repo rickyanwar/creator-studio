@@ -471,7 +471,7 @@ export const listAiVideoJobs = (params?: { status?: string; fanpage_id?: number;
 export const retryAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/retry`);
 export const cancelAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/cancel`);
 export const listGflowAccounts = () => api.get("/ai-video/accounts");
-export const updateGflowAccount = (id: number, data: { enabled?: boolean; label?: string }) =>
+export const updateGflowAccount = (id: number, data: { enabled?: boolean; label?: string; terms_accepted?: boolean }) =>
   api.patch(`/ai-video/accounts/${id}`, data);
 export const listGflowWorkers = () => api.get("/ai-video/workers");
 // F1 Drivers

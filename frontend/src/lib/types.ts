@@ -610,7 +610,7 @@ export interface GflowAccount {
   label: string | null;
   enabled: boolean;
   authenticated: boolean;
-  status: "ok" | "auth_error" | "no_access" | "error" | string;
+  status: "ok" | "auth_error" | "no_access" | "needs_terms" | "error" | string;
   credits: number | null;
   credits_checked_at: string | null;
   last_error: string | null;
