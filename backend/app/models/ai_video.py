@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String,
+    Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String,
     Text, UniqueConstraint, func, text,
 )
 
@@ -39,6 +39,11 @@ class GflowAccount(Base):
 
 class VideoIdea(Base):
     __tablename__ = "video_ideas"
+    __table_args__ = (
+        # One research-desk pack yields at most one idea per fanpage (idempotent retries).
+        Index("uq_video_ideas_client_ref_fanpage", "client_ref", "fanpage_id", unique=True,
+              postgresql_where=text("client_ref IS NOT NULL")),
+    )
 
     id = Column(Integer, primary_key=True)
     fanpage_id = Column(Integer, ForeignKey("target_fanpages.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -58,6 +63,10 @@ class VideoIdea(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     decided_at = Column(DateTime, nullable=True)
     decided_by = Column(String(64), nullable=True)
+    # Research desk (Muse) packs: the pack's client_ref plus the copy Muse wrote for this fanpage.
+    client_ref = Column(String(64), nullable=True)
+    title = Column(Text, nullable=True)
+    caption = Column(Text, nullable=True)
 
 
 class VideoJob(Base):

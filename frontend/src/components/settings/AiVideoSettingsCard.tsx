@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AppSettings } from "@/lib/types";
 import { updateSettings } from "@/lib/api";
+import { ResearchDeskSettings } from "@/components/settings/ResearchDeskSettings";
 
 export function AiVideoSettingsCard({
   settings,
@@ -99,6 +100,8 @@ export function AiVideoSettingsCard({
           Credits held back globally from job dispatch.
         </p>
       </div>
+
+      <ResearchDeskSettings settings={settings} onChanged={onChanged} />
     </section>
   );
 }

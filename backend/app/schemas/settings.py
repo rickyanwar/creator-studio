@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +32,9 @@ class SettingsUpdate(BaseModel):
     ai_video_worker_enabled: Optional[bool] = None
     ai_video_vision_qc_enabled: Optional[bool] = None
     ai_video_credit_reserve: Optional[int] = Field(None, ge=0, le=10000)
+    ai_video_researcher: Optional[Literal["muse", "hermes"]] = None
+    muse_pilot_packs: Optional[int] = Field(None, ge=0, le=10)
+    research_references: Optional[dict] = None
 
     # ── Viral Radar ──
     radar_sleep_start_wib: Optional[int] = None
@@ -86,6 +89,12 @@ class SettingsOut(BaseModel):
     ai_video_worker_enabled: bool = True
     ai_video_vision_qc_enabled: bool = False
     ai_video_credit_reserve: int = Field(0, ge=0, le=10000)
+    ai_video_researcher: str = "muse"
+    muse_research_mode: str = "pilot"
+    muse_pilot_packs: int = 3
+    research_references: Optional[dict] = None
+    research_last_report: Optional[dict] = None
+    research_last_call_at: Optional[datetime] = None
 
     # ── Viral Radar ──
     radar_sleep_start_wib: Optional[int] = None

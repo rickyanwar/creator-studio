@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from app.database import SessionLocal
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
-from app.services.ai_video_fill import fill_idea
+from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
 from app.services.video_templates import allowed_video_templates, credits_estimate, get_template, pick_clips
 from app.tasks.celery_app import celery_app
@@ -78,7 +78,9 @@ def plan_ai_videos():
             # The owner's own per-idea length wins; AI/Hermes ideas stay inside the fanpage range.
             clips = idea.clips if idea.source == "owner" and idea.clips in template.clip_options else pick_clips(idea.clips, fanpage, template)
             try:
-                variables, title, caption, rendered, _provider = fill_idea(db, idea, fanpage, clips)
+                # Research-desk ideas carry their own slots, title and caption; the rest are written by the LLM.
+                filler = fill_from_research if research_ready(idea, template, clips) else fill_idea
+                variables, title, caption, rendered, _provider = filler(db, idea, fanpage, clips)
                 job = VideoJob(fanpage_id=fanpage.id, idea_id=idea.id, template_key=template.key, title=title, caption=caption, model=template.model, aspect=template.aspect, clip_seconds=template.clip_seconds, clips=rendered, credits_per_clip=template.credits_per_clip, credits_estimate=credits_estimate(template, clips), status="queued")
                 idea.variables, idea.status, idea.error = variables, "queued", None
                 db.add(job)

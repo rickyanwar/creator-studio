@@ -26,9 +26,11 @@ import type {
   GflowWorker,
 } from "@/lib/types";
 import ClipPlayer from "@/components/ClipPlayer";
+import { ResearchIdeaDetails } from "@/components/ai-video/ResearchIdeaDetails";
 import { useFanpages } from "@/lib/useFanpages";
 
 const statusOptions = [
+  "pilot",
   "proposed",
   "approved",
   "queued",
@@ -39,6 +41,7 @@ const statusOptions = [
 ];
 
 const badge: Record<string, string> = {
+  pilot: "bg-indigo-100 text-indigo-800",
   proposed: "bg-blue-100 text-blue-800",
   approved: "bg-emerald-100 text-emerald-800",
   queued: "bg-amber-100 text-amber-800",
@@ -194,6 +197,22 @@ export default function AiVideoPage() {
                   </option>
                 ))}
               </select>
+              <button
+                type="button"
+                className="btn-secondary text-xs py-1.5"
+                disabled={ideas.length === 0}
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(ideas, null, 2)], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `ai-video-ideas-${ideaStatus}-${new Date().toISOString().slice(0, 10)}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Export JSON
+              </button>
               <select
                 className="input-rect text-xs"
                 value={fanpageId}
@@ -245,13 +264,15 @@ export default function AiVideoPage() {
                   <p className="text-xs text-error-main">{idea.error}</p>
                 )}
 
+                {idea.source === "muse" && <ResearchIdeaDetails idea={idea} />}
+
                 {actionError?.id === idea.id && (
                   <p className="text-xs text-error-main bg-red-50 rounded p-2">
                     {actionError.message}
                   </p>
                 )}
 
-                {idea.status === "proposed" && (
+                {(idea.status === "proposed" || idea.status === "pilot") && (
                   <div className="flex gap-2">
                     <button
                       disabled={busy === idea.id}
@@ -268,13 +289,18 @@ export default function AiVideoPage() {
                     </button>
                     <button
                       disabled={busy === idea.id}
-                      onClick={() =>
+                      onClick={() => {
+                        // Muse learns from the reason on its next run.
+                        const reason =
+                          idea.source === "muse"
+                            ? window.prompt("Why is this rejected? Muse will read this.") ?? undefined
+                            : undefined;
                         act(
                           idea.id,
-                          () => rejectAiVideoIdea(idea.id),
+                          () => rejectAiVideoIdea(idea.id, reason || undefined),
                           mutateIdeas
-                        )
-                      }
+                        );
+                      }}
                       className="btn-secondary text-xs py-1.5 text-error-main"
                     >
                       Reject

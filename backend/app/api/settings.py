@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from app.api.deps import CurrentUser, DB
 from app.schemas.settings import SettingsUpdate, SettingsOut, ReplizTestRequest, ProxyTestRequest, RelayTestRequest
 from app.services.proxy_pool import parse_proxies
+from app.services import research_desk
 from app.services.relay_pool import parse_relays, RELAY_TARGET_HEADER
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -67,6 +68,11 @@ def get_settings(db: DB, _: CurrentUser):
     except Exception:
         pass
 
+    try:
+        research_last_call_at = research_desk.last_call_at(db)
+    except Exception:
+        research_last_call_at = None
+
     return SettingsOut(
         crawl_interval_minutes=row.crawl_interval_minutes,
         max_post_age_days=row.max_post_age_days if row.max_post_age_days is not None else 3,
@@ -99,6 +105,12 @@ def get_settings(db: DB, _: CurrentUser):
         ai_video_worker_enabled=row.ai_video_worker_enabled,
         ai_video_vision_qc_enabled=row.ai_video_vision_qc_enabled,
         ai_video_credit_reserve=row.ai_video_credit_reserve,
+        ai_video_researcher=getattr(row, "ai_video_researcher", None) or "muse",
+        muse_research_mode=getattr(row, "muse_research_mode", None) or "pilot",
+        muse_pilot_packs=getattr(row, "muse_pilot_packs", None) if getattr(row, "muse_pilot_packs", None) is not None else 3,
+        research_references=research_desk.effective_references(row),
+        research_last_report=getattr(row, "research_last_report", None),
+        research_last_call_at=research_last_call_at,
         radar_sleep_start_wib=row.radar_sleep_start_wib,
         radar_sleep_end_wib=row.radar_sleep_end_wib,
         radar_very_hot_interval_min=row.radar_very_hot_interval_min,
@@ -154,6 +166,12 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
     # Silently ignore legacy flashapi_api_key field if sent by old clients
     data.pop("flashapi_api_key", None)
 
+    if "research_references" in data:
+        try:
+            data["research_references"] = research_desk.normalize_references(data["research_references"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     # Normalise scraper_mode: remap legacy "flashapi" → "viewer"; reject unknowns
     if "scraper_mode" in data:
         mode = data["scraper_mode"]
@@ -177,6 +195,18 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
     clear_cache()
 
     return get_settings(db, _)
+
+
+@router.get("/research-activity")
+def research_activity(db: DB, _: CurrentUser, limit: int = 50):
+    """Recent research desk (Muse) calls and Muse's notes, newest first."""
+    from app.models.research import ResearchFeedback
+
+    notes = db.query(ResearchFeedback).filter(ResearchFeedback.author == "muse").order_by(ResearchFeedback.created_at.desc()).limit(20).all()
+    return {
+        "calls": research_desk.recent_calls(db, limit=max(1, min(limit, 200))),
+        "notes": [{"id": n.id, "created_at": n.created_at, "client_ref": n.client_ref, "message": n.message} for n in notes],
+    }
 
 
 @router.post("/repliz/test")
