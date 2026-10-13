@@ -46,6 +46,7 @@ import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, DiscussionContentI
 import { Icon } from "@iconify/react";
 import { YtClipSection } from "@/components/fanpages/YtClipSection";
 import { AiVideoSection } from "@/components/fanpages/AiVideoSection";
+import { GlobalPublishMode } from "@/components/fanpages/GlobalPublishMode";
 import { SettingsTabs, type SettingsTab, type SettingsTabId } from "@/components/fanpages/SettingsTabs";
 
 
@@ -1141,6 +1142,54 @@ export default function FanpageEditPage() {
         </p>
       </section>
 
+      {/* ── Section: Watermark ── */}
+      <section className="card space-y-5">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">Watermark</h2>
+          <p className="text-xs text-text-secondary mt-0.5">Used on every design this fanpage publishes, in every mode.</p>
+        </div>
+
+        {/* Watermark text (per fanpage) */}
+        <div>
+          <label className="label">Watermark Text</label>
+          <input
+            className="input-rect"
+            value={(form.watermark_text as string) ?? ""}
+            onChange={(e) => set("watermark_text", e.target.value)}
+            placeholder="e.g. @yourbrand — leave empty to skip watermarking"
+          />
+          <p className="text-[11px] text-text-secondary mt-1">
+            Stamped onto post images before publishing. Leave empty to skip.
+          </p>
+        </div>
+
+        {/* Watermark logo (image) — overrides the text watermark on designs */}
+        <div>
+          <label className="label">Watermark Logo (image)</label>
+          <div className="flex items-center gap-3">
+            {fp.watermark_image_url ? (
+              <div className="flex items-center gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={fp.watermark_image_url} alt="watermark" className="h-12 rounded-md border border-hairline bg-[rgba(0,0,0,0.3)] p-1" />
+                <button onClick={handleWatermarkDelete} disabled={wmUploading} className="btn-ghost text-error-main flex items-center gap-1">
+                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} /> Remove
+                </button>
+              </div>
+            ) : (
+              <label className={`btn-ghost flex items-center gap-2 cursor-pointer ${wmUploading ? "opacity-50" : ""}`}>
+                {wmUploading ? <Icon icon="svg-spinners:ring-resize" width={14} /> : <Icon icon="solar:upload-bold-duotone" width={14} />}
+                Upload logo
+                <input type="file" accept="image/*" className="hidden" disabled={wmUploading}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWatermarkUpload(f); e.currentTarget.value = ""; }} />
+              </label>
+            )}
+          </div>
+          <p className="text-[11px] text-text-secondary mt-1">
+            A logo (PNG with transparency recommended) placed on every design. When set, it overrides the text watermark.
+          </p>
+        </div>
+      </section>
+
       {/* ── Section: Image Framing (news + IG recreate) ── */}
       <section className="card space-y-4">
         <h2 className="text-base font-semibold text-text-primary">Image Framing</h2>
@@ -1168,34 +1217,7 @@ export default function FanpageEditPage() {
         </div>
       </section>
 
-      {/* ── Section 3: Publish Mode ────────────────────── */}
-      <section className="card space-y-3">
-        <h2 className="text-base font-semibold text-text-primary">Publish Mode</h2>
-        <div className="flex gap-4">
-          {(["auto", "manual_review"] as const).map((mode) => (
-            <label key={mode} className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="radio"
-                name="publish-mode"
-                value={mode}
-                checked={form.publish_mode === mode}
-                onChange={() => set("publish_mode", mode)}
-                className="accent-primary-main"
-              />
-              <div>
-                <span className="text-sm text-text-primary font-medium">
-                  {mode === "auto" ? "Auto-publish" : "Manual Review"}
-                </span>
-                <p className="text-xs text-text-secondary">
-                  {mode === "auto"
-                    ? "Posts go directly to Repliz after AI caption generation."
-                    : "You approve each post before it's published."}
-                </p>
-              </div>
-            </label>
-          ))}
-        </div>
-      </section>
+      <GlobalPublishMode form={form as Record<string, unknown>} set={set} />
 
       {/* ── Section: Publish Pacing (anti-bot-detection) ─── */}
       <section className="card space-y-3">
@@ -1525,54 +1547,6 @@ export default function FanpageEditPage() {
           </button>
         </div>
       </section>
-
-      {/* ── Section 2: Caption Criteria ────────────────── */}
-      <section className="card space-y-5">
-        <h2 className="text-base font-semibold text-text-primary">IG Repost — Caption Criteria</h2>
-        <p className="text-sm text-text-secondary -mt-3">
-          Caption follows Global settings
-        </p>
-
-        {/* Watermark text (per fanpage) */}
-        <div>
-          <label className="label">Watermark Text</label>
-          <input
-            className="input-rect"
-            value={(form.watermark_text as string) ?? ""}
-            onChange={(e) => set("watermark_text", e.target.value)}
-            placeholder="e.g. @yourbrand — leave empty to skip watermarking"
-          />
-          <p className="text-[11px] text-text-secondary mt-1">
-            Stamped onto post images before publishing. Leave empty to skip.
-          </p>
-        </div>
-
-        {/* Watermark logo (image) — overrides the text watermark on designs */}
-        <div>
-          <label className="label">Watermark Logo (image)</label>
-          <div className="flex items-center gap-3">
-            {fp.watermark_image_url ? (
-              <div className="flex items-center gap-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={fp.watermark_image_url} alt="watermark" className="h-12 rounded-md border border-hairline bg-[rgba(0,0,0,0.3)] p-1" />
-                <button onClick={handleWatermarkDelete} disabled={wmUploading} className="btn-ghost text-error-main flex items-center gap-1">
-                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} /> Remove
-                </button>
-              </div>
-            ) : (
-              <label className={`btn-ghost flex items-center gap-2 cursor-pointer ${wmUploading ? "opacity-50" : ""}`}>
-                {wmUploading ? <Icon icon="svg-spinners:ring-resize" width={14} /> : <Icon icon="solar:upload-bold-duotone" width={14} />}
-                Upload logo
-                <input type="file" accept="image/*" className="hidden" disabled={wmUploading}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWatermarkUpload(f); e.currentTarget.value = ""; }} />
-              </label>
-            )}
-          </div>
-          <p className="text-[11px] text-text-secondary mt-1">
-            A logo (PNG with transparency recommended) placed on every design. When set, it overrides the text watermark.
-          </p>
-        </div>
-      </section>
         </div>
       )}
 
@@ -1736,28 +1710,6 @@ export default function FanpageEditPage() {
                   })}
                 </div>
               )}
-            </div>
-
-            {/* Publish mode for news content */}
-            <div>
-              <label className="label">News Publish Mode</label>
-              <div className="flex gap-4">
-                {(["manual_review", "auto"] as const).map((mode) => (
-                  <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="mode2-publish-mode"
-                      value={mode}
-                      checked={form.mode2_publish_mode === mode}
-                      onChange={() => set("mode2_publish_mode", mode)}
-                      className="accent-primary-main"
-                    />
-                    <span className="text-sm text-text-primary">
-                      {mode === "auto" ? "Auto-publish" : "Manual Review (open in designer)"}
-                    </span>
-                  </label>
-                ))}
-              </div>
             </div>
 
             {/* Gallery niches */}
@@ -1975,28 +1927,6 @@ export default function FanpageEditPage() {
                 <p className="text-[11px] text-text-secondary mt-1">
                   Restricts which badge style the AI is allowed to use on the card.
                 </p>
-              </div>
-            </div>
-
-            {/* Publish mode */}
-            <div>
-              <label className="label">Discussion Publish Mode</label>
-              <div className="flex gap-4">
-                {(["manual_review", "auto"] as const).map((mode) => (
-                  <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="discussion-publish-mode"
-                      value={mode}
-                      checked={form.discussion_publish_mode === mode}
-                      onChange={() => set("discussion_publish_mode", mode)}
-                      className="accent-primary-main"
-                    />
-                    <span className="text-sm text-text-primary">
-                      {mode === "auto" ? "Auto-publish" : "Manual Review (open in designer)"}
-                    </span>
-                  </label>
-                ))}
               </div>
             </div>
 
@@ -2275,27 +2205,6 @@ export default function FanpageEditPage() {
             </p>
 
             <div>
-              <label className="label">Pinterest Publish Mode</label>
-              <div className="flex gap-4">
-                {(["manual_review", "auto"] as const).map((mode) => (
-                  <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="pinterest-publish-mode"
-                      value={mode}
-                      checked={form.pinterest_publish_mode === mode}
-                      onChange={() => set("pinterest_publish_mode", mode)}
-                      className="accent-primary-main"
-                    />
-                    <span className="text-sm text-text-primary">
-                      {mode === "auto" ? "Auto-publish" : "Manual Review (approve in Queue)"}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div>
               <label className="label">Pinterest content focus (what to search for and pick)</label>
               <textarea
                 className="input w-full text-sm"
@@ -2547,26 +2456,6 @@ export default function FanpageEditPage() {
                   value={(form.facebook_photo_daily_count as number | undefined) ?? 2}
                   onChange={(e) => set("facebook_photo_daily_count", parseInt(e.target.value || "0"))}
                 />
-              </div>
-              <div>
-                <label className="label">Facebook Photo Publish Mode</label>
-                <div className="flex gap-4 pt-2">
-                  {(["manual_review", "auto"] as const).map((mode) => (
-                    <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="facebook-photo-publish-mode"
-                        value={mode}
-                        checked={form.facebook_photo_publish_mode === mode}
-                        onChange={() => set("facebook_photo_publish_mode", mode)}
-                        className="accent-primary-main"
-                      />
-                      <span className="text-sm text-text-primary">
-                        {mode === "auto" ? "Auto-publish" : "Manual Review"}
-                      </span>
-                    </label>
-                  ))}
-                </div>
               </div>
             </div>
             <div>

@@ -81,23 +81,6 @@ function YtClipSettings({ form, set }: Pick<Props, "form" | "set">) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className="label">Clip Publish Mode</label>
-          <div className="flex gap-4 pt-2">
-            {(["manual_review", "auto"] as const).map((mode) => (
-              <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="yt-clip-publish-mode"
-                  checked={form.yt_clip_publish_mode === mode}
-                  onChange={() => set("yt_clip_publish_mode", mode)}
-                  className="accent-primary-main"
-                />
-                <span className="text-sm text-text-primary">{mode === "auto" ? "Auto-publish" : "Manual Review"}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        <div>
           <label className="label">Shots without a face (racing, onboard, crowds)</label>
           <div className="flex gap-4 pt-2">
             {([["smart", "Smart zoom — fill 9:16"], ["fit", "Fit whole frame (blur)"]] as const).map(([value, text]) => (

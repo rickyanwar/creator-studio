@@ -16,6 +16,17 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
   const firstKey = selectedTemplates[0] ?? form.ai_video_template;
   const template = templates.find((item) => item.key === firstKey);
   const clips = form.ai_video_clips ?? template?.default_clips ?? 2;
+  const secs = template?.clip_seconds ?? 10;
+  const credits = template?.credits_per_clip ?? 15;
+
+  const selectedTemplateObjs = selectedTemplates
+    .map((key) => templates.find((t) => t.key === key))
+    .filter((t): t is AiVideoTemplate => Boolean(t));
+  const unionOptions = Array.from(
+    new Set(selectedTemplateObjs.flatMap((t) => t.clip_options ?? []))
+  ).sort((a, b) => a - b);
+  const clipOptions = unionOptions.length > 0 ? unionOptions : (template?.clip_options ?? [2, 3]);
+
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
@@ -84,17 +95,6 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="label">Publish Mode</label>
-              <div className="flex gap-4 pt-2">
-                {(["manual_review", "auto"] as const).map((mode) => (
-                  <label key={mode} className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
-                    <input type="radio" name="ai-video-publish-mode" checked={form.ai_video_publish_mode === mode} onChange={() => set("ai_video_publish_mode", mode)} className="accent-primary-main" />
-                    {mode === "auto" ? "Auto-publish" : "Manual Review"}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
               <label className="label">Videos per day</label>
               <input type="number" min={0} max={10} className="input w-full" value={form.ai_video_daily_count ?? 1} onChange={(e) => set("ai_video_daily_count", Number(e.target.value))} />
             </div>
@@ -134,10 +134,17 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
               </div>
             </div>
             <div>
-              <label className="label">Default clips</label>
+              <label className="label">Video length</label>
               <select className="input w-full" value={clips} onChange={(e) => set("ai_video_clips", Number(e.target.value))}>
-                {(template?.clip_options ?? [2, 3]).map((count) => <option key={count} value={count}>{count}</option>)}
+                {clipOptions.map((count) => (
+                  <option key={count} value={count}>
+                    {`${count * secs} seconds · ${count} clips · ${count * credits} credits`}
+                  </option>
+                ))}
               </select>
+              <p className="text-[11px] text-text-secondary mt-1">
+                Flow makes {secs}-second clips and joins them. Templates that cannot make this length use their own default.
+              </p>
             </div>
             <div>
               <label className="label">Narrator voice</label>
