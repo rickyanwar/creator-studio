@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     # Frontend + backend rebuilds on the VPS can exceed 10 min (and 15 min for
     # the job) — two deploys were cut off mid-way on 2026-09-25/26.
-    # 2026-10-13: backend image built once (was 6×); builds run one at a time with per-build caps (api 15m, others 8m) so a hung build fails fast.
-    timeout-minutes: 35
+    # 2026-10-13: backend image built once (was 6×); builds run one at a time with per-build caps (api 25m, others 8m) so a hung build fails fast.
+    timeout-minutes: 50
 
     steps:
       - name: Checkout code
@@ -25,7 +25,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          command_timeout: 30m
+          command_timeout: 45m
           script: |
             set -e
 
@@ -34,9 +34,9 @@ jobs:
             OLD_HEAD=$(git rev-parse HEAD)
             git pull origin main
 
-            echo "── Rebuilding images (one at a time; api max 15 min, others 8 min) ──"
+            echo "── Rebuilding images (one at a time; api max 25 min, others 8 min) ──"
             for svc in api renderer frontend; do
-              case "$svc" in api) cap=15m ;; *) cap=8m ;; esac
+              case "$svc" in api) cap=25m ;; *) cap=8m ;; esac
               echo "· building $svc (max $cap)"
               if ! timeout "$cap" docker compose -f docker-compose.server.yml build "$svc"; then
                 echo "✗ build of $svc failed or took longer than $cap — nothing was restarted"
@@ -65,8 +65,8 @@ jobs:
               echo "gflow_worker unchanged — no restart"
             fi
 
-            echo "── Pruning dangling images (build cache kept, max 20 GB) ──"
+            echo "── Pruning dangling images + build cache unused for 7 days ──"
             docker image prune -f
-            docker builder prune -f --max-used-space 20GB
+            docker builder prune -f --filter until=168h
 
             echo "✓ Deploy complete"
