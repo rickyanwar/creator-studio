@@ -49,12 +49,15 @@ def _old(now, days=15):
     return now - timedelta(days=days)
 
 
-def _publish_job(session, fanpage, *, status, published_at, video_path, thumbnail_path):
+def _publish_job(session, fanpage, *, status, published_at, video_path, thumbnail_path, updated_at=None):
+    if updated_at is None:
+        updated_at = published_at
     job = PublishJob(
         fanpage_id=fanpage.id,
         content_type=ContentType.ai_video,
         status=status,
         published_at=published_at,
+        updated_at=updated_at,
         video_path=str(video_path) if video_path else None,
         video_url="https://example/video.mp4" if video_path else None,
         video_thumbnail_path=str(thumbnail_path) if thumbnail_path else None,
@@ -63,6 +66,10 @@ def _publish_job(session, fanpage, *, status, published_at, video_path, thumbnai
     )
     session.add(job)
     session.flush()
+    if updated_at is not None:
+        session.query(PublishJob).filter(PublishJob.id == job.id).update(
+            {"updated_at": updated_at}, synchronize_session=False
+        )
     return job
 
 
@@ -132,7 +139,7 @@ def test_young_and_pending_publish_jobs_are_untouched(db, tmp_path, monkeypatch)
     ai_dir.mkdir(parents=True)
     fanpage = _fanpage(session, fanpage_ids)
     ids = []
-    for status, name, age in ((PublishJobStatus.published, "young", 13), (PublishJobStatus.pending_review, "review", 15), (PublishJobStatus.pending_publish, "pending", 15)):
+    for status, name, age in ((PublishJobStatus.published, "young", 3), (PublishJobStatus.pending_review, "review", 15), (PublishJobStatus.pending_publish, "pending", 15)):
         path = ai_dir / f"{name}.mp4"
         path.write_bytes(b"video")
         job = _publish_job(session, fanpage, status=status, published_at=_old(datetime.now(), age), video_path=path, thumbnail_path=None)
@@ -145,6 +152,66 @@ def test_young_and_pending_publish_jobs_are_untouched(db, tmp_path, monkeypatch)
     for job_id, path in ids:
         assert path.exists()
         assert verify.get(PublishJob, job_id).video_path == str(path)
+    verify.close()
+
+
+def test_retention_thresholds_published_7d_failed_14d(db, tmp_path, monkeypatch):
+    session, fanpage_ids = db
+    root = tmp_path / "media"
+    ai_dir = root / "ai_videos"
+    ai_dir.mkdir(parents=True)
+    fanpage = _fanpage(session, fanpage_ids)
+    now = datetime.now()
+
+    # published ai_video publish job 8 days ago -> files deleted
+    f_pub_8d = ai_dir / "pub_8d.mp4"
+    f_pub_8d.write_bytes(b"pub_8d")
+    job_pub_8d = _publish_job(session, fanpage, status=PublishJobStatus.published, published_at=_old(now, 8), video_path=f_pub_8d, thumbnail_path=None)
+    v_pub_8d = _video_job(session, fanpage, status="done", finished_at=None, video_path=f_pub_8d, thumbnail_path=None, publish_job_id=job_pub_8d.id)
+
+    # published 3 days ago -> kept
+    f_pub_3d = ai_dir / "pub_3d.mp4"
+    f_pub_3d.write_bytes(b"pub_3d")
+    job_pub_3d = _publish_job(session, fanpage, status=PublishJobStatus.published, published_at=_old(now, 3), video_path=f_pub_3d, thumbnail_path=None)
+    v_pub_3d = _video_job(session, fanpage, status="done", finished_at=None, video_path=f_pub_3d, thumbnail_path=None, publish_job_id=job_pub_3d.id)
+
+    # failed updated 8 days ago -> kept
+    f_fail_8d = ai_dir / "fail_8d.mp4"
+    f_fail_8d.write_bytes(b"fail_8d")
+    job_fail_8d = _publish_job(session, fanpage, status=PublishJobStatus.failed, published_at=None, video_path=f_fail_8d, thumbnail_path=None, updated_at=_old(now, 8))
+    v_fail_8d = _video_job(session, fanpage, status="done", finished_at=None, video_path=f_fail_8d, thumbnail_path=None, publish_job_id=job_fail_8d.id)
+
+    # failed updated 20 days ago -> deleted
+    f_fail_20d = ai_dir / "fail_20d.mp4"
+    f_fail_20d.write_bytes(b"fail_20d")
+    job_fail_20d = _publish_job(session, fanpage, status=PublishJobStatus.failed, published_at=None, video_path=f_fail_20d, thumbnail_path=None, updated_at=_old(now, 20))
+    v_fail_20d = _video_job(session, fanpage, status="done", finished_at=None, video_path=f_fail_20d, thumbnail_path=None, publish_job_id=job_fail_20d.id)
+
+    session.commit()
+
+    _run_cleanup(monkeypatch, root)
+
+    verify = SessionLocal()
+    # published 8 days ago -> files deleted
+    assert not f_pub_8d.exists()
+    assert verify.get(PublishJob, job_pub_8d.id).video_path is None
+    assert verify.get(VideoJob, v_pub_8d.id).video_path is None
+
+    # published 3 days ago -> kept
+    assert f_pub_3d.exists()
+    assert verify.get(PublishJob, job_pub_3d.id).video_path == str(f_pub_3d)
+    assert verify.get(VideoJob, v_pub_3d.id).video_path == str(f_pub_3d)
+
+    # failed updated 8 days ago -> kept
+    assert f_fail_8d.exists()
+    assert verify.get(PublishJob, job_fail_8d.id).video_path == str(f_fail_8d)
+    assert verify.get(VideoJob, v_fail_8d.id).video_path == str(f_fail_8d)
+
+    # failed updated 20 days ago -> deleted
+    assert not f_fail_20d.exists()
+    assert verify.get(PublishJob, job_fail_20d.id).video_path is None
+    assert verify.get(VideoJob, v_fail_20d.id).video_path is None
+
     verify.close()
 
 

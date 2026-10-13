@@ -25,7 +25,10 @@ _STUCK_POST_MAX_AGE_HOURS = 12
 # no reason to reach back this far. 21 days matches the one-time backlog
 # cleanup run the same day (user's choice — freed 5.48GB/1475 files).
 _DESIGN_RETENTION_DAYS = 21
+# Owner 2026-10-14: media of a successful post is deleted 7 days after publish (it is already on Facebook). Failed/skipped media keeps the longer retention for reposts.
+_PUBLISHED_DESIGN_RETENTION_DAYS = 7
 _AI_VIDEO_RETENTION_DAYS = 14
+_PUBLISHED_AI_VIDEO_RETENTION_DAYS = 7
 _THUMB_RETENTION_DAYS = 30
 
 
@@ -112,14 +115,15 @@ def cleanup_old_media():
 @celery_app.task(name="app.tasks.cleanup.cleanup_old_designs")
 def cleanup_old_designs():
     """Delete design_image_path files (Mode 2/3/4/5 rendered PNGs) for
-    terminal jobs older than _DESIGN_RETENTION_DAYS. Age is measured from
-    published_at when the job actually went live, else from updated_at
-    (failed/skipped jobs have no published_at). Clears design_image_path/
-    design_image_url on the row too, so the Queue/History UI doesn't try to
-    load a file that's gone — same pattern cleanup_old_media uses for
-    Post.image_local_paths above."""
+    published jobs older than _PUBLISHED_DESIGN_RETENTION_DAYS (7) days, and failed/skipped jobs older than
+    _DESIGN_RETENTION_DAYS. Age is measured from published_at when the job
+    actually went live, else from updated_at (failed/skipped jobs have no
+    published_at). Clears design_image_path/design_image_url on the row too,
+    so the Queue/History UI doesn't try to load a file that's gone — same
+    pattern cleanup_old_media uses for Post.image_local_paths above."""
     db = SessionLocal()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=_DESIGN_RETENTION_DAYS)).replace(tzinfo=None)
+    published_cutoff = (datetime.now(timezone.utc) - timedelta(days=_PUBLISHED_DESIGN_RETENTION_DAYS)).replace(tzinfo=None)
     cleaned = 0
 
     try:
@@ -134,8 +138,12 @@ def cleanup_old_designs():
                     PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped,
                 ]),
                 or_(
-                    and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= cutoff),
-                    and_(PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
+                    and_(PublishJob.status == PublishJobStatus.published,
+                         PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
+                    and_(PublishJob.status == PublishJobStatus.published,
+                         PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
+                    and_(PublishJob.status.in_([PublishJobStatus.failed, PublishJobStatus.skipped]),
+                         PublishJob.updated_at <= cutoff),
                 ),
             )
             .all()
@@ -153,7 +161,7 @@ def cleanup_old_designs():
 
         db.commit()
         if cleaned:
-            logger.info("Design cleanup: removed %d file(s) older than %d days", cleaned, _DESIGN_RETENTION_DAYS)
+            logger.info("Design cleanup: removed %d file(s) (published > %d day, other > %d days)", cleaned, _PUBLISHED_DESIGN_RETENTION_DAYS, _DESIGN_RETENTION_DAYS)
 
     except Exception as exc:
         db.rollback()
@@ -167,6 +175,7 @@ def cleanup_old_ai_videos():
     """Delete terminal Mode 8 video files older than the retention period."""
     db = SessionLocal()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=_AI_VIDEO_RETENTION_DAYS)).replace(tzinfo=None)
+    published_cutoff = (datetime.now(timezone.utc) - timedelta(days=_PUBLISHED_AI_VIDEO_RETENTION_DAYS)).replace(tzinfo=None)
     cleaned = 0
     media_dir = (Path(settings.storage_base_path) / "ai_videos").resolve()
 
@@ -212,8 +221,12 @@ def cleanup_old_ai_videos():
                     PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped,
                 ]),
                 or_(
-                    and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= cutoff),
-                    and_(PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
+                    and_(PublishJob.status == PublishJobStatus.published,
+                         PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
+                    and_(PublishJob.status == PublishJobStatus.published,
+                         PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
+                    and_(PublishJob.status.in_([PublishJobStatus.failed, PublishJobStatus.skipped]),
+                         PublishJob.updated_at <= cutoff),
                 ),
             )
             .all()
@@ -236,9 +249,11 @@ def cleanup_old_ai_videos():
             elif job.status == "done" and job.publish_job_id:
                 publish_job = db.get(PublishJob, job.publish_job_id)
                 age = None
+                limit = cutoff
                 if publish_job and publish_job.status in terminal_statuses:
                     age = publish_job.published_at or publish_job.updated_at
-                eligible = age is not None and age <= cutoff
+                    limit = published_cutoff if (publish_job.status == PublishJobStatus.published and publish_job.published_at) else cutoff
+                eligible = age is not None and age <= limit
             else:
                 eligible = False
             if not eligible or not delete_paths((job.video_path, job.thumbnail_path)):
@@ -248,7 +263,7 @@ def cleanup_old_ai_videos():
             cleaned += 1
 
         db.commit()
-        logger.info("AI video cleanup: removed %d file(s) older than %d days", cleaned, _AI_VIDEO_RETENTION_DAYS)
+        logger.info("AI video cleanup: removed %d file(s) (published > %d days, other > %d days)", cleaned, _PUBLISHED_AI_VIDEO_RETENTION_DAYS, _AI_VIDEO_RETENTION_DAYS)
     except Exception as exc:
         db.rollback()
         logger.error("AI video cleanup task error: %s", exc, exc_info=True)
