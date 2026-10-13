@@ -26,6 +26,9 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
     new Set(selectedTemplateObjs.flatMap((t) => t.clip_options ?? []))
   ).sort((a, b) => a - b);
   const clipOptions = unionOptions.length > 0 ? unionOptions : (template?.clip_options ?? [2, 3]);
+  const maxClips = clips;
+  const minClips = form.ai_video_clips_min ?? maxClips;
+  const optionText = (n: number) => `${n * secs} seconds · ${n} clips · ${n * credits} credits`;
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -134,16 +137,44 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
               </div>
             </div>
             <div>
-              <label className="label">Video length</label>
-              <select className="input w-full" value={clips} onChange={(e) => set("ai_video_clips", Number(e.target.value))}>
+              <label className="label">Shortest video</label>
+              <select
+                className="input w-full"
+                value={minClips}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  set("ai_video_clips_min", v);
+                  if (v > maxClips) set("ai_video_clips", v);
+                }}
+              >
                 {clipOptions.map((count) => (
                   <option key={count} value={count}>
-                    {`${count * secs} seconds · ${count} clips · ${count * credits} credits`}
+                    {optionText(count)}
                   </option>
                 ))}
               </select>
-              <p className="text-[11px] text-text-secondary mt-1">
-                Flow makes {secs}-second clips and joins them. Templates that cannot make this length use their own default.
+            </div>
+            <div>
+              <label className="label">Longest video</label>
+              <select
+                className="input w-full"
+                value={maxClips}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  set("ai_video_clips", v);
+                  if (v < minClips) set("ai_video_clips_min", v);
+                }}
+              >
+                {clipOptions.map((count) => (
+                  <option key={count} value={count}>
+                    {optionText(count)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <p className="text-[11px] text-text-secondary">
+                Each idea gets its own length inside this range: simple topics use the shortest, topics that need more explanation use the longest. Flow makes {secs}-second clips. Templates that cannot make a length use their own default.
               </p>
             </div>
             <div>

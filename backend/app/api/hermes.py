@@ -54,7 +54,7 @@ def update_memory_hermes(fanpage_id: int, req: MemoryWriteRequest, db: DB, token
         "notes_updated_at": mem.notes_updated_at,
     }
 
-from typing import List
+from typing import Dict, List, Optional
 from fastapi import Query
 from app.api.analytics import get_fanpage_analytics as internal_get_fanpage_analytics
 from app.services import strategy
@@ -64,6 +64,8 @@ from app.models.ai_video import VideoIdea, VideoJob
 from app.services import ai_video_ideas
 from app.services.video_templates import (
     allowed_video_templates,
+    clip_choices,
+    get_template,
     list_templates,
     liveries,
     narrator_presets,
@@ -88,12 +90,21 @@ class FanpageHermesResponse(BaseModel):
     ai_video_template: Optional[str]
     ai_video_templates: List[str]
     ai_video_narrator: Optional[str]
+    ai_video_clips: int
+    ai_video_clips_min: Optional[int]
+    ai_video_clip_choices: Dict[str, List[int]]
 
 @router.get("/fanpages", response_model=List[FanpageHermesResponse])
 def get_fanpages_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("read"))):
     fanpages = db.query(TargetFanpage).all()
     res = []
     for f in fanpages:
+        clip_choices_map = {}
+        for key in allowed_video_templates(f):
+            try:
+                clip_choices_map[key] = clip_choices(f, get_template(key))
+            except ValueError:
+                continue
         res.append({
             "id": f.id,
             "name": f.name,
@@ -111,6 +122,9 @@ def get_fanpages_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("
             "ai_video_template": f.ai_video_template,
             "ai_video_templates": allowed_video_templates(f),
             "ai_video_narrator": f.ai_video_narrator,
+            "ai_video_clips": f.ai_video_clips,
+            "ai_video_clips_min": f.ai_video_clips_min,
+            "ai_video_clip_choices": clip_choices_map,
         })
     return res
 

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from app.models.ai_video import VideoIdea
 from app.services import news_copywriter
 from app.services.ai_video_ideas import ConflictError, LimitExceededError, create_idea
-from app.services.video_templates import allowed_video_templates, get_template, list_templates
+from app.services.video_templates import allowed_video_templates, clip_choices, get_template, list_templates
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,8 @@ def build_idea_prompt(fanpage, templates, avoid_topics, count) -> str:
         {
             "template_key": t.key,
             "name": t.name,
+            "allowed_clips": clip_choices(fanpage, t),
+            "clip_seconds": t.clip_seconds,
             "rules": t.raw.get("rules", []),
             "example_topics": _topic_ideas(t, niche),
         }
@@ -76,15 +78,16 @@ Available templates:
 
 Guidelines:
 - Pick the template that fits each idea best; spread ideas across templates when more than one template is listed.
+- Pick clips for each idea from that template's allowed_clips: the smallest number for a simple single-idea topic, the largest when the topic needs more explanation (more parts or steps).
 - Topics must be evergreen, technical and visual (things a 3D x-ray / exploded-view or telemetry animation can show); never name real teams, sponsors or brands; do not invent numbers, dates or race results (there is no research step, so keep claims general).
 - Never repeat or paraphrase any of these topics: {json.dumps(avoid_topics)}.
 - Write topic and angle in English (the page language is applied later, when the script is written).
 - Score each idea honestly 0-100 for how well it fits the template and this page's audience; rationale = one or two sentences why.
-- Return ONLY strict JSON, no markdown: {{"ideas": [{{"template_key": "...", "topic": "<= 120 chars", "angle": "<= 400 chars", "score": 0-100, "rationale": "<= 400 chars"}}]}}
+- Return ONLY strict JSON, no markdown: {{"ideas": [{{"template_key": "...", "topic": "<= 120 chars", "angle": "<= 400 chars", "clips": <int>, "score": 0-100, "rationale": "<= 400 chars"}}]}}
 """
 
 
-def parse_ideas(raw: str, allowed_keys: set[str], count: int) -> list[dict]:
+def parse_ideas(raw: str, allowed_clips: dict[str, list[int]], count: int) -> list[dict]:
     cleaned = raw.strip()
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
     try:
@@ -106,7 +109,7 @@ def parse_ideas(raw: str, allowed_keys: set[str], count: int) -> list[dict]:
         if not isinstance(item, dict):
             continue
         t_key = item.get("template_key")
-        if t_key not in allowed_keys:
+        if t_key not in allowed_clips:
             continue
         topic = item.get("topic")
         if not isinstance(topic, str):
@@ -127,13 +130,18 @@ def parse_ideas(raw: str, allowed_keys: set[str], count: int) -> list[dict]:
                 continue
             angle = angle[:2000]
 
-        kept.append({
+        entry = {
             "template_key": t_key,
             "topic": topic,
             "angle": angle,
             "score": score,
             "rationale": rationale,
-        })
+        }
+        clips = item.get("clips")
+        if not isinstance(clips, bool) and isinstance(clips, int) and clips in allowed_clips[t_key]:
+            entry["clips"] = clips
+
+        kept.append(entry)
         if len(kept) == count:
             break
 
@@ -153,10 +161,10 @@ def write_ideas(db, fanpage, count: int) -> int:
         return 0
     avoid = recent_topics(db)
     prompt = build_idea_prompt(fanpage, templates, avoid, count)
-    keys = {t.key for t in templates}
+    allowed = {t.key: clip_choices(fanpage, t) for t in templates}
     ideas, _provider = news_copywriter._generate_with_fallback(
         prompt,
-        lambda raw: parse_ideas(raw, keys, count),
+        lambda raw: parse_ideas(raw, allowed, count),
         context="ai_video_idea_writer",
         fanpage_id=fanpage.id,
     )

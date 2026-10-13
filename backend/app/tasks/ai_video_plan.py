@@ -7,7 +7,7 @@ from app.models.ai_video import VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_fill import fill_idea
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
-from app.services.video_templates import allowed_video_templates, credits_estimate, get_template
+from app.services.video_templates import allowed_video_templates, credits_estimate, get_template, pick_clips
 from app.tasks.celery_app import celery_app
 from app.tasks.publisher import _fanpage_tz
 
@@ -75,7 +75,8 @@ def plan_ai_videos():
             )
 
             template = get_template(idea.template_key)
-            clips = idea.clips if idea.clips in template.clip_options else fanpage.ai_video_clips if fanpage.ai_video_clips in template.clip_options else template.default_clips
+            # The owner's own per-idea length wins; AI/Hermes ideas stay inside the fanpage range.
+            clips = idea.clips if idea.source == "owner" and idea.clips in template.clip_options else pick_clips(idea.clips, fanpage, template)
             try:
                 variables, title, caption, rendered, _provider = fill_idea(db, idea, fanpage, clips)
                 job = VideoJob(fanpage_id=fanpage.id, idea_id=idea.id, template_key=template.key, title=title, caption=caption, model=template.model, aspect=template.aspect, clip_seconds=template.clip_seconds, clips=rendered, credits_per_clip=template.credits_per_clip, credits_estimate=credits_estimate(template, clips), status="queued")

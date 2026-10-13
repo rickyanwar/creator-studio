@@ -113,6 +113,7 @@ class FanpageBase(BaseModel):
     ai_video_template: Optional[str] = None
     ai_video_templates: Optional[list[str]] = None
     ai_video_clips: int = Field(2, ge=1, le=6)
+    ai_video_clips_min: Optional[int] = Field(None, ge=1, le=6)
     ai_video_narrator: Optional[str] = None
     ai_video_title_max_chars: int = Field(100, ge=20, le=5000)
     ai_video_description_max_chars: int = Field(600, ge=20, le=5000)
@@ -152,6 +153,12 @@ class FanpageBase(BaseModel):
                 self.ai_video_template = self.ai_video_templates[0]
             else:
                 self.ai_video_template = None
+        return self
+
+    @model_validator(mode="after")
+    def validate_ai_video_clips_range(self):
+        if self.ai_video_clips_min is not None and self.ai_video_clips_min > self.ai_video_clips:
+            raise ValueError("ai_video_clips_min must be <= ai_video_clips")
         return self
 
     @field_validator("ai_video_narrator")

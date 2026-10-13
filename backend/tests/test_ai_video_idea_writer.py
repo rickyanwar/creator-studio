@@ -106,7 +106,7 @@ def test_parse_ideas_filtering_and_capping():
         ]
     })
 
-    result = parse_ideas(payload, allowed_keys={"motorsport_tech_explainer"}, count=2)
+    result = parse_ideas(payload, allowed_clips={"motorsport_tech_explainer": [2, 3]}, count=2)
     assert len(result) == 2
     assert result[0]["topic"] == "Valid Topic One"
     assert result[0]["score"] == 85
@@ -130,20 +130,20 @@ def test_parse_ideas_fences_and_errors():
       ]
     }
     ```"""
-    res = parse_ideas(fenced, allowed_keys={"motorsport_tech_explainer"}, count=1)
+    res = parse_ideas(fenced, allowed_clips={"motorsport_tech_explainer": [2, 3]}, count=1)
     assert len(res) == 1
     assert res[0]["topic"] == "Fenced Idea Topic"
 
     with pytest.raises(ValueError, match="invalid JSON"):
-        parse_ideas("not a valid json at all", allowed_keys={"motorsport_tech_explainer"}, count=1)
+        parse_ideas("not a valid json at all", allowed_clips={"motorsport_tech_explainer": [2, 3]}, count=1)
 
     with pytest.raises(ValueError, match="missing ideas list"):
-        parse_ideas('{"something_else": []}', allowed_keys={"motorsport_tech_explainer"}, count=1)
+        parse_ideas('{"something_else": []}', allowed_clips={"motorsport_tech_explainer": [2, 3]}, count=1)
 
     with pytest.raises(ValueError, match="no valid ideas"):
         parse_ideas(
             json.dumps({"ideas": [{"template_key": "wrong_key", "topic": "Valid Topic", "score": 80, "rationale": "R"}]}),
-            allowed_keys={"motorsport_tech_explainer"},
+            allowed_clips={"motorsport_tech_explainer": [2, 3]},
             count=1,
         )
 

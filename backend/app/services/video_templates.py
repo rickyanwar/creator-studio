@@ -243,3 +243,23 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
 
 def credits_estimate(t: VideoTemplate, clips: int) -> int:
     return clips * t.credits_per_clip
+
+
+def clip_choices(fanpage, t: VideoTemplate) -> list[int]:
+    """Clip counts allowed for this fanpage on template t, ascending (never empty)."""
+    hi = getattr(fanpage, "ai_video_clips", None)
+    hi = hi if hi in t.clip_options else t.default_clips
+    lo = getattr(fanpage, "ai_video_clips_min", None)
+    lo = hi if lo is None else lo
+    lo, hi = min(lo, hi), max(lo, hi)
+    return sorted(c for c in t.clip_options if lo <= c <= hi) or [t.default_clips]
+
+
+def pick_clips(idea_clips, fanpage, t: VideoTemplate) -> int:
+    choices = clip_choices(fanpage, t)
+    if idea_clips in choices:
+        return idea_clips
+    if idea_clips is None:
+        return choices[-1]
+    return min(choices, key=lambda c: (abs(c - idea_clips), -c))
+
