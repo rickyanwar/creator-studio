@@ -285,12 +285,15 @@ window.renderTemplate = function renderTemplate(args) {
       return tpl;
     };
 
-    // Ensure Montserrat weights 700 and 800 are fully loaded before layout calculations
+    // Ensure Montserrat weights 700, 800, and 900 are fully loaded before layout calculations
     const ensureFonts = (typeof document !== "undefined" && document.fonts)
       ? Promise.all([
           document.fonts.load("700 44px Montserrat"),
+          document.fonts.load("800 64px Montserrat"),
           document.fonts.load("800 76px Montserrat"),
           document.fonts.load("800 78px Montserrat"),
+          document.fonts.load("900 64px Montserrat"),
+          document.fonts.load("900 76px Montserrat"),
         ])
       : Promise.resolve();
 
@@ -469,6 +472,7 @@ window.renderTemplate = function renderTemplate(args) {
             }
             titleObj.initDimensions();
             hlLayer.initDimensions();
+            hlLayer.followsTitle = true;
             // Insert directly above titleObj in canvas stacking order
             const titleIdx = canvas.getObjects().indexOf(titleObj);
             canvas.insertAt(hlLayer, titleIdx + 1, false);
@@ -518,6 +522,8 @@ window.renderTemplate = function renderTemplate(args) {
 
             const leftCopy = makeChromaCopy(-px, leftColor);
             const rightCopy = makeChromaCopy(px, rightColor);
+            leftCopy.followsTitle = true;
+            rightCopy.followsTitle = true;
 
             // Insert both copies directly BELOW the base white layer
             const curIdx = canvas.getObjects().indexOf(titleObj);
@@ -691,11 +697,9 @@ window.renderTemplate = function renderTemplate(args) {
           }
           titleObj.set("top", titleObj.top - subDeltaY);
 
-          // Also move title highlight layer and chroma copies if present
-          for (const obj of objects) {
-            if (obj !== titleObj && (obj.text === titleObj.text) && Math.abs(obj.top - (titleObj.top + subDeltaY)) < 2) {
-              obj.set("top", obj.top - subDeltaY);
-            }
+          // Move highlight layer and chroma copies that follow the title
+          for (const obj of canvas.getObjects()) {
+            if (obj.followsTitle) obj.set("top", obj.top - subDeltaY);
           }
 
           // Re-anchor label and labelBadge if they sit above title

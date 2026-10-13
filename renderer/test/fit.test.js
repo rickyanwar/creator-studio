@@ -878,3 +878,102 @@ test("Extra: subtitle wraps up to 2 lines, title moves up by same delta, badge c
   assert.ok(longRun.badgeTop <= longRun.subTop, "Badge top is at or above subtitle top");
 });
 
+test("Montserrat weights 700, 800, and 900 preload successfully", async () => {
+  const result = await runInPage(async () => {
+    return {
+      w700: document.fonts.check("700 44px Montserrat"),
+      w800: document.fonts.check("800 76px Montserrat"),
+      w900: document.fonts.check("900 64px Montserrat"),
+    };
+  });
+
+  assert.ok(result.w700, "Montserrat weight 700 is loaded");
+  assert.ok(result.w800, "Montserrat weight 800 is loaded");
+  assert.ok(result.w900, "Montserrat weight 900 is loaded");
+});
+
+test("ghost fix: chroma copies and highlight layer follow title after subDeltaY move", async () => {
+  const result = await runInPage(async () => {
+    const tpl = {
+      version: "5.3.0",
+      objects: [
+        {
+          type: "textbox",
+          placeholderRole: "title",
+          left: 70,
+          top: 946,
+          width: 940,
+          height: 358,
+          text: "Headline",
+          fontSize: 76,
+          fontFamily: "Montserrat",
+          fontWeight: 800,
+          textAlign: "center",
+          lineHeight: 0.9,
+          fill: "#FFFFFF",
+          titleAnchorBottom: 1304,
+          titleGrowMaxHeight: 358,
+          titleMinReadableFontSize: 50,
+          titleAccentColor: "#E8362B",
+          titleHighlightGlow: {
+            color: "rgba(232,54,43,0.40)",
+            blur: 10,
+          },
+          titleChromaShift: {
+            px: 2,
+            left: "rgba(255,40,40,0.55)",
+            right: "rgba(60,255,255,0.55)",
+          },
+        },
+        {
+          type: "textbox",
+          placeholderRole: "subtitle",
+          left: 90,
+          top: 1310,
+          width: 400,
+          height: 30,
+          text: "SUBTITLE",
+          fontSize: 28,
+          subtitleMinFontSize: 22,
+          subtitleMaxLines: 2,
+        },
+      ],
+    };
+
+    let titleTop = null;
+    const followers = [];
+
+    const origRender = fabric.StaticCanvas.prototype.renderAll;
+    fabric.StaticCanvas.prototype.renderAll = function () {
+      const objs = this.getObjects();
+      const t = objs.find((o) => o.placeholderRole === "title");
+      if (t) {
+        titleTop = t.top;
+        for (const o of objs) {
+          if (o.followsTitle) {
+            followers.push({ top: o.top, left: o.left });
+          }
+        }
+      }
+      return origRender.apply(this, arguments);
+    };
+
+    await window.renderTemplate({
+      templateJson: tpl,
+      width: 1080,
+      height: 1350,
+      title: "Bagnaia crashes out: **No feeling, no grip**",
+      subtitle: "A very long subtitle that should wrap to two lines easily here",
+    });
+
+    fabric.StaticCanvas.prototype.renderAll = origRender;
+    return { titleTop, followers };
+  });
+
+  assert.ok(result.titleTop !== null, "Title exists");
+  assert.ok(result.followers.length >= 2, `At least 2 followers found (got ${result.followers.length})`);
+  for (const f of result.followers) {
+    assert.equal(f.top, result.titleTop, `Follower top ${f.top} matches title top ${result.titleTop}`);
+  }
+});
+
