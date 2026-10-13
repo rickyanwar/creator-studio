@@ -108,6 +108,17 @@ def test_class_by_name_and_json_parser():
     assert last_json('log {bad}\n{"a": {"nested": 1}}\n{"status": "ok", "x": {"y": 2}}') == {"status": "ok", "x": {"y": 2}}
 
 
+@pytest.mark.parametrize(
+    "msg,reason",
+    [
+        ("migrated host: ... most likely Flow's one-time upload-terms confirmation (host=migrated)", "upload_terms"),
+        ("file too large", "other"),
+    ],
+)
+def test_upload_terms_classification(msg, reason):
+    assert classify(GflowResult(False, {}, 27, "MediaUploadRejectedError", False, msg)) == reason
+
+
 def test_cancel_before_generation(cfg, studio, runner):
     runner.apply_cancels([1])
     runner.run_job(payload())

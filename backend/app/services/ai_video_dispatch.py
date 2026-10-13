@@ -104,7 +104,8 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
         account.email = acc_data.get("email")
         authenticated = bool(acc_data.get("authenticated", False))
         account.authenticated = authenticated
-        account.last_error = acc_data.get("error")
+        if account.status != "needs_terms":
+            account.last_error = acc_data.get("error")
         account.last_seen_at = now
 
         credits = acc_data.get("credits")
@@ -114,7 +115,7 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
 
         error_class = acc_data.get("error_class")
         if authenticated:
-            account.status = "ok"
+            account.status = "needs_terms" if account.status == "needs_terms" else "ok"
         elif error_class == "FlowAccessUnavailableError":
             account.status = "no_access"
         else:
@@ -354,7 +355,7 @@ def record_failure(
 ):
     """
     Record failure event from worker.
-    reasons: transient, out_of_credits, auth, policy, lost_checkpoint, other.
+    reasons: transient, out_of_credits, auth, policy, lost_checkpoint, upload_terms, other.
     """
     if job.worker_id != worker_id or job.status not in ("claimed", "generating") or generation != job.generation:
         raise ConflictError(
@@ -420,6 +421,12 @@ def record_failure(
         _requeue()
 
     elif reason == "lost_checkpoint":
+        _restart()
+
+    elif reason == "upload_terms":
+        if account:
+            account.status = "needs_terms"
+            account.last_error = message[:2000] if message else "Flow upload terms not accepted"
         _restart()
 
     elif reason in ("transient", "other"):

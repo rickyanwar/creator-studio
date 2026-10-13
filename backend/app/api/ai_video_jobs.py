@@ -21,6 +21,7 @@ router = APIRouter(prefix="/ai-video", tags=["ai_video_admin"])
 class AccountUpdate(BaseModel):
     enabled: Optional[bool] = None
     label: Optional[str] = Field(None, max_length=100)
+    terms_accepted: Optional[bool] = None
 
 
 class OverlayPreviewRequest(BaseModel):
@@ -206,6 +207,9 @@ def update_account(id: int, req: AccountUpdate, db: DB, user: CurrentUser):
         account.enabled = req.enabled
     if req.label is not None:
         account.label = req.label
+    if req.terms_accepted and account.status == "needs_terms":
+        account.status = "ok"
+        account.last_error = None
 
     db.commit()
     db.refresh(account)

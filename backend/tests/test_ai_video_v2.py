@@ -988,3 +988,127 @@ def test_http_auth_and_endpoints(client, db_session, test_fanpage, worker_token,
     assert len(workers) >= 1
     assert workers[0]["worker_id"] == "w1"
     assert workers[0]["online"] is True
+
+
+def test_upload_terms_marks_account_and_restarts(db_session, test_fanpage):
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    db_session.add(acc)
+    db_session.commit()
+
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job Upload Terms",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}, {"index": 2}],
+        credits_per_clip=15,
+        credits_estimate=30,
+        status="claimed",
+        account_id=acc.id,
+        worker_id="w1",
+        generation=1,
+        clips_done=[{"index": 1, "media_id": "m1"}],
+        clip_attempts=0,
+        restarts=0,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    ai_video_dispatch.record_failure(
+        db_session,
+        job,
+        "w1",
+        1,
+        "upload_terms",
+        "migrated host: ... most likely Flow's one-time upload-terms confirmation (host=migrated)",
+    )
+    db_session.refresh(acc)
+    db_session.refresh(job)
+
+    assert acc.status == "needs_terms"
+    assert "upload-terms" in (acc.last_error or "")
+    assert job.status == "queued"
+    assert job.account_id is None
+    assert job.restarts == 1
+    assert job.clips_done == []
+
+
+def test_heartbeat_keeps_needs_terms(db_session):
+    acc_terms = GflowAccount(
+        worker_id="w1",
+        profile="p_terms",
+        authenticated=True,
+        status="needs_terms",
+        last_error="Flow upload terms not accepted",
+        credits=50,
+    )
+    acc_auth = GflowAccount(
+        worker_id="w1",
+        profile="p_auth",
+        authenticated=False,
+        status="auth_error",
+        last_error="Session expired",
+        credits=50,
+    )
+    db_session.add_all([acc_terms, acc_auth])
+    db_session.commit()
+
+    payload = {
+        "accounts": [
+            {
+                "profile": "p_terms",
+                "authenticated": True,
+                "credits": 50,
+                "error": "some transient warning",
+            },
+            {
+                "profile": "p_auth",
+                "authenticated": True,
+                "credits": 50,
+            },
+        ],
+    }
+    ai_video_dispatch.record_heartbeat(db_session, "w1", payload)
+    db_session.refresh(acc_terms)
+    db_session.refresh(acc_auth)
+
+    assert acc_terms.status == "needs_terms"
+    assert acc_terms.last_error == "Flow upload terms not accepted"
+    assert acc_auth.status == "ok"
+
+
+def test_claim_skips_needs_terms_account(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True, reserve=0)
+    acc = GflowAccount(
+        worker_id="w1",
+        profile="p1",
+        authenticated=True,
+        status="needs_terms",
+        credits=100,
+    )
+    db_session.add(acc)
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 1",
+        caption="Cap 1",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    candidates = ai_video_dispatch.get_candidate_accounts(db_session, "w1")
+    assert acc not in candidates
+    assert candidates == []
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed is None

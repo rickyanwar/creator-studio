@@ -41,6 +41,8 @@ def last_json(stdout):
 
 
 def classify(result):
+    if result.error_class == "MediaUploadRejectedError" and "upload-terms" in (result.message or ""):
+        return "upload_terms"
     if result.exit_code == 37 or result.error_class == "InsufficientCreditsError":
         return "out_of_credits"
     if result.exit_code in (8, 12, 14, 38, 39):
