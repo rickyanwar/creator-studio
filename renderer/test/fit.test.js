@@ -977,3 +977,96 @@ test("ghost fix: chroma copies and highlight layer follow title after subDeltaY 
   }
 });
 
+test("label badge treats labelFixedWidth as minimum width", async () => {
+  const result = await runInPage(async () => {
+    const tpl = {
+      version: "5.3.0",
+      objects: [
+        {
+          type: "rect",
+          placeholderRole: "labelBadge",
+          left: 378,
+          top: 800,
+          width: 324,
+          height: 73,
+          labelRadius: 16,
+          labelKeepFill: true,
+          labelFixedHeight: 73,
+          labelFixedWidth: 324,
+          fill: "linear-mock",
+        },
+        {
+          type: "textbox",
+          placeholderRole: "label",
+          left: 70,
+          top: 810,
+          width: 940,
+          height: 50,
+          text: "LABEL",
+          fontSize: 44,
+          textAlign: "center",
+          labelGap: 22,
+          labelPadX: 42,
+        },
+        {
+          type: "textbox",
+          placeholderRole: "title",
+          left: 70,
+          top: 1000,
+          width: 940,
+          height: 200,
+          text: "TITLE",
+          fontSize: 76,
+          textAlign: "center",
+          titleAnchorBottom: 1304,
+          titleGrowMaxHeight: 358,
+          titleMinReadableFontSize: 50,
+        },
+      ],
+    };
+
+    const labels = ["BREAKING", "MOTOGP NEWS"];
+    const results = {};
+
+    for (const lbl of labels) {
+      let badgeWidth = 0;
+      let labelTextWidth = 0;
+      const padX = 42;
+
+      const origRender = fabric.StaticCanvas.prototype.renderAll;
+      fabric.StaticCanvas.prototype.renderAll = function () {
+        const objs = this.getObjects();
+        const b = objs.find((o) => o.placeholderRole === "labelBadge");
+        const l = objs.find((o) => o.placeholderRole === "label");
+        if (b && l) {
+          badgeWidth = b.width;
+          labelTextWidth = Math.ceil(l.calcTextWidth());
+        }
+        return origRender.apply(this, arguments);
+      };
+
+      await window.renderTemplate({
+        templateJson: tpl,
+        width: 1080,
+        height: 1350,
+        title: "Short Title",
+        label: lbl,
+      });
+
+      fabric.StaticCanvas.prototype.renderAll = origRender;
+      results[lbl] = { badgeWidth, labelTextWidth, padX };
+    }
+
+    return results;
+  });
+
+  assert.equal(result["BREAKING"].badgeWidth, 324, "BREAKING keeps exact labelFixedWidth 324");
+  const motogp = result["MOTOGP NEWS"];
+  assert.ok(
+    motogp.badgeWidth >= motogp.labelTextWidth + 2 * motogp.padX,
+    `MOTOGP NEWS badge width (${motogp.badgeWidth}) >= text width (${motogp.labelTextWidth}) + 2*padX (${2 * motogp.padX})`
+  );
+  assert.ok(motogp.badgeWidth > 324, `MOTOGP NEWS badge expanded beyond 324 (got ${motogp.badgeWidth})`);
+});
+
+

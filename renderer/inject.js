@@ -583,9 +583,10 @@ window.renderTemplate = function renderTemplate(args) {
             labelObj.initDimensions();
           }
           if (labelBadge) {
+            const naturalW = (textW + 2) + padX * 2;
             const badgeW = typeof labelBadge.labelFixedWidth === "number"
-              ? labelBadge.labelFixedWidth
-              : (textW + 2) + padX * 2;
+              ? Math.max(labelBadge.labelFixedWidth, naturalW)
+              : naturalW;
             const badgeH = typeof labelBadge.labelFixedHeight === "number"
               ? labelBadge.labelFixedHeight
               : labelObj.height + padY * 2;

@@ -46,6 +46,16 @@ def clear_template_text_objects(template_json: dict) -> dict:
                 obj["text"] = ""
     return tj
 
+
+def _speaker_line_fields(template_json, subtitle: str, caption: str) -> tuple[str, str]:
+    """Templates without a subtitle placeholder (GP Quote) show the speaker
+    name in their caption line. Returns (subtitle, caption) for the payload."""
+    from app.services.design_images import find_role_object
+    if (not caption) and subtitle and find_role_object(template_json, "subtitle") is None \
+            and find_role_object(template_json, "caption") is not None:
+        return "", subtitle
+    return subtitle, caption
+
 _RENDER_TIMEOUT = 120.0
 _HEADLINE_NAME_RE = re.compile(
     r"^\s*([A-Z][A-Za-zÀ-ſ.'’-]+(?:\s+[A-Z][A-Za-zÀ-ſ.'’-]+){0,3})\s*:\s+\S"
@@ -476,6 +486,7 @@ def render_design(self, job_id: int):
         # ── Render via Puppeteer + Fabric.js service ──
         title = clean_title_for_render(title)
         template_json = clear_template_text_objects(template_json)
+        sub_text, cap_text = _speaker_line_fields(template_json, job.design_subtitle or "", job.design_caption or "")
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
             json={
@@ -483,8 +494,8 @@ def render_design(self, job_id: int):
                 "width": template.canvas_width,
                 "height": template.canvas_height,
                 "title": title,
-                "subtitle": job.design_subtitle or "",
-                "caption": job.design_caption or "",
+                "subtitle": sub_text,
+                "caption": cap_text,
                 "label": news_badge_text,
                 # No fallback to fanpage name/username — a fanpage that hasn't
                 # set an explicit watermark_text/watermark_image gets NO
@@ -1174,6 +1185,7 @@ def render_facebook_photo(self, job_id: int):
 
         template_json = clear_template_text_objects(template_json)
         d_title = clean_title_for_render(job.design_title or "")
+        sub_text, cap_text = _speaker_line_fields(template_json, subtitle, "")
         resp = httpx.post(
             f"{settings.renderer_url.rstrip('/')}/render",
             json={
@@ -1181,8 +1193,8 @@ def render_facebook_photo(self, job_id: int):
                 "width": template.canvas_width,
                 "height": template.canvas_height,
                 "title": d_title,
-                "subtitle": subtitle,
-                "caption": "",
+                "subtitle": sub_text,
+                "caption": cap_text,
                 "label": label,
                 "watermark": fanpage.watermark_text or "",
                 "watermark_image": watermark_datauri(fanpage),
