@@ -46,6 +46,7 @@ import type { FanpageDetail, IGSourceRef, DiscussionTopicRef, DiscussionContentI
 import { Icon } from "@iconify/react";
 import { YtClipSection } from "@/components/fanpages/YtClipSection";
 import { AiVideoSection } from "@/components/fanpages/AiVideoSection";
+import { SettingsTabs, type SettingsTab, type SettingsTabId } from "@/components/fanpages/SettingsTabs";
 
 
 const TARGET_COUNTRIES = [
@@ -335,6 +336,26 @@ export default function FanpageEditPage() {
   const [form, setForm] = useState<Partial<FanpageDetail>>({});
   const [saving, setSaving] = useState(false);
   const [mode1Saving, setMode1Saving] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTabId>("global");
+
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = window.location.hash.slice(1) as SettingsTabId;
+      const valid: SettingsTabId[] = ["global", "ig", "news", "discussion", "pinterest", "facebook", "youtube", "aivideo", "radar"];
+      if (valid.includes(hash)) {
+        setActiveTab(hash);
+      }
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, []);
+
+  function selectTab(id: SettingsTabId) {
+    setActiveTab(id);
+    history.replaceState(null, "", "#" + id);
+    window.scrollTo({ top: 0 });
+  }
   // Tracks whether the admin has touched any field THIS visit — not "has the
   // form ever been initialized". Bug (2026-08-20): the old flag stayed true
   // forever after the first sync, so once revalidateOnFocus was disabled the
@@ -846,6 +867,18 @@ export default function FanpageEditPage() {
 
   if (!fp) return <div className="text-sm text-text-secondary">Loading…</div>;
 
+  const tabs: SettingsTab[] = [
+    { id: "global", label: "Global" },
+    { id: "ig", label: "Instagram", mode: "IG", enabled: !!form.mode1_ig_repost_enabled },
+    { id: "news", label: "News", mode: "Mode 2", enabled: !!form.mode2_news_content_enabled },
+    { id: "discussion", label: "Discussion", mode: "Mode 4", enabled: !!form.discussion_enabled },
+    { id: "pinterest", label: "Pinterest", mode: "Mode 5", enabled: !!form.pinterest_enabled },
+    { id: "facebook", label: "Facebook", mode: "Mode 6", enabled: !!form.facebook_photo_enabled },
+    { id: "youtube", label: "YouTube Clips", mode: "Mode 7", enabled: !!form.yt_clip_enabled },
+    { id: "aivideo", label: "AI Video", mode: "Mode 8", enabled: !!form.ai_video_enabled },
+    { id: "radar", label: "Viral Radar", enabled: !!form.radar_enabled },
+  ];
+
   return (
     <div className="max-w-3xl space-y-8">
       {/* Header */}
@@ -862,6 +895,10 @@ export default function FanpageEditPage() {
         </div>
       </div>
 
+      <SettingsTabs tabs={tabs} active={activeTab} onChange={selectTab} />
+
+      {activeTab === "global" && (
+        <div role="tabpanel" id="tab-panel-global" aria-labelledby="tab-global" className="space-y-8">
       {/* ── Section: Global settings ─────────────────────── */}
       <section className="card space-y-5">
         <div>
@@ -1036,6 +1073,273 @@ export default function FanpageEditPage() {
         </div>
       </section>
 
+      {/* ── Section: Design Templates (shared by Mode 2 news + IG recreate) ── */}
+      <section className="card space-y-5">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">Design Templates</h2>
+          <p className="text-xs text-text-secondary mt-0.5">
+            One setting per category, used everywhere that category of content is rendered — news designs from
+            Mode 2 (news-scrape) and IG recreate (classified &quot;news&quot;) share the News Template;
+            IG recreate posts classified &quot;quote&quot; use the Quote Template; Mode 4 debate cards use the
+            Discussion Template. If no Discussion Template is set, it falls back to the News Template.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Quote Template</label>
+            <select
+              className="input w-full"
+              value={(form.default_quote_template_id as number | null) ?? ""}
+              onChange={(e) => set("default_quote_template_id", e.target.value ? parseInt(e.target.value) : null)}
+            >
+              <option value="">— shared default (quote-tagged) —</option>
+              {allTemplates.filter((t) => t.category !== "news" && t.category !== "discussion").map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">News Template</label>
+            <select
+              className="input w-full"
+              value={(form.default_news_template_id as number | null) ?? ""}
+              onChange={(e) => set("default_news_template_id", e.target.value ? parseInt(e.target.value) : null)}
+            >
+              <option value="">— shared default (news-tagged) —</option>
+              {allTemplates.filter((t) => t.category !== "quote" && t.category !== "discussion").map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Discussion Template (Mode 4)</label>
+            <select
+              className="input w-full"
+              value={(form.default_discussion_template_id as number | null) ?? ""}
+              onChange={(e) => set("default_discussion_template_id", e.target.value ? parseInt(e.target.value) : null)}
+            >
+              <option value="">— shared default (discussion-tagged) —</option>
+              {allTemplates.filter((t) => t.category === "discussion" || t.category == null).map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="text-[11px] text-text-secondary">
+          Mode 5 (Pinterest) has no separate template setting — it reuses the Quote/News Templates in this section,
+          picked per idea by whether the photo has a detected face (face → Quote, no face → News).
+        </p>
+        <p className="text-[11px] text-text-secondary">
+          Create, edit or tag templates by category in{" "}
+          <a href="/templates" className="text-primary-main hover:underline">Template Designer</a>.
+        </p>
+      </section>
+
+      {/* ── Section: Image Framing (news + IG recreate) ── */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">Image Framing</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <label className="label mb-0">Expand image to fill (auto)</label>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              When a photo would be heavily cropped, fill the frame instead — mirror-extend
+              action shots, blurred fit for close-up faces. Photos that already fit are untouched.
+              Applies to news &amp; IG-recreate designs.
+            </p>
+          </div>
+          <button
+            onClick={() => set("design_expand", !form.design_expand)}
+            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+              form.design_expand ? "bg-primary-main" : "bg-hairline"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                form.design_expand ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
+      </section>
+
+      {/* ── Section 3: Publish Mode ────────────────────── */}
+      <section className="card space-y-3">
+        <h2 className="text-base font-semibold text-text-primary">Publish Mode</h2>
+        <div className="flex gap-4">
+          {(["auto", "manual_review"] as const).map((mode) => (
+            <label key={mode} className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="publish-mode"
+                value={mode}
+                checked={form.publish_mode === mode}
+                onChange={() => set("publish_mode", mode)}
+                className="accent-primary-main"
+              />
+              <div>
+                <span className="text-sm text-text-primary font-medium">
+                  {mode === "auto" ? "Auto-publish" : "Manual Review"}
+                </span>
+                <p className="text-xs text-text-secondary">
+                  {mode === "auto"
+                    ? "Posts go directly to Repliz after AI caption generation."
+                    : "You approve each post before it's published."}
+                </p>
+              </div>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Section: Publish Pacing (anti-bot-detection) ─── */}
+      <section className="card space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">Publish Pacing & Timezone</h2>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Keeps auto-publish looking like a real page admin — a sleep window
+            (no posts at 3am) and a daily cap. Applies to every content mode.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Target Country</label>
+            <select
+              className="input-rect w-full"
+              value={form.target_country || ""}
+              onChange={(e) => handleCountryChange(e.target.value)}
+            >
+              <option value="">— None (Global) —</option>
+              {TARGET_COUNTRIES.map(c => (
+                <option key={c.code} value={c.code}>{c.name}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-text-secondary mt-1">Country for scheduling & target audience.</p>
+          </div>
+          <div>
+            <label className="label">Timezone</label>
+            <input
+              list="iana-zones"
+              className="input-rect w-full"
+              value={tzInput}
+              onChange={(e) => {
+                const val = e.target.value;
+                setTzInput(val);
+                if (isValidTz(val) && val !== form.timezone) {
+                  handleTimezoneChange(val);
+                }
+              }}
+              onBlur={() => {
+                if (!isValidTz(tzInput)) {
+                  setTzInput(form.timezone || "Europe/London");
+                }
+              }}
+              placeholder="e.g. Europe/London"
+            />
+            <datalist id="iana-zones">
+              {IANA_ZONES.map(z => <option key={z} value={z} />)}
+            </datalist>
+            {!isValidTz(tzInput) && (
+              <p className="text-[11px] text-error-main mt-1">Unknown timezone</p>
+            )}
+            <p className="text-[11px] text-text-secondary mt-1">
+              Local time: <TzClock tz={form.timezone || "Europe/London"} />
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-4 mt-2">
+          <div>
+            <label className="label">Sleep window (local time)</label>
+            <div className="flex items-center gap-2">
+              <select
+                className="input-rect py-1.5 text-sm w-20"
+                value={form.publish_sleep_start_hour ?? ""}
+                onChange={(e) => set("publish_sleep_start_hour", e.target.value === "" ? null : Number(e.target.value))}
+              >
+                <option value="">Off</option>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                ))}
+              </select>
+              <span className="text-xs text-text-secondary">to</span>
+              <select
+                className="input-rect py-1.5 text-sm w-20"
+                value={form.publish_sleep_end_hour ?? ""}
+                onChange={(e) => set("publish_sleep_end_hour", e.target.value === "" ? null : Number(e.target.value))}
+                disabled={form.publish_sleep_start_hour === null || form.publish_sleep_start_hour === undefined}
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                ))}
+              </select>
+            </div>
+            {tzMsg && <p className="text-[11px] text-amber-500 mt-1 font-semibold">{tzMsg}</p>}
+          </div>
+          <div>
+            <label className="label">Max posts / day</label>
+            <input
+              type="number"
+              min={1}
+              className="input-rect py-1.5 text-sm w-24"
+              value={form.publish_daily_limit ?? 35}
+              onChange={(e) => set("publish_daily_limit", Math.max(1, Number(e.target.value) || 1))}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ── Section 4: Live Caption Preview ───────────── */}
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-text-primary">Caption Preview</h2>
+        <p className="text-xs text-text-secondary">
+          Test the AI caption with an example original caption.
+        </p>
+        <div>
+          <label className="label">Source IG Username</label>
+          <input
+            className="input-rect"
+            value={previewSrc}
+            onChange={(e) => setPreviewSrc(e.target.value)}
+            placeholder="e.g. natgeo"
+          />
+        </div>
+        <div>
+          <label className="label">Original Caption (from IG)</label>
+          <textarea
+            className="input-rect h-24 resize-none"
+            value={previewOrig}
+            onChange={(e) => setPreviewOrig(e.target.value)}
+            placeholder="Paste an Instagram caption here…"
+          />
+        </div>
+        <button
+          onClick={handlePreview}
+          disabled={previewLoading || !previewSrc || !previewOrig}
+          className="btn-primary"
+        >
+          <Icon icon="solar:magic-stick-3-bold-duotone" width={16} />
+          {previewLoading ? "Generating…" : "Generate Preview"}
+        </button>
+        {previewResult && (
+          <div className="p-4 bg-bg-paper-hover rounded-lg">
+            <p className="text-[11px] text-text-secondary mb-1 font-semibold uppercase tracking-wide">
+              Generated Caption
+            </p>
+            <p className="text-sm text-text-primary whitespace-pre-wrap">{previewResult}</p>
+          </div>
+        )}
+      </section>
+        </div>
+      )}
+
+      {activeTab === "ig" && (
+        <div role="tabpanel" id="tab-panel-ig" aria-labelledby="tab-ig" className="space-y-8">
       {/* ── Section 1: IG Sources ──────────────────────── */}
       {/* ── Section: IG (Instagram) ── */}
       <section className="card space-y-4">
@@ -1222,74 +1526,6 @@ export default function FanpageEditPage() {
         </div>
       </section>
 
-      {/* ── Section: Design Templates (shared by Mode 2 news + IG recreate) ── */}
-      <section className="card space-y-5">
-        <div>
-          <h2 className="text-base font-semibold text-text-primary">Design Templates</h2>
-          <p className="text-xs text-text-secondary mt-0.5">
-            One setting per category, used everywhere that category of content is rendered — news designs from
-            Mode 2 (news-scrape) and IG recreate (classified &quot;news&quot;) share the News Template;
-            IG recreate posts classified &quot;quote&quot; use the Quote Template; Mode 4 debate cards use the
-            Discussion Template. If no Discussion Template is set, it falls back to the News Template.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Quote Template</label>
-            <select
-              className="input w-full"
-              value={(form.default_quote_template_id as number | null) ?? ""}
-              onChange={(e) => set("default_quote_template_id", e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">— shared default (quote-tagged) —</option>
-              {allTemplates.filter((t) => t.category !== "news" && t.category !== "discussion").map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">News Template</label>
-            <select
-              className="input w-full"
-              value={(form.default_news_template_id as number | null) ?? ""}
-              onChange={(e) => set("default_news_template_id", e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">— shared default (news-tagged) —</option>
-              {allTemplates.filter((t) => t.category !== "quote" && t.category !== "discussion").map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">Discussion Template (Mode 4)</label>
-            <select
-              className="input w-full"
-              value={(form.default_discussion_template_id as number | null) ?? ""}
-              onChange={(e) => set("default_discussion_template_id", e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">— shared default (discussion-tagged) —</option>
-              {allTemplates.filter((t) => t.category === "discussion" || t.category == null).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <p className="text-[11px] text-text-secondary">
-          Mode 5 (Pinterest) has no separate template setting — it reuses the Quote/News Templates above,
-          picked per idea by whether the photo has a detected face (face → Quote, no face → News).
-        </p>
-        <p className="text-[11px] text-text-secondary">
-          Create, edit or tag templates by category in{" "}
-          <a href="/templates" className="text-primary-main hover:underline">Template Designer</a>.
-        </p>
-      </section>
-
       {/* ── Section 2: Caption Criteria ────────────────── */}
       <section className="card space-y-5">
         <h2 className="text-base font-semibold text-text-primary">IG Repost — Caption Criteria</h2>
@@ -1337,133 +1573,11 @@ export default function FanpageEditPage() {
           </p>
         </div>
       </section>
-
-      {/* ── Section 3: Publish Mode ────────────────────── */}
-      <section className="card space-y-3">
-        <h2 className="text-base font-semibold text-text-primary">Publish Mode</h2>
-        <div className="flex gap-4">
-          {(["auto", "manual_review"] as const).map((mode) => (
-            <label key={mode} className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="radio"
-                name="publish-mode"
-                value={mode}
-                checked={form.publish_mode === mode}
-                onChange={() => set("publish_mode", mode)}
-                className="accent-primary-main"
-              />
-              <div>
-                <span className="text-sm text-text-primary font-medium">
-                  {mode === "auto" ? "Auto-publish" : "Manual Review"}
-                </span>
-                <p className="text-xs text-text-secondary">
-                  {mode === "auto"
-                    ? "Posts go directly to Repliz after AI caption generation."
-                    : "You approve each post before it's published."}
-                </p>
-              </div>
-            </label>
-          ))}
         </div>
-      </section>
+      )}
 
-      {/* ── Section: Publish Pacing (anti-bot-detection) ─── */}
-      <section className="card space-y-3">
-        <div>
-          <h2 className="text-base font-semibold text-text-primary">Publish Pacing & Timezone</h2>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Keeps auto-publish looking like a real page admin — a sleep window
-            (no posts at 3am) and a daily cap. Applies to every content mode.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Target Country</label>
-            <select
-              className="input-rect w-full"
-              value={form.target_country || ""}
-              onChange={(e) => handleCountryChange(e.target.value)}
-            >
-              <option value="">— None (Global) —</option>
-              {TARGET_COUNTRIES.map(c => (
-                <option key={c.code} value={c.code}>{c.name}</option>
-              ))}
-            </select>
-            <p className="text-[11px] text-text-secondary mt-1">Country for scheduling & target audience.</p>
-          </div>
-          <div>
-            <label className="label">Timezone</label>
-            <input
-              list="iana-zones"
-              className="input-rect w-full"
-              value={tzInput}
-              onChange={(e) => {
-                const val = e.target.value;
-                setTzInput(val);
-                if (isValidTz(val) && val !== form.timezone) {
-                  handleTimezoneChange(val);
-                }
-              }}
-              onBlur={() => {
-                if (!isValidTz(tzInput)) {
-                  setTzInput(form.timezone || "Europe/London");
-                }
-              }}
-              placeholder="e.g. Europe/London"
-            />
-            <datalist id="iana-zones">
-              {IANA_ZONES.map(z => <option key={z} value={z} />)}
-            </datalist>
-            {!isValidTz(tzInput) && (
-              <p className="text-[11px] text-error-main mt-1">Unknown timezone</p>
-            )}
-            <p className="text-[11px] text-text-secondary mt-1">
-              Local time: <TzClock tz={form.timezone || "Europe/London"} />
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-4 mt-2">
-          <div>
-            <label className="label">Sleep window (local time)</label>
-            <div className="flex items-center gap-2">
-              <select
-                className="input-rect py-1.5 text-sm w-20"
-                value={form.publish_sleep_start_hour ?? ""}
-                onChange={(e) => set("publish_sleep_start_hour", e.target.value === "" ? null : Number(e.target.value))}
-              >
-                <option value="">Off</option>
-                {Array.from({ length: 24 }, (_, h) => (
-                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
-                ))}
-              </select>
-              <span className="text-xs text-text-secondary">to</span>
-              <select
-                className="input-rect py-1.5 text-sm w-20"
-                value={form.publish_sleep_end_hour ?? ""}
-                onChange={(e) => set("publish_sleep_end_hour", e.target.value === "" ? null : Number(e.target.value))}
-                disabled={form.publish_sleep_start_hour === null || form.publish_sleep_start_hour === undefined}
-              >
-                {Array.from({ length: 24 }, (_, h) => (
-                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
-                ))}
-              </select>
-            </div>
-            {tzMsg && <p className="text-[11px] text-amber-500 mt-1 font-semibold">{tzMsg}</p>}
-          </div>
-          <div>
-            <label className="label">Max posts / day</label>
-            <input
-              type="number"
-              min={1}
-              className="input-rect py-1.5 text-sm w-24"
-              value={form.publish_daily_limit ?? 35}
-              onChange={(e) => set("publish_daily_limit", Math.max(1, Number(e.target.value) || 1))}
-            />
-          </div>
-        </div>
-      </section>
-
+      {activeTab === "news" && (
+        <div role="tabpanel" id="tab-panel-news" aria-labelledby="tab-news" className="space-y-8">
       {/* ── Section: Mode 2 — News Content ─────────────── */}
       <section className="card space-y-5">
         <div className="flex items-center justify-between">
@@ -1788,206 +1902,11 @@ export default function FanpageEditPage() {
           </>
         )}
       </section>
-
-      {/* ── Section: Viral Radar (Feature 3) ───────── */}
-      <section className="card space-y-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">Viral Radar</h2>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Automatically scrape niche leaders and jump on viral posts early. Recreate/repost them before they peak.
-            </p>
-          </div>
-          <button
-            role="switch"
-            aria-checked={!!form.radar_enabled}
-            aria-label="Enable Viral Radar"
-            onClick={() => set("radar_enabled", !form.radar_enabled)}
-            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-              form.radar_enabled ? "bg-primary-main" : "bg-hairline"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                form.radar_enabled ? "translate-x-5" : ""
-              }`}
-            />
-          </button>
         </div>
+      )}
 
-        {form.radar_enabled && (
-          <div className="space-y-6 pt-2 border-t border-hairline mt-4">
-            {/* Shadow Mode */}
-            <div className="flex items-center justify-between bg-bg-paper p-3 rounded-md border border-hairline">
-              <div>
-                <p className="text-sm font-medium text-text-primary flex items-center gap-2">
-                  <Icon icon="solar:ghost-bold-duotone" width={16} className={form.radar_shadow ? "text-primary-main" : "text-text-secondary"} />
-                  Shadow Mode
-                </p>
-                <p className="text-[11px] text-text-secondary mt-0.5">
-                  Only records what would be posted in the Shadow Report, without actually creating jobs. 
-                  Recommended for 3-5 days when tuning rules.
-                </p>
-              </div>
-              <button
-                role="switch"
-                aria-checked={!!form.radar_shadow}
-                aria-label="Enable Shadow Mode"
-                onClick={() => set("radar_shadow", !form.radar_shadow)}
-                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
-                  form.radar_shadow ? "bg-primary-main" : "bg-hairline"
-                }`}
-              >
-                <span
-                  className={`absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-white transition-transform ${
-                    form.radar_shadow ? "translate-x-4" : ""
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* Radar Niches */}
-            <div className="space-y-2">
-              <label className="label">Radar Niches</label>
-              <p className="text-[11px] text-text-secondary mb-2">
-                This fanpage will receive stories from these niches.
-              </p>
-              {!(radarNichesData && radarNichesData.length > 0) ? (
-                <p className="text-[11px] text-text-secondary italic">No radar niches found yet. Add accounts to Radar first.</p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {radarNichesData.map((n) => {
-                    const active = ((form.radar_niches as string[]) ?? []).includes(n);
-                    return (
-                      <button
-                        key={n}
-                        onClick={() => {
-                          const cur = (form.radar_niches as string[]) ?? [];
-                          set("radar_niches", active ? cur.filter((v) => v !== n) : [...cur, n]);
-                        }}
-                        className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
-                          active
-                            ? "bg-primary-main text-white border-primary-main"
-                            : "border-hairline text-text-secondary hover:border-primary-main hover:text-primary-main"
-                        }`}
-                      >
-                        {n}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Rule Thresholds */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="label">Min Likes (Abs)</label>
-                <input
-                  type="number"
-                  className="input-rect"
-                  value={form.radar_min_likes ?? 1000}
-                  onChange={(e) => set("radar_min_likes", Math.max(1, parseInt(e.target.value) || 1000))}
-                />
-              </div>
-              <div>
-                <label className="label">Confirmed Ratio</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  className="input-rect"
-                  value={form.radar_confirm_ratio ?? 1.5}
-                  onChange={(e) => set("radar_confirm_ratio", Math.max(0.1, parseFloat(e.target.value) || 1.5))}
-                />
-                <p className="text-[10px] text-text-secondary mt-1">x median likes at this age</p>
-              </div>
-              
-              <div>
-                <label className="label">Fast Ratio</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  className="input-rect"
-                  value={form.radar_fast_ratio ?? 2.0}
-                  onChange={(e) => set("radar_fast_ratio", Math.max(0.1, parseFloat(e.target.value) || 2.0))}
-                />
-              </div>
-              <div>
-                <label className="label">Fast Window (min)</label>
-                <input
-                  type="number"
-                  className="input-rect"
-                  value={form.radar_fast_window_min ?? 60}
-                  onChange={(e) => set("radar_fast_window_min", Math.max(1, parseInt(e.target.value) || 60))}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="label">Shelf Life: News (h)</label>
-                <input
-                  type="number"
-                  className="input-rect"
-                  value={form.radar_shelf_news_h ?? 72}
-                  onChange={(e) => set("radar_shelf_news_h", Math.max(1, parseInt(e.target.value) || 72))}
-                />
-              </div>
-              <div>
-                <label className="label">Shelf Life: Evergreen (h)</label>
-                <input
-                  type="number"
-                  className="input-rect"
-                  value={form.radar_shelf_evergreen_h ?? 168}
-                  onChange={(e) => set("radar_shelf_evergreen_h", Math.max(1, parseInt(e.target.value) || 168))}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="flex items-center gap-3 bg-bg-paper p-3 rounded-md border border-hairline">
-                <input
-                  type="checkbox"
-                  id="radar_burst_enabled"
-                  checked={form.radar_burst_enabled ?? true}
-                  onChange={(e) => set("radar_burst_enabled", e.target.checked)}
-                  className="rounded border-hairline text-primary-main focus:ring-primary-main/20"
-                />
-                <label htmlFor="radar_burst_enabled" className="text-sm font-medium text-text-primary cursor-pointer select-none">
-                  Enable Topic Burst
-                  <p className="text-[10px] text-text-secondary mt-0.5">Allow early triggers if many accounts post simultaneously.</p>
-                </label>
-              </div>
-
-              <div>
-                <label className="label">Posts per day limit</label>
-                <input
-                  type="number"
-                  className="input-rect"
-                  value={form.radar_daily_max ?? 3}
-                  onChange={(e) => set("radar_daily_max", Math.max(0, parseInt(e.target.value) || 3))}
-                />
-                <p className="text-[10px] text-text-secondary mt-1">Reactive max, not a target. Shared within publish_daily_limit.</p>
-              </div>
-            </div>
-
-            <div>
-              <label className="label">Visual Engine (Run 2 image edit)</label>
-              <select
-                className="input w-full mt-1"
-                value={(form.visual_engine as string) ?? "off"}
-                onChange={(e) => set("visual_engine", e.target.value)}
-              >
-                <option value="off">Off (don't edit other images)</option>
-                <option value="gflow">Google Flow (gflow)</option>
-                <option value="chatgpt">ChatGPT (cx/gpt-image)</option>
-                <option value="auto">Auto (let AI choose)</option>
-              </select>
-            </div>
-          </div>
-        )}
-      </section>
-
+      {activeTab === "discussion" && (
+        <div role="tabpanel" id="tab-panel-discussion" aria-labelledby="tab-discussion" className="space-y-8">
       {/* ── Section: Mode 4 — Discussion Content ───────── */}
       <section className="card space-y-5">
         <div className="flex items-center justify-between">
@@ -2286,12 +2205,16 @@ export default function FanpageEditPage() {
             </div>
 
             <p className="text-[11px] text-text-secondary">
-              Uses the Discussion Template (set above) and the Mode 2 caption criteria for the Facebook post text.
+              Uses the Discussion Template (Global tab) and the Mode 2 caption criteria for the Facebook post text.
             </p>
           </>
         )}
       </section>
+        </div>
+      )}
 
+      {activeTab === "pinterest" && (
+        <div role="tabpanel" id="tab-panel-pinterest" aria-labelledby="tab-pinterest" className="space-y-8">
       {/* ── Section: Mode 5 — Pinterest Content ───────── */}
       <section className="card space-y-5">
         <div className="flex items-center justify-between">
@@ -2347,7 +2270,7 @@ export default function FanpageEditPage() {
               </div>
             </div>
             <p className="text-[11px] text-text-secondary">
-              Renders on the single Pinterest Template set above (Design Templates section) — set which one to
+              Renders on the single Pinterest Template set in the Global tab (Design Templates) — set which one to
               use, or add/tag one in Template Designer.
             </p>
 
@@ -2564,7 +2487,11 @@ export default function FanpageEditPage() {
           </>
         )}
       </section>
+        </div>
+      )}
 
+      {activeTab === "facebook" && (
+        <div role="tabpanel" id="tab-panel-facebook" aria-labelledby="tab-facebook" className="space-y-8">
       {/* ── Section: Mode 6 — Facebook Photo Recreate ───────── */}
       <section className="card space-y-5">
         <div className="flex items-center justify-between">
@@ -2659,7 +2586,7 @@ export default function FanpageEditPage() {
               </p>
             </div>
             <p className="text-[11px] text-text-secondary">
-              Renders on the News/Quote/Discussion Templates set above (Design Templates section) — no
+              Renders on the News/Quote/Discussion Templates set in the Global tab (Design Templates) — no
               separate template setting for Mode 6. Captions use the IG Repost caption settings, without the
               &quot;via @source&quot; attribution line. No like-count/growth check in this version — a photo not seen
               before on the source page&apos;s public gallery is the only filter.
@@ -2842,7 +2769,11 @@ export default function FanpageEditPage() {
           </>
         )}
       </section>
+        </div>
+      )}
 
+      {activeTab === "youtube" && (
+        <div role="tabpanel" id="tab-panel-youtube" aria-labelledby="tab-youtube" className="space-y-8">
       {/* ── Section: Mode 7 — YouTube Clips ───────────── */}
       <YtClipSection
         fanpageId={fanpageId}
@@ -2853,80 +2784,220 @@ export default function FanpageEditPage() {
           if (fresh) setForm((prev) => ({ ...prev, yt_clip_sources: fresh.yt_clip_sources }));
         }}
       />
+        </div>
+      )}
 
+      {activeTab === "aivideo" && (
+        <div role="tabpanel" id="tab-panel-aivideo" aria-labelledby="tab-aivideo" className="space-y-8">
       <AiVideoSection form={form} set={set} templates={aiVideoTemplates ?? []} />
+        </div>
+      )}
 
-      {/* ── Section: Image Framing (news + IG recreate) ── */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Image Framing</h2>
+      {activeTab === "radar" && (
+        <div role="tabpanel" id="tab-panel-radar" aria-labelledby="tab-radar" className="space-y-8">
+      {/* ── Section: Viral Radar (Feature 3) ───────── */}
+      <section className="card space-y-5">
         <div className="flex items-center justify-between">
           <div>
-            <label className="label mb-0">Expand image to fill (auto)</label>
-            <p className="text-[11px] text-text-secondary mt-0.5">
-              When a photo would be heavily cropped, fill the frame instead — mirror-extend
-              action shots, blurred fit for close-up faces. Photos that already fit are untouched.
-              Applies to news &amp; IG-recreate designs.
+            <h2 className="text-base font-semibold text-text-primary">Viral Radar</h2>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Automatically scrape niche leaders and jump on viral posts early. Recreate/repost them before they peak.
             </p>
           </div>
           <button
-            onClick={() => set("design_expand", !form.design_expand)}
+            role="switch"
+            aria-checked={!!form.radar_enabled}
+            aria-label="Enable Viral Radar"
+            onClick={() => set("radar_enabled", !form.radar_enabled)}
             className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-              form.design_expand ? "bg-primary-main" : "bg-hairline"
+              form.radar_enabled ? "bg-primary-main" : "bg-hairline"
             }`}
           >
             <span
               className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                form.design_expand ? "translate-x-5" : ""
+                form.radar_enabled ? "translate-x-5" : ""
               }`}
             />
           </button>
         </div>
-      </section>
 
-      {/* ── Section 4: Live Caption Preview ───────────── */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Caption Preview</h2>
-        <p className="text-xs text-text-secondary">
-          Test the AI caption with an example original caption.
-        </p>
-        <div>
-          <label className="label">Source IG Username</label>
-          <input
-            className="input-rect"
-            value={previewSrc}
-            onChange={(e) => setPreviewSrc(e.target.value)}
-            placeholder="e.g. natgeo"
-          />
-        </div>
-        <div>
-          <label className="label">Original Caption (from IG)</label>
-          <textarea
-            className="input-rect h-24 resize-none"
-            value={previewOrig}
-            onChange={(e) => setPreviewOrig(e.target.value)}
-            placeholder="Paste an Instagram caption here…"
-          />
-        </div>
-        <button
-          onClick={handlePreview}
-          disabled={previewLoading || !previewSrc || !previewOrig}
-          className="btn-primary"
-        >
-          <Icon icon="solar:magic-stick-3-bold-duotone" width={16} />
-          {previewLoading ? "Generating…" : "Generate Preview"}
-        </button>
-        {previewResult && (
-          <div className="p-4 bg-bg-paper-hover rounded-lg">
-            <p className="text-[11px] text-text-secondary mb-1 font-semibold uppercase tracking-wide">
-              Generated Caption
-            </p>
-            <p className="text-sm text-text-primary whitespace-pre-wrap">{previewResult}</p>
+        {form.radar_enabled && (
+          <div className="space-y-6 pt-2 border-t border-hairline mt-4">
+            {/* Shadow Mode */}
+            <div className="flex items-center justify-between bg-bg-paper p-3 rounded-md border border-hairline">
+              <div>
+                <p className="text-sm font-medium text-text-primary flex items-center gap-2">
+                  <Icon icon="solar:ghost-bold-duotone" width={16} className={form.radar_shadow ? "text-primary-main" : "text-text-secondary"} />
+                  Shadow Mode
+                </p>
+                <p className="text-[11px] text-text-secondary mt-0.5">
+                  Only records what would be posted in the Shadow Report, without actually creating jobs. 
+                  Recommended for 3-5 days when tuning rules.
+                </p>
+              </div>
+              <button
+                role="switch"
+                aria-checked={!!form.radar_shadow}
+                aria-label="Enable Shadow Mode"
+                onClick={() => set("radar_shadow", !form.radar_shadow)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                  form.radar_shadow ? "bg-primary-main" : "bg-hairline"
+                }`}
+              >
+                <span
+                  className={`absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-white transition-transform ${
+                    form.radar_shadow ? "translate-x-4" : ""
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Radar Niches */}
+            <div className="space-y-2">
+              <label className="label">Radar Niches</label>
+              <p className="text-[11px] text-text-secondary mb-2">
+                This fanpage will receive stories from these niches.
+              </p>
+              {!(radarNichesData && radarNichesData.length > 0) ? (
+                <p className="text-[11px] text-text-secondary italic">No radar niches found yet. Add accounts to Radar first.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {radarNichesData.map((n) => {
+                    const active = ((form.radar_niches as string[]) ?? []).includes(n);
+                    return (
+                      <button
+                        key={n}
+                        onClick={() => {
+                          const cur = (form.radar_niches as string[]) ?? [];
+                          set("radar_niches", active ? cur.filter((v) => v !== n) : [...cur, n]);
+                        }}
+                        className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
+                          active
+                            ? "bg-primary-main text-white border-primary-main"
+                            : "border-hairline text-text-secondary hover:border-primary-main hover:text-primary-main"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Rule Thresholds */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="label">Min Likes (Abs)</label>
+                <input
+                  type="number"
+                  className="input-rect"
+                  value={form.radar_min_likes ?? 1000}
+                  onChange={(e) => set("radar_min_likes", Math.max(1, parseInt(e.target.value) || 1000))}
+                />
+              </div>
+              <div>
+                <label className="label">Confirmed Ratio</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="input-rect"
+                  value={form.radar_confirm_ratio ?? 1.5}
+                  onChange={(e) => set("radar_confirm_ratio", Math.max(0.1, parseFloat(e.target.value) || 1.5))}
+                />
+                <p className="text-[10px] text-text-secondary mt-1">x median likes at this age</p>
+              </div>
+              
+              <div>
+                <label className="label">Fast Ratio</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="input-rect"
+                  value={form.radar_fast_ratio ?? 2.0}
+                  onChange={(e) => set("radar_fast_ratio", Math.max(0.1, parseFloat(e.target.value) || 2.0))}
+                />
+              </div>
+              <div>
+                <label className="label">Fast Window (min)</label>
+                <input
+                  type="number"
+                  className="input-rect"
+                  value={form.radar_fast_window_min ?? 60}
+                  onChange={(e) => set("radar_fast_window_min", Math.max(1, parseInt(e.target.value) || 60))}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="label">Shelf Life: News (h)</label>
+                <input
+                  type="number"
+                  className="input-rect"
+                  value={form.radar_shelf_news_h ?? 72}
+                  onChange={(e) => set("radar_shelf_news_h", Math.max(1, parseInt(e.target.value) || 72))}
+                />
+              </div>
+              <div>
+                <label className="label">Shelf Life: Evergreen (h)</label>
+                <input
+                  type="number"
+                  className="input-rect"
+                  value={form.radar_shelf_evergreen_h ?? 168}
+                  onChange={(e) => set("radar_shelf_evergreen_h", Math.max(1, parseInt(e.target.value) || 168))}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex items-center gap-3 bg-bg-paper p-3 rounded-md border border-hairline">
+                <input
+                  type="checkbox"
+                  id="radar_burst_enabled"
+                  checked={form.radar_burst_enabled ?? true}
+                  onChange={(e) => set("radar_burst_enabled", e.target.checked)}
+                  className="rounded border-hairline text-primary-main focus:ring-primary-main/20"
+                />
+                <label htmlFor="radar_burst_enabled" className="text-sm font-medium text-text-primary cursor-pointer select-none">
+                  Enable Topic Burst
+                  <p className="text-[10px] text-text-secondary mt-0.5">Allow early triggers if many accounts post simultaneously.</p>
+                </label>
+              </div>
+
+              <div>
+                <label className="label">Posts per day limit</label>
+                <input
+                  type="number"
+                  className="input-rect"
+                  value={form.radar_daily_max ?? 3}
+                  onChange={(e) => set("radar_daily_max", Math.max(0, parseInt(e.target.value) || 3))}
+                />
+                <p className="text-[10px] text-text-secondary mt-1">Reactive max, not a target. Shared within publish_daily_limit.</p>
+              </div>
+            </div>
+
+            <div>
+              <label className="label">Visual Engine (Run 2 image edit)</label>
+              <select
+                className="input w-full mt-1"
+                value={(form.visual_engine as string) ?? "off"}
+                onChange={(e) => set("visual_engine", e.target.value)}
+              >
+                <option value="off">Off (don't edit other images)</option>
+                <option value="gflow">Google Flow (gflow)</option>
+                <option value="chatgpt">ChatGPT (cx/gpt-image)</option>
+                <option value="auto">Auto (let AI choose)</option>
+              </select>
+            </div>
           </div>
         )}
       </section>
+        </div>
+      )}
 
       {/* Save */}
-      <div className="flex gap-3">
+      <div className="sticky bottom-[60px] lg:bottom-0 z-20 -mx-1 px-1 py-3 flex gap-3 bg-bg-default border-t border-hairline">
         <button onClick={handleSave} disabled={saving} className="btn-primary">
           {saving ? "Saving…" : "Save Changes"}
         </button>
