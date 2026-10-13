@@ -42,6 +42,15 @@ def test_migration_c15_structure():
 def test_migration_c15_up_down_up_restores_json():
     config = Config(str(BASE_DIR / "alembic.ini"))
 
+    # The normal test DB is built with create_all (no alembic_version), so a
+    # downgrade has nothing to walk back from; only run against a migrated DB.
+    with engine.begin() as conn:
+        managed = conn.execute(
+            text("SELECT 1 FROM information_schema.tables WHERE table_name = 'alembic_version'")
+        ).scalar()
+    if not managed:
+        pytest.skip("test DB is not alembic-managed")
+
     # Ensure starting at c14
     command.downgrade(config, "c80000000014")
 

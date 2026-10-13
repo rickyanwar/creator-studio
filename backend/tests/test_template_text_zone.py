@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from app.services.template_text_zone import apply_text_zone, apply_gp_design
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-PROD_OLD_PATH = BASE_DIR / ".notes" / "prod_old_templates.json"
-PROD_GP_PATH = BASE_DIR / ".notes" / "prod_gp_templates.json"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "templates"
+PROD_OLD_PATH = FIXTURES_DIR / "prod_old_templates.json"
+PROD_GP_PATH = FIXTURES_DIR / "prod_gp_templates.json"
 
 
 def _calc_topmost_y(tj: dict) -> float:
