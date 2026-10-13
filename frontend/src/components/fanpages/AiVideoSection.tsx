@@ -152,7 +152,7 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
               </select>
             </div>
             <div>
-              <label className="label">Panjang judul (karakter)</label>
+              <label className="label">Title length (characters)</label>
               <input
                 type="number"
                 min={20}
@@ -163,7 +163,7 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
               />
             </div>
             <div>
-              <label className="label">Panjang deskripsi (karakter)</label>
+              <label className="label">Description length (characters)</label>
               <input
                 type="number"
                 min={20}
@@ -175,7 +175,7 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
             </div>
           </div>
           <p className="text-xs text-text-secondary italic">
-            Caption mengikuti Pengaturan Global
+            Caption follows Global settings
           </p>
           <div className="border-t border-hairline pt-4 space-y-4">
             <div className="flex items-center justify-between">

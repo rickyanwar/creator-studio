@@ -108,13 +108,13 @@ const MAX_ALBUM = 10;
 function IGSourceCard({
   source,
   fanpageId,
-  fanpageRecreateEnabled,
+  fanpageIgModeLabel,
   onRemove,
   onAlbumSaved,
 }: {
   source: IGSourceRef;
   fanpageId: number;
-  fanpageRecreateEnabled: boolean;
+  fanpageIgModeLabel: string;
   onRemove: () => void;
   onAlbumSaved: () => void;
 }) {
@@ -215,7 +215,7 @@ function IGSourceCard({
         </div>
         <div className="flex gap-1">
           {([
-            { v: null, label: `Ikuti mode fanpage (${fanpageRecreateEnabled ? "recreate" : "repost"})` },
+            { v: null, label: `Follow fanpage (${fanpageIgModeLabel})` },
             { v: true, label: "Always recreate" },
             { v: false, label: "Always repost" },
           ] as const).map((opt) => (
@@ -234,7 +234,7 @@ function IGSourceCard({
           ))}
         </div>
         <p className="text-[10px] text-text-secondary">
-          Repost = gambar asli + caption baru. Recreate = render ulang ke template quote/news (IG Recreate).
+          Repost = original image + new caption. Recreate = re-render onto the quote/news template (IG Recreate).
         </p>
       </div>
 
@@ -862,18 +862,18 @@ export default function FanpageEditPage() {
         </div>
       </div>
 
-      {/* ── Section: Pengaturan Global ─────────────────────── */}
+      {/* ── Section: Global settings ─────────────────────── */}
       <section className="card space-y-5">
         <div>
-          <h2 className="text-base font-semibold text-text-primary">Pengaturan Global</h2>
+          <h2 className="text-base font-semibold text-text-primary">Global settings</h2>
           <p className="text-xs text-text-secondary mt-0.5">
-            Satu set pengaturan caption per fanpage yang digunakan oleh semua mode konten (IG Repost/Recreate, Berita, Diskusi, Pinterest, FB Photo, YT Clip, Video Narasi).
+            One set of caption settings per fanpage, used by every content mode (IG Repost/Recreate, News, Discussion, Pinterest, FB Photo, YT Clip, Narrative Video).
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="label">Bahasa fanpage</label>
+            <label className="label">Fanpage language</label>
             <select
               className="input-rect w-full"
               value={(form.caption_language as string) ?? "en"}
@@ -1043,7 +1043,7 @@ export default function FanpageEditPage() {
           <div>
             <h2 className="text-base font-semibold text-text-primary">IG (Instagram)</h2>
             <p className="text-xs text-text-secondary mt-0.5">
-              Crawl dan proses postingan dari akun Instagram sumber di bawah.
+              Crawl and process posts from the Instagram source accounts below.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1073,12 +1073,12 @@ export default function FanpageEditPage() {
 
         {!form.mode1_ig_repost_enabled ? (
           <p className="text-xs text-text-secondary italic">
-            IG Mode is off — akun sumber tidak akan di-crawl atau diposting untuk fanpage ini.
+            IG Mode is off — source accounts will not be crawled or posted for this fanpage.
           </p>
         ) : (
           <div className="space-y-4 border-t border-hairline pt-3">
             <div>
-              <label className="label">Pilihan Format IG</label>
+              <label className="label">IG format</label>
               {(() => {
                 const currentMode = !form.ig_recreate_enabled
                   ? "repost"
@@ -1089,18 +1089,18 @@ export default function FanpageEditPage() {
                 const options = [
                   {
                     id: "repost",
-                    title: "Repost apa adanya",
-                    desc: "Gambar asli + caption baru",
+                    title: "Repost as-is",
+                    desc: "Original image + new caption",
                   },
                   {
                     id: "recreate_template",
-                    title: "Recreate dengan template",
-                    desc: "Teks ditempelkan ke template News/Quote fanpage",
+                    title: "Recreate with template",
+                    desc: "Text placed on the fanpage's News/Quote template",
                   },
                   {
                     id: "recreate_chatgpt",
-                    title: "Recreate dengan edit ChatGPT",
-                    desc: "1 panggilan gambar ChatGPT membersihkan/merestyling gambar sumber, lalu template kami menaruh teks",
+                    title: "Recreate with ChatGPT edit",
+                    desc: "One ChatGPT image call cleans up/restyles the source image, then our template adds the text. Requires a cx/gpt-image model on 9Router.",
                   },
                 ] as const;
 
@@ -1145,7 +1145,7 @@ export default function FanpageEditPage() {
                   <div>
                     <label className="label mb-0">Smart layout (2-photo / split) <span className="text-[10px] text-amber-500">experimental</span></label>
                     <p className="text-[11px] text-text-secondary mt-0.5">
-                      AI menentukan 1 vs 2 orang → single+inset atau split, memilih foto wajah/aksi.
+                      AI decides 1 vs 2 people → single+inset or split, selecting face/action photos.
                     </p>
                   </div>
                   <button
@@ -1186,16 +1186,24 @@ export default function FanpageEditPage() {
 
         {(fp.ig_sources ?? []).length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-            {(fp.ig_sources ?? []).map((src) => (
-              <IGSourceCard
-                key={src.id}
-                source={src}
-                fanpageId={fanpageId}
-                fanpageRecreateEnabled={!!fp.ig_recreate_enabled}
-                onRemove={() => handleRemoveSource(src.ig_username)}
-                onAlbumSaved={mutate}
-              />
-            ))}
+            {(() => {
+              const currentIgModeLabel = !form.ig_recreate_enabled
+                ? "repost"
+                : form.visual_engine === "chatgpt" || form.visual_engine === "auto" || form.visual_engine === "gflow"
+                ? "recreate ChatGPT"
+                : "recreate template";
+
+              return (fp.ig_sources ?? []).map((src) => (
+                <IGSourceCard
+                  key={src.id}
+                  source={src}
+                  fanpageId={fanpageId}
+                  fanpageIgModeLabel={currentIgModeLabel}
+                  onRemove={() => handleRemoveSource(src.ig_username)}
+                  onAlbumSaved={mutate}
+                />
+              ));
+            })()}
           </div>
         )}
 
@@ -1286,7 +1294,7 @@ export default function FanpageEditPage() {
       <section className="card space-y-5">
         <h2 className="text-base font-semibold text-text-primary">IG Repost — Caption Criteria</h2>
         <p className="text-sm text-text-secondary -mt-3">
-          Caption mengikuti Pengaturan Global
+          Caption follows Global settings
         </p>
 
         {/* Watermark text (per fanpage) */}
@@ -1496,18 +1504,18 @@ export default function FanpageEditPage() {
               </p>
             </div>
 
-            {/* Warna aksen template */}
+            {/* Template accent colour */}
             <div>
-              <label className="label">Warna aksen template</label>
+              <label className="label">Template accent colour</label>
               <div className="flex flex-wrap items-center gap-2 mt-1.5">
                 {[
-                  { name: "merah", hex: "#E8362B" },
-                  { name: "kuning", hex: "#FFC400" },
-                  { name: "hijau", hex: "#91F64C" },
-                  { name: "oranye", hex: "#FF7A1A" },
-                  { name: "biru", hex: "#2F80ED" },
+                  { name: "red", hex: "#E8362B" },
+                  { name: "yellow", hex: "#FFC400" },
+                  { name: "green", hex: "#91F64C" },
+                  { name: "orange", hex: "#FF7A1A" },
+                  { name: "blue", hex: "#2F80ED" },
                   { name: "cyan", hex: "#22D3EE" },
-                  { name: "ungu", hex: "#9B5CFF" },
+                  { name: "purple", hex: "#9B5CFF" },
                   { name: "pink", hex: "#FF3E8A" },
                 ].map((swatch) => {
                   const isSelected = (form.accent_color as string | null)?.toUpperCase() === swatch.hex;
@@ -1566,7 +1574,7 @@ export default function FanpageEditPage() {
             <div className="flex items-center justify-between p-3 rounded-lg border border-hairline">
               <div>
                 <label htmlFor="quote-shorten" className="text-xs font-medium text-text-primary cursor-pointer">
-                  Ringkas kutipan (quote)
+                  Shorten quotes
                 </label>
                 <p className="text-[11px] text-text-secondary mt-0.5">
                   Off: quotes stay word-for-word (template shrinks the font). On: the AI may shorten a quote to fit the template, keeping its meaning — never adds words.
@@ -1679,7 +1687,7 @@ export default function FanpageEditPage() {
                 News Copywriting Criteria
               </p>
               <p className="text-xs text-text-secondary italic">
-                Caption mengikuti Pengaturan Global
+                Caption follows Global settings
               </p>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -2365,22 +2373,22 @@ export default function FanpageEditPage() {
             </div>
 
             <div>
-              <label className="label">Fokus konten Pinterest (apa yang dicari/dipilih)</label>
+              <label className="label">Pinterest content focus (what to search for and pick)</label>
               <textarea
                 className="input w-full text-sm"
                 rows={2}
-                placeholder='e.g. "ONLY elite-level UFC/boxing" atau "focus on the golden eras 1950s-2000s"'
+                placeholder='e.g. "ONLY elite-level UFC/boxing" or "focus on the golden eras 1950s-2000s"'
                 value={(form.pinterest_custom_prompt as string | undefined) ?? ""}
                 onChange={(e) => set("pinterest_custom_prompt", e.target.value)}
               />
               <p className="text-[11px] text-text-secondary mt-1">
-                Mengatur konten apa yang diambil dari Pinterest. Caption tetap mengikuti Pengaturan Global.
+                Controls what content is pulled from Pinterest. Caption still follows Global settings.
               </p>
             </div>
 
             <div className="space-y-2">
               <p className="text-xs text-text-secondary italic">
-                Caption mengikuti Pengaturan Global
+                Caption follows Global settings
               </p>
             </div>
 

@@ -128,18 +128,18 @@ function YtClipSettings({ form, set }: Pick<Props, "form" | "set">) {
       </div>
       <div className="border-t border-hairline pt-4 space-y-3">
         <p className="text-xs text-text-secondary italic">
-          Caption mengikuti Pengaturan Global
+          Caption follows Global settings
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <NumberField
-            label="Panjang judul (karakter)"
+            label="Title length (characters)"
             value={num("yt_clip_title_max_chars", 60)}
             min={20}
             max={5000}
             onChange={(v) => set("yt_clip_title_max_chars", v)}
           />
           <NumberField
-            label="Panjang deskripsi (karakter)"
+            label="Description length (characters)"
             value={num("yt_clip_description_max_chars", 180)}
             min={20}
             max={5000}
