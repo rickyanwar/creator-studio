@@ -57,8 +57,8 @@ def create_idea(db: Session, fanpage_id: int, data: dict, source: str, token_id=
         allowed = allowed_video_templates(fanpage)
         if allowed and data.get("template_key") not in allowed:
             raise ValueError(f"template_key '{data.get('template_key')}' is not allowed for fanpage {fanpage_id}")
-    if source == "hermes" and (data.get("score") is None or not data.get("rationale")):
-        raise ValueError("Hermes ideas require score and rationale")
+    if source in ("hermes", "ai") and (data.get("score") is None or not data.get("rationale")):
+        raise ValueError("Hermes and AI ideas require score and rationale")
     proposed = db.query(VideoIdea).filter_by(fanpage_id=fanpage_id, status="proposed").count()
     if proposed >= 30:
         raise LimitExceededError("Maximum of 30 proposed ideas allowed per fanpage")

@@ -6,6 +6,7 @@ from app.database import SessionLocal
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_fill import fill_idea
+from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
 from app.services.video_templates import allowed_video_templates, credits_estimate, get_template
 from app.tasks.celery_app import celery_app
 from app.tasks.publisher import _fanpage_tz
@@ -94,3 +95,37 @@ def plan_ai_videos():
                 return
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.ai_video_plan.top_up_ai_video_ideas")
+def top_up_ai_video_ideas():
+    """Keep each Mode 8 fanpage's queue at about one day of ideas (in-app writer)."""
+    db = SessionLocal()
+    try:
+        for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True).all():  # noqa: E712
+            daily = max(1, fanpage.ai_video_daily_count or 1)
+            waiting = db.query(VideoIdea).filter(
+                VideoIdea.fanpage_id == fanpage.id,
+                VideoIdea.status.in_(["proposed", "approved"]),
+            ).count()
+            target = max(2, daily)
+            if waiting >= target:
+                continue
+            written_24h = db.query(VideoIdea).filter(
+                VideoIdea.fanpage_id == fanpage.id,
+                VideoIdea.source == "ai",
+                VideoIdea.created_at >= _now() - timedelta(hours=24),
+            ).count()
+            if written_24h >= 2 * daily:
+                continue
+            need = min(target - waiting, 2 * daily - written_24h, MAX_IDEAS_PER_RUN)
+            try:
+                created = write_ideas(db, fanpage, need)
+            except Exception as exc:
+                db.rollback()
+                logger.warning("Mode 8 idea writer failed for fanpage %s: %s", fanpage.id, exc)
+                continue
+            logger.info("Mode 8 idea writer: fanpage %s wrote %s idea(s)", fanpage.id, created)
+    finally:
+        db.close()
+

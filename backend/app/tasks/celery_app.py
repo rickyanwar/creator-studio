@@ -266,6 +266,11 @@ celery_app.conf.beat_schedule = {
         "schedule": 600,
         "options": {"expires": 590},
     },
+    "top-up-ai-video-ideas": {
+        "task": "app.tasks.ai_video_plan.top_up_ai_video_ideas",
+        "schedule": 3600,
+        "options": {"expires": 3500},
+    },
     "sweep-ai-video-jobs": {
         "task": "app.tasks.ai_video_dispatch.sweep_ai_video_jobs",
         "schedule": 120,
