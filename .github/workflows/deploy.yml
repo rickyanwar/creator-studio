@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     # Frontend + backend rebuilds on the VPS can exceed 10 min (and 15 min for
     # the job) — two deploys were cut off mid-way on 2026-09-25/26.
+    # 2026-10-13: backend image built once (was 6×); builds run one at a time with per-build caps (api 15m, others 8m) so a hung build fails fast.
     timeout-minutes: 35
 
     steps:
@@ -30,10 +31,18 @@ jobs:
 
             echo "── Pulling latest code ──"
             cd /opt/studio
+            OLD_HEAD=$(git rev-parse HEAD)
             git pull origin main
 
-            echo "── Rebuilding images ──"
-            docker compose -f docker-compose.server.yml build
+            echo "── Rebuilding images (one at a time; api max 15 min, others 8 min) ──"
+            for svc in api renderer frontend; do
+              case "$svc" in api) cap=15m ;; *) cap=8m ;; esac
+              echo "· building $svc (max $cap)"
+              if ! timeout "$cap" docker compose -f docker-compose.server.yml build "$svc"; then
+                echo "✗ build of $svc failed or took longer than $cap — nothing was restarted"
+                exit 1
+              fi
+            done
 
             echo "── Restarting services ──"
             docker compose -f docker-compose.server.yml up -d --remove-orphans
@@ -44,7 +53,20 @@ jobs:
             echo "── Running migrations ──"
             docker compose -f docker-compose.server.yml exec -T api alembic upgrade head
 
-            echo "── Pruning unused images + build cache ──"
-            docker system prune -f
+            echo "── gflow-worker ──"
+            if git diff --name-only "$OLD_HEAD" HEAD -- gflow_worker | grep -q .; then
+              BUSY=$(docker compose -f docker-compose.server.yml exec -T api python -c "from app.database import SessionLocal; from app.models.ai_video import VideoJob; db = SessionLocal(); print(db.query(VideoJob).filter(VideoJob.status.in_(['claimed', 'generating'])).count())" | tail -1)
+              if [ "$BUSY" = "0" ]; then
+                systemctl restart gflow-worker && echo "gflow-worker restarted"
+              else
+                echo "! gflow-worker NOT restarted: $BUSY video job(s) running — restart it by hand later"
+              fi
+            else
+              echo "gflow_worker unchanged — no restart"
+            fi
+
+            echo "── Pruning dangling images (build cache kept, max 20 GB) ──"
+            docker image prune -f
+            docker builder prune -f --max-used-space 20GB
 
             echo "✓ Deploy complete"
