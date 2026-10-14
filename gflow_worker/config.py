@@ -34,6 +34,7 @@ class Config:
     probe_timeout_seconds: float = 300
     lock_file: Path | None = None
     lock_timeout_seconds: float = 1800
+    proxy: str | None = None
 
     @classmethod
     def from_env(cls):
@@ -60,6 +61,7 @@ class Config:
                       probe_timeout_seconds=float(os.getenv("GFLOW_PROBE_TIMEOUT_SECONDS", "300")),
                       lock_file=(Path(os.environ["GFLOW_LOCK_FILE"]).expanduser() if os.getenv("GFLOW_LOCK_FILE", "").strip() else None),
                       lock_timeout_seconds=float(os.getenv("GFLOW_LOCK_TIMEOUT_SECONDS", "1800")),
+                      proxy=(os.getenv("GFLOW_PROXY") or os.getenv("GFLOW_SOCKS5_PROXY") or "").strip() or None,
                       work_dir=Path(os.getenv("GFLOW_WORK_DIR", "~/.gflow-worker")).expanduser().resolve(),
                       ffmpeg=os.getenv("FFMPEG", "ffmpeg"), ffprobe=os.getenv("FFPROBE", "ffprobe"))
         for name in ("max_concurrent", "mem_reserve_mb", "chrome_peak_mb", "seed_offset_ms"):

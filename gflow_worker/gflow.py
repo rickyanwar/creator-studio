@@ -62,6 +62,12 @@ class GflowRunner:
     def run(self, args, profile=None):
         # The studio token is never needed by the child CLI.
         env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
+        if self.cfg.proxy:
+            env["GFLOW_PROXY"] = self.cfg.proxy
+            env["GFLOW_SOCKS5_PROXY"] = self.cfg.proxy
+            env["ALL_PROXY"] = self.cfg.proxy
+            env["HTTP_PROXY"] = self.cfg.proxy
+            env["HTTPS_PROXY"] = self.cfg.proxy
         try:
             with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=profile):
                 process = subprocess.Popen([*shlex.split(self.cfg.gflow_cmd), *map(str, args), "--json"],

@@ -47,6 +47,7 @@ The worker is a standalone package and runs from the repository root as `python 
 | `GFLOW_PROBE_PREFIX` | empty | Optional command prefix, such as `xvfb-run -a` on a headless VPS |
 | `GFLOW_PROBE_PROJECTS` | empty | Optional comma-separated `profile=project_id` mappings |
 | `GFLOW_PROBE_TIMEOUT_SECONDS` | `300` | Maximum time for one UI credit probe |
+| `GFLOW_PROXY` | empty | Optional proxy URL (e.g. `socks5://100.64.96.50:1080` or HTTP proxy) |
 | `GFLOW_LOCK_FILE` | empty | Optional shared exclusive flock path; empty disables locking |
 | `GFLOW_LOCK_TIMEOUT_SECONDS` | `1800` | Maximum wait for the shared Flow lock |
 | `GFLOW_CLIP_TIMEOUT_SECONDS` | `1200` | Per-clip gflow timeout |
