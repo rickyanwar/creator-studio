@@ -15,6 +15,7 @@ class GflowWorker(Base):
     max_concurrent = Column(Integer, nullable=True)
     mem_available_mb = Column(Integer, nullable=True)
     running_job_ids = Column(JSON, nullable=False, default=list, server_default=text("'[]'::json"))
+    paused_until = Column(DateTime, nullable=True)
 
 
 class GflowAccount(Base):
@@ -92,6 +93,7 @@ class VideoJob(Base):
     clips_done = Column(JSON, nullable=False, default=list, server_default=text("'[]'::json"))
     clip_attempts = Column(Integer, nullable=False, default=0, server_default="0")
     restarts = Column(Integer, nullable=False, default=0, server_default="0")
+    unusual_hits = Column(Integer, nullable=False, default=0, server_default="0")
     lease_until = Column(DateTime, nullable=True)
     not_before = Column(DateTime, nullable=True)
     last_progress_at = Column(DateTime, nullable=True)

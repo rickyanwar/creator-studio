@@ -258,5 +258,6 @@ def list_workers(db: DB, user: CurrentUser):
             "max_concurrent": w.max_concurrent,
             "mem_available_mb": w.mem_available_mb,
             "running_job_ids": w.running_job_ids or [],
+            "paused_until": w.paused_until,
         })
     return result

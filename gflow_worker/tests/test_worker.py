@@ -119,6 +119,12 @@ def test_upload_terms_classification(msg, reason):
     assert classify(GflowResult(False, {}, 27, "MediaUploadRejectedError", False, msg)) == reason
 
 
+def test_unusual_activity_classification():
+    msg = "Flow refused the submit: PUBLIC_ERROR_UNUSUAL_ACTIVITY (gRPC 7)"
+    assert classify(GflowResult(False, {}, 28, None, False, msg)) == "unusual_activity"
+    assert classify(GflowResult(False, {"error_message": "PUBLIC_ERROR_UNUSUAL_ACTIVITY"}, 28)) == "unusual_activity"
+
+
 def test_cancel_before_generation(cfg, studio, runner):
     runner.apply_cancels([1])
     runner.run_job(payload())

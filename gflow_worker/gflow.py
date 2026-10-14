@@ -41,13 +41,15 @@ def last_json(stdout):
 
 
 def classify(result):
+    text = json.dumps([result.payload.get("failure_reasons"), result.payload.get("error_message")]).upper()
     if result.error_class == "MediaUploadRejectedError" and "upload-terms" in (result.message or ""):
         return "upload_terms"
+    if "UNUSUAL_ACTIVITY" in (result.message or "").upper() or "UNUSUAL_ACTIVITY" in text:
+        return "unusual_activity"
     if result.exit_code == 37 or result.error_class == "InsufficientCreditsError":
         return "out_of_credits"
     if result.exit_code in (8, 12, 14, 38, 39):
         return "auth"
-    text = json.dumps([result.payload.get("failure_reasons"), result.payload.get("error_message")]).upper()
     if result.payload.get("status") == "fail" and re.search(r"SAFETY|UNSAFE|POLICY|BLOCKED|PROHIBITED|RAI", text):
         return "policy"
     if result.exit_code in (9, 10, 15, 23, 25, 28, 31, 36) or result.error_class == "TimeoutExpired":

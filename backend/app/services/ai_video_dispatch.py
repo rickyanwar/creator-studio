@@ -21,6 +21,8 @@ MAX_CLIP_ATTEMPTS = 3
 BACKOFF_MINUTES = (2, 5, 10)
 PIN_MAX_HOURS = 12
 MAX_RESTARTS = 2
+UNUSUAL_BACKOFF_MINUTES = (30, 60, 120, 120)
+MIN_CLAIM_GAP_MINUTES = 10
 WORKER_ONLINE_SECONDS = 180
 
 
@@ -149,14 +151,17 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
 def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAccount]]:
     """
     Claim a job for worker_id.
+    0. Return None while the worker is paused (gflow_workers.paused_until > now)
+       or the last claim on this worker was less than MIN_CLAIM_GAP_MINUTES ago.
     1. Return None when ai_video_worker_enabled is false.
     2. Pinned first: queued jobs whose account_id is a candidate account and
        whose not_before is null or <= now, oldest first.
        Remaining cost = (len(job.clips) - len(clips_done)) * credits_per_clip.
        Take the job if credits - reserve >= remaining cost.
     3. Otherwise unpinned queued jobs (account_id null, not_before ok), oldest first.
-       Pick candidate account with largest credits - reserve >= credits_estimate
-       (ties: least recently used). If none fits, return None.
+       Pick the most recently used candidate account with
+       credits - reserve >= credits_estimate; never-used accounts last (largest credits first).
+       If none fits, return None.
     4. Lock job row with with_for_update(skip_locked=True).
     5. Set status=claimed, worker_id=W, account_id=acc.id, lease_until=now+LEASE,
        last_progress_at=now, started_at=started_at or now, acc.last_used_at=now.
@@ -168,6 +173,19 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
 
     credit_reserve = settings_row.ai_video_credit_reserve if settings_row else 0
     now = _utcnow()
+
+    worker_row = db.query(GflowWorker).filter(GflowWorker.worker_id == worker_id).first()
+    if worker_row and worker_row.paused_until and worker_row.paused_until > now:
+        return None
+    if MIN_CLAIM_GAP_MINUTES > 0:
+        last_claim = (
+            db.query(GflowAccount.last_used_at)
+            .filter(GflowAccount.worker_id == worker_id, GflowAccount.last_used_at.isnot(None))
+            .order_by(desc(GflowAccount.last_used_at))
+            .first()
+        )
+        if last_claim and last_claim[0] and last_claim[0] > now - timedelta(minutes=MIN_CLAIM_GAP_MINUTES):
+            return None
 
     candidates = get_candidate_accounts(db, worker_id)
     if not candidates:
@@ -254,12 +272,13 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         if not matching_accounts:
             continue
 
-        # Sort: largest credits desc, then last_used_at asc (None first)
+        # Sticky account: keep using the most recently used account while it has
+        # enough credits; Google flags one host that hops between many accounts.
+        # Never-used accounts come last; among them the most credits wins.
         def acc_sort_key(a: GflowAccount):
-            # credits desc -> -a.credits
-            # last_used_at asc (None first -> datetime.min)
-            last_used = a.last_used_at or datetime.min
-            return (-(a.credits - credit_reserve), last_used)
+            if a.last_used_at is not None:
+                return (0, -a.last_used_at.timestamp(), -(a.credits - credit_reserve))
+            return (1, 0.0, -(a.credits - credit_reserve))
 
         matching_accounts.sort(key=acc_sort_key)
         best_acc = matching_accounts[0]
@@ -355,7 +374,7 @@ def record_failure(
 ):
     """
     Record failure event from worker.
-    reasons: transient, out_of_credits, auth, policy, lost_checkpoint, upload_terms, other.
+    reasons: unusual_activity, transient, out_of_credits, auth, policy, lost_checkpoint, upload_terms, other.
     """
     if job.worker_id != worker_id or job.status not in ("claimed", "generating") or generation != job.generation:
         raise ConflictError(
@@ -402,7 +421,23 @@ def record_failure(
         else:
             job.status = "queued"
 
-    if reason == "policy":
+    is_unusual = reason == "unusual_activity" or "UNUSUAL_ACTIVITY" in (message or "").upper()
+    if is_unusual:
+        job.unusual_hits = (job.unusual_hits or 0) + 1
+        if job.unusual_hits > len(UNUSUAL_BACKOFF_MINUTES):
+            job.status = "failed"
+            job.finished_at = now
+            job.worker_id = None
+            job.lease_until = None
+            _fail_idea()
+        else:
+            pause_until = now + timedelta(minutes=UNUSUAL_BACKOFF_MINUTES[job.unusual_hits - 1])
+            _requeue(not_before_dt=pause_until)
+            worker_row = db.query(GflowWorker).filter(GflowWorker.worker_id == worker_id).first()
+            if worker_row and (worker_row.paused_until is None or worker_row.paused_until < pause_until):
+                worker_row.paused_until = pause_until
+
+    elif reason == "policy":
         job.status = "failed"
         job.finished_at = now
         _fail_idea()
@@ -594,6 +629,7 @@ def complete_job(
     job.status = "uploaded"
     job.finished_at = now
     job.lease_until = None
+    job.error = None
 
     db.commit()
     db.refresh(job)
@@ -640,6 +676,7 @@ def retry_job(db: Session, job: VideoJob):
     # restarts unchanged
     job.clips_done = []
     job.clip_attempts = 0
+    job.unusual_hits = 0
     job.account_id = None
     job.flow_project_id = None
     job.worker_id = None

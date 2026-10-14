@@ -16,6 +16,11 @@ from app.api import gflow_worker as gflow_worker_api
 from app.api.deps import get_current_user
 
 
+@pytest.fixture(autouse=True)
+def _no_claim_gap(monkeypatch):
+    monkeypatch.setattr(ai_video_dispatch, "MIN_CLAIM_GAP_MINUTES", 0)
+
+
 @pytest.fixture(scope="module")
 def setup_db():
     Base.metadata.create_all(bind=engine)

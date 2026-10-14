@@ -63,7 +63,7 @@ class FailRequest(BaseModel):
     message: str
 
 
-VALID_FAIL_REASONS = {"transient", "out_of_credits", "auth", "policy", "lost_checkpoint", "other", "upload_terms"}
+VALID_FAIL_REASONS = {"transient", "out_of_credits", "auth", "policy", "lost_checkpoint", "other", "upload_terms", "unusual_activity"}
 
 
 @router.post("/heartbeat")

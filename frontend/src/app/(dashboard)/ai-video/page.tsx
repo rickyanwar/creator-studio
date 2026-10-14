@@ -129,26 +129,39 @@ export default function AiVideoPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {workers.map((worker) => (
-            <span
-              key={worker.worker_id}
-              className={`text-xs px-2.5 py-1 rounded-full ${
-                worker.online
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-divider-soft text-text-secondary"
-              }`}
-            >
+          {workers.map((worker) => {
+            const pausedUntil = worker.paused_until ? new Date(worker.paused_until + "Z") : null;
+            const paused = !!pausedUntil && pausedUntil.getTime() > Date.now();
+            return (
               <span
-                className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
-                  worker.online ? "bg-emerald-500" : "bg-gray-400"
+                key={worker.worker_id}
+                className={`text-xs px-2.5 py-1 rounded-full ${
+                  worker.online
+                    ? paused
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-emerald-100 text-emerald-800"
+                    : "bg-divider-soft text-text-secondary"
                 }`}
-              />
-              {worker.worker_id} ·{" "}
-              {worker.online
-                ? `${worker.mem_available_mb ?? "?"} MB · ${worker.running_job_ids.length} running`
-                : "offline"}
-            </span>
-          ))}
+              >
+                <span
+                  className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
+                    worker.online
+                      ? paused
+                        ? "bg-amber-500"
+                        : "bg-emerald-500"
+                      : "bg-gray-400"
+                  }`}
+                />
+                {worker.online && paused && pausedUntil
+                  ? `${worker.worker_id} · paused until ${pausedUntil.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (Google unusual activity)`
+                  : `${worker.worker_id} · ${
+                      worker.online
+                        ? `${worker.mem_available_mb ?? "?"} MB · ${worker.running_job_ids.length} running`
+                        : "offline"
+                    }`}
+              </span>
+            );
+          })}
           <span className="text-xs px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">
             {credits} credits available
           </span>

@@ -658,6 +658,7 @@ export interface GflowWorker {
   max_concurrent: number | null;
   mem_available_mb: number | null;
   running_job_ids: number[];
+  paused_until: string | null;
 }
 
 export interface AiVideoTemplate {
