@@ -15,9 +15,17 @@ user_data_dir = f"{cli_home}/profile_{profile_name}"
 
 
 async def run():
+    proxy = (os.getenv("GFLOW_PROXY") or os.getenv("GFLOW_SOCKS5_PROXY") or "").strip()
+    if proxy:
+        try:
+            from gflow_worker.proxy_guard import ensure_proxy_ready
+            ensure_proxy_ready(proxy)
+        except Exception as exc:
+            print(f"CREDITS: unreadable (proxy error: {exc})", flush=True)
+            sys.exit(2)
+
     async with async_playwright() as p:
         args = ["--no-sandbox", "--disable-dev-shm-usage"]
-        proxy = (os.getenv("GFLOW_PROXY") or os.getenv("GFLOW_SOCKS5_PROXY") or "").strip()
         if proxy:
             args.append(f"--proxy-server={proxy}")
         ctx = await p.chromium.launch_persistent_context(
