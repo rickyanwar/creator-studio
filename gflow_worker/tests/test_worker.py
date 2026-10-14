@@ -227,6 +227,67 @@ def test_credit_probe_fallback_and_heartbeat(cfg, studio, monkeypatch, mode, cre
         worker.executor.shutdown()
 
 
+def test_extract_credits_from_text():
+    from gflow_worker.probe_credits import extract_credits_from_text
+
+    # Indonesian formats
+    assert extract_credits_from_text("1.035 kredit Google Flow") == 1035
+    assert extract_credits_from_text("1.050 kredit") == 1050
+    assert extract_credits_from_text("Saldo: 50 kredit") == 50
+    assert extract_credits_from_text("0 kredit") == 0
+
+    # English formats
+    assert extract_credits_from_text("1,035 credits") == 1035
+    assert extract_credits_from_text("1,050 Google Flow credits") == 1050
+    assert extract_credits_from_text("You have 250 credits left") == 250
+    assert extract_credits_from_text("0 credits") == 0
+
+    # Exclusions
+    assert extract_credits_from_text("Refund credits will be processed in 3 days") is None
+    assert extract_credits_from_text("Purchase additional credits here") is None
+    assert extract_credits_from_text("Memuat...") is None
+    assert extract_credits_from_text("") is None
+
+
+def test_credit_probe_transient_failure_retains_balance(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    monkeypatch.setenv("FAKE_PROBE_MODE", "credits")
+    worker = Worker(replace(cfg, profiles=("p2",), probe_timeout_seconds=0.1), studio.api)
+    try:
+        # Tick 1: Initial probe succeeds -> 638 credits
+        worker.tick()
+        assert worker.accounts[0]["credits"] == 638
+        assert worker.accounts[0]["error"] is None
+
+        # Force a refresh tick with mode="unknown" (transient network glitch)
+        worker.last_refresh = None
+        monkeypatch.setenv("FAKE_PROBE_MODE", "unknown")
+        worker.tick()
+        # Retains 638 credits; does NOT flip to unreadable on single glitch
+        assert worker.accounts[0]["credits"] == 638
+        assert worker.accounts[0]["error"] is None
+        heartbeat_accounts = studio.events("/heartbeat")[-1]["accounts"]
+        assert heartbeat_accounts[0]["credits"] == 638
+        assert heartbeat_accounts[0]["error"] is None
+
+        # Force another refresh tick with mode="unknown" (second consecutive failure)
+        worker.last_refresh = None
+        worker.tick()
+        # Now it transitions to unreadable after 2 consecutive failures
+        assert worker.accounts[0]["credits"] is None
+        assert worker.accounts[0]["error"] == "credits unreadable"
+
+        # Next tick recovers with mode="credits"
+        worker.last_refresh = None
+        monkeypatch.setenv("FAKE_PROBE_MODE", "credits")
+        worker.tick()
+        assert worker.accounts[0]["credits"] == 638
+        assert worker.accounts[0]["error"] is None
+    finally:
+        worker.executor.shutdown()
+
+
+
 def test_probe_project_resolution_and_token_isolation(cfg, studio, monkeypatch):
     monkeypatch.setattr(memory, "available_mb", lambda: 9000)
     env_file = cfg.work_dir / "probe-env.txt"
