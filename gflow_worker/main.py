@@ -55,7 +55,7 @@ class Worker:
             return cached[profile]
         return None
 
-    def _probe_credits(self, account):
+    def _probe_credits(self, account, previous=None):
         profile = account["profile"]
         project = self._probe_project(profile) or "(none)"
         out_dir = self.cfg.work_dir / "probes" / re.sub(r"[^A-Za-z0-9._-]", "-", profile)
@@ -77,11 +77,23 @@ class Worker:
         output = f"{completed.stdout}\n{completed.stderr}"
         match = re.search(r"^CREDITS:\s*(\d+)\s*$", output, re.MULTILINE)
         if match:
-            account.update(authenticated=True, credits=int(match.group(1)), error=None, error_class=None)
+            account.update(authenticated=True, credits=int(match.group(1)), error=None, error_class=None, _unreadable_count=0)
         elif re.search(r"^CREDITS:\s*unknown\s*$", output, re.MULTILINE):
-            account.update(authenticated=True, credits=None, error="credits unreadable", error_class=None)
+            # If account previously had valid credits, tolerate a single transient probe failure
+            # before marking it unreadable in heartbeat, avoiding false alarms during network lag.
+            prev_credits = previous.get("credits") if previous else None
+            unreadable_count = (previous.get("_unreadable_count", 0) + 1) if previous else 1
+            if prev_credits is not None and unreadable_count < 2:
+                account.update(authenticated=True, credits=prev_credits, error=None, error_class=None,
+                               _unreadable_count=unreadable_count)
+                log.warning("Probe for profile %s returned unreadable (transient attempt %d/2); retaining balance=%s",
+                            profile, unreadable_count, prev_credits)
+            else:
+                account.update(authenticated=True, credits=None, error="credits unreadable", error_class=None,
+                               _unreadable_count=unreadable_count)
 
     def _refresh_accounts(self):
+        previous_by_profile = {a["profile"]: a for a in self.accounts}
         result = self.gflow.credits_list()
         profiles = result.payload.get("profiles", []) if isinstance(result.payload, dict) else []
         if profiles:
@@ -103,7 +115,7 @@ class Worker:
                              for name in discovered]
         for account in self.accounts:
             if account["credits"] is None:
-                self._probe_credits(account)
+                self._probe_credits(account, previous=previous_by_profile.get(account["profile"]))
         if not result.ok:
             log.warning("Credits refresh failed (exit_code=%s, error_class=%s)",
                         result.exit_code, result.error_class)
@@ -117,7 +129,10 @@ class Worker:
             if not self.jobs:
                 self._refresh_accounts()
                 self.last_refresh = now
-        accounts = [dict(account, credits=account["credits"] if self._credits_heartbeat_pending else None)
+        accounts = [dict(profile=account["profile"], email=account.get("email"),
+                         authenticated=account.get("authenticated", False),
+                         credits=account["credits"] if self._credits_heartbeat_pending else None,
+                         error=account.get("error"), error_class=account.get("error_class"))
                     for account in self.accounts]
         reply = self.api.heartbeat(dict(version=__version__, max_concurrent=self.cfg.max_concurrent,
                                          mem_available_mb=memory.available_mb(), running_job_ids=list(self.jobs), accounts=accounts))
