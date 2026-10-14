@@ -257,9 +257,9 @@ def test_upload_size_reencoded_before_upload(cfg, studio, runner, monkeypatch):
     original_stat = Path.stat
     reencoded = {"called": False}
 
-    def fake_stat(path):
-        result = original_stat(path)
-        if path == video:
+    def fake_stat(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path.name == "video.mp4":
             size = 39 * 1024 * 1024 if reencoded["called"] else 41 * 1024 * 1024
             return type("Stat", (), {"st_size": size, "st_mode": result.st_mode})()
         return result
@@ -345,11 +345,45 @@ def test_config_env(cfg, monkeypatch):
     monkeypatch.setenv("GFLOW_WORKER_TOKEN", cfg.token)
     monkeypatch.setenv("GFLOW_CLI_DIR", str(cfg.cli_dir))
     monkeypatch.setenv("GFLOW_PROFILES", " p1, p2, ")
+    monkeypatch.setenv("GFLOW_PROXY", "socks5://100.64.96.50:1080")
     config = Config.from_env()
     assert config.profiles == ("p1", "p2") and config.token not in repr(config)
+    assert config.proxy == "socks5://100.64.96.50:1080"
     monkeypatch.setenv("GFLOW_WORKER_ID", "bad id")
     with pytest.raises(ValueError):
         Config.from_env()
+
+
+def test_gflow_runner_passes_proxy_env(cfg, monkeypatch):
+    from gflow_worker.config import Config
+    from gflow_worker.gflow import GflowRunner
+
+    passed_env = {}
+
+    def fake_popen(cmd, **kwargs):
+        passed_env.update(kwargs.get("env", {}))
+
+        class FakeProc:
+            pid = 99999
+            returncode = 0
+
+            def communicate(self, timeout=None):
+                return '{"status": "ok"}', ""
+
+        return FakeProc()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    cfg_with_proxy = Config(
+        studio_api_url="http://studio",
+        token="tok",
+        cli_dir=cfg.cli_dir,
+        proxy="socks5://100.64.96.50:1080",
+    )
+    runner = GflowRunner(cfg_with_proxy)
+    res = runner.run(["test"])
+    assert res.ok
+    assert passed_env.get("GFLOW_PROXY") == "socks5://100.64.96.50:1080"
+    assert passed_env.get("ALL_PROXY") == "socks5://100.64.96.50:1080"
 
 
 def _hold_lock(path, seconds):

@@ -2,6 +2,7 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import shlex
+import shutil
 import sys
 
 import httpx
@@ -16,13 +17,15 @@ from gflow_worker.runner import JobRunner
 
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
+    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+    ffprobe_bin = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
     monkeypatch.setenv("FAKE_GF_LOG", str(tmp_path / "calls.jsonl"))
-    monkeypatch.setenv("FAKE_FFMPEG", "/opt/homebrew/bin/ffmpeg")
+    monkeypatch.setenv("FAKE_FFMPEG", ffmpeg_bin)
     monkeypatch.delenv("FAKE_GF_MODE", raising=False)
     return Config("https://studio.test/api", "secret-test-token", tmp_path, worker_id="test-worker",
                    gflow_cmd=f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(__file__).with_name('fake_gflow.py')))}",
                    probe_python_cmd=f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(__file__).with_name('fake_probe.py')))}",
-                   work_dir=tmp_path / "work", ffmpeg="/opt/homebrew/bin/ffmpeg", ffprobe="/opt/homebrew/bin/ffprobe")
+                   work_dir=tmp_path / "work", ffmpeg=ffmpeg_bin, ffprobe=ffprobe_bin)
 
 
 def payload(clips=2):

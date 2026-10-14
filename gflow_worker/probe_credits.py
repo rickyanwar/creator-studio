@@ -16,10 +16,14 @@ user_data_dir = f"{cli_home}/profile_{profile_name}"
 
 async def run():
     async with async_playwright() as p:
+        args = ["--no-sandbox", "--disable-dev-shm-usage"]
+        proxy = (os.getenv("GFLOW_PROXY") or os.getenv("GFLOW_SOCKS5_PROXY") or "").strip()
+        if proxy:
+            args.append(f"--proxy-server={proxy}")
         ctx = await p.chromium.launch_persistent_context(
             user_data_dir=user_data_dir,
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=args,
         )
         try:
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
