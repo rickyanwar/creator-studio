@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Failure statuses observed in real Repliz responses (S1 evidence).
 _REPLIZ_FAILURE_STATUSES = {"failed", "error", "rejected", "canceled", "cancelled"}
+_REPLIZ_SUCCESS_STATUSES = {"success", "published", "posted", "done", "completed"}
 # These statuses mean the schedule is still in flight — keep polling.
 _REPLIZ_PENDING_STATUSES = {"pending", "processing", "queued", "scheduled"}
 
@@ -146,6 +147,10 @@ def sync_pending_schedules():
                         "status_sync: job %d (type=%s) → failed (Repliz status=%s): %s",
                         job.id, job.content_type, status_val, job.last_error[:200],
                     )
+                elif status_val in _REPLIZ_SUCCESS_STATUSES:
+                    job.repliz_response_json = data
+                    job.last_error = None
+                    db.add(job)
                 elif job.repliz_response_json != data:
                     job.repliz_response_json = data
                     db.add(job)

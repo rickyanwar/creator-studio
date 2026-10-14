@@ -54,7 +54,7 @@ function avatarColor(name: string) {
 }
 
 function resolveUrls(job: PublishJob): string[] {
-  if (job.content_type === "youtube_clip") {
+  if (job.content_type === "youtube_clip" || job.content_type === "ai_video") {
     return job.video_thumbnail_url ? [job.video_thumbnail_url] : [];
   }
   if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") {
@@ -487,7 +487,7 @@ function HistoryCard({
   const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
   const src = sourceLink(job);
   const canReedit = job.content_type === "news_content" && job.status === "published";
-  const isClip = job.content_type === "youtube_clip";
+  const isClip = job.content_type === "youtube_clip" || job.content_type === "ai_video";
 
   const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
 
@@ -689,7 +689,7 @@ function HistoryLightbox({
   const src = sourceLink(job);
   const showScheduled = job.status === "published" && isPendingLive;
   const canReedit = job.content_type === "news_content" && job.status === "published";
-  const isClip = job.content_type === "youtube_clip";
+  const isClip = job.content_type === "youtube_clip" || job.content_type === "ai_video";
 
   const [expanded, setExpanded] = useState(true);
 

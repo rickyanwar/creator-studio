@@ -43,6 +43,7 @@ from app.tasks.status_sync import (
     _response_needs_sync,
     _REPLIZ_FAILURE_STATUSES,
     _REPLIZ_PENDING_STATUSES,
+    _REPLIZ_SUCCESS_STATUSES,
 )
 
 
@@ -159,6 +160,26 @@ class TestSyncPendingSchedules:
         # status unchanged — it's a success, not a failure
         assert job.status == "published"
         assert job.last_error is None
+
+    def test_repliz_success_clears_stale_last_error(self):
+        """When Repliz reports success, any stale last_error is cleared and status stays published."""
+        now = _now()
+        job = _make_job(
+            job_id=9308,
+            content_type="youtube_clip",
+            repliz_response_json={"scheduleId": "abc"},
+            scheduled_for=now - timedelta(minutes=10),
+        )
+        job.status = "published"
+        job.last_error = "Repliz: Unable to fetch video file from URL."
+
+        repliz_success = {"scheduleId": "abc", "status": "success"}
+        client, session = self._run_sync([job], [repliz_success])
+
+        assert job.repliz_response_json == repliz_success
+        assert job.status == "published"
+        assert job.last_error is None
+        session.add.assert_called_with(job)
 
     # ── S2a/S10: failure path — Repliz reports failure → job.status = failed ──
 
