@@ -186,7 +186,7 @@ def test_brief_research_shape_and_no_leak(db, clean):
     assert channel["channel_id"] == f1.id and channel["ideas_needed"] == 3
     assert channel["templates"]["motorsport_tech_explainer"]["clip_options"] == [2, 3]
     assert channel["templates"]["motorsport_tech_explainer"]["narration_words"]["narration_1"] == {"target": "22-24", "accepted": "16-24"}
-    assert niches["motogp"]["channels"][0]["templates"]["motorsport_tech_explainer"]["vehicle_presets"] == ["motogp", "motogp_livery"]
+    assert niches["motogp"]["channels"][0]["templates"]["motorsport_tech_explainer"]["vehicle_presets"] == ["motogp_livery"]
     assert niches["f1"]["references"]["video_style"][0]["url"] == "https://www.instagram.com/formula.addict/"
     text = client.get("/research/brief", headers=token(db)).text.lower()
     for leak in (LEAK_NAME.lower(), "leaky motogp page", "fanpage", "facebook", "repliz", "see more", "/root/", "flow.sh", "channel_name"):

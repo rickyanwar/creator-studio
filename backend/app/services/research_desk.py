@@ -56,6 +56,17 @@ SIMILARITY_LIMIT = 0.85
 EVIDENCE_LIMIT = 16384
 CALL_LOG_DAYS = 30
 STUDIO_SLOTS = {"livery", "channel_name", "narrator_preset"}
+TEAM_LIVERY_HINTS = {
+    "scarlet": "Ferrari-style red",
+    "navy_red_yellow": "Red Bull-style navy",
+    "papaya": "McLaren-style papaya",
+    "silver_teal": "Mercedes-style silver",
+    "racing_green": "Aston Martin-style green",
+    "blue_pink": "Alpine-style blue and pink",
+    "royal_blue": "Williams-style blue",
+    "white_red": "Haas-style white",
+    "titanium": "Audi-style titanium",
+}
 # Template notes written for the old manual workflow, not for a research desk.
 DROP_RULE_PREFIXES = ("Ask the owner before generating",)
 SOURCE_ID = re.compile(r"^S[0-9]+$")
@@ -118,6 +129,9 @@ PACK_RULES = {
     "min_score": MIN_SCORE,
     "variants": "Variants of one pack share the facts only: each needs its own angle, hook, narration wording and "
                 "title. A channel never gets two variants of the same pack.",
+    "team_livery": "Leave team_livery out normally — the studio rotates liveries so videos look different. "
+                   "Set it ONLY when the video is about one team's own technology (e.g. that team's wing or device), "
+                   "using that team's key from templates[].team_liveries. Never write team names in any slot.",
     "motion_check": "Before sending, write out every clip prompt from clip_prompts with your slot values and "
                     "check: moving_part is the ONE part that mechanism_action moves; no part in fixed_parts is "
                     "described as moving anywhere; every component in mechanism_details and parts_list appears "
@@ -182,8 +196,11 @@ def niche_presets(t, niche: str) -> list[str]:
     """The vehicle presets the studio's own fill step would allow for this niche."""
     presets = vehicle_presets(t)
     if niche == "motogp":
-        return [p for p in presets if "motogp" in p] or presets
-    return [p for p in presets if "motogp" not in p] or presets
+        candidates = [p for p in presets if "motogp" in p] or presets
+    else:
+        candidates = [p for p in presets if "motogp" not in p] or presets
+    filtered = [p for p in candidates if p not in {"f1_red", "motogp"}]
+    return filtered or candidates
 
 
 def content_slots(t, clips: int) -> list[str]:
@@ -234,6 +251,7 @@ def template_item(t, niches) -> dict:
                 "short": _neutral_vehicle_text(blocks["vehicle_presets"][p + "_short"])}
             for p in presets
         },
+        "team_liveries": {k: TEAM_LIVERY_HINTS.get(k, k) for k in liveries(t)},
         "rules": [r for r in raw.get("rules", []) if not r.startswith(DROP_RULE_PREFIXES)],
         "research": research,
         "keywords_that_worked": raw.get("keywords_that_worked", []),
@@ -542,6 +560,7 @@ def pack_schema() -> dict:
                             "angle": {"type": "string", "minLength": 1, "maxLength": 2000},
                             "variables": {
                                 "type": "object", "required": ["vehicle_preset"],
+                                "properties": {"team_livery": {"type": "string"}},
                                 "propertyNames": {"not": {"enum": sorted(STUDIO_SLOTS)}},
                                 "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 600, "pattern": "^[^{}]*$"},
                             },
@@ -741,8 +760,13 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
             elif moving.lower() in fixed.lower():
                 errors.append("moving_part must not also be listed in fixed_parts")
         preset = variables.get("vehicle_preset")
-        if preset not in niche_presets(template, niche):
-            errors.append(f"vehicle_preset must be one of {niche_presets(template, niche)}")
+        allowed = list(niche_presets(template, niche))
+        extra_presets = ("f1_red",) if niche == "f1" else ("motogp",) if niche == "motogp" else ()
+        for extra in extra_presets:
+            if extra in vehicle_presets(template) and extra not in allowed:
+                allowed.append(extra)
+        if preset not in allowed:
+            errors.append(f"vehicle_preset must be one of {allowed}")
         elif not missing and not sent_studio_slots:
             render_vars = dict(variables)
             if any("{livery" in template.raw["blocks"]["vehicle_presets"].get(p, "") for p in (preset, preset + "_short")):
@@ -751,6 +775,12 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
                 render_clips(template, render_vars, pack["clips"], lang_code=fanpage_language(fp))
             except ValueError as exc:
                 errors.append(str(exc))
+        if "team_livery" in variables:
+            team_livery = variables.get("team_livery")
+            if team_livery not in liveries(template):
+                errors.append(f"team_livery must be one of {liveries(template)}")
+            if preset not in {"f1", "f1_red", "classic_gp", "motogp_livery", "motogp"}:
+                errors.append("team_livery only works with a livery preset")
         for key, value in variables.items():
             names = find_real_names(value)
             if names:

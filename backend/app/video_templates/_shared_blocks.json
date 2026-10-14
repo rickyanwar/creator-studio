@@ -4,14 +4,15 @@
   "narrator_en": "Voice-over: a confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
   "narrator_en_followup": "Voice-over: the same confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
   "liveries": {
-    "scarlet": {"full": "deep glossy scarlet red with white and black accents", "short": "scarlet red"},
-    "navy_red_yellow": {"full": "matte dark navy blue with red and yellow accents", "short": "matte navy blue"},
-    "papaya": {"full": "bright papaya orange with dark blue accents", "short": "papaya orange"},
-    "silver_teal": {"full": "metallic silver and black with teal accents", "short": "silver-and-black"},
-    "racing_green": {"full": "metallic British racing green with lime green accents", "short": "racing green"},
-    "blue_pink": {"full": "bright blue with pink accents", "short": "blue-and-pink"},
-    "royal_blue": {"full": "royal blue with white and light blue accents", "short": "royal blue"},
-    "white_red": {"full": "glossy white with bold red and black accents", "short": "white-and-red"}
+    "scarlet": {"full": "deep glossy red with white accents on the nose, sidepods and rear wing, a black floor and a black halo", "short": "glossy red"},
+    "navy_red_yellow": {"full": "matte dark navy blue with red and yellow accents along the sidepods and engine cover and a yellow nose tip", "short": "matte navy blue"},
+    "papaya": {"full": "bright papaya orange with black accents on the sidepods, nose and rear wing", "short": "papaya orange"},
+    "silver_teal": {"full": "metallic silver and gloss black with thin teal accent lines", "short": "silver-and-black"},
+    "racing_green": {"full": "metallic British racing green with bright lime green accents", "short": "racing green"},
+    "blue_pink": {"full": "bright blue with pink accents and black details", "short": "blue-and-pink"},
+    "royal_blue": {"full": "dark royal blue with white and light blue accents", "short": "royal blue"},
+    "white_red": {"full": "glossy white with bold red and black accents", "short": "white-and-red"},
+    "titanium": {"full": "titanium silver and black with bright red accents", "short": "titanium-and-black"}
   },
   "vehicle_presets": {
     "f1_red": "A modern Formula 1 car in glossy racing red with white accents, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",

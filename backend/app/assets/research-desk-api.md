@@ -281,13 +281,14 @@ A variant or pack failing any check is rejected, with the reason.
 2. `vehicle_preset` is allowed for the channel's niche.
 3. All slots for the template and `clips` are present. Slots are plain text of at most 600 characters, with no `{` or `}`, and narration has no double quotes.
 4. Never send `livery`, `channel_name` or `narrator_preset`; the studio sets them.
-5. Every narration line fits the channel's `narration_words.accepted` range. Aim for `target`.
-6. No real team, constructor, manufacturer, driver, rider, sponsor, brand or circuit names in any slot, the title or the caption.
-7. `title` and `caption` respect the channel's `copy_rules`.
+5. Optional `team_livery`: only when the video is about one team's own technology, send that team's key from the brief's `templates[].team_liveries` (e.g. "scarlet" for a Ferrari device). Otherwise leave it out — the studio gives every video a different livery.
+6. Every narration line fits the channel's `narration_words.accepted` range. Aim for `target`.
+7. No real team, constructor, manufacturer, driver, rider, sponsor, brand or circuit names in any slot, the title or the caption.
+8. `title` and `caption` respect the channel's `copy_rules`.
    - The caption's first sentence is the hook a viewer sees before the text is truncated: at most `hook_max_chars`, concrete, no generic opener.
    - At most `hashtags_max` hashtags.
-8. The variant's narration and title are not near-copies of another variant in the same pack.
-9. `moving_part` and `fixed_parts` are filled, `mechanism_action` names the moving part, and the moving part is not listed as fixed.
+9. The variant's narration and title are not near-copies of another variant in the same pack.
+10. `moving_part` and `fixed_parts` are filled, `mechanism_action` names the moving part, and the moving part is not listed as fixed.
 
 ## Research and writing rules
 

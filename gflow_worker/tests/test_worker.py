@@ -497,6 +497,28 @@ def test_concat_silent_clip(cfg, runner):
     assert float(probe["format"]["duration"]) == pytest.approx(2, abs=0.2)
 
 
+def test_concat_trims_tail_of_all_but_last_clip(cfg, runner):
+    state = JobState(cfg.work_dir, 1, 1)
+    video = state.directory / "clip.mp4"
+    subprocess.run([cfg.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=180x320:rate=24",
+                    "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)], check=True)
+    out = state.directory / "concat_trimmed.mp4"
+    runner.media.concat([video, video, video], out, trim_tail_ms=100)
+    probe = runner.media.probe(out)
+    assert float(probe["format"]["duration"]) == pytest.approx(2.8, abs=0.1)
+
+
+def test_concat_without_trim_keeps_full_length(cfg, runner):
+    state = JobState(cfg.work_dir, 1, 1)
+    video = state.directory / "clip.mp4"
+    subprocess.run([cfg.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=180x320:rate=24",
+                    "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)], check=True)
+    out = state.directory / "concat_full.mp4"
+    runner.media.concat([video, video, video], out)
+    probe = runner.media.probe(out)
+    assert float(probe["format"]["duration"]) == pytest.approx(3.0, abs=0.1)
+
+
 def test_concat_uses_hermes_encode_settings(cfg, runner, monkeypatch):
     monkeypatch.setattr(runner.media, "probe", lambda path: {
         "format": {"duration": "1"},

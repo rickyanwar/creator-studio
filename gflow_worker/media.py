@@ -32,7 +32,7 @@ class Media:
             raise ValueError("could not extract seed frame")
         return png
 
-    def concat(self, clips, out):
+    def concat(self, clips, out, trim_tail_ms=0):
         args = [self.ffmpeg, "-y"]
         filters, labels = [], []
         stream_index = 0
@@ -41,14 +41,20 @@ class Media:
             args += ["-i", str(clip)]
             video_index = stream_index
             stream_index += 1
+            end = max(0.1, float(info["format"]["duration"]) - trim_tail_ms / 1000) if (trim_tail_ms > 0 and i < len(clips) - 1) else None
             if any(s["codec_type"] == "audio" for s in info["streams"]):
                 audio_index = video_index
             else:
-                args += ["-f", "lavfi", "-t", info["format"]["duration"], "-i", "anullsrc=r=48000:cl=stereo"]
+                dur = f"{end:.3f}" if end is not None else info["format"]["duration"]
+                args += ["-f", "lavfi", "-t", dur, "-i", "anullsrc=r=48000:cl=stereo"]
                 audio_index = stream_index
                 stream_index += 1
-            filters += [f"[{video_index}:v:0]setpts=PTS-STARTPTS[v{i}]",
-                        f"[{audio_index}:a:0]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]"]
+            v_filt = f"trim=end={end:.3f},setpts=PTS-STARTPTS" if end is not None else "setpts=PTS-STARTPTS"
+            a_filt = (f"atrim=end={end:.3f},aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS"
+                      if end is not None else
+                      "aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS")
+            filters += [f"[{video_index}:v:0]{v_filt}[v{i}]",
+                        f"[{audio_index}:a:0]{a_filt}[a{i}]"]
             labels.append(f"[v{i}][a{i}]")
         filters.append("".join(labels) + f"concat=n={len(clips)}:v=1:a=1[v][a]")
         self._run([*args, "-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]", "-c:v", "libx264",

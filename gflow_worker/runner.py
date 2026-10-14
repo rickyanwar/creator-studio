@@ -123,7 +123,7 @@ class JobRunner:
         video, thumb = state.directory / "video.mp4", state.directory / "thumbnail.jpg"
         if self.cancelled(jid):
             return
-        self.media.concat(paths, video)
+        self.media.concat(paths, video, trim_tail_ms=self.cfg.seed_offset_ms)
         duration = self.media.probe_duration(video)
         if video.stat().st_size > 40 * 1024 * 1024:
             self.media.reencode_for_upload(video, duration)

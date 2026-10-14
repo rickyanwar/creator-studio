@@ -178,9 +178,9 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
         if channel_name is not None:
             if not isinstance(channel_name, str) or sanitize_channel_name(channel_name) != channel_name:
                 raise ValueError("channel_name must be sanitized")
-            lettering = f' with the name "{channel_name}" in large clean white block capital letters '
-            lettering += "on the fairing and the fuel tank, no other text" if "motogp" in preset else "on both sidepods, no other text"
-            lettering_short = f' with the same "{channel_name}" lettering and no other text'
+            lettering = f' with a small, subtle "{channel_name}" name in clean white letters '
+            lettering += "on the side of the fairing, no other text" if "motogp" in preset else "on the side of the engine cover, no other text"
+            lettering_short = f' with the same small "{channel_name}" name and no other text'
         else:
             lettering, lettering_short = ", no text", ", no text"
         livery_values = blocks["liveries"][livery]

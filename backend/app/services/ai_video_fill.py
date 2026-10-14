@@ -4,7 +4,7 @@ import json
 import random
 import re
 
-from app.models.ai_video import VideoIdea
+from app.models.ai_video import VideoIdea, VideoJob
 from app.services import news_copywriter
 from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language, language_name
@@ -20,6 +20,9 @@ from app.services.video_templates import (
     sanitize_channel_name,
     vehicle_presets,
 )
+
+# Fixed-colour presets are mapped to their rotating-livery twin so every video gets a new livery.
+FIXED_COLOUR_PRESETS = {"f1_red": "f1", "motogp": "motogp_livery"}
 
 
 @lru_cache(maxsize=1)
@@ -109,20 +112,25 @@ def _parse(raw: str, title_max: int = 100, desc_max: int = 600, hashtag_max: int
 
 
 def pick_livery(db, fanpage_id, t):
-    recent = (
-        db.query(VideoIdea)
-        .filter(VideoIdea.fanpage_id == fanpage_id, VideoIdea.variables.isnot(None))
-        .order_by(VideoIdea.id.desc())
-        .limit(3)
+    """Next livery for this fanpage: one not used by its recent videos, else the least recently used."""
+    options = liveries(t)
+    rows = (
+        db.query(VideoIdea.variables)
+        .join(VideoJob, VideoJob.idea_id == VideoIdea.id)
+        .filter(VideoJob.fanpage_id == fanpage_id)
+        .order_by(VideoJob.id.desc())
+        .limit(50)
         .all()
-    )
-    used = {
-        idea.variables.get("livery")
-        for idea in recent
-        if isinstance(idea.variables, dict) and idea.variables.get("livery")
-    }
-    available = [value for value in liveries(t) if value not in used]
-    return random.choice(available or liveries(t))
+    ) if db is not None else []
+    recent = []  # most recent first, unique
+    for (variables,) in rows:
+        value = variables.get("livery") if isinstance(variables, dict) else None
+        if value in options and value not in recent:
+            recent.append(value)
+    unused = [value for value in options if value not in recent]
+    if unused:
+        return random.choice(unused)
+    return recent[-1]
 
 
 def apply_system_look(db, fanpage, template, variables):
@@ -131,7 +139,12 @@ def apply_system_look(db, fanpage, template, variables):
     if variables.get("narrator_preset") not in narrator_presets(template):
         variables["narrator_preset"] = resolve_narrator(fanpage, template)
     preset = variables.get("vehicle_preset")
+    if preset in FIXED_COLOUR_PRESETS and FIXED_COLOUR_PRESETS[preset] in vehicle_presets(template):
+        preset = FIXED_COLOUR_PRESETS[preset]
+        variables["vehicle_preset"] = preset
     if preset in {"f1", "classic_gp", "motogp_livery"}:
+        if variables.get("team_livery") in liveries(template):
+            variables["livery"] = variables["team_livery"]
         if variables.get("livery") not in liveries(template):
             variables["livery"] = pick_livery(db, fanpage.id, template)
         channel_name = sanitize_channel_name(fanpage.name)

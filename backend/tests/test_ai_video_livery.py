@@ -1,11 +1,31 @@
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 import json
 
 import pytest
 
-from app.services import ai_video_fill, video_templates
+from app.database import Base, SessionLocal, engine
+from app.models.ai_video import VideoIdea, VideoJob
+from app.models.target_fanpages import TargetFanpage
+from app.services import ai_video_fill, research_desk, video_templates
 from app.schemas.fanpage import FanpageUpdate
+
+
+@pytest.fixture(scope="module")
+def setup_db():
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+@pytest.fixture
+def db(setup_db):
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
 
 
 def _variables(preset="f1", **extra):
@@ -32,10 +52,10 @@ def test_render_livery_with_channel_name():
         template, _variables(livery="scarlet", channel_name="FORMULA ARCHIVES"), 2
     )
 
-    assert "deep glossy scarlet red" in rendered[0]["prompt"]
+    assert "deep glossy red with white accents" in rendered[0]["prompt"]
     assert '"FORMULA ARCHIVES"' in rendered[0]["prompt"]
     assert "no other text" in rendered[0]["prompt"]
-    assert 'scarlet red open-wheel single-seater Grand Prix race car with the same "FORMULA ARCHIVES" lettering' in rendered[1]["prompt"]
+    assert 'glossy red open-wheel single-seater Grand Prix race car with the same small "FORMULA ARCHIVES" name' in rendered[1]["prompt"]
     assert all("{" not in clip["prompt"] and "}" not in clip["prompt"] for clip in rendered)
     assert all("no text" not in clip["prompt"].replace("no other text", "") for clip in rendered)
     assert all("no other text" in clip["prompt"] for clip in rendered)
@@ -68,8 +88,8 @@ def test_render_motogp_livery_uses_fairing_wording():
         2,
     )
 
-    assert "on the fairing and the fuel tank" in rendered[0]["prompt"]
-    assert "on both sidepods" not in rendered[0]["prompt"]
+    assert "on the side of the fairing" in rendered[0]["prompt"]
+    assert "on the side of the engine cover" not in rendered[0]["prompt"]
 
 
 def test_legacy_f1_render_stays_unchanged():
@@ -96,8 +116,8 @@ def test_render_narrator_presets(preset):
     assert f"Voice-over: the same {preset_text[2:]}" in rendered[1]["prompt"]
     assert all("{" not in clip["prompt"] and "}" not in clip["prompt"] for clip in rendered)
     # Regression test: non-EN-DOC narrator preserves vehicle text
-    assert "Grand Prix race car in a deep glossy scarlet red" in rendered[0]["prompt"]
-    assert "scarlet red open-wheel single-seater Grand Prix race car" in rendered[1]["prompt"]
+    assert "Grand Prix race car in a deep glossy red" in rendered[0]["prompt"]
+    assert "glossy red open-wheel single-seater Grand Prix race car" in rendered[1]["prompt"]
 
 
 def test_render_documentary_narrator_is_unchanged_without_or_with_doc_preset():
@@ -151,6 +171,9 @@ def test_pick_livery_avoids_recent_values(monkeypatch):
     template = video_templates.get_template("motorsport_tech_explainer")
 
     class Query:
+        def join(self, *args):
+            return self
+
         def filter(self, *args):
             return self
 
@@ -158,13 +181,13 @@ def test_pick_livery_avoids_recent_values(monkeypatch):
             return self
 
         def limit(self, count):
-            assert count == 3
+            assert count == 50
             return self
 
         def all(self):
-            return [SimpleNamespace(variables={"livery": "scarlet"}), SimpleNamespace(variables={"livery": "papaya"})]
+            return [({"livery": "scarlet"},), ({"livery": "papaya"},)]
 
-    db = SimpleNamespace(query=lambda model: Query())
+    db = SimpleNamespace(query=lambda *args: Query())
     monkeypatch.setattr(ai_video_fill.random, "choice", lambda values: values[0])
     assert ai_video_fill.pick_livery(db, 1, template) not in {"scarlet", "papaya"}
 
@@ -215,3 +238,223 @@ def test_fanpage_narrator_schema():
     assert FanpageUpdate(ai_video_narrator="EN-SCOT").ai_video_narrator == "EN-SCOT"
     with pytest.raises(Exception):
         FanpageUpdate(ai_video_narrator="EN-NOT-REAL")
+
+
+def test_apply_system_look_maps_f1_red(db):
+    template = video_templates.get_template("motorsport_tech_explainer")
+    fp = TargetFanpage(
+        name="Formula Page",
+        username=f"f1_{uuid.uuid4().hex[:8]}",
+        repliz_account_id=f"rep_{uuid.uuid4().hex[:8]}",
+        is_active=True,
+    )
+    db.add(fp)
+    db.flush()
+
+    vars_in = _variables("f1_red")
+    res = ai_video_fill.apply_system_look(db, fp, template, vars_in)
+    assert res["vehicle_preset"] == "f1"
+    assert res["livery"] in video_templates.liveries(template)
+
+
+def test_pick_livery_rotation_lru(db):
+    template = video_templates.get_template("motorsport_tech_explainer")
+    all_liveries = video_templates.liveries(template)
+    assert len(all_liveries) == 9
+
+    fp = TargetFanpage(
+        name="Rotation Page",
+        username=f"rot_{uuid.uuid4().hex[:8]}",
+        repliz_account_id=f"rep_{uuid.uuid4().hex[:8]}",
+        is_active=True,
+    )
+    db.add(fp)
+    db.flush()
+
+    used = all_liveries[:-1]
+    unused = all_liveries[-1]
+
+    livery_sequence = list(used) + [used[0]]
+    for i, liv in enumerate(livery_sequence, start=1):
+        idea = VideoIdea(
+            fanpage_id=fp.id,
+            template_key=template.key,
+            topic=f"topic {i}",
+            variables={"livery": liv, "vehicle_preset": "f1"},
+        )
+        db.add(idea)
+        db.flush()
+        job = VideoJob(
+            fanpage_id=fp.id,
+            idea_id=idea.id,
+            template_key=template.key,
+            title=f"title {i}",
+            caption=f"caption {i}",
+            model="flow",
+            aspect="9:16",
+            clip_seconds=4,
+            clips=[],
+            credits_per_clip=7,
+            credits_estimate=14,
+            status="done",
+        )
+        db.add(job)
+        db.flush()
+
+    # With all except 1 used, pick_livery must return the unused one
+    assert ai_video_fill.pick_livery(db, fp.id, template) == unused
+
+    # When all were used, returns the least recently used one
+    idea_last = VideoIdea(
+        fanpage_id=fp.id,
+        template_key=template.key,
+        topic=f"topic {len(livery_sequence) + 1}",
+        variables={"livery": unused, "vehicle_preset": "f1"},
+    )
+    db.add(idea_last)
+    db.flush()
+    job_last = VideoJob(
+        fanpage_id=fp.id,
+        idea_id=idea_last.id,
+        template_key=template.key,
+        title=f"title {len(livery_sequence) + 1}",
+        caption=f"caption {len(livery_sequence) + 1}",
+        model="flow",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[],
+        credits_per_clip=7,
+        credits_estimate=14,
+        status="done",
+    )
+    db.add(job_last)
+    db.flush()
+
+    assert ai_video_fill.pick_livery(db, fp.id, template) == used[1]
+
+
+def test_brief_niche_presets_and_check_variant_accepts_f1_red(db):
+    template = video_templates.get_template("motorsport_tech_explainer")
+    presets = research_desk.niche_presets(template, "f1")
+    assert "f1_red" not in presets
+    assert "f1" in presets
+
+    fp = TargetFanpage(
+        name="Tech F1",
+        username=f"tech_{uuid.uuid4().hex[:8]}",
+        repliz_account_id=f"rep_{uuid.uuid4().hex[:8]}",
+        mode2_gallery_niches=["f1"],
+        is_active=True,
+        ai_video_enabled=True,
+    )
+    db.add(fp)
+    db.flush()
+
+    variant = {
+        "channel_id": fp.id,
+        "angle": "Explaining the mechanism",
+        "variables": _variables("f1_red"),
+        "title": "A Great Video Title",
+        "caption": "A concise hook sentence that tells the reader what happens in this clip. #F1 #Tech",
+    }
+    pack = {
+        "client_ref": str(uuid.uuid4()),
+        "niche": "f1",
+        "template_key": template.key,
+        "clips": 2,
+        "topic": "rear wing mechanism",
+        "research_notes": "1. Note [S1].",
+        "sources": [],
+        "references": [],
+        "score": 85,
+        "rationale": "Strong topic.",
+        "qc": {"passed": True, "motion_checked": True, "motion_notes": "Verified all motions."},
+        "variants": [variant],
+    }
+    errors, accepted_fp = research_desk._check_variant(
+        db, variant, pack, template, None, need_left={fp.id: 1}, accepted=[], channel_topic_counts={}
+    )
+    assert not errors, f"Unexpected errors: {errors}"
+    assert accepted_fp.id == fp.id
+
+
+def test_team_livery_accepted_and_applied(db):
+    template = video_templates.get_template("motorsport_tech_explainer")
+    fp = TargetFanpage(
+        name="Scuderia Fanpage",
+        username=f"scud_{uuid.uuid4().hex[:8]}",
+        repliz_account_id=f"rep_{uuid.uuid4().hex[:8]}",
+        mode2_gallery_niches=["f1"],
+        is_active=True,
+        ai_video_enabled=True,
+    )
+    db.add(fp)
+    db.flush()
+
+    # 1. Variant with team_livery="scarlet" is accepted
+    variant = {
+        "channel_id": fp.id,
+        "angle": "High downforce rear wing angle",
+        "variables": _variables("f1", team_livery="scarlet"),
+        "title": "High Downforce Wing Tech",
+        "caption": "How the team shaped its high downforce wing for maximum speed. #F1 #Speed",
+    }
+    pack = {
+        "client_ref": str(uuid.uuid4()),
+        "niche": "f1",
+        "template_key": template.key,
+        "clips": 2,
+        "topic": "high downforce wing mechanism",
+        "research_notes": "1. Wing detail [S1].",
+        "sources": [],
+        "references": [],
+        "score": 85,
+        "rationale": "Team specific innovation.",
+        "qc": {"passed": True, "motion_checked": True, "motion_notes": "Verified motion."},
+        "variants": [variant],
+    }
+    errors, accepted_fp = research_desk._check_variant(
+        db, variant, pack, template, None, need_left={fp.id: 1}, accepted=[], channel_topic_counts={}
+    )
+    assert not errors, f"Unexpected errors: {errors}"
+
+    # 2. Produced variables get livery == "scarlet" after apply_system_look
+    res = ai_video_fill.apply_system_look(db, fp, template, variant["variables"])
+    assert res["livery"] == "scarlet"
+
+    # 3. Invalid team_livery key -> rejected
+    bad_variant = dict(variant, variables=_variables("f1", team_livery="neon_yellow"))
+    bad_errors, _ = research_desk._check_variant(
+        db, bad_variant, pack, template, None, need_left={fp.id: 1}, accepted=[], channel_topic_counts={}
+    )
+    assert any("team_livery must be one of" in e for e in bad_errors)
+
+    # 4. Non-livery preset with team_livery -> rejected
+    bad_preset_variant = dict(variant, variables=_variables("unsupported_preset", team_livery="scarlet"))
+    bad_preset_errors, _ = research_desk._check_variant(
+        db, bad_preset_variant, pack, template, None, need_left={fp.id: 1}, accepted=[], channel_topic_counts={}
+    )
+    assert any("team_livery only works with a livery preset" in e for e in bad_preset_errors)
+
+    # 5. Without team_livery -> rotation as before
+    no_team_var = _variables("f1")
+    res_rot = ai_video_fill.apply_system_look(db, fp, template, no_team_var)
+    assert res_rot["livery"] in video_templates.liveries(template)
+
+
+def test_team_livery_with_f1_red_preset(db):
+    template = video_templates.get_template("motorsport_tech_explainer")
+    fp = TargetFanpage(
+        name="Scuderia Red",
+        username=f"scud_red_{uuid.uuid4().hex[:8]}",
+        repliz_account_id=f"rep_{uuid.uuid4().hex[:8]}",
+        mode2_gallery_niches=["f1"],
+        is_active=True,
+        ai_video_enabled=True,
+    )
+    db.add(fp)
+    db.flush()
+
+    res = ai_video_fill.apply_system_look(db, fp, template, _variables("f1_red", team_livery="scarlet"))
+    assert res["vehicle_preset"] == "f1"
+    assert res["livery"] == "scarlet"
