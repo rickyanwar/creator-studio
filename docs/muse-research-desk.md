@@ -10,10 +10,11 @@ the brief, docs and feedback for leaks. Keep it that way when changing `app/serv
 
 ## Settings → AI Video
 - **Researcher**: Muse or Hermes. With Hermes, Muse's brief is always idle.
-- **Mode**: pilot only for now. Muse's ideas arrive with status `pilot`; the planner never produces
-  them until you approve one on the AI Video page.
-- **Pilot ideas per channel** (default 3): Muse stops researching for a channel once this many of its
-  ideas wait (`pilot` or `approved`). Rejecting or producing one frees a slot.
+- **Mode**: Pilot or Live. Pilot: Muse's ideas arrive as `pilot` and wait for your approval. Live: ideas that pass the server checks are approved at once when their score reaches the fanpage's minimum score (else `proposed`); switching to Live releases the waiting pilot ideas the same way.
+- **Idea bank (days)** (default 3): each channel keeps videos/day × days ideas waiting (any source:
+  pilot, proposed, approved). Muse's brief asks for the gap, emptiest channel first.
+- **Pilot ideas per channel** (pilot mode only) (default 3): at most this many Muse ideas wait for your review per channel.
+- With Muse as researcher the in-app idea writer is off; video jobs are claimed fanpage by fanpage (fair share).
 - **References** per niche, one link per line (`url | note`).
 - **Activity**: every Muse call, Muse's notes and its last run report.
 
@@ -34,5 +35,5 @@ Muse may use its labeler token (`labels:write`) or a token with `research`. A `r
 cannot read the Hermes endpoints (they carry page names).
 
 ## Not built yet (next phase)
-Live mode (auto-approve), Muse-first planner tiers with Hermes as fallback, two-day queue math,
+Muse-first planner tiers with Hermes as fallback,
 videos-per-day ranges, Hermes reading a fallback "ideas needed" field.

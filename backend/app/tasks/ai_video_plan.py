@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal
 from app.models.ai_video import VideoIdea, VideoJob
+from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
@@ -102,16 +103,21 @@ def plan_ai_videos():
 
 @celery_app.task(name="app.tasks.ai_video_plan.top_up_ai_video_ideas")
 def top_up_ai_video_ideas():
-    """Keep each Mode 8 fanpage's queue at about one day of ideas (in-app writer)."""
+    """Keep each Mode 8 fanpage's idea bank (videos per day x bank days) filled, emptiest first; off while Muse researches."""
     db = SessionLocal()
     try:
+        row = db.query(Settings).first()
+        if row is None or (row.ai_video_researcher or "muse") == "muse":
+            return  # Muse researches Mode 8 ideas; the in-app writer stays off.
+        bank_days = max(1, row.ai_video_idea_bank_days or 1)
+        plans = []
         for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True).all():  # noqa: E712
             daily = max(1, fanpage.ai_video_daily_count or 1)
             waiting = db.query(VideoIdea).filter(
                 VideoIdea.fanpage_id == fanpage.id,
-                VideoIdea.status.in_(["proposed", "approved"]),
+                VideoIdea.status.in_(["pilot", "proposed", "approved"]),
             ).count()
-            target = max(2, daily)
+            target = max(2, daily * bank_days)
             if waiting >= target:
                 continue
             written_24h = db.query(VideoIdea).filter(
@@ -122,6 +128,9 @@ def top_up_ai_video_ideas():
             if written_24h >= 2 * daily:
                 continue
             need = min(target - waiting, 2 * daily - written_24h, MAX_IDEAS_PER_RUN)
+            plans.append((waiting / target, fanpage.id, fanpage, need))
+        # Emptiest bank first, so no fanpage waits behind another one.
+        for _coverage, _fid, fanpage, need in sorted(plans, key=lambda p: (p[0], p[1])):
             try:
                 created = write_ideas(db, fanpage, need)
             except Exception as exc:

@@ -33,7 +33,9 @@ class SettingsUpdate(BaseModel):
     ai_video_vision_qc_enabled: Optional[bool] = None
     ai_video_credit_reserve: Optional[int] = Field(None, ge=0, le=10000)
     ai_video_researcher: Optional[Literal["muse", "hermes"]] = None
+    muse_research_mode: Optional[Literal["pilot", "live"]] = None
     muse_pilot_packs: Optional[int] = Field(None, ge=0, le=10)
+    ai_video_idea_bank_days: Optional[int] = Field(None, ge=1, le=7)
     research_references: Optional[dict] = None
 
     # ── Viral Radar ──
@@ -92,6 +94,7 @@ class SettingsOut(BaseModel):
     ai_video_researcher: str = "muse"
     muse_research_mode: str = "pilot"
     muse_pilot_packs: int = 3
+    ai_video_idea_bank_days: int = 3
     research_references: Optional[dict] = None
     research_last_report: Optional[dict] = None
     research_last_call_at: Optional[datetime] = None

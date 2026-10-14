@@ -4,8 +4,8 @@ Muse researches a topic once (a "pack") and writes one variant per channel. A ch
 fanpage, but Muse must never learn that: everything it sees is a channel id, a niche and an
 audience, never page names, the platform or publishing data. Tests assert this.
 
-Only the pilot mode exists so far: accepted variants are stored as ideas with status "pilot",
-which the planner never picks up, until the owner approves them on the AI Video page.
+Two modes: pilot stores accepted variants as ideas with status "pilot" (produced only after the
+owner approves them); live approves them at once when the score reaches the fanpage's minimum score.
 """
 import difflib
 import hashlib
@@ -44,6 +44,7 @@ from app.services.video_templates import (
 
 SCHEMA_VERSION = 1
 DOCS_PATH = Path(__file__).resolve().parent.parent / "assets" / "research-desk-api.md"
+MODES = ("pilot", "live")
 NICHES = ("f1", "motogp")
 MAX_CHANNELS_PER_PACK = 10
 MAX_PACKS_PER_REQUEST = 3
@@ -295,16 +296,44 @@ def research_channels(db: Session) -> dict[str, list]:
     return by_niche
 
 
+WAITING_STATUSES = ("pilot", "proposed", "approved")
+
+
+def bank_target(fanpage, row: Settings) -> int:
+    """Ideas a channel keeps waiting: videos per day x idea-bank days."""
+    return max(1, fanpage.ai_video_daily_count or 1) * max(1, row.ai_video_idea_bank_days or 1)
+
+
+def waiting_ideas(db: Session, fanpage_id: int) -> int:
+    """Ideas from any source still waiting for review or production."""
+    return db.query(VideoIdea).filter(
+        VideoIdea.fanpage_id == fanpage_id, VideoIdea.status.in_(WAITING_STATUSES),
+    ).count()
+
+
 def waiting_muse_ideas(db: Session, fanpage_id: int) -> int:
     return db.query(VideoIdea).filter(
         VideoIdea.fanpage_id == fanpage_id,
         VideoIdea.source == "muse",
-        VideoIdea.status.in_(["pilot", "approved"]),
+        VideoIdea.status == "pilot",
     ).count()
 
 
+def new_idea_status(row: Settings, fanpage, score) -> str:
+    """Status of a new Muse idea: held for review in pilot; approved in live when the score is high enough."""
+    if row.muse_research_mode != "live":
+        return "pilot"
+    minimum = fanpage.ai_video_min_score
+    return "approved" if minimum is None or (score or 0) >= minimum else "proposed"
+
+
 def channel_need(db: Session, fanpage, row: Settings) -> int:
-    return max(0, (row.muse_pilot_packs or 0) - waiting_muse_ideas(db, fanpage.id))
+    """Fill the channel's bank; in pilot mode never more than muse_pilot_packs ideas waiting for review."""
+    bank_left = bank_target(fanpage, row) - waiting_ideas(db, fanpage.id)
+    if row.muse_research_mode == "live":
+        return max(0, bank_left)
+    review_left = (row.muse_pilot_packs or 0) - waiting_muse_ideas(db, fanpage.id)
+    return max(0, min(bank_left, review_left))
 
 
 def packs_needed(needs: list[int]) -> int:
@@ -312,6 +341,24 @@ def packs_needed(needs: list[int]) -> int:
     if not needs:
         return 0
     return max(max(needs), math.ceil(sum(needs) / MAX_CHANNELS_PER_PACK))
+
+
+def go_live(db: Session, row: Settings) -> int:
+    """Pilot -> live: release Muse ideas still held for review the way live mode would. Returns the count changed."""
+    changed = 0
+    ideas = db.query(VideoIdea).filter(VideoIdea.source == "muse", VideoIdea.status == "pilot").all()
+    for idea in ideas:
+        fanpage = db.query(TargetFanpage).filter_by(id=idea.fanpage_id).first()
+        if fanpage is None:
+            continue
+        status = new_idea_status(row, fanpage, idea.score)
+        if status == "approved":
+            idea.status, idea.decided_by, idea.decided_at = "approved", "muse-live", _now()
+        else:
+            idea.status = status
+        changed += 1
+    db.commit()
+    return changed
 
 
 def latest_feedback_at(db: Session):
@@ -333,8 +380,8 @@ def _brief_id(body: dict) -> str:
     return f"{_now():%Y%m%d%H%M}-{digest}"
 
 
-def _idle(db: Session, reason: str) -> dict:
-    body = {"schema_version": SCHEMA_VERSION, "docs_version": docs_version(), "mode": "pilot", "action": "idle", "reason": reason,
+def _idle(db: Session, reason: str, mode: str = "pilot") -> dict:
+    body = {"schema_version": SCHEMA_VERSION, "docs_version": docs_version(), "mode": mode, "action": "idle", "reason": reason,
             "latest_feedback_at": latest_feedback_at(db), "niches": []}
     return {"brief_id": _brief_id(body), **body}
 
@@ -342,8 +389,8 @@ def _idle(db: Session, reason: str) -> dict:
 def build_brief(db: Session) -> dict:
     row = get_settings_row(db)
     if row.ai_video_researcher != "muse":
-        return _idle(db, "research is handled elsewhere for now")
-    if row.muse_research_mode != "pilot":
+        return _idle(db, "research is handled elsewhere for now", row.muse_research_mode or "pilot")
+    if row.muse_research_mode not in MODES:
         return _idle(db, "this research mode is not available yet")
 
     references = effective_references(row)
@@ -360,7 +407,9 @@ def build_brief(db: Session) -> dict:
             templates = channel_templates(fp, niche)
             for t in templates:
                 used_templates.setdefault(t.key, (t, set()))[1].add(niche)
+            coverage = waiting_ideas(db, fp.id) / bank_target(fp, row)
             channels.append({
+                "_coverage": coverage,
                 "channel_id": fp.id,
                 "audience": {"language": lang, "country": fp.target_country},
                 "ideas_needed": need,
@@ -372,6 +421,9 @@ def build_brief(db: Session) -> dict:
                 "copy_rules": copy_rules(fp),
                 "recent_topics": recent_topics(db, fp.id),
             })
+        channels.sort(key=lambda c: (c["_coverage"], c["channel_id"]))
+        for c in channels:
+            c.pop("_coverage")
         if channels:
             niches.append({
                 "niche": niche,
@@ -380,12 +432,12 @@ def build_brief(db: Session) -> dict:
                 "channels": channels,
             })
     if not niches:
-        return _idle(db, "no channel needs ideas")
+        return _idle(db, "no channel needs ideas", row.muse_research_mode)
 
     body = {
         "schema_version": SCHEMA_VERSION,
         "docs_version": docs_version(),
-        "mode": "pilot",
+        "mode": row.muse_research_mode,
         "action": "research",
         "latest_feedback_at": latest_feedback_at(db),
         "queue_policy": QUEUE_POLICY,
@@ -723,7 +775,7 @@ def submit_pack(db: Session, pack, brief_id, row: Settings, token_id=None) -> di
     stored = _stored_variants(db, ref)
     if stored:
         return {"client_ref": ref, "status": "exists", "errors": [], "variants": stored}
-    if row.ai_video_researcher != "muse" or row.muse_research_mode != "pilot":
+    if row.ai_video_researcher != "muse" or row.muse_research_mode not in MODES:
         return {"client_ref": ref, "status": "rejected", "errors": ["the studio is not taking research packs now"], "variants": []}
 
     template = get_template(pack["template_key"])
@@ -757,8 +809,11 @@ def submit_pack(db: Session, pack, brief_id, row: Settings, token_id=None) -> di
             fanpage_id=fp.id, template_key=template.key, topic=pack["topic"].strip(), angle=variant["angle"].strip(),
             research_notes=pack["research_notes"], variables=dict(variant["variables"]), clips=pack["clips"],
             score=pack["score"], rationale=pack["rationale"], evidence=evidence, source="muse", token_id=token_id,
-            status="pilot", client_ref=ref, title=variant["title"].strip(), caption=variant["caption"].strip(),
+            status=new_idea_status(row, fp, pack["score"]), client_ref=ref, title=variant["title"].strip(), caption=variant["caption"].strip(),
         )
+        if idea.status == "approved":
+            idea.decided_by = "muse-live"
+            idea.decided_at = _now()
         db.add(idea)
         ideas.append((fp.id, idea))
     try:

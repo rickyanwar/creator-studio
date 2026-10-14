@@ -1,4 +1,4 @@
-# Research Desk API (v1, pilot)
+# Research Desk API (v1)
 
 You are the research desk for a studio that makes short vertical (9:16) motorsport explainer videos: 20–30 seconds, photorealistic 3D CGI, with a voice-over spoken inside the clips. You find what is worth explaining, verify the facts, and write production-ready **research packs**. The studio turns every pack variant into AI-generated video clips by placing your slot values into a fixed prompt template. You never generate video.
 
@@ -7,7 +7,7 @@ You are the research desk for a studio that makes short vertical (9:16) motorspo
   - **Pilot:** use the studio token you already hold for the gallery labeler.
   - **Later:** a token with the `research` scope also works.
 - Content type: `application/json`
-- Schedule during the pilot: every 30 minutes.
+- Schedule: every 30 minutes.
 - **Latest version of this document:** `GET /research/docs` returns it as Markdown. The brief carries `docs_version`; re-read the document whenever that value changes.
 
 ## How a run works
@@ -25,6 +25,8 @@ You are the research desk for a studio that makes short vertical (9:16) motorspo
 **Idle rule.** If the brief says `"action": "idle"`, do no research and make no further calls in that run. The only exceptions are reading new feedback (step 2) and a changed document. Most scheduled runs should end at step 1. That is expected and keeps usage low.
 
 **Queue cap.** The studio caps its queue. `ideas_needed` and `packs_needed` already subtract what is waiting, and the server rejects variants for channels that no longer need ideas.
+
+**Mode.** The brief's `mode` is `pilot` or `live`. In pilot every variant is held for the studio's review (`in_review`). In live, variants that pass every check go straight to production (`approved`). The rules and checks are the same in both modes, so research with the same care.
 
 ## Concepts
 
@@ -213,7 +215,7 @@ Variant status meanings:
 
 | Status | Meaning |
 |---|---|
-| `in_review` | Held for the studio's review. All pilot packs are held. |
+| `in_review` | Held for the studio's review (every variant in pilot mode). |
 | `approved` | Accepted and waiting for production. |
 | `in_production` | Video is being made. |
 | `produced` | The video was made. |

@@ -251,96 +251,122 @@ def test_write_ideas_creation_and_conflict_handling(db_session, fanpage, monkeyp
 
 def test_top_up_ai_video_ideas_task(fanpage, monkeypatch):
     import app.tasks.ai_video_plan as planner
+    from app.models.settings import Settings
 
-    monkeypatch.setattr(planner, "SessionLocal", SessionLocal)
+    s_db = SessionLocal()
+    settings_row = s_db.query(Settings).first()
+    if settings_row is None:
+        settings_row = Settings()
+        s_db.add(settings_row)
+        s_db.commit()
+        s_db.refresh(settings_row)
+    orig_researcher = settings_row.ai_video_researcher
+    orig_bank_days = settings_row.ai_video_idea_bank_days
+    settings_row.ai_video_researcher = "hermes"
+    settings_row.ai_video_idea_bank_days = 1
+    s_db.commit()
+    s_db.close()
 
-    calls = []
-
-    def fake_write(db, fp, need):
-        calls.append((fp.id, need))
-        return need
-
-    monkeypatch.setattr(planner, "write_ideas", fake_write)
-
-    verify = SessionLocal()
     try:
-        verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
-        verify.commit()
+        monkeypatch.setattr(planner, "SessionLocal", SessionLocal)
 
-        # 7a: queue already has 2 waiting ideas -> writer NOT called
-        idea1 = VideoIdea(
-            fanpage_id=fanpage.id,
-            template_key="motorsport_tech_explainer",
-            topic="Waiting idea 1",
-            status="proposed",
-            source="ai",
-            score=80,
-            rationale="R1",
-        )
-        idea2 = VideoIdea(
-            fanpage_id=fanpage.id,
-            template_key="motorsport_tech_explainer",
-            topic="Waiting idea 2",
-            status="approved",
-            source="ai",
-            score=85,
-            rationale="R2",
-        )
-        verify.add_all([idea1, idea2])
-        verify.commit()
+        calls = []
 
-        calls.clear()
-        planner.top_up_ai_video_ideas.run()
-        assert not any(fp_id == fanpage.id for fp_id, _ in calls)
+        def fake_write(db, fp, need):
+            calls.append((fp.id, need))
+            return need
 
-        # 7b: empty queue -> writer called with need == 2
-        verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
-        verify.commit()
+        monkeypatch.setattr(planner, "write_ideas", fake_write)
 
-        calls.clear()
-        planner.top_up_ai_video_ideas.run()
-        fixture_calls = [need for fp_id, need in calls if fp_id == fanpage.id]
-        assert fixture_calls == [2]
+        verify = SessionLocal()
+        try:
+            verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+            verify.commit()
 
-        # 7c: 4 source="ai" ideas created in the last 24 h (status "done") -> writer NOT called (cap)
-        verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        done_ideas = [
-            VideoIdea(
+            # 7a: queue already has 2 waiting ideas -> writer NOT called
+            idea1 = VideoIdea(
                 fanpage_id=fanpage.id,
                 template_key="motorsport_tech_explainer",
-                topic=f"Done idea {i}",
-                status="done",
+                topic="Waiting idea 1",
+                status="proposed",
                 source="ai",
-                score=80 + i,
-                rationale=f"Rationale {i}",
-                created_at=now - timedelta(hours=i),
+                score=80,
+                rationale="R1",
             )
-            for i in range(4)
-        ]
-        verify.add_all(done_ideas)
-        verify.commit()
+            idea2 = VideoIdea(
+                fanpage_id=fanpage.id,
+                template_key="motorsport_tech_explainer",
+                topic="Waiting idea 2",
+                status="approved",
+                source="ai",
+                score=85,
+                rationale="R2",
+            )
+            verify.add_all([idea1, idea2])
+            verify.commit()
 
-        calls.clear()
-        planner.top_up_ai_video_ideas.run()
-        assert not any(fp_id == fanpage.id for fp_id, _ in calls)
+            calls.clear()
+            planner.top_up_ai_video_ideas.run()
+            assert not any(fp_id == fanpage.id for fp_id, _ in calls)
 
-        # 7d: writer raises RuntimeError -> task does not raise
-        verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
-        verify.commit()
+            # 7b: empty queue -> writer called with need == 2
+            verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+            verify.commit()
 
-        def broken_write(db, fp, need):
-            if fp.id == fanpage.id:
-                raise RuntimeError("LLM service unavailable")
-            return 0
+            calls.clear()
+            planner.top_up_ai_video_ideas.run()
+            fixture_calls = [need for fp_id, need in calls if fp_id == fanpage.id]
+            assert fixture_calls == [2]
 
-        monkeypatch.setattr(planner, "write_ideas", broken_write)
-        planner.top_up_ai_video_ideas.run()
+            # 7c: 4 source="ai" ideas created in the last 24 h (status "done") -> writer NOT called (cap)
+            verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            done_ideas = [
+                VideoIdea(
+                    fanpage_id=fanpage.id,
+                    template_key="motorsport_tech_explainer",
+                    topic=f"Done idea {i}",
+                    status="done",
+                    source="ai",
+                    score=80 + i,
+                    rationale=f"Rationale {i}",
+                    created_at=now - timedelta(hours=i),
+                )
+                for i in range(4)
+            ]
+            verify.add_all(done_ideas)
+            verify.commit()
 
+            calls.clear()
+            planner.top_up_ai_video_ideas.run()
+            assert not any(fp_id == fanpage.id for fp_id, _ in calls)
+
+            # 7d: writer raises RuntimeError -> task does not raise
+            verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+            verify.commit()
+
+            def broken_write(db, fp, need):
+                if fp.id == fanpage.id:
+                    raise RuntimeError("LLM service unavailable")
+                return 0
+
+            monkeypatch.setattr(planner, "write_ideas", broken_write)
+            planner.top_up_ai_video_ideas.run()
+
+        finally:
+            verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+            verify.commit()
+            verify.close()
     finally:
-        verify.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
-        verify.commit()
-        verify.close()
+        s_db = SessionLocal()
+        try:
+            r = s_db.query(Settings).first()
+            if r:
+                r.ai_video_researcher = orig_researcher
+                r.ai_video_idea_bank_days = orig_bank_days
+                s_db.commit()
+        finally:
+            s_db.close()
 
 
 def test_create_idea_ai_source_requires_score_and_rationale(db_session, fanpage):

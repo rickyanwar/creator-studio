@@ -545,8 +545,9 @@ export interface AppSettings {
   ai_video_vision_qc_enabled: boolean;
   ai_video_credit_reserve: number;
   ai_video_researcher?: "muse" | "hermes";
-  muse_research_mode?: string;
+  muse_research_mode?: "pilot" | "live";
   muse_pilot_packs?: number;
+  ai_video_idea_bank_days?: number;
   research_references?: ResearchReferences | null;
   research_last_report?: Record<string, unknown> | null;
   research_last_call_at?: string | null;

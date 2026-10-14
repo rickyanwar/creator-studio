@@ -41,6 +41,7 @@ export function ResearchDeskSettings({
 }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [packs, setPacks] = useState<number | string>(settings?.muse_pilot_packs ?? 3);
+  const [bankDays, setBankDays] = useState<number | string>(settings?.ai_video_idea_bank_days ?? 3);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const { data: activity } = useSWR("research-activity", () =>
@@ -57,7 +58,8 @@ export function ResearchDeskSettings({
     }
     setDrafts(next);
     setPacks(settings?.muse_pilot_packs ?? 3);
-  }, [settings?.research_references, settings?.muse_pilot_packs]);
+    setBankDays(settings?.ai_video_idea_bank_days ?? 3);
+  }, [settings?.research_references, settings?.muse_pilot_packs, settings?.ai_video_idea_bank_days]);
 
   async function save(data: Record<string, unknown>) {
     setError(null);
@@ -80,10 +82,16 @@ export function ResearchDeskSettings({
       }
     }
     const parsed = typeof packs === "string" ? parseInt(packs, 10) : packs;
-    save({ research_references: refs, muse_pilot_packs: Math.max(0, Math.min(10, Number.isNaN(parsed) ? 3 : parsed)) });
+    const parsedDays = typeof bankDays === "string" ? parseInt(bankDays, 10) : bankDays;
+    save({
+      research_references: refs,
+      muse_pilot_packs: Math.max(0, Math.min(10, Number.isNaN(parsed) ? 3 : parsed)),
+      ai_video_idea_bank_days: Math.max(1, Math.min(7, Number.isNaN(parsedDays) ? 3 : parsedDays)),
+    });
   }
 
   const researcher = settings?.ai_video_researcher ?? "muse";
+  const mode = settings?.muse_research_mode ?? "pilot";
   const report = settings?.research_last_report;
 
   return (
@@ -106,27 +114,68 @@ export function ResearchDeskSettings({
         <option value="hermes">Hermes</option>
       </select>
 
+      <div>
+        <label className="label">Idea bank (days)</label>
+        <input
+          type="number"
+          min={1}
+          max={7}
+          className="input-rect"
+          value={bankDays}
+          onChange={(e) => setBankDays(e.target.value)}
+          onBlur={() => {
+            const days = typeof bankDays === "string" ? parseInt(bankDays, 10) : bankDays;
+            save({ ai_video_idea_bank_days: Math.max(1, Math.min(7, Number.isNaN(days) ? 3 : days)) });
+          }}
+        />
+        <p className="text-[11px] text-text-secondary mt-1">
+          Each Mode 8 fanpage keeps videos per day × this many days of ideas waiting. The emptiest fanpage is filled first.
+        </p>
+      </div>
+
       {researcher === "muse" && (
         <>
+          <div>
+            <label className="label">Muse mode</label>
+            <select
+              className="input-rect text-sm"
+              value={settings?.muse_research_mode ?? "pilot"}
+              onChange={(e) => save({ muse_research_mode: e.target.value })}
+            >
+              <option value="pilot">Pilot (I approve every idea)</option>
+              <option value="live">Live (approve automatically)</option>
+            </select>
+          </div>
+
           <p className="text-xs bg-indigo-50 text-indigo-800 rounded p-2">
-            Mode: <b>Pilot</b>. Muse&apos;s ideas arrive with status <b>pilot</b> on the AI Video page and are never
-            produced until you approve them. Reject with a reason or send feedback there; Muse reads it on its next run.
+            {mode === "live" ? (
+              <>
+                Mode: <b>Live</b>. Muse&apos;s ideas that pass the studio&apos;s checks are approved at once when their score reaches the fanpage&apos;s minimum score, and go straight to production. Reject one on the AI Video page to tell Muse why.
+              </>
+            ) : (
+              <>
+                Mode: <b>Pilot</b>. Muse&apos;s ideas arrive with status <b>pilot</b> on the AI Video page and are never
+                produced until you approve them. Reject with a reason or send feedback there; Muse reads it on its next run.
+              </>
+            )}
           </p>
 
-          <div>
-            <label className="label">Pilot ideas per channel</label>
-            <input
-              type="number"
-              min={0}
-              max={10}
-              className="input-rect"
-              value={packs}
-              onChange={(e) => setPacks(e.target.value)}
-            />
-            <p className="text-[11px] text-text-secondary mt-1">
-              Muse stops researching for a channel once this many of its ideas wait for review or production.
-            </p>
-          </div>
+          {mode === "pilot" && (
+            <div>
+              <label className="label">Pilot ideas per channel</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                className="input-rect"
+                value={packs}
+                onChange={(e) => setPacks(e.target.value)}
+              />
+              <p className="text-[11px] text-text-secondary mt-1">
+                Muse stops researching for a channel once this many of its ideas wait for your review. Approving or rejecting one frees a slot.
+              </p>
+            </div>
+          )}
 
           {NICHES.map((niche) => (
             <div key={niche} className="space-y-2">

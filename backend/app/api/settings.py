@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from app.api.deps import CurrentUser, DB
@@ -5,6 +7,8 @@ from app.schemas.settings import SettingsUpdate, SettingsOut, ReplizTestRequest,
 from app.services.proxy_pool import parse_proxies
 from app.services import research_desk
 from app.services.relay_pool import parse_relays, RELAY_TARGET_HEADER
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -108,6 +112,7 @@ def get_settings(db: DB, _: CurrentUser):
         ai_video_researcher=getattr(row, "ai_video_researcher", None) or "muse",
         muse_research_mode=getattr(row, "muse_research_mode", None) or "pilot",
         muse_pilot_packs=getattr(row, "muse_pilot_packs", None) if getattr(row, "muse_pilot_packs", None) is not None else 3,
+        ai_video_idea_bank_days=getattr(row, "ai_video_idea_bank_days", None) if getattr(row, "ai_video_idea_bank_days", None) is not None else 3,
         research_references=research_desk.effective_references(row),
         research_last_report=getattr(row, "research_last_report", None),
         research_last_call_at=research_last_call_at,
@@ -137,6 +142,7 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
 
     row = _get_or_create_settings(db)
     data = body.model_dump(exclude_unset=True)
+    was_live = (getattr(row, "muse_research_mode", None) or "pilot") == "live"
 
     # Handle sensitive fields with encryption
     if "gemini_api_key" in data:
@@ -189,6 +195,10 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         setattr(row, field, value)
 
     db.commit()
+
+    if not was_live and getattr(row, "muse_research_mode", None) == "live":
+        released = research_desk.go_live(db, row)
+        logger.info("Muse research switched to live; %s pilot idea(s) released", released)
 
     # 9Router config is cached in-process — force a re-read after a save
     from app.services.nine_router import clear_cache

@@ -98,6 +98,8 @@ class Settings(Base):
     ai_video_researcher = Column(String(16), default="muse", nullable=False, server_default="muse")
     muse_research_mode = Column(String(16), default="pilot", nullable=False, server_default="pilot")
     muse_pilot_packs = Column(Integer, default=3, nullable=False, server_default="3")
+    # Each Mode 8 fanpage keeps videos-per-day x this many days of ideas waiting.
+    ai_video_idea_bank_days = Column(Integer, default=3, nullable=False, server_default="3")
     # {"f1": {"video_style": [{"url", "note"}], "topic_signals": [...]}, "motogp": {...}}; NULL = built-in defaults
     research_references = Column(JSON, nullable=True)
     research_last_report = Column(JSON, nullable=True)

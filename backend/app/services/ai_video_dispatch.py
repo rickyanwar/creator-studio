@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List, Dict, Any
 from pathlib import Path
 
-from sqlalchemy import or_, desc, asc
+from sqlalchemy import or_, desc, asc, func
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -159,6 +159,7 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
        Remaining cost = (len(job.clips) - len(clips_done)) * credits_per_clip.
        Take the job if credits - reserve >= remaining cost.
     3. Otherwise unpinned queued jobs (account_id null, not_before ok), oldest first.
+       Jobs of the fanpage served least recently go first (fair share).
        Pick the most recently used candidate account with
        credits - reserve >= credits_estimate; never-used accounts last (largest credits first).
        If none fits, return None.
@@ -261,6 +262,15 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         .order_by(asc(VideoJob.created_at))
         .all()
     )
+
+    # Fair share: the fanpage whose last job started longest ago goes first, then the oldest job.
+    last_started = dict(
+        db.query(VideoJob.fanpage_id, func.max(VideoJob.started_at))
+        .filter(VideoJob.started_at.isnot(None))
+        .group_by(VideoJob.fanpage_id)
+        .all()
+    )
+    unpinned_jobs.sort(key=lambda j: (last_started.get(j.fanpage_id) or datetime.min, j.created_at))
 
     for cand_job in unpinned_jobs:
         # Pick candidate account with largest credits - reserve >= credits_estimate
