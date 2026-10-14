@@ -8,7 +8,7 @@ from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
-from app.services.video_templates import allowed_video_templates, credits_estimate, get_template, pick_clips
+from app.services.video_templates import allowed_video_templates, credits_estimate, fit_clips_to_credits, get_template, pick_clips
 from app.tasks.celery_app import celery_app
 from app.tasks.publisher import _fanpage_tz
 
@@ -78,6 +78,29 @@ def plan_ai_videos():
             template = get_template(idea.template_key)
             # The owner's own per-idea length wins; AI/Hermes ideas stay inside the fanpage range.
             clips = idea.clips if idea.source == "owner" and idea.clips in template.clip_options else pick_clips(idea.clips, fanpage, template)
+            per_video = fanpage.ai_video_max_credits_per_video
+            per_day = fanpage.ai_video_max_credits_per_day
+            if per_video is not None and fit_clips_to_credits(template, clips, per_video) is None:
+                idea.status = "failed"
+                idea.error = (f"needs at least {credits_estimate(template, min(template.clip_options))} credits; "
+                              f"this fanpage allows {per_video} per video")
+                db.commit()
+                continue
+            budget = per_video
+            if per_day is not None:
+                spent_today = sum(
+                    j.credits_estimate or 0 for j in db.query(VideoJob).filter(
+                        VideoJob.fanpage_id == fanpage.id, VideoJob.created_at >= local_midnight,
+                        VideoJob.status != "cancelled",
+                    )
+                )
+                left_today = per_day - spent_today
+                budget = left_today if budget is None else min(budget, left_today)
+            fitted = fit_clips_to_credits(template, clips, budget)
+            if fitted is None:
+                logger.info("Mode 8: fanpage %s reached its daily credit cap; idea %s waits", fanpage.id, idea.id)
+                continue
+            clips = fitted
             try:
                 # Research-desk ideas carry their own slots, title and caption; the rest are written by the LLM.
                 filler = fill_from_research if research_ready(idea, template, clips) else fill_idea

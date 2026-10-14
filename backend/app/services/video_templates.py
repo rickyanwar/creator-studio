@@ -4,6 +4,7 @@ from functools import lru_cache
 import json
 from pathlib import Path
 import re
+from typing import Optional
 
 from app.services.fanpage_language import LANGUAGE_NAMES, language_name
 
@@ -246,7 +247,21 @@ def credits_estimate(t: VideoTemplate, clips: int) -> int:
 
 
 def clip_choices(fanpage, t: VideoTemplate) -> list[int]:
-    """Clip counts allowed for this fanpage on template t, ascending (never empty)."""
+    """Clip counts allowed for this fanpage on template t (seconds range first, else the
+    clip-count range), ascending (never empty)."""
+    hi_s = getattr(fanpage, "ai_video_seconds_max", None)
+    if hi_s:
+        lo_s = getattr(fanpage, "ai_video_seconds_min", None) or hi_s
+        lo_s, hi_s = min(lo_s, hi_s), max(lo_s, hi_s)
+        options = sorted(t.clip_options)
+        inside = [c for c in options if lo_s <= c * t.clip_seconds <= hi_s]
+        if inside:
+            return inside
+        if hi_s < options[0] * t.clip_seconds:
+            return [options[0]]
+        if lo_s > options[-1] * t.clip_seconds:
+            return [options[-1]]  # the template cannot make this long yet: its longest option
+        return [min(options, key=lambda c: abs(c * t.clip_seconds - (lo_s + hi_s) / 2))]
     hi = getattr(fanpage, "ai_video_clips", None)
     hi = hi if hi in t.clip_options else t.default_clips
     lo = getattr(fanpage, "ai_video_clips_min", None)
@@ -262,4 +277,14 @@ def pick_clips(idea_clips, fanpage, t: VideoTemplate) -> int:
     if idea_clips is None:
         return choices[-1]
     return min(choices, key=lambda c: (abs(c - idea_clips), -c))
+
+
+def fit_clips_to_credits(t: VideoTemplate, clips: int, budget) -> Optional[int]:
+    """Longest clip option <= clips whose credits fit the budget (None = no budget); None if none fits."""
+    if budget is None:
+        return clips
+    for c in sorted((o for o in t.clip_options if o <= clips), reverse=True):
+        if credits_estimate(t, c) <= budget:
+            return c
+    return None
 

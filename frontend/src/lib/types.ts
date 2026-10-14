@@ -135,6 +135,10 @@ export interface Fanpage {
   ai_video_templates: string[] | null;
   ai_video_clips: number;
   ai_video_clips_min: number | null;
+  ai_video_seconds_min: number | null;
+  ai_video_seconds_max: number | null;
+  ai_video_max_credits_per_video: number | null;
+  ai_video_max_credits_per_day: number | null;
   ai_video_narrator: string | null;
   ai_video_title_max_chars?: number;
   ai_video_description_max_chars?: number;

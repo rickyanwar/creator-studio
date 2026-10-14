@@ -92,6 +92,10 @@ class FanpageHermesResponse(BaseModel):
     ai_video_narrator: Optional[str]
     ai_video_clips: int
     ai_video_clips_min: Optional[int]
+    ai_video_seconds_min: Optional[int] = None
+    ai_video_seconds_max: Optional[int] = None
+    ai_video_max_credits_per_video: Optional[int] = None
+    ai_video_max_credits_per_day: Optional[int] = None
     ai_video_clip_choices: Dict[str, List[int]]
 
 @router.get("/fanpages", response_model=List[FanpageHermesResponse])
@@ -124,6 +128,10 @@ def get_fanpages_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("
             "ai_video_narrator": f.ai_video_narrator,
             "ai_video_clips": f.ai_video_clips,
             "ai_video_clips_min": f.ai_video_clips_min,
+            "ai_video_seconds_min": f.ai_video_seconds_min,
+            "ai_video_seconds_max": f.ai_video_seconds_max,
+            "ai_video_max_credits_per_video": f.ai_video_max_credits_per_video,
+            "ai_video_max_credits_per_day": f.ai_video_max_credits_per_day,
             "ai_video_clip_choices": clip_choices_map,
         })
     return res

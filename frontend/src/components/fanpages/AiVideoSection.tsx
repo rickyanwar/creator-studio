@@ -28,7 +28,12 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
   const clipOptions = unionOptions.length > 0 ? unionOptions : (template?.clip_options ?? [2, 3]);
   const maxClips = clips;
   const minClips = form.ai_video_clips_min ?? maxClips;
-  const optionText = (n: number) => `${n * secs} seconds · ${n} clips · ${n * credits} credits`;
+  const loS = form.ai_video_seconds_min ?? minClips * secs;
+  const hiS = form.ai_video_seconds_max ?? maxClips * secs;
+  const clipsFor = (s: number) => Math.max(1, Math.ceil(s / secs));
+  const MIN_PER_CLIP = 3; // measured: about 3 minutes of Flow time per 10-second clip
+  const templateMaxS = Math.max(...clipOptions) * secs;
+  const daily = form.ai_video_daily_count ?? 1;
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -137,44 +142,72 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
               </div>
             </div>
             <div>
-              <label className="label">Shortest video</label>
-              <select
+              <label className="label">Shortest video (seconds)</label>
+              <input
+                type="number"
+                min={4}
+                step={1}
                 className="input w-full"
-                value={minClips}
+                value={form.ai_video_seconds_min === null ? "" : (form.ai_video_seconds_min ?? minClips * secs)}
                 onChange={(e) => {
-                  const v = Number(e.target.value);
-                  set("ai_video_clips_min", v);
-                  if (v > maxClips) set("ai_video_clips", v);
+                  const v = e.target.value === "" ? null : Number(e.target.value);
+                  set("ai_video_seconds_min", v);
+                  if (v !== null && hiS !== null && v > hiS) {
+                    set("ai_video_seconds_max", v);
+                  }
                 }}
-              >
-                {clipOptions.map((count) => (
-                  <option key={count} value={count}>
-                    {optionText(count)}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <div>
-              <label className="label">Longest video</label>
-              <select
+              <label className="label">Longest video (seconds)</label>
+              <input
+                type="number"
+                min={4}
+                step={1}
                 className="input w-full"
-                value={maxClips}
+                value={form.ai_video_seconds_max === null ? "" : (form.ai_video_seconds_max ?? maxClips * secs)}
                 onChange={(e) => {
-                  const v = Number(e.target.value);
-                  set("ai_video_clips", v);
-                  if (v < minClips) set("ai_video_clips_min", v);
+                  const v = e.target.value === "" ? null : Number(e.target.value);
+                  set("ai_video_seconds_max", v);
+                  if (v !== null && loS !== null && v < loS) {
+                    set("ai_video_seconds_min", v);
+                  }
                 }}
-              >
-                {clipOptions.map((count) => (
-                  <option key={count} value={count}>
-                    {optionText(count)}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
-            <div className="sm:col-span-2">
+            <div>
+              <label className="label">Max credits per video</label>
+              <input
+                type="number"
+                min={0}
+                className="input w-full"
+                placeholder="No limit"
+                value={form.ai_video_max_credits_per_video ?? ""}
+                onChange={(e) => set("ai_video_max_credits_per_video", e.target.value === "" ? null : Number(e.target.value))}
+              />
+            </div>
+            <div>
+              <label className="label">Max credits per day</label>
+              <input
+                type="number"
+                min={0}
+                className="input w-full"
+                placeholder="No limit"
+                value={form.ai_video_max_credits_per_day ?? ""}
+                onChange={(e) => set("ai_video_max_credits_per_day", e.target.value === "" ? null : Number(e.target.value))}
+              />
+            </div>
+            <div className="sm:col-span-2 space-y-1">
               <p className="text-[11px] text-text-secondary">
-                Each idea gets its own length inside this range: simple topics use the shortest, topics that need more explanation use the longest. Flow makes {secs}-second clips. Templates that cannot make a length use their own default.
+                Estimate per video: {clipsFor(loS) * credits}–{clipsFor(hiS) * credits} credits, about {clipsFor(loS) * MIN_PER_CLIP}–{clipsFor(hiS) * MIN_PER_CLIP} minutes to generate. At {daily} videos a day: up to {daily * clipsFor(hiS) * credits} credits a day.
+              </p>
+              {hiS > templateMaxS && (
+                <p className="text-[11px] text-warning-main">
+                  The selected template makes at most {templateMaxS} seconds today; longer videos come with the long-video update.
+                </p>
+              )}
+              <p className="text-[11px] text-text-secondary">
+                If an idea needs more credits than allowed, its video is made shorter; when the daily limit is reached, the next video waits for tomorrow.
               </p>
             </div>
             <div>

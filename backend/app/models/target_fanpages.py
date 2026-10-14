@@ -209,6 +209,12 @@ class TargetFanpage(Base):
     ai_video_templates = Column(JSON, nullable=True)
     ai_video_clips = Column(Integer, default=2, nullable=False, server_default="2")
     ai_video_clips_min = Column(Integer, nullable=True)
+    # Video length range in seconds (None = use ai_video_clips / ai_video_clips_min).
+    ai_video_seconds_min = Column(Integer, nullable=True)
+    ai_video_seconds_max = Column(Integer, nullable=True)
+    # Credit caps (None = no limit). A job that needs more is shortened, or waits for the next day.
+    ai_video_max_credits_per_video = Column(Integer, nullable=True)
+    ai_video_max_credits_per_day = Column(Integer, nullable=True)
     ai_video_narrator = Column(String(32), nullable=True)
     ai_video_title_max_chars = Column(Integer, default=100, nullable=False, server_default="100")
     ai_video_description_max_chars = Column(Integer, default=600, nullable=False, server_default="600")
