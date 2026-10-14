@@ -7,6 +7,7 @@ import signal
 import subprocess
 
 from .lock import LockTimeout, flow_lock
+from .proxy_guard import ensure_proxy_ready
 
 
 @dataclass
@@ -62,6 +63,11 @@ class GflowRunner:
         self.cfg = cfg
 
     def run(self, args, profile=None):
+        if self.cfg.proxy:
+            try:
+                ensure_proxy_ready(self.cfg.proxy)
+            except RuntimeError as exc:
+                return GflowResult(False, {}, -1, "ProxyUnreachableError", False, str(exc))
         # The studio token is never needed by the child CLI.
         env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
         if self.cfg.proxy:

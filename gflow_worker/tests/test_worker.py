@@ -392,6 +392,28 @@ def test_gflow_runner_passes_proxy_env(cfg, monkeypatch):
     assert passed_env.get("ALL_PROXY") == "socks5://100.64.96.50:1080"
 
 
+def test_gflow_runner_fails_closed_when_proxy_unreachable(cfg, monkeypatch):
+    from gflow_worker.config import Config
+    from gflow_worker.gflow import GflowRunner
+    import gflow_worker.proxy_guard as pg
+
+    # Simulate proxy is unreachable and auto-heal fails
+    monkeypatch.setattr(pg, "is_proxy_reachable", lambda *a, **kw: False)
+    monkeypatch.setattr(pg, "revive_phone_proxy", lambda *a, **kw: False)
+
+    cfg_with_proxy = Config(
+        studio_api_url="http://studio",
+        token="tok",
+        cli_dir=cfg.cli_dir,
+        proxy="socks5://127.0.0.1:9999",
+    )
+    runner = GflowRunner(cfg_with_proxy)
+    res = runner.run(["test"])
+    assert not res.ok
+    assert res.error_class == "ProxyUnreachableError"
+    assert "refusing to launch" in res.message.lower() or "unreachable" in res.message.lower()
+
+
 def _hold_lock(path, seconds):
     return subprocess.Popen([sys.executable, "-c", """
 import fcntl, sys, time
