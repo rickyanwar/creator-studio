@@ -391,7 +391,8 @@ def test_finalize_overlay_success_replaces_raw(db, tmp_path):
     job = db.query(VideoJob).get(job_id)
     raw_path = job.video_path
 
-    with patch("app.services.ai_video_overlay.render_branded") as render, \
+    with patch("app.services.speech_words.caption_words", return_value=None), \
+         patch("app.services.ai_video_overlay.render_branded") as render, \
          patch("app.services.ai_video_overlay.speech_windows", return_value=[(0.4, 9.6)]), \
          patch("app.services.ai_video_overlay.estimate_words", return_value=[Word(0.5, 1.0, "HI")]), \
          patch("app.services.ai_video_qc.contact_sheet", return_value=b"jpeg"), \
@@ -409,6 +410,29 @@ def test_finalize_overlay_success_replaces_raw(db, tmp_path):
     assert pj.status == PublishJobStatus.pending_publish
     assert job.qc.get("overlay", {}).get("logo") is True
     assert job.qc.get("overlay", {}).get("captions") is True
+    assert job.qc.get("overlay", {}).get("timing") == "estimate"
+
+
+def test_finalize_overlay_voice_timing(db, tmp_path):
+    from app.tasks import ai_video_finalize, publisher
+
+    job_id, fp_id, _ = _seed_overlay_job(db, tmp_path)
+    job = db.query(VideoJob).get(job_id)
+
+    with patch("app.services.speech_words.caption_words", return_value=[Word(0.5, 1.0, "HI")]), \
+         patch("app.services.ai_video_overlay.render_branded") as render, \
+         patch("app.services.ai_video_qc.contact_sheet", return_value=b"jpeg"), \
+         patch.object(publisher.publish_job, "delay"):
+
+        def fake_render(src, out, *a, **kw):
+            Path(out).write_bytes(Path(src).read_bytes())
+        render.side_effect = fake_render
+
+        ai_video_finalize.finalize_ai_video(job_id)
+
+    db.refresh(job)
+    assert job.qc.get("overlay", {}).get("timing") == "voice"
+    assert job.qc.get("overlay", {}).get("words") == 1
 
 
 def test_finalize_overlay_failure_keeps_raw_pending_review(db, tmp_path):
@@ -416,7 +440,8 @@ def test_finalize_overlay_failure_keeps_raw_pending_review(db, tmp_path):
 
     job_id, fp_id, _ = _seed_overlay_job(db, tmp_path)
 
-    with patch("app.services.ai_video_overlay.render_branded", side_effect=RuntimeError("ffmpeg boom")), \
+    with patch("app.services.speech_words.caption_words", return_value=None), \
+         patch("app.services.ai_video_overlay.render_branded", side_effect=RuntimeError("ffmpeg boom")), \
          patch("app.services.ai_video_overlay.speech_windows", return_value=[(0.4, 9.6)]), \
          patch("app.services.ai_video_overlay.estimate_words", return_value=[Word(0.5, 1.0, "HI")]), \
          patch("app.services.ai_video_qc.contact_sheet", return_value=b"jpeg"), \

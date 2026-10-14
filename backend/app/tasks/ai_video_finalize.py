@@ -79,13 +79,18 @@ def finalize_ai_video(video_job_id: int):
                         "captions": bool(fanpage and fanpage.ai_video_captions_enabled), "words": 0}
         if overlays_enabled:
             from app.services.ai_video_overlay import estimate_words, render_branded, speech_windows
+            from app.services.fanpage_language import fanpage_language
+            from app.services.speech_words import caption_words
             raw_path = Path(job.video_path)
             workdir = raw_path.parent / f"overlay_{job.id}_{uuid.uuid4().hex[:8]}"
             try:
                 variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
                 texts = [variables.get(f"narration_{i}", "") for i in range(1, len(job.clips or []) + 1)]
-                windows = speech_windows(str(raw_path), job.clip_seconds, len(texts))
-                words = estimate_words(texts, windows)
+                words = caption_words(str(raw_path), fanpage_language(fanpage) if fanpage else None, texts)
+                overlay_info["timing"] = "voice" if words else "estimate"
+                if not words:
+                    windows = speech_windows(str(raw_path), job.clip_seconds, len(texts))
+                    words = estimate_words(texts, windows)
                 overlay_info["words"] = len(words)
                 branded = raw_path.with_name(f"{raw_path.stem}_branded_{uuid.uuid4().hex[:8]}{raw_path.suffix}")
                 render_branded(str(raw_path), str(branded), fanpage, words, workdir)
