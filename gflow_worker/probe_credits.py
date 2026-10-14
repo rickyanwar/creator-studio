@@ -9,6 +9,7 @@ import sys
 from playwright.async_api import async_playwright
 
 project, out_dir = sys.argv[1], sys.argv[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 profile_name = os.getenv("GFLOW_CLI_PROFILE") or Path(out_dir).name.split("-credits-")[-1]
 cli_home = os.getenv("GFLOW_CLI_HOME", "/home/gflow/.local/share/gflow-cli")
 user_data_dir = f"{cli_home}/profile_{profile_name}"
