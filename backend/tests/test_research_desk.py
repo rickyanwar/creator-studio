@@ -92,6 +92,8 @@ def variables(clips=2, narration=NARRATION, preset="f1"):
         "part": "rear wing", "vehicle_preset": preset,
         "mechanism_details": "a slim actuator cylinder inside the central pillar and the upper flap hinge",
         "mechanism_action": "The actuator pushes and the upper flap pivots upward around its forward hinge while the main plane stays fixed.",
+        "moving_part": "upper rear-wing flap",
+        "fixed_parts": "the lower main plane and both endplates",
         "effect_visual": "Glowing white airflow lines rush through the open slot of the rear wing.",
         "parts_list": "the endplates, the main plane, the upper flap, the actuator",
         "final_state": "the rear wing closes its flap",
@@ -115,7 +117,8 @@ def pack(channel_ids, **overrides):
         "references": [{"url": "https://www.instagram.com/reel/abc/", "platform": "instagram", "kind": "video_style",
                         "views": 120000, "views_approx": True, "likes": 5000, "comments": 80}],
         "score": 82, "rationale": "Reference reels on wings beat the account median by 3x.",
-        "qc": {"passed": True, "facts_two_sources": True, "season_checked": "2026", "no_real_names": True},
+        "qc": {"passed": True, "facts_two_sources": True, "season_checked": "2026", "no_real_names": True,
+               "motion_checked": True, "motion_notes": "Only the upper flap moves; main plane and endplates stay fixed."},
         "variants": [],
     }
     narrations = [NARRATION, NARRATION_B]

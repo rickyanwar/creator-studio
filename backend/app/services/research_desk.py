@@ -118,6 +118,11 @@ PACK_RULES = {
     "min_score": MIN_SCORE,
     "variants": "Variants of one pack share the facts only: each needs its own angle, hook, narration wording and "
                 "title. A channel never gets two variants of the same pack.",
+    "motion_check": "Before sending, write out every clip prompt from clip_prompts with your slot values and "
+                    "check: moving_part is the ONE part that mechanism_action moves; no part in fixed_parts is "
+                    "described as moving anywhere; every component in mechanism_details and parts_list appears "
+                    "in your research_notes; each component sits where it really is on the vehicle. Then set "
+                    "qc.motion_checked to true and write what you checked in qc.motion_notes.",
 }
 
 
@@ -527,7 +532,9 @@ def pack_schema() -> dict:
                         }}},
                     "score": {"type": "integer", "minimum": MIN_SCORE, "maximum": 100},
                     "rationale": {"type": "string", "minLength": 1, "maxLength": 4000},
-                    "qc": {"type": "object", "required": ["passed"], "properties": {"passed": {"const": True}}},
+                    "qc": {"type": "object", "required": ["passed", "motion_checked", "motion_notes"], "properties": {
+                        "passed": {"const": True}, "motion_checked": {"const": True},
+                        "motion_notes": {"type": "string", "minLength": 10, "maxLength": 1000}}},
                     "variants": {"type": "array", "minItems": 1, "maxItems": MAX_CHANNELS_PER_PACK, "items": {
                         "type": "object", "required": ["channel_id", "angle", "variables", "title", "caption"],
                         "properties": {
@@ -655,6 +662,10 @@ def _check_pack_shape(pack) -> list[str]:
     qc = pack.get("qc")
     if not isinstance(qc, dict) or qc.get("passed") is not True:
         errors.append("qc.passed must be true: run your quality check before sending")
+    if isinstance(qc, dict) and qc.get("motion_checked") is not True:
+        errors.append("qc.motion_checked must be true: check the motion slots against the clip prompts before sending")
+    if isinstance(qc, dict) and not (isinstance(qc.get("motion_notes"), str) and 10 <= len(qc["motion_notes"].strip()) <= 1000):
+        errors.append("qc.motion_notes must say what you checked (10-1000 characters)")
     variants = pack.get("variants")
     if not isinstance(variants, list) or not 1 <= len(variants) <= MAX_CHANNELS_PER_PACK:
         errors.append(f"variants must list 1-{MAX_CHANNELS_PER_PACK} channels")
@@ -717,6 +728,18 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
         missing = [s for s in content_slots(template, pack["clips"]) if not (variables.get(s) or "").strip()]
         if missing:
             errors.append(f"missing slots: {', '.join(missing)}")
+        req = required_variables(template, pack["clips"])
+        if "moving_part" in req and "fixed_parts" in req:
+            moving = (variables.get("moving_part") or "").strip()
+            fixed = (variables.get("fixed_parts") or "").strip()
+            action = (variables.get("mechanism_action") or "").lower()
+            words = [w for w in re.findall(r"[^\W\d_]{4,}", moving.lower())]
+            if not moving or not fixed:
+                errors.append("moving_part and fixed_parts must both be filled")
+            elif words and not any(w in action for w in words):
+                errors.append("mechanism_action must move the moving_part (none of its words appear in mechanism_action)")
+            elif moving.lower() in fixed.lower():
+                errors.append("moving_part must not also be listed in fixed_parts")
         preset = variables.get("vehicle_preset")
         if preset not in niche_presets(template, niche):
             errors.append(f"vehicle_preset must be one of {niche_presets(template, niche)}")

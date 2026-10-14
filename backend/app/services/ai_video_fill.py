@@ -145,18 +145,32 @@ def apply_system_look(db, fanpage, template, variables):
     return variables
 
 
+LOCK_SLOTS = ("moving_part", "fixed_parts")
+# Muse ideas written before the motion lock existed: a safe, generic lock instead of a guess.
+GENERIC_LOCK = {
+    "moving_part": "mechanism described above",
+    "fixed_parts": "the car body, the wheels and every part that is not named as moving",
+}
+
+
 def research_ready(idea, template, clips) -> bool:
     """A research-desk idea that already carries every slot plus its own title and caption."""
     return bool(
         idea.source == "muse" and idea.title and idea.caption and isinstance(idea.variables, dict)
-        and set(required_variables(template, clips)) <= set(idea.variables)
+        and (set(required_variables(template, clips)) - set(LOCK_SLOTS)) <= set(idea.variables)
     )
 
 
 def fill_from_research(db, idea, fanpage, clips):
     """Use the slots, title and caption the research desk wrote, with the studio's look; no LLM call."""
     template = get_template(idea.template_key)
-    variables = apply_system_look(db, fanpage, template, idea.variables)
+    raw = dict(idea.variables or {})
+    base = dict(raw)
+    for slot in LOCK_SLOTS:
+        val = raw.get(slot)
+        if not val or not str(val).strip():
+            base[slot] = GENERIC_LOCK[slot]
+    variables = apply_system_look(db, fanpage, template, base)
     rendered = render_clips(template, variables, clips, lang_code=fanpage_language(fanpage))
     return variables, idea.title, idea.caption, rendered, "research_desk"
 

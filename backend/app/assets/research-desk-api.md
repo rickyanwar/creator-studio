@@ -145,7 +145,8 @@ Returns the JSON Schema (draft 2020-12) of the `POST /research/packs` body, incl
       ],
       "score": 84,
       "rationale": "Why this will perform, citing the reference numbers.",
-      "qc": {"passed": true, "facts_two_sources": true, "season_checked": "2026", "no_real_names": true,
+      "qc": {"passed": true, "motion_checked": true, "motion_notes": "Only the upper flap rotates in mechanism_action; main plane, endplates and pillar stay fixed; all parts are in notes 2-3.",
+             "facts_two_sources": true, "season_checked": "2026", "no_real_names": true,
              "placement_checked": true, "notes": ""},
       "variants": [
         {"channel_id": 12, "angle": "...", "variables": {"part": "...", "vehicle_preset": "f1", "narration_1": "...", "...": "..."},
@@ -247,6 +248,17 @@ Send the studio a short message: a question, a blocked source, an account you co
 
 Returns `201 {"id": 12}`. Keep notes short and only when they matter. Answers come back through `/research/feedback`.
 
+## Motion self-check (required)
+
+The studio does not run a vision check on the finished video, so the motion must be right in the
+slots. Before you send a pack, write out every clip prompt from the brief's `clip_prompts` with your
+slot values and check:
+1. `moving_part` is the ONE part that `mechanism_action` moves (around which axis, which direction).
+2. No part in `fixed_parts` is described as moving anywhere in any clip.
+3. Every component in `mechanism_details` and `parts_list` appears in your `research_notes` with a source.
+4. Each component sits where it really is on the vehicle.
+Then set `qc.motion_checked: true` and write what you checked in `qc.motion_notes`.
+
 ## What the server checks
 
 A variant or pack failing any check is rejected, with the reason.
@@ -262,6 +274,7 @@ A variant or pack failing any check is rejected, with the reason.
 8. `rationale` is present.
 9. `qc.passed` is `true`.
 10. There are 1–10 variants with no repeated channel.
+11. `qc.motion_checked` is `true` and `qc.motion_notes` says what was checked.
 
 **Variant:**
 1. The channel is in the brief, still needs ideas, allows the template and `clips`, and did not have this topic in the last 30 days.
@@ -274,6 +287,7 @@ A variant or pack failing any check is rejected, with the reason.
    - The caption's first sentence is the hook a viewer sees before the text is truncated: at most `hook_max_chars`, concrete, no generic opener.
    - At most `hashtags_max` hashtags.
 8. The variant's narration and title are not near-copies of another variant in the same pack.
+9. `moving_part` and `fixed_parts` are filled, `mechanism_action` names the moving part, and the moving part is not listed as fixed.
 
 ## Research and writing rules
 

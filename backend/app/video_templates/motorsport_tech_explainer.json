@@ -71,7 +71,7 @@
     "topic": "DRS rear wing",
     "variables": {
       "part": "rear wing",
-      "mechanism_details": "the DRS mechanism inside the central pillar: a slim hydraulic actuator cylinder with glowing orange and blue hydraulic fluid, a piston sliding forward, small gears and braided steel hoses",
+      "mechanism_details": "the DRS actuator inside the central support pillar: a slim hydraulic cylinder whose piston is linked to the upper flap",
       "mechanism_action": "The piston pushes and the upper flap of the rear wing visibly rotates upward, opening a wide slot between the two wing elements.",
       "moving_part": "upper rear-wing flap",
       "fixed_parts": "the lower main plane, both vertical endplates and the central support pillar",
