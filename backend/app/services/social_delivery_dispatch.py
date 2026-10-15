@@ -1303,6 +1303,28 @@ def dispatch_phone_delivery(
     return delivery
 
 
+def _recovering_phone_destinations_query(
+    db: Session,
+    device_id: int | None = None,
+):
+    # IN scalar subquery avoids SELECT DISTINCT over SocialDestination.supported_media JSON
+    eligible_ids_query = (
+        db.query(SocialDestination.id)
+        .join(DestinationDeviceAssignment, DestinationDeviceAssignment.destination_id == SocialDestination.id)
+        .join(PhoneDevice, PhoneDevice.id == DestinationDeviceAssignment.device_id)
+        .filter(
+            SocialDestination.is_active.is_(True),
+            DestinationDeviceAssignment.is_active.is_(True),
+            PhoneDevice.status == "available",
+            PhoneDevice.calibration_verified_at.isnot(None),
+        )
+    )
+    if device_id is not None:
+        eligible_ids_query = eligible_ids_query.filter(PhoneDevice.id == device_id)
+
+    return db.query(SocialDestination).filter(SocialDestination.id.in_(eligible_ids_query))
+
+
 def replan_recovering_phone_deliveries(
     db: Session,
     device_id: int | None = None,
@@ -1316,22 +1338,7 @@ def replan_recovering_phone_deliveries(
     now = _now(now_utc)
     naive_now = now.replace(tzinfo=None)
 
-    # Find active destinations with available phone devices
-    dest_query = (
-        db.query(SocialDestination)
-        .join(DestinationDeviceAssignment, DestinationDeviceAssignment.destination_id == SocialDestination.id)
-        .join(PhoneDevice, PhoneDevice.id == DestinationDeviceAssignment.device_id)
-        .filter(
-            SocialDestination.is_active.is_(True),
-            DestinationDeviceAssignment.is_active.is_(True),
-            PhoneDevice.status == "available",
-            PhoneDevice.calibration_verified_at.isnot(None),
-        )
-    )
-    if device_id is not None:
-        dest_query = dest_query.filter(PhoneDevice.id == device_id)
-
-    destinations = dest_query.distinct().all()
+    destinations = _recovering_phone_destinations_query(db, device_id=device_id).all()
     replanned: list[PublishDelivery] = []
 
     for dest in destinations:
