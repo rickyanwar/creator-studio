@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 from sqlalchemy.orm import sessionmaker
 
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
@@ -27,6 +28,11 @@ from app.services.social_delivery_dispatch import (
 
 @pytest.fixture
 def db_session():
+    orig_visit_array = getattr(SQLiteTypeCompiler, "visit_ARRAY", None)
+    orig_visit_jsonb = getattr(SQLiteTypeCompiler, "visit_JSONB", None)
+    SQLiteTypeCompiler.visit_ARRAY = lambda self, type_, **kw: "TEXT"
+    SQLiteTypeCompiler.visit_JSONB = lambda self, type_, **kw: "TEXT"
+
     sd_col = SocialDestination.__table__.columns["supported_media"]
     orig_sd = sd_col.server_default
     sd_col.server_default = None
@@ -35,27 +41,39 @@ def db_session():
     orig_de = de_col.server_default
     de_col.server_default = None
 
-    engine = create_engine("sqlite:///:memory:")
-    TargetFanpage.__table__.create(engine)
-    SocialDestination.__table__.create(engine)
-    PhoneDevice.__table__.create(engine)
-    DestinationDeviceAssignment.__table__.create(engine)
-    DeviceLease.__table__.create(engine)
-    RecoveryIncident.__table__.create(engine)
-    OperationalNotification.__table__.create(engine)
-    PublishJob.__table__.create(engine)
-    PublishDelivery.__table__.create(engine)
-    DeliveryEvent.__table__.create(engine)
-
-    Session = sessionmaker(bind=engine)
-    session = Session()
-
+    engine = None
+    session = None
     try:
+        engine = create_engine("sqlite:///:memory:")
+        TargetFanpage.__table__.create(engine)
+        SocialDestination.__table__.create(engine)
+        PhoneDevice.__table__.create(engine)
+        DestinationDeviceAssignment.__table__.create(engine)
+        DeviceLease.__table__.create(engine)
+        RecoveryIncident.__table__.create(engine)
+        OperationalNotification.__table__.create(engine)
+        PublishJob.__table__.create(engine)
+        PublishDelivery.__table__.create(engine)
+        DeliveryEvent.__table__.create(engine)
+
+        Session = sessionmaker(bind=engine)
+        session = Session()
         yield session
     finally:
-        session.close()
+        if session is not None:
+            session.close()
+        if engine is not None:
+            engine.dispose()
         sd_col.server_default = orig_sd
         de_col.server_default = orig_de
+        if orig_visit_array is not None:
+            SQLiteTypeCompiler.visit_ARRAY = orig_visit_array
+        elif hasattr(SQLiteTypeCompiler, "visit_ARRAY"):
+            delattr(SQLiteTypeCompiler, "visit_ARRAY")
+        if orig_visit_jsonb is not None:
+            SQLiteTypeCompiler.visit_JSONB = orig_visit_jsonb
+        elif hasattr(SQLiteTypeCompiler, "visit_JSONB"):
+            delattr(SQLiteTypeCompiler, "visit_JSONB")
 
 
 def _create_fixture_project(db, name="Project 1"):
