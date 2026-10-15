@@ -43,6 +43,7 @@ celery_app = Celery(
         "app.tasks.radar_dispatch",
         "app.tasks.model_health",
         "app.tasks.f1_drivers_sync",
+        "app.tasks.social_delivery",
     ],
 )
 
@@ -185,6 +186,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.status_sync.sync_pending_schedules",
         "schedule": 300,
     },
+    # Delivery status sync: every 5 minutes
+    "sync-delivery-status": {
+        "task": "app.tasks.status_sync.sync_pending_deliveries",
+        "schedule": 300,
+    },
     # Recovery: re-trigger fan-out for posts stuck in 'stored' with no publish jobs
     "recover-stuck-posts": {
         "task": "app.tasks.fan_out.recover_stuck_posts",
@@ -315,5 +321,11 @@ celery_app.conf.beat_schedule = {
     "cleanup-old-thumbs": {
         "task": "app.tasks.cleanup.cleanup_old_thumbs",
         "schedule": crontab(minute=0, hour=3, day_of_week="sunday"),
+    },
+    # Social delivery dispatch: ticks every 60s
+    "dispatch-social-deliveries": {
+        "task": "app.tasks.social_delivery.dispatch_social_deliveries",
+        "schedule": 60,
+        "options": {"expires": 55},
     },
 }

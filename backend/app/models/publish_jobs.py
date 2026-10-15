@@ -117,3 +117,4 @@ class PublishJob(Base):
     post = relationship("Post", back_populates="publish_jobs")
     fanpage = relationship("TargetFanpage", back_populates="publish_jobs")
     source_article = relationship("ScrapedArticle", back_populates="publish_jobs")
+    deliveries = relationship("PublishDelivery", back_populates="publish_job", cascade="all, delete-orphan")

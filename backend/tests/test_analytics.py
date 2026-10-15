@@ -17,7 +17,8 @@ from app.services.analytics import (
     compute_by_hour,
     compute_daily,
     compute_by_content_type,
-    compute_top_posts
+    compute_top_posts,
+    load_jobs_for_fanpages,
 )
 from app.database import Base, engine, SessionLocal
 
@@ -222,3 +223,130 @@ def test_api_analytics(db_session):
         setrow.metrics_ingestion_enabled = old_metrics_enabled
     db_session.commit()
     app.dependency_overrides.clear()
+
+
+def test_load_jobs_for_fanpages_delivery_aggregation_and_legacy_fallback():
+    """Verify delivery-linked snapshots are aggregated per job/bucket and legacy snapshot is used as fallback."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+    from sqlalchemy.ext.compiler import compiles
+    from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool
+
+    @compiles(ARRAY, "sqlite")
+    def _compile_array(type_, compiler, **kw):
+        return "TEXT"
+
+    @compiles(JSONB, "sqlite")
+    def _compile_jsonb(type_, compiler, **kw):
+        return "TEXT"
+
+    mem_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TargetFanpage.__table__.create(bind=mem_engine)
+    PublishJob.__table__.create(bind=mem_engine)
+    PostMetricSnapshot.__table__.create(bind=mem_engine)
+
+    session = Session(bind=mem_engine)
+    try:
+        fp = TargetFanpage(name="fanpage_analytics", is_active=True)
+        session.add(fp)
+        session.flush()
+
+        now = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+        since = now - timedelta(days=7)
+        until = now + timedelta(days=1)
+
+        j1 = PublishJob(
+            fanpage_id=fp.id,
+            status=PublishJobStatus.published,
+            is_deleted=False,
+            content_type=ContentType.ig_repost,
+            scheduled_for=now,
+            ai_generated_caption="Job with multiple deliveries",
+        )
+        j2 = PublishJob(
+            fanpage_id=fp.id,
+            status=PublishJobStatus.published,
+            is_deleted=False,
+            content_type=ContentType.ig_repost,
+            scheduled_for=now,
+            ai_generated_caption="Job with legacy snapshot only",
+        )
+        session.add_all([j1, j2])
+        session.flush()
+
+        # Job 1: Two delivery snapshots for bucket "24h" + one legacy snapshot for "24h"
+        d_snap1 = PostMetricSnapshot(
+            publish_job_id=j1.id,
+            delivery_id=101,
+            fanpage_id=fp.id,
+            bucket="24h",
+            captured_at=now,
+            age_minutes=1440,
+            likes=10,
+            comments=2,
+            shares=1,
+        )
+        d_snap2 = PostMetricSnapshot(
+            publish_job_id=j1.id,
+            delivery_id=102,
+            fanpage_id=fp.id,
+            bucket="24h",
+            captured_at=now,
+            age_minutes=1440,
+            likes=20,
+            comments=3,
+            shares=4,
+        )
+        legacy_snap_j1 = PostMetricSnapshot(
+            publish_job_id=j1.id,
+            delivery_id=None,
+            fanpage_id=fp.id,
+            bucket="24h",
+            captured_at=now,
+            age_minutes=1440,
+            likes=999,
+            comments=999,
+            shares=999,
+        )
+
+        # Job 2: Only legacy snapshot for bucket "24h"
+        legacy_snap_j2 = PostMetricSnapshot(
+            publish_job_id=j2.id,
+            delivery_id=None,
+            fanpage_id=fp.id,
+            bucket="24h",
+            captured_at=now,
+            age_minutes=1440,
+            likes=5,
+            comments=1,
+            shares=0,
+        )
+
+        session.add_all([d_snap1, d_snap2, legacy_snap_j1, legacy_snap_j2])
+        session.commit()
+
+        rows = load_jobs_for_fanpages(session, [fp.id], since=since, until=until)
+        assert len(rows) == 2
+
+        row_j1 = next(r for r in rows if r.id == j1.id)
+        assert "24h" in row_j1.snapshots
+        s1 = row_j1.snapshots["24h"]
+        assert s1.likes == 30  # 10 + 20 (legacy 999 ignored)
+        assert s1.comments == 5  # 2 + 3
+        assert s1.shares == 5  # 1 + 4
+        assert s1.engagement == 40
+
+        row_j2 = next(r for r in rows if r.id == j2.id)
+        assert "24h" in row_j2.snapshots
+        s2 = row_j2.snapshots["24h"]
+        assert s2.likes == 5
+        assert s2.comments == 1
+        assert s2.shares == 0
+        assert s2.engagement == 6
+    finally:
+        session.close()

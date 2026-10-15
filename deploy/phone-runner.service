@@ -1,0 +1,52 @@
+# Install:
+# 1. Deploy package to /opt/phone_runner/phone_runner (PYTHONPATH=/opt/phone_runner)
+# 2. Provision /etc/phone-runner-mobilerun.yaml (mode 644) from template
+# 3. Create /etc/phone-runner.env (mode 600) with credentials and MOBILERUN_CONFIG_PATH
+# 4. Copy unit to /etc/systemd/system/phone-runner.service
+# 5. systemctl daemon-reload && systemctl enable --now phone-runner.service
+#
+# ADB Connectivity:
+# Root ADB server daemon is started prior to service launch (e.g. `adb start-server`).
+# ProtectHome=read-only permits reading /root/.android/adbkey without requiring write access.
+#
+# Environment configuration (/etc/phone-runner.env):
+# - PHONE_RUNNER_BIND: private interface IP (e.g. 172.18.0.1 or 172.17.0.1 for Docker worker access, or 127.0.0.1 for loopback only).
+#     NEVER bind to public 0.0.0.0 or any public interface.
+# - PHONE_RUNNER_PORT: service port (default: 8765)
+# - PHONE_RUNNER_TOKEN: constant-time shared secret for host runner authentication (must match worker container PHONE_RUNNER_TOKEN)
+# - PHONE_RUNNER_ALLOWED_SERIALS: comma-separated allowlist of authorized ADB serials (e.g. 100.64.96.50:5555)
+# - MOBILERUN_CONFIG_PATH: /etc/phone-runner-mobilerun.yaml (explicit pre-provisioned runtime YAML config)
+# - OPENAI_API_KEY: gateway API key (held in process environment for OpenAILike provider; never in argv or logs)
+# - MOBILERUN_PROVIDER: provider name (default: OpenAILike)
+# - MOBILERUN_MODEL: model name (default: FlashFast)
+# - MOBILERUN_API_BASE: gateway URL passed via --api_base (default: http://localhost:20128/v1)
+# - ADB_PATH: path to adb binary (default: /usr/bin/adb)
+# - MOBILERUN_PATH: path to mobilerun CLI (default: /root/.local/bin/mobilerun)
+
+[Unit]
+Description=Phone Runner Host Automation Service
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+StateDirectory=phone-runner
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/phone-runner
+Environment=PYTHONPATH=/opt/phone_runner
+Environment=MOBILERUN_TELEMETRY_ENABLED=false
+Environment=XDG_CONFIG_HOME=/var/lib/phone-runner/.config
+Environment=XDG_CACHE_HOME=/var/lib/phone-runner/.cache
+EnvironmentFile=/etc/phone-runner.env
+ExecStart=/usr/bin/python3 -m phone_runner.server
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

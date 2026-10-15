@@ -1,0 +1,513 @@
+"""Pydantic schemas for social media destinations, devices, assignments, and content projects."""
+
+from __future__ import annotations
+
+from datetime import datetime
+import ipaddress
+import re
+from typing import Optional
+import zoneinfo
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+# ── Content Projects ───────────────────────────────────────────────────────────
+
+
+class ContentProjectCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+    timezone: str = "Europe/London"
+
+    @field_validator("name")
+    def validate_name(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Project name cannot be blank")
+        if re.search(r"[\r\n\x00-\x1f\x7f-\x9f]", s):
+            raise ValueError("Project name cannot contain newlines or control characters")
+        return s
+
+    @field_validator("timezone")
+    def validate_tz(cls, v: str) -> str:
+        if v not in zoneinfo.available_timezones():
+            raise ValueError(f"Unknown IANA timezone: {v}")
+        return v
+
+
+class ContentProjectOut(BaseModel):
+    id: int
+    name: str
+    repliz_account_id: Optional[str] = None
+    is_connected: bool
+    is_active: bool
+    timezone: str
+    target_country: Optional[str] = None
+    destination_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Social Destinations ────────────────────────────────────────────────────────
+
+
+VALID_MEDIA = {"image", "album", "video"}
+
+
+class SocialDestinationCreate(BaseModel):
+    content_project_id: int
+    kind: str = Field(..., description="facebook_profile or facebook_page")
+    name: str = Field(..., min_length=1, max_length=256)
+    facebook_actor_id: Optional[str] = None
+    parent_profile_id: Optional[int] = None
+    repliz_account_id: Optional[str] = None
+    mode: str = "phone"
+    timezone: str = "Europe/London"
+    daily_target: int = 1
+    phone_daily_target: int = 0
+    repliz_daily_target: int = 0
+    min_gap_minutes: int = 5
+    supported_media: list[str] = ["image", "album", "video"]
+    is_active: bool = False
+
+    @field_validator("name")
+    def clean_name(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Destination name cannot be blank")
+        if re.search(r"[\r\n\x00-\x1f\x7f-\x9f]", s):
+            raise ValueError("Destination name cannot contain newlines or control characters")
+        return s
+
+    @field_validator("kind")
+    def validate_kind(cls, v: str) -> str:
+        v_clean = v.strip().lower()
+        if v_clean == "profile":
+            return "facebook_profile"
+        if v_clean == "page":
+            return "facebook_page"
+        if v_clean not in ("facebook_profile", "facebook_page"):
+            raise ValueError(f"Unsupported platform kind: {v}. Only Facebook Profile and Page supported.")
+        return v_clean
+
+    @field_validator("mode")
+    def validate_mode(cls, v: str) -> str:
+        v_clean = v.strip().lower()
+        if v_clean not in ("phone", "repliz", "mixed"):
+            raise ValueError(f"Unsupported route mode: {v}. Must be phone, repliz, or mixed.")
+        return v_clean
+
+    @field_validator("timezone")
+    def validate_tz(cls, v: str) -> str:
+        if v not in zoneinfo.available_timezones():
+            raise ValueError(f"Unknown IANA timezone: {v}")
+        return v
+
+    @field_validator("daily_target")
+    def validate_daily_target(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("daily_target must be positive")
+        return v
+
+    @field_validator("phone_daily_target", "repliz_daily_target")
+    def validate_quotas(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("Quotas must be non-negative")
+        return v
+
+    @field_validator("min_gap_minutes")
+    def validate_min_gap(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("min_gap_minutes must be positive")
+        return v
+
+    @field_validator("supported_media")
+    def validate_media(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("supported_media cannot be empty")
+        for item in v:
+            if item not in VALID_MEDIA:
+                raise ValueError(f"Invalid supported_media value: {item}. Allowed: {sorted(VALID_MEDIA)}")
+        return list(dict.fromkeys(v))
+
+    @field_validator("facebook_actor_id", "repliz_account_id")
+    def clean_string_ids(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+    @model_validator(mode="after")
+    def validate_quota_sum(self):
+        if self.phone_daily_target + self.repliz_daily_target != self.daily_target:
+            raise ValueError(
+                f"Quota sum ({self.phone_daily_target} + {self.repliz_daily_target}) "
+                f"must equal daily_target ({self.daily_target})"
+            )
+        return self
+
+
+class SocialDestinationUpdate(BaseModel):
+    content_project_id: Optional[int] = None
+    kind: Optional[str] = None
+    name: Optional[str] = None
+    facebook_actor_id: Optional[str] = None
+    parent_profile_id: Optional[int] = None
+    repliz_account_id: Optional[str] = None
+    mode: Optional[str] = None
+    timezone: Optional[str] = None
+    daily_target: Optional[int] = None
+    phone_daily_target: Optional[int] = None
+    repliz_daily_target: Optional[int] = None
+    min_gap_minutes: Optional[int] = None
+    supported_media: Optional[list[str]] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("name")
+    def clean_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Destination name cannot be blank")
+        if re.search(r"[\r\n\x00-\x1f\x7f-\x9f]", s):
+            raise ValueError("Destination name cannot contain newlines or control characters")
+        return s
+
+    @field_validator("kind")
+    def validate_kind(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        if v_clean == "profile":
+            return "facebook_profile"
+        if v_clean == "page":
+            return "facebook_page"
+        if v_clean not in ("facebook_profile", "facebook_page"):
+            raise ValueError(f"Unsupported platform kind: {v}. Only Facebook Profile and Page supported.")
+        return v_clean
+
+    @field_validator("mode")
+    def validate_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        if v_clean not in ("phone", "repliz", "mixed"):
+            raise ValueError(f"Unsupported route mode: {v}. Must be phone, repliz, or mixed.")
+        return v_clean
+
+    @field_validator("timezone")
+    def validate_tz(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if v not in zoneinfo.available_timezones():
+            raise ValueError(f"Unknown IANA timezone: {v}")
+        return v
+
+    @field_validator("daily_target")
+    def validate_daily_target(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("daily_target must be positive")
+        return v
+
+    @field_validator("phone_daily_target", "repliz_daily_target")
+    def validate_quotas(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("Quotas must be non-negative")
+        return v
+
+    @field_validator("min_gap_minutes")
+    def validate_min_gap(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("min_gap_minutes must be positive")
+        return v
+
+    @field_validator("supported_media")
+    def validate_media(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return None
+        if not v:
+            raise ValueError("supported_media cannot be empty")
+        for item in v:
+            if item not in VALID_MEDIA:
+                raise ValueError(f"Invalid supported_media value: {item}. Allowed: {sorted(VALID_MEDIA)}")
+        return list(dict.fromkeys(v))
+
+    @field_validator("facebook_actor_id", "repliz_account_id")
+    def clean_string_ids(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+
+class SocialDestinationOut(BaseModel):
+    id: int
+    content_project_id: int
+    kind: str
+    name: str
+    facebook_actor_id: Optional[str] = None
+    parent_profile_id: Optional[int] = None
+    repliz_account_id: Optional[str] = None
+    mode: str
+    timezone: str
+    daily_target: int
+    phone_daily_target: int
+    repliz_daily_target: int
+    min_gap_minutes: int
+    supported_media: list[str]
+    is_active: bool
+    identity_verified_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Phone Devices ──────────────────────────────────────────────────────────────
+
+
+class PhoneDeviceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    tailscale_node_id: Optional[str] = Field(None, max_length=128)
+    tailscale_ip: Optional[str] = Field(None, max_length=64)
+    adb_serial: Optional[str] = Field(None, max_length=128)
+    expected_profile_actor_id: Optional[str] = Field(None, max_length=64)
+    expected_profile_name: Optional[str] = Field(None, max_length=256)
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
+    screen_density: Optional[int] = None
+    screen_rotation: Optional[int] = None
+    facebook_app_version: Optional[str] = Field(None, max_length=64)
+    mobilerun_portal_version: Optional[str] = Field(None, max_length=64)
+    app_card_version: Optional[str] = Field(None, max_length=64)
+    status: str = "maintenance"
+
+    @field_validator("name", "expected_profile_name")
+    def clean_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Name cannot be blank")
+        if re.search(r"[\r\n\x00-\x1f\x7f-\x9f]", s):
+            raise ValueError("Name cannot contain newlines or control characters")
+        return s
+
+    @field_validator("status")
+    def check_status(cls, v: str) -> str:
+        v_clean = v.strip().lower()
+        if v_clean not in ("available", "in_use", "maintenance"):
+            raise ValueError("Status must be one of: available, in_use, maintenance")
+        return v_clean
+
+    @field_validator("adb_serial", "tailscale_node_id")
+    def check_identifier_safety(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        if not re.match(r"^[A-Za-z0-9_.:-]+$", s):
+            raise ValueError("Invalid identifier format; disallowed shell or special characters")
+        return s
+
+    @field_validator("tailscale_ip")
+    def check_ip(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            ipaddress.ip_address(s)
+        except ValueError:
+            raise ValueError(f"Invalid IP address format: {v}")
+        return s
+
+    @field_validator("expected_profile_actor_id")
+    def clean_actor_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+    @model_validator(mode="after")
+    def check_available_actor_id(self):
+        if self.status == "available" and not self.expected_profile_actor_id:
+            raise ValueError("expected_profile_actor_id is required before device status can be available")
+        return self
+
+
+class PhoneDeviceUpdate(BaseModel):
+    name: Optional[str] = None
+    tailscale_node_id: Optional[str] = None
+    tailscale_ip: Optional[str] = None
+    adb_serial: Optional[str] = None
+    expected_profile_actor_id: Optional[str] = None
+    expected_profile_name: Optional[str] = None
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
+    screen_density: Optional[int] = None
+    screen_rotation: Optional[int] = None
+    facebook_app_version: Optional[str] = None
+    mobilerun_portal_version: Optional[str] = None
+    app_card_version: Optional[str] = None
+    status: Optional[str] = None
+
+    @field_validator("name", "expected_profile_name")
+    def clean_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Name cannot be blank")
+        if re.search(r"[\r\n\x00-\x1f\x7f-\x9f]", s):
+            raise ValueError("Name cannot contain newlines or control characters")
+        return s
+
+    @field_validator("status")
+    def check_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v_clean = v.strip().lower()
+        if v_clean not in ("available", "in_use", "maintenance"):
+            raise ValueError("Status must be one of: available, in_use, maintenance")
+        return v_clean
+
+    @field_validator("adb_serial", "tailscale_node_id")
+    def check_identifier_safety(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        if not re.match(r"^[A-Za-z0-9_.:-]+$", s):
+            raise ValueError("Invalid identifier format; disallowed shell or special characters")
+        return s
+
+    @field_validator("tailscale_ip")
+    def check_ip(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            ipaddress.ip_address(s)
+        except ValueError:
+            raise ValueError(f"Invalid IP address format: {v}")
+        return s
+
+    @field_validator("expected_profile_actor_id")
+    def clean_actor_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+
+class PhoneDeviceOut(BaseModel):
+    id: int
+    name: str
+    tailscale_node_id: Optional[str] = None
+    tailscale_ip: Optional[str] = None
+    adb_serial: Optional[str] = None
+    expected_profile_actor_id: Optional[str] = None
+    expected_profile_name: Optional[str] = None
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
+    screen_density: Optional[int] = None
+    screen_rotation: Optional[int] = None
+    facebook_app_version: Optional[str] = None
+    mobilerun_portal_version: Optional[str] = None
+    app_card_version: Optional[str] = None
+    calibration_verified_at: Optional[datetime] = None
+    status: str
+    last_seen_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Assignments ────────────────────────────────────────────────────────────────
+
+
+class DestinationDeviceAssignmentCreate(BaseModel):
+    destination_id: int
+    device_id: int
+    priority: int = Field(0, ge=0)
+    is_active: bool = True
+    verified_profile_actor_id: Optional[str] = None
+    verified_target_actor_id: Optional[str] = None
+
+
+class DestinationDeviceAssignmentVerify(BaseModel):
+    destination_id: int
+    device_id: int
+    verified_profile_actor_id: str = Field(..., min_length=1)
+    verified_target_actor_id: Optional[str] = None
+
+
+class DeviceDryRunRequest(BaseModel):
+    destination_id: Optional[int] = None
+
+
+class DestinationDeviceAssignmentOut(BaseModel):
+    id: int
+    destination_id: int
+    device_id: int
+    priority: int
+    is_active: bool
+    verified_profile_actor_id: Optional[str] = None
+    verified_target_actor_id: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Delivery Activity & Events ────────────────────────────────────────────────
+
+
+class DeliveryEventOut(BaseModel):
+    id: int
+    delivery_id: int
+    event_type: str
+    details: dict = {}
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DeliveryActivityOut(BaseModel):
+    id: int
+    publish_job_id: int
+    destination_id: int
+    destination_name: Optional[str] = None
+    destination_kind: Optional[str] = None
+    content_project_id: Optional[int] = None
+    device_id: Optional[int] = None
+    device_name: Optional[str] = None
+    state: str
+    intended_method: Optional[str] = None
+    actual_method: Optional[str] = None
+    scheduled_for: Optional[datetime] = None
+    claimed_at: Optional[datetime] = None
+    attempt_count: int = 0
+    caption_snapshot: Optional[str] = None
+    media_kind: Optional[str] = None
+    title_snapshot: Optional[str] = None
+    repliz_schedule_id: Optional[str] = None
+    facebook_post_id: Optional[str] = None
+    facebook_permalink: Optional[str] = None
+    uncertain_since: Optional[datetime] = None
+    last_error: Optional[str] = None
+    published_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    events: list[DeliveryEventOut] = []
+
+    model_config = {"from_attributes": True}

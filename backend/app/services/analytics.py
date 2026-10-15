@@ -85,17 +85,43 @@ def load_jobs_for_fanpages(db: Session, fanpage_ids: list[int], since: datetime,
         )
         .all()
     )
-    
-    snap_map = {}
+
+    # Group snapshots by (publish_job_id, bucket)
+    # Prefer delivery-linked snapshots when present and aggregate metrics across deliveries;
+    # fallback to legacy snapshot (delivery_id is None) only if no delivery snapshots exist.
+    snapshots_by_job_bucket: dict[tuple[int, str], list[PostMetricSnapshot]] = {}
     for s in snapshots:
-        if s.publish_job_id not in snap_map:
-            snap_map[s.publish_job_id] = {}
-        snap_map[s.publish_job_id][s.bucket] = JobSnapshot(
-            bucket=s.bucket,
-            likes=s.likes,
-            comments=s.comments,
-            shares=s.shares
-        )
+        snapshots_by_job_bucket.setdefault((s.publish_job_id, s.bucket), []).append(s)
+
+    snap_map: dict[int, dict[str, JobSnapshot]] = {}
+    for (job_id, bucket), snap_list in snapshots_by_job_bucket.items():
+        delivery_snaps = [s for s in snap_list if s.delivery_id is not None]
+        if delivery_snaps:
+            likes = (
+                sum(s.likes for s in delivery_snaps if s.likes is not None)
+                if any(s.likes is not None for s in delivery_snaps)
+                else None
+            )
+            comments = (
+                sum(s.comments for s in delivery_snaps if s.comments is not None)
+                if any(s.comments is not None for s in delivery_snaps)
+                else None
+            )
+            shares = (
+                sum(s.shares for s in delivery_snaps if s.shares is not None)
+                if any(s.shares is not None for s in delivery_snaps)
+                else None
+            )
+            snap = JobSnapshot(bucket=bucket, likes=likes, comments=comments, shares=shares)
+        else:
+            legacy_s = snap_list[0]
+            snap = JobSnapshot(
+                bucket=legacy_s.bucket,
+                likes=legacy_s.likes,
+                comments=legacy_s.comments,
+                shares=legacy_s.shares,
+            )
+        snap_map.setdefault(job_id, {})[bucket] = snap
         
     rows = []
     for j in jobs:

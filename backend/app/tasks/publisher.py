@@ -263,6 +263,75 @@ def publish_job(self, job_id: int):
             return
 
         job = db.query(PublishJob).filter_by(id=job_id).first()
+        if not job:
+            return
+
+        # Check for configured active social destinations (S1b delivery ledger path)
+        from app.models.social_publishing import SocialDestination, PublishDelivery
+        from app.services.social_delivery_planner import ensure_deliveries
+        from app.services.social_delivery_dispatch import dispatch_due_deliveries
+
+        has_destinations = (
+            db.query(SocialDestination)
+            .filter(
+                SocialDestination.content_project_id == job.fanpage_id,
+                SocialDestination.is_active.is_(True),
+            )
+            .count()
+            > 0
+        )
+
+        if has_destinations:
+            deliveries = ensure_deliveries(db, job)
+            dispatch_due_deliveries(db, job_id=job.id)
+
+            all_delivs = (
+                db.query(PublishDelivery)
+                .filter_by(publish_job_id=job.id)
+                .all()
+            )
+            all_accepted = bool(all_delivs) and all(
+                d.state in ("repliz_scheduled", "published") for d in all_delivs
+            )
+
+            now = datetime.now(timezone.utc)
+            if all_accepted:
+                job.status = PublishJobStatus.published
+                job.published_at = now
+                repliz_delivs = [d for d in all_delivs if d.actual_method == "repliz"]
+                if len(all_delivs) == 1 and len(repliz_delivs) == 1:
+                    rd = repliz_delivs[0]
+                    job.repliz_schedule_id = rd.repliz_schedule_id
+                    job.scheduled_for = rd.scheduled_for
+
+                if job.source_article_id:
+                    from app.models.scraped_articles import ScrapedArticle, ArticleStatus
+                    article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
+                    if article:
+                        article.status = ArticleStatus.published
+
+                if job.post_id:
+                    post = db.query(Post).filter_by(id=job.post_id).first()
+                    if post:
+                        _maybe_mark_post_done(db, post)
+            else:
+                # Release back to pending_publish for recovery sweep without duplicating deliveries
+                job.status = PublishJobStatus.pending_publish
+
+            db.commit()
+            return
+
+        fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+        if not fanpage or not (fanpage.repliz_account_id and fanpage.repliz_account_id.strip()):
+            logger.error(
+                "Job %d: project %s has no Repliz account and no active social destinations",
+                job.id,
+                job.fanpage_id,
+            )
+            job.status = PublishJobStatus.failed
+            job.last_error = "Project has no Repliz account and no active social destinations"
+            db.commit()
+            return
 
         from app.models.publish_jobs import ContentType
         # news_content, ig_recreate, discussion, pinterest_content, and

@@ -1,0 +1,13 @@
+# Mobilerun configuration template for Phone Runner host service (Mobilerun 0.6.22+ schema 7)
+#
+# IMPORTANT: App Cards provide agent guidance to Mobilerun.
+# The host runner application and backend orchestrator strictly enforce all safety gates,
+# timeouts, serial allowlists, and dry-run boundaries.
+
+_version: 7
+agent:
+  app_cards:
+    enabled: true
+    mode: local
+    # Absolute path to deployed app_cards directory on the VPS
+    app_cards_dir: /opt/phone_runner/phone_runner/app_cards

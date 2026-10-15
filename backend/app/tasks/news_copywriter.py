@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 def _subscribed_fanpages(db, news_source_id: int):
     from app.models.target_fanpages import TargetFanpage
     from app.models.fanpage_news_sources import FanpageNewsSource
+    from app.services.social_project_eligibility import project_can_generate
 
     return (
         db.query(TargetFanpage)
@@ -54,7 +55,7 @@ def _subscribed_fanpages(db, news_source_id: int):
             FanpageNewsSource.is_active == True,
             TargetFanpage.mode2_news_content_enabled == True,
             TargetFanpage.is_active == True,
-            TargetFanpage.is_connected == True,
+            project_can_generate(),
         )
         .all()
     )
@@ -200,6 +201,7 @@ def copywrite_pending_articles():
         from app.models.news_sources import NewsSource
         from app.models.fanpage_news_sources import FanpageNewsSource
         from app.models.target_fanpages import TargetFanpage
+        from app.services.social_project_eligibility import project_can_generate
 
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
 
@@ -214,7 +216,7 @@ def copywrite_pending_articles():
                 FanpageNewsSource.is_active == True,
                 TargetFanpage.mode2_news_content_enabled == True,
                 TargetFanpage.is_active == True,
-                TargetFanpage.is_connected == True,
+                project_can_generate(),
             )
             .distinct()
             .limit(20)

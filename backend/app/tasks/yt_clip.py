@@ -46,13 +46,14 @@ def _now() -> datetime:
 
 def _enabled_fanpages(db):
     from app.models.target_fanpages import TargetFanpage
+    from app.services.social_project_eligibility import project_can_generate
 
     return (
         db.query(TargetFanpage)
         .filter(
             TargetFanpage.yt_clip_enabled == True,  # noqa: E712
             TargetFanpage.is_active == True,  # noqa: E712
-            TargetFanpage.is_connected == True,  # noqa: E712
+            project_can_generate(),
         )
         .all()
     )

@@ -8,6 +8,7 @@ import { HermesTokensCard } from "@/components/settings/HermesTokensCard";
 import { AiVideoSettingsCard } from "@/components/settings/AiVideoSettingsCard";
 import { GalleryLabelsSettingsCard } from "@/components/settings/GalleryLabelsSettingsCard";
 import { F1DriversSettings } from "@/components/settings/F1DriversSettings";
+import { DevicesSettingsCard } from "@/components/settings/DevicesSettingsCard";
 import type { AppSettings } from "@/lib/types";
 import { Icon } from "@iconify/react";
 
@@ -134,7 +135,7 @@ export default function SettingsPage() {
   return (
     <div className="max-w-2xl space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
+        <h1 className="text-2xl font-bold text-text-primary">Global Settings</h1>
         <p className="text-sm text-text-secondary mt-1">Global configuration for the reposter</p>
       </div>
 
@@ -580,6 +581,8 @@ export default function SettingsPage() {
         <Icon icon="solar:refresh-bold-duotone" width={14} className={loadingSave ? "animate-spin" : "hidden"} />
         {saved ? "Saved!" : loadingSave ? "Saving…" : "Save Settings"}
       </button>
+
+      <DevicesSettingsCard />
 
       <F1DriversSettings />
     </div>

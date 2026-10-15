@@ -249,7 +249,7 @@ class FanpageSourceTriggerUpdate(BaseModel):
 
 class FanpageOut(FanpageBase):
     id: int
-    repliz_account_id: str
+    repliz_account_id: Optional[str] = None
     name: str
     username: Optional[str] = None
     picture_url: Optional[str] = None

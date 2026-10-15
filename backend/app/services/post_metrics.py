@@ -115,3 +115,48 @@ def extract_post_id(repliz_response_json: dict | None) -> str | None:
                 return res
 
     return None
+
+
+def select_metric_targets(job: Any) -> list[tuple[int | None, str, str | None]]:
+    """Select all metric targets (delivery_id, post_id, account_id) for a job.
+
+    Returns distinct targets for each ledger delivery with a facebook_post_id,
+    or falls back to legacy PublishJob.repliz_response_json.
+    """
+    targets: list[tuple[int | None, str, str | None]] = []
+    if hasattr(job, "deliveries") and job.deliveries:
+        for deliv in job.deliveries:
+            pid = getattr(deliv, "facebook_post_id", None)
+            if pid:
+                pid = str(pid).strip()
+                if pid:
+                    dest = getattr(deliv, "destination", None)
+                    acc_id = None
+                    if dest and getattr(dest, "repliz_account_id", None):
+                        acc_id = dest.repliz_account_id
+                    elif hasattr(job, "fanpage") and job.fanpage and getattr(job.fanpage, "repliz_account_id", None):
+                        acc_id = job.fanpage.repliz_account_id
+                    targets.append((deliv.id, pid, acc_id))
+    if targets:
+        return targets
+
+    legacy_pid = extract_post_id(getattr(job, "repliz_response_json", None))
+    acc_id = None
+    if hasattr(job, "fanpage") and job.fanpage and getattr(job.fanpage, "repliz_account_id", None):
+        acc_id = job.fanpage.repliz_account_id
+    if legacy_pid:
+        return [(None, legacy_pid, acc_id)]
+    return []
+
+
+def select_post_id_and_account(job: Any) -> tuple[str | None, str | None]:
+    """Select post ID and connected account ID for metrics polling.
+
+    Prefers delivery ledger facebook_post_id and destination repliz_account_id
+    when available, falling back to legacy PublishJob.repliz_response_json and
+    job.fanpage.repliz_account_id.
+    """
+    targets = select_metric_targets(job)
+    if targets:
+        return targets[0][1], targets[0][2]
+    return None, None

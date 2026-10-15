@@ -220,6 +220,7 @@ def generate_facebook_photo_content():
         from sqlalchemy import func
         from app.models.target_fanpages import TargetFanpage
         from app.models.publish_jobs import PublishJob, ContentType
+        from app.services.social_project_eligibility import project_can_generate
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         now_wib = now_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
@@ -234,7 +235,7 @@ def generate_facebook_photo_content():
             .filter(
                 TargetFanpage.facebook_photo_enabled == True,
                 TargetFanpage.is_active == True,
-                TargetFanpage.is_connected == True,
+                project_can_generate(),
                 TargetFanpage.facebook_photo_daily_count > 0,
             )
             .all()

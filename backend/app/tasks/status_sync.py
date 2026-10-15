@@ -22,10 +22,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, func, cast, String
+from sqlalchemy.orm import Session
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.services.repliz_client import get_repliz_client_from_db
+from app.services.post_metrics import extract_post_id
+from app.services.social_post_reconciliation import reconcile_delivery_repliz
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +159,29 @@ def sync_pending_schedules():
                     db.add(job)
 
                 synced += 1
+
+                # Update associated delivery ledger rows when available
+                if hasattr(job, "deliveries") and job.deliveries:
+                    for deliv in job.deliveries:
+                        if deliv.repliz_schedule_id == job.repliz_schedule_id or deliv.state == "repliz_scheduled":
+                            if status_val in _REPLIZ_FAILURE_STATUSES:
+                                deliv.state = "failed"
+                                deliv.last_error = job.last_error
+                                db.add(deliv)
+                            elif status_val in _REPLIZ_SUCCESS_STATUSES:
+                                deliv.state = "published"
+                                deliv.last_error = None
+                                pid = extract_post_id(data)
+                                if pid:
+                                    deliv.facebook_post_id = pid
+                                    if data.get("url") or data.get("permalink"):
+                                        deliv.facebook_permalink = data.get("url") or data.get("permalink")
+                                    db.add(deliv)
+                                elif not deliv.facebook_post_id:
+                                    reconcile_delivery_repliz(db, deliv, client=client)
+                                if deliv.facebook_post_id and isinstance(job.repliz_response_json, dict) and not job.repliz_response_json.get("postId"):
+                                    job.repliz_response_json = dict(job.repliz_response_json, postId=deliv.facebook_post_id)
+                                    db.add(job)
             except Exception as exc:
                 logger.warning("Status sync failed for job %d: %s", job.id, exc)
 
@@ -164,3 +190,89 @@ def sync_pending_schedules():
 
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.status_sync.sync_pending_deliveries")
+def sync_pending_deliveries(db: Session | None = None, now: datetime | None = None):
+    """Poll Repliz for deliveries in repliz_scheduled state."""
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        from app.models.social_publishing import PublishDelivery, DeliveryEvent
+
+        if now is None:
+            now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+
+        deliveries = (
+            db.query(PublishDelivery)
+            .filter(
+                PublishDelivery.state == "repliz_scheduled",
+                PublishDelivery.repliz_schedule_id.isnot(None),
+                PublishDelivery.scheduled_for.isnot(None),
+                PublishDelivery.scheduled_for <= now_naive - _POLL_MIN_AGE,
+                PublishDelivery.scheduled_for >= now_naive - _POLL_MAX_AGE,
+            )
+            .order_by(PublishDelivery.scheduled_for.asc())
+            .limit(50)
+            .all()
+        )
+        if not deliveries:
+            return 0
+
+        try:
+            client = get_repliz_client_from_db(db)
+        except RuntimeError:
+            logger.warning("Repliz credentials not set — skipping delivery status sync")
+            return 0
+
+        synced = 0
+        for deliv in deliveries:
+            try:
+                data = client.get_schedule(deliv.repliz_schedule_id)
+                status_val = (data.get("status") or "").lower()
+                if status_val in _REPLIZ_FAILURE_STATUSES:
+                    deliv.state = "failed"
+                    deliv.last_error = "Repliz: " + _best_error_message(data)
+                    db.add(
+                        DeliveryEvent(
+                            delivery_id=deliv.id,
+                            event_type="failed",
+                            details={"error": deliv.last_error, "source": "status_sync"},
+                            created_at=now_naive,
+                        )
+                    )
+                    db.add(deliv)
+                elif status_val in _REPLIZ_SUCCESS_STATUSES:
+                    deliv.state = "published"
+                    deliv.last_error = None
+                    if not deliv.published_at:
+                        deliv.published_at = now_naive
+                    pid = extract_post_id(data)
+                    if pid:
+                        deliv.facebook_post_id = pid
+                        if data.get("url") or data.get("permalink"):
+                            deliv.facebook_permalink = data.get("url") or data.get("permalink")
+                        db.add(
+                            DeliveryEvent(
+                                delivery_id=deliv.id,
+                                event_type="published",
+                                details={"facebook_post_id": pid, "source": "status_sync"},
+                                created_at=now_naive,
+                            )
+                        )
+                        db.add(deliv)
+                    elif not deliv.facebook_post_id:
+                        reconcile_delivery_repliz(db, deliv, client=client)
+                synced += 1
+            except Exception as exc:
+                logger.warning("Status sync failed for delivery %s: %s", deliv.id, exc)
+
+        db.commit()
+        logger.info("Delivery status sync: checked %d delivery(s)", synced)
+        return synced
+    finally:
+        if own_session:
+            db.close()

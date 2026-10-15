@@ -385,3 +385,200 @@ class TestS10AllModesSync:
 
         q.order_by.assert_called_once()
         q.limit.assert_called_once_with(50)
+
+
+# ── Delivery status sync tests (Task 3) ──────────────────────────────────────
+
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
+from sqlalchemy.orm import Session
+
+# Allow SQLite to compile PostgreSQL ARRAY and JSONB types in memory
+SQLiteTypeCompiler.visit_ARRAY = lambda self, type_, **kw: "TEXT"
+SQLiteTypeCompiler.visit_JSONB = lambda self, type_, **kw: "TEXT"
+
+from app.models.social_publishing import DeliveryEvent, PublishDelivery, SocialDestination
+from app.models.target_fanpages import TargetFanpage
+from app.tasks.status_sync import _POLL_MIN_AGE, _POLL_MAX_AGE, sync_pending_deliveries
+
+
+@pytest.fixture
+def delivery_db():
+    """In-memory SQLite session for delivery sync tests."""
+    sd_col = SocialDestination.__table__.columns["supported_media"]
+    orig_sd = sd_col.server_default
+    sd_col.server_default = None
+
+    de_col = DeliveryEvent.__table__.columns["details"]
+    orig_de = de_col.server_default
+    de_col.server_default = None
+
+    engine = create_engine("sqlite:///:memory:")
+    TargetFanpage.__table__.create(engine)
+    SocialDestination.__table__.create(engine)
+    PublishDelivery.__table__.create(engine)
+    DeliveryEvent.__table__.create(engine)
+
+    sd_col.server_default = orig_sd
+    de_col.server_default = orig_de
+
+    session = Session(engine)
+    dest = SocialDestination(
+        id=1,
+        content_project_id=1,
+        kind="facebook_page",
+        name="Sync Test Dest",
+        mode="repliz",
+        daily_target=1,
+        phone_daily_target=0,
+        repliz_daily_target=1,
+        is_active=True,
+    )
+    session.add(dest)
+    session.commit()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
+
+
+class TestSyncPendingDeliveries:
+    """Verify delivery status sync due filtering, age boundaries, ordering, and starvation avoidance."""
+
+    def test_due_deliveries_not_starved_by_more_than_50_future_deliveries(self, delivery_db, monkeypatch):
+        """50+ future schedules must NOT starve past-due deliveries."""
+        now = _now()
+
+        # Insert 55 future deliveries (scheduled in the future or not past 2 min age)
+        for i in range(55):
+            delivery_db.add(
+                PublishDelivery(
+                    publish_job_id=i + 1,
+                    destination_id=1,
+                    state="repliz_scheduled",
+                    repliz_schedule_id=f"future_{i}",
+                    scheduled_for=now + timedelta(minutes=i + 5),
+                )
+            )
+
+        # Insert 1 past-due delivery (e.g. 15 minutes ago)
+        due_delivery = PublishDelivery(
+            publish_job_id=999,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="due_target_1",
+            scheduled_for=now - timedelta(minutes=15),
+        )
+        delivery_db.add(due_delivery)
+        delivery_db.commit()
+
+        mock_client = MagicMock()
+        mock_client.get_schedule.return_value = {"status": "success", "postId": "1234567890_9876543210"}
+        monkeypatch.setattr("app.tasks.status_sync.get_repliz_client_from_db", lambda db: mock_client)
+
+        synced = sync_pending_deliveries(db=delivery_db, now=now)
+
+        # Exactly the 1 due delivery was polled
+        assert synced == 1
+        mock_client.get_schedule.assert_called_once_with("due_target_1")
+
+        delivery_db.expire_all()
+        reloaded = delivery_db.query(PublishDelivery).filter_by(repliz_schedule_id="due_target_1").first()
+        assert reloaded.state == "published"
+        assert reloaded.facebook_post_id == "1234567890_9876543210"
+
+    def test_ordering_oldest_due_first(self, delivery_db, monkeypatch):
+        """Deliveries must be processed in ascending scheduled_for order (oldest due first)."""
+        now = _now()
+        # Add deliveries in arbitrary order with distinct publish_job_ids
+        d_30m = PublishDelivery(
+            publish_job_id=1,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="sched_30m",
+            scheduled_for=now - timedelta(minutes=30),
+        )
+        d_2h = PublishDelivery(
+            publish_job_id=2,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="sched_2h",
+            scheduled_for=now - timedelta(hours=2),
+        )
+        d_5m = PublishDelivery(
+            publish_job_id=3,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="sched_5m",
+            scheduled_for=now - timedelta(minutes=5),
+        )
+        delivery_db.add_all([d_30m, d_2h, d_5m])
+        delivery_db.commit()
+
+        polled_order = []
+        mock_client = MagicMock()
+        mock_client.get_schedule.side_effect = lambda sid: (polled_order.append(sid), {"status": "pending"})[1]
+        monkeypatch.setattr("app.tasks.status_sync.get_repliz_client_from_db", lambda db: mock_client)
+
+        synced = sync_pending_deliveries(db=delivery_db, now=now)
+        assert synced == 3
+        # Ascending: 2h ago, then 30m ago, then 5m ago
+        assert polled_order == ["sched_2h", "sched_30m", "sched_5m"]
+
+    def test_boundary_and_null_schedules(self, delivery_db, monkeypatch):
+        """Test exact boundary inclusions/exclusions and null scheduled_for exclusion."""
+        now = _now()
+
+        # 1. Exact min age boundary: now - _POLL_MIN_AGE -> INCLUDED
+        at_min_age = PublishDelivery(
+            publish_job_id=1,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="at_min",
+            scheduled_for=now - _POLL_MIN_AGE,
+        )
+        # 2. Exact max age boundary: now - _POLL_MAX_AGE -> INCLUDED
+        at_max_age = PublishDelivery(
+            publish_job_id=2,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="at_max",
+            scheduled_for=now - _POLL_MAX_AGE,
+        )
+        # 3. Too recent (< _POLL_MIN_AGE past scheduled_for): 1 minute ago -> EXCLUDED
+        too_recent = PublishDelivery(
+            publish_job_id=3,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="too_recent",
+            scheduled_for=now - timedelta(minutes=1),
+        )
+        # 4. Too old (> _POLL_MAX_AGE): 4 days ago -> EXCLUDED
+        too_old = PublishDelivery(
+            publish_job_id=4,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="too_old",
+            scheduled_for=now - timedelta(days=4),
+        )
+        # 5. Null scheduled_for -> EXCLUDED
+        null_sched = PublishDelivery(
+            publish_job_id=5,
+            destination_id=1,
+            state="repliz_scheduled",
+            repliz_schedule_id="null_sched",
+            scheduled_for=None,
+        )
+        delivery_db.add_all([at_min_age, at_max_age, too_recent, too_old, null_sched])
+        delivery_db.commit()
+
+        polled = []
+        mock_client = MagicMock()
+        mock_client.get_schedule.side_effect = lambda sid: (polled.append(sid), {"status": "pending"})[1]
+        monkeypatch.setattr("app.tasks.status_sync.get_repliz_client_from_db", lambda db: mock_client)
+
+        synced = sync_pending_deliveries(db=delivery_db, now=now)
+        assert synced == 2
+        # Only at_max (older) and at_min (younger) are included
+        assert polled == ["at_max", "at_min"]

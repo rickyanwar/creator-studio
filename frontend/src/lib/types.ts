@@ -819,3 +819,217 @@ export interface F1Driver {
   verified: boolean;
   updated_at?: string;
 }
+
+// ── Social Media & Content Projects (A1a/U0) ──────────────────────────────────
+export type PlatformKind = "facebook_profile" | "facebook_page";
+export type SocialDestinationMode = "phone" | "repliz" | "mixed";
+export type PhoneDeviceStatus = "available" | "in_use" | "maintenance";
+
+export interface ContentProject {
+  id: number;
+  name: string;
+  repliz_account_id: string | null;
+  is_connected: boolean;
+  is_active: boolean;
+  timezone: string;
+  target_country: string | null;
+  destination_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContentProjectCreate {
+  name: string;
+  timezone?: string;
+}
+
+export interface SocialDestination {
+  id: number;
+  content_project_id: number;
+  kind: "facebook_profile" | "facebook_page";
+  name: string;
+  facebook_actor_id: string | null;
+  parent_profile_id: number | null;
+  repliz_account_id: string | null;
+  mode: SocialDestinationMode;
+  timezone: string;
+  daily_target: number;
+  phone_daily_target: number;
+  repliz_daily_target: number;
+  min_gap_minutes: number;
+  supported_media: string[];
+  is_active: boolean;
+  identity_verified_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SocialDestinationCreate {
+  content_project_id: number;
+  kind: string;
+  name: string;
+  facebook_actor_id?: string | null;
+  parent_profile_id?: number | null;
+  repliz_account_id?: string | null;
+  mode?: SocialDestinationMode;
+  timezone?: string;
+  daily_target?: number;
+  phone_daily_target?: number;
+  repliz_daily_target?: number;
+  min_gap_minutes?: number;
+  supported_media?: string[];
+  is_active?: boolean;
+}
+
+export interface SocialDestinationUpdate {
+  content_project_id?: number;
+  kind?: string;
+  name?: string;
+  facebook_actor_id?: string | null;
+  parent_profile_id?: number | null;
+  repliz_account_id?: string | null;
+  mode?: SocialDestinationMode;
+  timezone?: string;
+  daily_target?: number;
+  phone_daily_target?: number;
+  repliz_daily_target?: number;
+  min_gap_minutes?: number;
+  supported_media?: string[];
+  is_active?: boolean;
+}
+
+export interface PhoneDevice {
+  id: number;
+  name: string;
+  tailscale_node_id: string | null;
+  tailscale_ip: string | null;
+  adb_serial: string | null;
+  expected_profile_actor_id: string | null;
+  expected_profile_name: string | null;
+  screen_width: number | null;
+  screen_height: number | null;
+  screen_density: number | null;
+  screen_rotation: number | null;
+  facebook_app_version: string | null;
+  mobilerun_portal_version: string | null;
+  app_card_version: string | null;
+  calibration_verified_at: string | null;
+  status: PhoneDeviceStatus;
+  last_seen_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PhoneDeviceCreate {
+  name: string;
+  tailscale_node_id?: string | null;
+  tailscale_ip?: string | null;
+  adb_serial?: string | null;
+  expected_profile_actor_id?: string | null;
+  expected_profile_name?: string | null;
+  screen_width?: number | null;
+  screen_height?: number | null;
+  screen_density?: number | null;
+  screen_rotation?: number | null;
+  facebook_app_version?: string | null;
+  mobilerun_portal_version?: string | null;
+  app_card_version?: string | null;
+  status?: PhoneDeviceStatus;
+}
+
+export interface PhoneDeviceUpdate {
+  name?: string;
+  tailscale_node_id?: string | null;
+  tailscale_ip?: string | null;
+  adb_serial?: string | null;
+  expected_profile_actor_id?: string | null;
+  expected_profile_name?: string | null;
+  screen_width?: number | null;
+  screen_height?: number | null;
+  screen_density?: number | null;
+  screen_rotation?: number | null;
+  facebook_app_version?: string | null;
+  mobilerun_portal_version?: string | null;
+  app_card_version?: string | null;
+  status?: PhoneDeviceStatus;
+}
+
+export interface DeviceDryRunRequest {
+  destination_id?: number | null;
+}
+
+export interface DeviceDryRunResult {
+  status: "success" | "failed" | string;
+  device_id: number;
+  calibration_verified_at: string | null;
+  assignment_verified: boolean;
+  result: Record<string, unknown>;
+}
+
+export interface DestinationDeviceAssignment {
+  id: number;
+  destination_id: number;
+  device_id: number;
+  priority: number;
+  is_active: boolean;
+  verified_profile_actor_id: string | null;
+  verified_target_actor_id: string | null;
+  verified_at: string | null;
+  created_at: string;
+}
+
+export interface DestinationDeviceAssignmentCreate {
+  destination_id: number;
+  device_id: number;
+  priority?: number;
+  is_active?: boolean;
+  verified_profile_actor_id?: string | null;
+  verified_target_actor_id?: string | null;
+}
+
+// ── Social Media Activity (R1/U1) ─────────────────────────────────────────────
+export interface DeliveryEvent {
+  id: number;
+  delivery_id: number;
+  event_type: string;
+  details: Record<string, any>;
+  created_at: string;
+}
+
+export interface DeliveryActivity {
+  id: number;
+  publish_job_id: number;
+  destination_id: number;
+  destination_name: string | null;
+  destination_kind: string | null;
+  content_project_id: number | null;
+  device_id: number | null;
+  device_name: string | null;
+  state: string;
+  intended_method: string | null;
+  actual_method: string | null;
+  scheduled_for: string | null;
+  claimed_at: string | null;
+  attempt_count: number;
+  caption_snapshot: string | null;
+  media_kind: string | null;
+  title_snapshot: string | null;
+  repliz_schedule_id: string | null;
+  facebook_post_id: string | null;
+  facebook_permalink: string | null;
+  uncertain_since: string | null;
+  last_error: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+  events: DeliveryEvent[];
+}
+
+export interface DeliveryActivityQueryParams {
+  content_project_id?: number;
+  destination_id?: number;
+  device_id?: number;
+  state?: string;
+  limit?: number;
+  offset?: number;
+}

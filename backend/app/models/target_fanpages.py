@@ -21,7 +21,7 @@ class TargetFanpage(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # ── From Repliz ───────────────────────────────
-    repliz_account_id = Column(String(64), unique=True, nullable=False, index=True)
+    repliz_account_id = Column(String(64), unique=True, nullable=True, index=True)
     name = Column(String(256), nullable=False)
     username = Column(String(128), nullable=True)
     picture_url = Column(Text, nullable=True)
@@ -278,3 +278,4 @@ class TargetFanpage(Base):
     yt_videos = relationship("YtVideo", back_populates="fanpage", cascade="all, delete-orphan")
     yt_clip_ideas = relationship("YtClipIdea", back_populates="fanpage", cascade="all, delete-orphan")
     publish_jobs = relationship("PublishJob", back_populates="fanpage")
+    social_destinations = relationship("SocialDestination", back_populates="content_project", cascade="all, delete-orphan")

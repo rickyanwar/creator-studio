@@ -7,9 +7,9 @@ import { clsx } from "clsx";
 
 const TABS = [
   { href: "/dashboard", label: "Home",     icon: "solar:widget-bold-duotone" },
-  { href: "/fanpages",  label: "Fanpages", icon: "mingcute:facebook-fill" },
+  { href: "/social-media", label: "Social", icon: "mingcute:facebook-fill" },
   { href: "/queue",     label: "Queue",    icon: "solar:clock-circle-bold-duotone" },
-  { href: "/history",   label: "History",  icon: "solar:history-bold-duotone" },
+  { href: "/history",   label: "Activity", icon: "solar:history-bold-duotone" },
   { href: "/gallery",   label: "Gallery",  icon: "solar:gallery-wide-bold-duotone" },
   { href: "/settings",  label: "Settings", icon: "solar:settings-bold-duotone" },
 ];
@@ -18,7 +18,11 @@ export default function BottomTabBar() {
   const pathname = usePathname();
 
   function isActive(href: string) {
-    return pathname === href || pathname.startsWith(href + "/");
+    return (
+      pathname === href ||
+      pathname.startsWith(href + "/") ||
+      (href === "/social-media" && pathname.startsWith("/fanpages"))
+    );
   }
 
   return (

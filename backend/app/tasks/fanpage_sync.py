@@ -10,11 +10,15 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="app.tasks.fanpage_sync.sync_fanpages_from_repliz")
-def sync_fanpages_from_repliz():
-    """Fetch all Facebook accounts from Repliz and upsert into target_fanpages."""
-    db = SessionLocal()
+def sync_fanpages_from_repliz(db=None):
+    """Fetch all Facebook accounts from Repliz and upsert into target_fanpages and social_destinations."""
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
     try:
         from app.models.target_fanpages import TargetFanpage
+        from app.models.social_publishing import SocialDestination
         from app.services.repliz_client import get_repliz_client_from_db
 
         try:
@@ -53,6 +57,7 @@ def sync_fanpages_from_repliz():
                 existing.is_connected = is_connected
                 existing.last_synced_at = now
                 db.add(existing)
+                fanpage = existing
                 updated += 1
 
                 if not is_connected:
@@ -69,7 +74,45 @@ def sync_fanpages_from_repliz():
                     last_synced_at=now,
                 )
                 db.add(new_page)
+                db.flush()
+                fanpage = new_page
                 created += 1
+
+            # Ensure corresponding SocialDestination
+            dest = (
+                db.query(SocialDestination)
+                .filter_by(repliz_account_id=repliz_id)
+                .first()
+            )
+            if dest:
+                if account.get("name"):
+                    dest.name = account.get("name")
+                if not dest.content_project_id:
+                    dest.content_project_id = fanpage.id
+                # NEVER overwrite mode, quota, parent Profile, actor ID, device assignments, active setting, or user-reassigned content project.
+                db.add(dest)
+            else:
+                target = (
+                    getattr(fanpage, "daily_target", None)
+                    or getattr(fanpage, "publish_daily_limit", None)
+                    or 1
+                )
+                new_dest = SocialDestination(
+                    content_project_id=fanpage.id,
+                    kind="facebook_page",
+                    name=fanpage.name,
+                    repliz_account_id=repliz_id,
+                    mode="repliz",
+                    timezone=fanpage.timezone or "Europe/London",
+                    daily_target=target,
+                    phone_daily_target=0,
+                    repliz_daily_target=target,
+                    min_gap_minutes=5,
+                    is_active=fanpage.is_active,
+                    supported_media=["image", "album", "video"],
+                )
+                db.add(new_dest)
+                db.flush()
 
         # A fanpage whose repliz_account_id isn't in this response at all (not
         # just marked isConnected:false, but absent — the account was removed
@@ -93,9 +136,12 @@ def sync_fanpages_from_repliz():
 
         db.commit()
         logger.info("Fanpage sync: %d created, %d updated (%d newly marked disconnected — missing from Repliz)", created, updated, len(missing))
+        return {"created": created, "updated": updated, "missing": len(missing)}
 
     except Exception as exc:
         db.rollback()
         logger.error("Fanpage sync error: %s", exc, exc_info=True)
+        raise
     finally:
-        db.close()
+        if close_db:
+            db.close()

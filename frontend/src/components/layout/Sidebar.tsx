@@ -11,16 +11,17 @@ const nav = [
   { href: "/analytics", label: "Analytics",   icon: "solar:chart-2-bold-duotone" },
   { href: "/strategy",  label: "Strategy",    icon: "solar:lightbulb-bolt-bold-duotone" },
   { href: "/ai-video",  label: "AI Video",    icon: "solar:videocamera-record-bold-duotone" },
-  { href: "/fanpages",  label: "Fanpages",     icon: "mingcute:facebook-fill" },
+  { href: "/social-media", label: "Social Media", icon: "mingcute:facebook-fill" },
+  { href: "/content-projects", label: "Content Projects", icon: "solar:folder-with-files-bold-duotone" },
   { href: "/queue",     label: "Queue",        icon: "solar:clock-circle-bold-duotone" },
   { href: "/sources",   label: "IG Sources",   icon: "solar:global-bold-duotone" },
   { href: "/news-sources", label: "News Sources", icon: "solar:documents-bold-duotone" },
   { href: "/radar",     label: "Viral Radar",  icon: "solar:radar-2-bold-duotone" },
   { href: "/gallery",   label: "Gallery",      icon: "solar:gallery-wide-bold-duotone" },
   { href: "/templates", label: "Templates",    icon: "solar:palette-bold-duotone" },
-  { href: "/history",   label: "History",      icon: "solar:history-bold-duotone" },
+  { href: "/history",   label: "Publishing Activity", icon: "solar:history-bold-duotone" },
   { href: "/logs",      label: "Logs",         icon: "solar:document-text-bold-duotone" },
-  { href: "/settings",  label: "Settings",     icon: "solar:settings-bold-duotone" },
+  { href: "/settings",  label: "Global Settings", icon: "solar:settings-bold-duotone" },
 ];
 
 export default function Sidebar() {
@@ -87,7 +88,10 @@ export default function Sidebar() {
         collapsed ? "px-2" : "px-3"
       )}>
         {nav.map(({ href, label, icon }) => {
-          const active = pathname === href || pathname.startsWith(href + "/");
+          const active =
+            pathname === href ||
+            pathname.startsWith(href + "/") ||
+            (href === "/social-media" && pathname.startsWith("/fanpages"));
 
           const activeStyle = active
             ? { background: "color-mix(in srgb, var(--primary-main) 12%, transparent)" }

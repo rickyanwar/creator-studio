@@ -39,6 +39,16 @@ from app.models.radar import (
     DecisionStatus,
 )
 from app.models.f1_drivers import F1Driver
+from app.models.social_publishing import (
+    SocialDestination,
+    PhoneDevice,
+    DestinationDeviceAssignment,
+    PublishDelivery,
+    DeliveryEvent,
+    DeviceLease,
+    RecoveryIncident,
+    OperationalNotification,
+)
 
 __all__ = [
     "User",
@@ -93,4 +103,12 @@ __all__ = [
     "DecisionRule",
     "DecisionStatus",
     "F1Driver",
+    "SocialDestination",
+    "PhoneDevice",
+    "DestinationDeviceAssignment",
+    "PublishDelivery",
+    "DeliveryEvent",
+    "DeviceLease",
+    "RecoveryIncident",
+    "OperationalNotification",
 ]

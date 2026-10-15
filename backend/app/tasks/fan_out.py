@@ -99,6 +99,7 @@ def create_fanout_jobs(self, post_id: int):
         from app.models.posts import Post, PostStatus
         from app.models.fanpage_sources import FanpageSource
         from app.models.target_fanpages import TargetFanpage
+        from app.services.social_project_eligibility import project_can_generate
 
         post = db.query(Post).filter_by(id=post_id).first()
         if not post:
@@ -112,7 +113,7 @@ def create_fanout_jobs(self, post_id: int):
                 FanpageSource.ig_source_id == post.ig_source_id,
                 FanpageSource.is_active == True,
                 TargetFanpage.is_active == True,
-                TargetFanpage.is_connected == True,
+                project_can_generate(),
             )
             .all()
         )

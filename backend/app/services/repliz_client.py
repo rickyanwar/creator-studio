@@ -183,6 +183,31 @@ class ReplizClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_content(
+        self,
+        account_id: str,
+        content_type: str = "media",
+        next_token: str | None = None,
+    ) -> dict:
+        """Fetch published content for a connected Facebook account. Gold+ plan required.
+
+        Contract: GET /public/content, Basic auth, accountId required, type (media/story), nextToken.
+        https://docs.repliz.com/api/content/get-content
+        """
+        if not account_id or not str(account_id).strip():
+            raise ValueError("accountId is required")
+        params: dict[str, Any] = {
+            "accountId": str(account_id).strip(),
+            "type": content_type,
+        }
+        if next_token:
+            params["nextToken"] = next_token
+        resp = self._client.get("/public/content", params=params)
+        if resp.status_code == 402:
+            raise ReplizPlanRequired(resp.text[:200])
+        resp.raise_for_status()
+        return resp.json()
+
     # ─────────────────────────────────────────────
     # Deletion — removes the schedule/post on Repliz (and, per Repliz, on the
     # connected Facebook page). Not verified against live Repliz docs; follows

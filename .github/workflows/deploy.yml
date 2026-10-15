@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: SSH Deploy
@@ -27,35 +31,169 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           command_timeout: 45m
           script: |
-            set -e
+            set -euo pipefail
+
+            echo "── Checking server repository status ──"
+            cd /opt/studio
+            if [ -n "$(git status --porcelain -uno)" ]; then
+              echo "✗ Tracked server files dirty. Aborting deployment to avoid destroying work." >&2
+              exit 1
+            fi
 
             echo "── Pulling latest code ──"
-            cd /opt/studio
             OLD_HEAD=$(git rev-parse HEAD)
             git pull origin main
+
+            DEPLOY_ID=$(date +%Y%m%d_%H%M%S)
+
+            echo "── Recording rollback image tags for running services (deploy $DEPLOY_ID) ──"
+            PREV_API_CID=$(docker compose -p studio -f docker-compose.server.yml ps -q api | head -n1 || true)
+            PREV_RENDERER_CID=$(docker compose -p studio -f docker-compose.server.yml ps -q renderer | head -n1 || true)
+            PREV_FRONTEND_CID=$(docker compose -p studio -f docker-compose.server.yml ps -q frontend | head -n1 || true)
+
+            PREV_API_IMG=""
+            PREV_RENDERER_IMG=""
+            PREV_FRONTEND_IMG=""
+            PREV_API_TAG="studio-backend:rollback-${DEPLOY_ID}"
+            PREV_RENDERER_TAG="studio-renderer:rollback-${DEPLOY_ID}"
+            PREV_FRONTEND_TAG="studio-frontend:rollback-${DEPLOY_ID}"
+
+            PREV_API_TARGET="studio-backend:latest"
+            PREV_RENDERER_TARGET="studio-renderer"
+            PREV_FRONTEND_TARGET="studio-frontend"
+
+            if [ -n "$PREV_API_CID" ]; then
+              PREV_API_IMG=$(docker inspect -f '{{.Image}}' "$PREV_API_CID" 2>/dev/null || true)
+              if [ -n "$PREV_API_IMG" ]; then
+                docker tag "$PREV_API_IMG" "$PREV_API_TAG"
+                echo "Saved api rollback tag $PREV_API_TAG ($PREV_API_IMG)"
+              fi
+            fi
+
+            if [ -n "$PREV_RENDERER_CID" ]; then
+              PREV_RENDERER_IMG=$(docker inspect -f '{{.Image}}' "$PREV_RENDERER_CID" 2>/dev/null || true)
+              if [ -n "$PREV_RENDERER_IMG" ]; then
+                docker tag "$PREV_RENDERER_IMG" "$PREV_RENDERER_TAG"
+                echo "Saved renderer rollback tag $PREV_RENDERER_TAG ($PREV_RENDERER_IMG)"
+              fi
+            fi
+
+            if [ -n "$PREV_FRONTEND_CID" ]; then
+              PREV_FRONTEND_IMG=$(docker inspect -f '{{.Image}}' "$PREV_FRONTEND_CID" 2>/dev/null || true)
+              if [ -n "$PREV_FRONTEND_IMG" ]; then
+                docker tag "$PREV_FRONTEND_IMG" "$PREV_FRONTEND_TAG"
+                echo "Saved frontend rollback tag $PREV_FRONTEND_TAG ($PREV_FRONTEND_IMG)"
+              fi
+            fi
 
             echo "── Rebuilding images (one at a time; api max 25 min, others 8 min) ──"
             for svc in api renderer frontend; do
               case "$svc" in api) cap=25m ;; *) cap=8m ;; esac
               echo "· building $svc (max $cap)"
-              if ! timeout "$cap" docker compose -f docker-compose.server.yml build "$svc"; then
-                echo "✗ build of $svc failed or took longer than $cap — nothing was restarted"
+              if ! timeout "$cap" docker compose -p studio -f docker-compose.server.yml build "$svc"; then
+                echo "✗ build of $svc failed or took longer than $cap — nothing was restarted" >&2
                 exit 1
               fi
             done
 
+            echo "── Pre-migration database backup ──"
+            BACKUP_DIR="/var/backups/studio-social/${DEPLOY_ID}"
+            mkdir -p "$BACKUP_DIR"
+            chmod 700 "$BACKUP_DIR"
+            (
+              umask 077
+              BACKUP_FILE="${BACKUP_DIR}/studio_pre_deploy_${DEPLOY_ID}.dump"
+              docker compose -p studio -f docker-compose.server.yml exec -T db pg_dump -U studio -Fc studio > "$BACKUP_FILE"
+              if [ ! -s "$BACKUP_FILE" ]; then
+                echo "✗ Backup dump file is empty. Aborting migration." >&2
+                exit 1
+              fi
+              if ! docker compose -p studio -f docker-compose.server.yml exec -T db pg_restore --list < "$BACKUP_FILE" > /dev/null; then
+                echo "✗ Backup dump verification failed. Aborting migration." >&2
+                exit 1
+              fi
+              echo "✓ Database backup verified nonempty and readable: $BACKUP_FILE"
+            )
+
+            echo "── Running database migrations (isolated run before container restart) ──"
+            if ! docker compose -p studio -f docker-compose.server.yml run --rm --no-deps api alembic upgrade head; then
+              echo "✗ Database migration failed. Aborting deploy without DB downgrade. Old containers remain running." >&2
+              exit 1
+            fi
+
+            echo "── Verifying migration head ──"
+            docker compose -p studio -f docker-compose.server.yml run --rm --no-deps api alembic current
+
             echo "── Restarting services ──"
-            docker compose -f docker-compose.server.yml up -d --remove-orphans
+            STARTUP_FAILED=false
+            if ! docker compose -p studio -f docker-compose.server.yml up -d --remove-orphans; then
+              echo "✗ Normal service startup failed." >&2
+              STARTUP_FAILED=true
+            fi
 
-            echo "── Reloading nginx ──"
-            docker compose -f docker-compose.server.yml restart nginx
+            if [ "$STARTUP_FAILED" = "false" ]; then
+              echo "── Reloading nginx ──"
+              if ! docker compose -p studio -f docker-compose.server.yml restart nginx; then
+                echo "✗ Normal nginx reload failed." >&2
+                STARTUP_FAILED=true
+              fi
+            fi
 
-            echo "── Running migrations ──"
-            docker compose -f docker-compose.server.yml exec -T api alembic upgrade head
+            echo "── Polling internal API and ingress health ──"
+            HEALTH_OK=false
+            if [ "$STARTUP_FAILED" = "false" ]; then
+              for i in $(seq 1 20); do
+                if docker compose -p studio -f docker-compose.server.yml exec -T api python -c "import urllib.request, sys; res = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); sys.exit(0 if res.getcode() == 200 else 1)" 2>/dev/null && \
+                   curl -sSf --max-time 5 --resolve autostudio.pro:443:127.0.0.1 https://autostudio.pro/api/health >/dev/null 2>&1; then
+                  HEALTH_OK=true
+                  echo "✓ API and ingress health check passed on attempt $i"
+                  break
+                fi
+                echo "· Waiting for API and ingress health (attempt $i/20)..."
+                sleep 2
+              done
+            fi
+
+            if [ "$STARTUP_FAILED" = "true" ] || [ "$HEALTH_OK" != "true" ]; then
+              echo "✗ Startup or health check failed. Restoring rollback image tags and recreating application services..." >&2
+              [ -n "$PREV_API_IMG" ] && docker tag "$PREV_API_TAG" "$PREV_API_TARGET"
+              [ -n "$PREV_RENDERER_IMG" ] && docker tag "$PREV_RENDERER_TAG" "$PREV_RENDERER_TARGET"
+              [ -n "$PREV_FRONTEND_IMG" ] && docker tag "$PREV_FRONTEND_TAG" "$PREV_FRONTEND_TARGET"
+
+              APP_SERVICES="api worker worker-gallery worker-visual worker-video beat frontend renderer nginx"
+              if ! docker compose -p studio -f docker-compose.server.yml up -d --no-deps --force-recreate $APP_SERVICES; then
+                echo "✗ Rollback service recreation failed." >&2
+                exit 1
+              fi
+              if ! docker compose -p studio -f docker-compose.server.yml restart nginx; then
+                echo "✗ Rollback nginx restart failed." >&2
+                exit 1
+              fi
+
+              echo "── Verifying rollback health ──"
+              ROLLBACK_HEALTH_OK=false
+              for i in $(seq 1 20); do
+                if docker compose -p studio -f docker-compose.server.yml exec -T api python -c "import urllib.request, sys; res = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); sys.exit(0 if res.getcode() == 200 else 1)" 2>/dev/null && \
+                   curl -sSf --max-time 5 --resolve autostudio.pro:443:127.0.0.1 https://autostudio.pro/api/health >/dev/null 2>&1; then
+                  ROLLBACK_HEALTH_OK=true
+                  echo "✓ Rollback health check passed on attempt $i"
+                  break
+                fi
+                sleep 2
+              done
+
+              if [ "$ROLLBACK_HEALTH_OK" = "true" ]; then
+                echo "✓ Service rollback healthy. Additive schema c21..c23 retained." >&2
+              else
+                echo "✗ Rollback health check failed. Manual intervention required." >&2
+              fi
+              echo "✗ Failing CI due to post-deploy health failure." >&2
+              exit 1
+            fi
 
             echo "── gflow-worker ──"
             if git diff --name-only "$OLD_HEAD" HEAD -- gflow_worker | grep -q .; then
-              BUSY=$(docker compose -f docker-compose.server.yml exec -T api python -c "from app.database import SessionLocal; from app.models.ai_video import VideoJob; db = SessionLocal(); print(db.query(VideoJob).filter(VideoJob.status.in_(['claimed', 'generating'])).count())" | tail -1)
+              BUSY=$(docker compose -p studio -f docker-compose.server.yml exec -T api python -c "from app.database import SessionLocal; from app.models.ai_video import VideoJob; db = SessionLocal(); print(db.query(VideoJob).filter(VideoJob.status.in_(['claimed', 'generating'])).count())" | tail -1)
               if [ "$BUSY" = "0" ]; then
                 systemctl restart gflow-worker && echo "gflow-worker restarted"
               else

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fabric } from "fabric";
 import { applyTemplateContent } from "./applyTemplate";
 
 // Sample content so the card shows the real styling (highlight colour, alignment,
@@ -35,49 +34,57 @@ export default function TemplateThumbnail({
       return;
     }
     let cancelled = false;
-    const el = document.createElement("canvas");
-    const canvas = new fabric.StaticCanvas(el, {
-      width,
-      height,
-      enableRetinaScaling: false,
-    });
+    let canvasInstance: any = null;
 
-    const finish = () => {
-      if (cancelled) {
+    import("fabric").then(({ fabric }) => {
+      if (cancelled) return;
+      const el = document.createElement("canvas");
+      const canvas = new fabric.StaticCanvas(el, {
+        width,
+        height,
+        enableRetinaScaling: false,
+      });
+      canvasInstance = canvas;
+
+      const finish = () => {
+        if (cancelled) {
+          try { canvas.dispose(); } catch {}
+          return;
+        }
+        canvas.renderAll();
+        try {
+          // Downscale the output — cap the long edge around 600px for a crisp card.
+          const url = canvas.toDataURL({ format: "png", multiplier: Math.min(1, 600 / Math.max(width, height)) });
+          if (!cancelled) setSrc(url);
+        } catch {
+          /* ignore */
+        }
         try { canvas.dispose(); } catch {}
-        return;
-      }
-      canvas.renderAll();
-      try {
-        // Downscale the output — cap the long edge around 600px for a crisp card.
-        const url = canvas.toDataURL({ format: "png", multiplier: Math.min(1, 600 / Math.max(width, height)) });
-        if (!cancelled) setSrc(url);
-      } catch {
-        /* ignore */
-      }
-      try { canvas.dispose(); } catch {}
-    };
+      };
 
-    const ready = document.fonts?.ready ?? Promise.resolve();
-    ready
-      .then(() => {
-        canvas.loadFromJSON(json, () => {
-          // Apply sample content the same way the renderer does, then capture.
-          // A same-origin sample photo (public/) avoids canvas taint on export.
-          applyTemplateContent({
-            fabric, canvas, width, height,
-            title: SAMPLE_TITLE, subtitle: SAMPLE_SUBTITLE, caption: SAMPLE_CAPTION,
-            imageSrc: "/sample-news.jpg", focusPoint: [0.5, 0.28],
-          })
-            .catch(() => {})
-            .finally(() => requestAnimationFrame(finish));
-        });
-      })
-      .catch(finish);
+      const ready = document.fonts?.ready ?? Promise.resolve();
+      ready
+        .then(() => {
+          canvas.loadFromJSON(json, () => {
+            // Apply sample content the same way the renderer does, then capture.
+            // A same-origin sample photo (public/) avoids canvas taint on export.
+            applyTemplateContent({
+              fabric, canvas, width, height,
+              title: SAMPLE_TITLE, subtitle: SAMPLE_SUBTITLE, caption: SAMPLE_CAPTION,
+              imageSrc: "/sample-news.jpg", focusPoint: [0.5, 0.28],
+            })
+              .catch(() => {})
+              .finally(() => requestAnimationFrame(finish));
+          });
+        })
+        .catch(finish);
+    }).catch(() => {});
 
     return () => {
       cancelled = true;
-      try { canvas.dispose(); } catch {}
+      if (canvasInstance) {
+        try { canvasInstance.dispose(); } catch {}
+      }
     };
   }, [json, width, height]);
 

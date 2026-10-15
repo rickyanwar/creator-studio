@@ -8,6 +8,7 @@ from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
+from app.services.social_project_eligibility import project_can_generate
 from app.services.video_templates import allowed_video_templates, credits_estimate, fit_clips_to_credits, get_template, pick_clips
 from app.tasks.celery_app import celery_app
 from app.tasks.publisher import _fanpage_tz
@@ -23,7 +24,7 @@ def _now() -> datetime:
 def plan_ai_videos():
     db = SessionLocal()
     try:
-        for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True).all():  # noqa: E712
+        for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True, project_can_generate()).all():  # noqa: E712
             now = datetime.now(timezone.utc)
             local_today = now.astimezone(_fanpage_tz(fanpage)).date()
             local_midnight = datetime.combine(local_today, datetime.min.time(), tzinfo=_fanpage_tz(fanpage)).astimezone(timezone.utc).replace(tzinfo=None)
@@ -134,7 +135,7 @@ def top_up_ai_video_ideas():
             return  # Muse researches Mode 8 ideas; the in-app writer stays off.
         bank_days = max(1, row.ai_video_idea_bank_days or 1)
         plans = []
-        for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True).all():  # noqa: E712
+        for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True, project_can_generate()).all():  # noqa: E712
             daily = max(1, fanpage.ai_video_daily_count or 1)
             waiting = db.query(VideoIdea).filter(
                 VideoIdea.fanpage_id == fanpage.id,

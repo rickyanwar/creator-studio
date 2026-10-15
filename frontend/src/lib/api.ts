@@ -504,3 +504,82 @@ export const uploadF1DriverLogo = (id: number, file: File) => {
     headers: { "Content-Type": "multipart/form-data" },
   });
 };
+
+// ── Content Projects (A1a/U0) ────────────────────────────────────────────────
+import type {
+  ContentProject,
+  ContentProjectCreate,
+  SocialDestination,
+  SocialDestinationCreate,
+  SocialDestinationUpdate,
+  PhoneDevice,
+  PhoneDeviceCreate,
+  PhoneDeviceUpdate,
+  DeviceDryRunRequest,
+  DeviceDryRunResult,
+  DestinationDeviceAssignment,
+  DestinationDeviceAssignmentCreate,
+  DeliveryActivity,
+  DeliveryActivityQueryParams,
+} from "./types";
+
+export const listContentProjects = () =>
+  api.get<ContentProject[]>("/content-projects");
+
+export const getContentProject = (id: number) =>
+  api.get<ContentProject>(`/content-projects/${id}`);
+
+export const createContentProject = (data: ContentProjectCreate) =>
+  api.post<ContentProject>("/content-projects", data);
+
+// ── Social Media Destinations (A1a/U0) ───────────────────────────────────────
+export const listSocialDestinations = (params?: {
+  content_project_id?: number;
+  kind?: string;
+  is_active?: boolean;
+}) => api.get<SocialDestination[]>("/social-media/destinations", { params });
+
+export const getSocialDestination = (id: number) =>
+  api.get<SocialDestination>(`/social-media/destinations/${id}`);
+
+export const createSocialDestination = (data: SocialDestinationCreate) =>
+  api.post<SocialDestination>("/social-media/destinations", data);
+
+export const updateSocialDestination = (id: number, data: SocialDestinationUpdate) =>
+  api.patch<SocialDestination>(`/social-media/destinations/${id}`, data);
+
+export const deleteSocialDestination = (id: number) =>
+  api.delete<SocialDestination>(`/social-media/destinations/${id}`);
+
+// ── Phone Devices (A1a/U0) ───────────────────────────────────────────────────
+export const listPhoneDevices = (params?: { status?: string }) =>
+  api.get<PhoneDevice[]>("/social-media/devices", { params });
+
+export const getPhoneDevice = (id: number) =>
+  api.get<PhoneDevice>(`/social-media/devices/${id}`);
+
+export const createPhoneDevice = (data: PhoneDeviceCreate) =>
+  api.post<PhoneDevice>("/social-media/devices", data);
+
+export const updatePhoneDevice = (id: number, data: PhoneDeviceUpdate) =>
+  api.patch<PhoneDevice>(`/social-media/devices/${id}`, data);
+
+export const runDeviceDryRun = (id: number, data?: DeviceDryRunRequest) =>
+  api.post<DeviceDryRunResult>(`/social-media/devices/${id}/dry-run`, data ?? {});
+
+// ── Device Assignments (A1a/U0) ──────────────────────────────────────────────
+export const listDeviceAssignments = (params?: {
+  destination_id?: number;
+  device_id?: number;
+  is_active?: boolean;
+}) => api.get<DestinationDeviceAssignment[]>("/social-media/assignments", { params });
+
+export const createDeviceAssignment = (data: DestinationDeviceAssignmentCreate) =>
+  api.post<DestinationDeviceAssignment>("/social-media/assignments", data);
+
+export const deleteDeviceAssignment = (destinationId: number, deviceId: number) =>
+  api.delete<DestinationDeviceAssignment>(`/social-media/assignments/${destinationId}/${deviceId}`);
+
+// ── Social Media Activity (R1/U1) ─────────────────────────────────────────────
+export const listSocialMediaActivity = (params?: DeliveryActivityQueryParams) =>
+  api.get<DeliveryActivity[]>("/social-media/activity", { params });

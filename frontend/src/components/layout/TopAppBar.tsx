@@ -91,7 +91,7 @@ export default function TopAppBar() {
                     className="flex items-center gap-3 w-full px-4 py-2 text-sm text-text-secondary hover:bg-bg-paper-hover hover:text-text-primary transition-colors"
                   >
                     <Icon icon="solar:settings-bold-duotone" width={16} />
-                    Settings
+                    Global Settings
                   </button>
                   <button
                     onClick={() => { setProfileOpen(false); handleLogout(); }}
