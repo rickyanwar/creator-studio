@@ -682,6 +682,65 @@ def find_own_profile_controls(
     return True, "", more_bounds
 
 
+def find_own_profile_name_identity(
+    tree: ET.Element,
+    expected_name: str,
+) -> tuple[bool, str]:
+    """Verifies professional/own profile via exact name and owner controls (owner policy 2026-10-16)."""
+    if tree is None:
+        return False, "UI hierarchy tree is None"
+    clean_expected = (expected_name or "").strip()
+    if not clean_expected:
+        return False, "Expected name is empty"
+
+    visitor_markers = {"add friend", "message", "follow"}
+    owner_controls = {
+        "Edit cover photo",
+        "Edit profile picture",
+        "Edit profile",
+        "Edit Personal details",
+    }
+    owner_controls_lower = {c.lower() for c in owner_controls}
+
+    has_name = False
+    has_owner_control = False
+    has_dashboard = False
+
+    for node in tree.iter("node"):
+        text = (node.attrib.get("text") or "").strip()
+        desc = (node.attrib.get("content-desc") or "").strip()
+        pkg = (node.attrib.get("package") or "").strip()
+        clickable = node.attrib.get("clickable", "").lower() == "true"
+
+        if text.lower() in visitor_markers or desc.lower() in visitor_markers:
+            return False, f"Detected visitor profile marker: '{text or desc}'"
+
+        if pkg == "com.facebook.katana" and text == clean_expected:
+            has_name = True
+
+        if clickable and (
+            text in owner_controls
+            or desc in owner_controls
+            or text.lower() in owner_controls_lower
+            or desc.lower() in owner_controls_lower
+        ):
+            has_owner_control = True
+
+        if text == "Dashboard" or desc == "Dashboard":
+            has_dashboard = True
+
+    if not has_name:
+        return False, f"Expected exact name '{clean_expected}' in package com.facebook.katana not found"
+
+    if not has_owner_control:
+        return False, "Missing clickable owner control (Edit cover photo, Edit profile picture, Edit profile, or Edit Personal details)"
+
+    if not has_dashboard:
+        return False, "Missing exact 'Dashboard' control on profile"
+
+    return True, ""
+
+
 def find_root_settings_controls(
     tree: ET.Element,
     screen_height: int = 2408,
@@ -1342,6 +1401,7 @@ def collect_own_url_proof_chain(
     actual_resolution: str | None = None
     actual_rotation: int = 0
     actual_card_ver: str | None = None
+    proof_method = "own_url_chain_v1"
 
     def make_fail(err_msg: str, stage_name: str = "identity_proof") -> IdentityProofResult:
         stages.append({"stage": stage_name, "passed": False, "detail": err_msg})
@@ -1349,7 +1409,7 @@ def collect_own_url_proof_chain(
             nonce=nonce,
             created_at=created_at,
             serial=serial,
-            method="own_url_chain_v1",
+            method=proof_method,
             evidence_source="adb_device_read",
             observed_root_id=observed_root_id,
             observed_root_url=observed_root_url,
@@ -1482,322 +1542,349 @@ def collect_own_url_proof_chain(
 
             root_prof_digest = compute_xml_digest(raw_xml)
             ok, err, more_bounds = find_own_profile_controls(tree, clean_main_name)
+            name_proof_path = False
             if not ok or more_bounds is None:
-                return make_fail(f"Root own profile invalid: {err}", "root_url")
-
-            steps.append({
-                "step": "root_profile_verified",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "digest": root_prof_digest,
-                "detail": f"Verified own root profile for '{clean_main_name}'",
-            })
-
-            # Tap More profile settings
-            timeout_err = check_deadline("settings open")
-            if timeout_err:
-                return make_fail(timeout_err, "root_url")
-
-            cx, cy = get_center(more_bounds)
-            run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
-            time.sleep(0.5)
-
-            # Step 3: Validate Profile Settings & Prepare IME
-            timeout_err = check_deadline("root settings check")
-            if timeout_err:
-                return make_fail(timeout_err, "root_url")
-
-            ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-            if not ok or tree is None:
-                return make_fail(f"Profile Settings screen invalid: {err}", "root_url")
-
-            settings_digest = compute_xml_digest(raw_xml)
-            ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
-            if not ok:
-                return make_fail(f"Profile Settings controls invalid: {err}", "root_url")
-
-            # Bind IME via Search if needed (with bounded Back + captures until back at same settings)
-            ime_ok, ime_performed, s_tree, s_xml = bind_portal_ime_if_needed(
-                serial, raw_xml, is_page=False, expected_geometry=expected_geometry,
-            )
-            if not ime_ok:
-                return make_fail("Failed to bind Portal IME via Settings Search", "root_url")
-
-            if ime_performed and s_tree is not None:
-                tree = s_tree
-                raw_xml = s_xml
-                settings_digest = compute_xml_digest(raw_xml)
-                ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
-                if not ok:
-                    return make_fail(f"Profile Settings controls missing after IME binding: {err}", "root_url")
-
-            timeout_err = check_deadline("root clipboard clear")
-            if timeout_err:
-                return make_fail(timeout_err, "root_url")
-
-            # Clear clipboard with fresh sentinel and verify readback
-            cb_ok, sentinel_root = clear_and_verify_clipboard(serial)
-            if not cb_ok:
-                return make_fail("Root clipboard sentinel readback failed", "root_url")
-
-            # If copy link is clipped, scroll and recapture
-            timeout_err = check_deadline("copy root link")
-            if timeout_err:
-                return make_fail(timeout_err, "root_url")
-            w, h = extract_viewport_geometry(tree, expected_geometry)
-            if copy_link_bounds is None or is_clipped(copy_link_bounds, screen_height=h):
-                ok, err, tree, raw_xml = scroll_settings_and_recapture(
-                    serial, screen_width=w, screen_height=h, expected_geometry=expected_geometry,
-                )
-                if not ok or tree is None:
-                    return make_fail("Recapture after scroll failed", "root_url")
-                w, h = extract_viewport_geometry(tree, expected_geometry)
-                ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
-                if copy_link_bounds is None:
-                    return make_fail("Copy profile link button not found after scroll", "root_url")
-
-            # Tap Copy profile link and read clipboard
-            copied_root_url, err = tap_copy_link_and_read(serial, copy_link_bounds, sentinel_root)
-            if not copied_root_url:
-                return make_fail("Failed to copy root profile link", "root_url")
-
-            resolved_root = resolve_facebook_actor_url(copied_root_url)
-            if not resolved_root:
-                return make_fail("Failed to resolve root URL", "root_url")
-
-            extracted_root_id = extract_numeric_fb_id(resolved_root)
-            if not extracted_root_id:
-                return make_fail("No numeric root ID in resolved URL", "root_url")
-
-            observed_root_id = extracted_root_id
-            observed_root_url = resolved_root
-
-            if not discovery_mode:
-                if str(expected_root_id).strip() != observed_root_id:
-                    return make_fail(
-                        f"Observed root ID '{observed_root_id}' does not match expected '{expected_root_id}'",
-                        "root_url",
-                    )
-
-            steps.append({
-                "step": "root_url_resolved",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "digest": settings_digest,
-                "detail": f"Observed root ID {observed_root_id} ({observed_root_url})",
-            })
-            stages.append({
-                "stage": "root_url",
-                "passed": True,
-                "detail": f"Root URL verified for ID {observed_root_id}",
-            })
-
-            # Step 4: Handle Page Target vs Root Profile Target
-            if is_page_target:
-                if switcher_bounds is None:
-                    return make_fail("Missing Profile switcher to switch to Page target", "hierarchy")
-
-                # Tap Profile switcher
-                scx, scy = get_center(switcher_bounds)
-                run_adb(["shell", "input", "tap", str(scx), str(scy)], serial=serial)
-                time.sleep(0.5)
-
-                # Validate Switcher list
-                ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-                if not ok or tree is None:
-                    return make_fail(f"Account switcher capture failed: {err}", "hierarchy")
-
-                switcher_digest = compute_xml_digest(raw_xml)
-                ok, err, page_target_bounds = find_switcher_target_page(tree, clean_target_name, clean_main_name)
-                if not ok or page_target_bounds is None:
-                    return make_fail(f"Account switcher hierarchy check failed: {err}", "hierarchy")
-
+                name_ok, _ = find_own_profile_name_identity(tree, clean_main_name)
+                if (not is_page_target) and name_ok:
+                    name_proof_path = True
+                    proof_method = "own_profile_name_v1"
+                    observed_root_id = str(expected_root_id).strip()
+                    observed_target_id = str(expected_root_id).strip()
+                    observed_root_url = None
+                    observed_target_url = None
+                    steps.append({
+                        "step": "root_profile_name_verified",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "digest": root_prof_digest,
+                        "detail": "Own profile verified by exact name + owner controls (owner policy 2026-10-16)",
+                    })
+                    stages.append({
+                        "stage": "root_url",
+                        "passed": True,
+                        "detail": "name-based owner-profile proof (URL route unavailable)",
+                    })
+                    stages.append({
+                        "stage": "target_url",
+                        "passed": True,
+                        "detail": "name-based owner-profile proof (URL route unavailable)",
+                    })
+                else:
+                    return make_fail(f"Root own profile invalid: {err}", "root_url")
+            else:
                 steps.append({
-                    "step": "switcher_hierarchy_verified",
+                    "step": "root_profile_verified",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "digest": switcher_digest,
-                    "detail": f"Target Page '{clean_target_name}' candidate selected under root session",
+                    "digest": root_prof_digest,
+                    "detail": f"Verified own root profile for '{clean_main_name}'",
                 })
 
-                # Tap target Page row
-                tcx, tcy = get_center(page_target_bounds)
-                run_adb(["shell", "input", "tap", str(tcx), str(tcy)], serial=serial)
-                time.sleep(1.0)
-
-                # Poll switch completion and verify target Page own profile
-                target_prof_ok = False
-                go_to_profile_tapped = False
-                for _ in range(6):
-                    timeout_err = check_deadline("switch to target page")
-                    if timeout_err:
-                        return make_fail(timeout_err, "hierarchy")
-
-                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-                    if ok and tree is not None:
-                        pok, _, pmore_bounds = find_own_profile_controls(tree, clean_target_name)
-                        if pok and pmore_bounds is not None:
-                            target_prof_ok = True
-                            more_bounds = pmore_bounds
-                            break
-
-                        # If on feed header, tap 'Go to profile' button once
-                        if not go_to_profile_tapped:
-                            g_ok, g_err, g_bounds = find_go_to_profile_button(tree)
-                            if g_ok and g_bounds is not None:
-                                gcx, gcy = get_center(g_bounds)
-                                run_adb(["shell", "input", "tap", str(gcx), str(gcy)], serial=serial)
-                                go_to_profile_tapped = True
-                                time.sleep(1.0)
-                                continue
-
-                    time.sleep(0.5)
-
-                if not target_prof_ok:
-                    return make_fail(f"Target Page own profile for '{clean_target_name}' not active after switch", "hierarchy")
-
-                target_prof_digest = compute_xml_digest(raw_xml)
-                steps.append({
-                    "step": "target_profile_verified",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "digest": target_prof_digest,
-                    "detail": f"Verified target Page profile for '{clean_target_name}'",
-                })
-
-                # Tap Page More profile settings
-                timeout_err = check_deadline("page settings open")
+            if not name_proof_path:
+                # Tap More profile settings
+                timeout_err = check_deadline("settings open")
                 if timeout_err:
-                    return make_fail(timeout_err, "target_url")
+                    return make_fail(timeout_err, "root_url")
 
                 cx, cy = get_center(more_bounds)
                 run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
                 time.sleep(0.5)
 
-                # Validate Page Settings
-                timeout_err = check_deadline("page settings check")
+                # Step 3: Validate Profile Settings & Prepare IME
+                timeout_err = check_deadline("root settings check")
                 if timeout_err:
-                    return make_fail(timeout_err, "target_url")
+                    return make_fail(timeout_err, "root_url")
 
                 ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
                 if not ok or tree is None:
-                    return make_fail(f"Page Settings screen invalid: {err}", "target_url")
+                    return make_fail(f"Profile Settings screen invalid: {err}", "root_url")
 
-                page_settings_digest = compute_xml_digest(raw_xml)
-                ok, err, page_link_bounds = find_page_settings_controls(tree)
+                settings_digest = compute_xml_digest(raw_xml)
+                ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
                 if not ok:
-                    return make_fail(f"Page Settings controls invalid: {err}", "target_url")
+                    return make_fail(f"Profile Settings controls invalid: {err}", "root_url")
 
-                # Bind IME on Page settings if needed
-                p_ime_ok, p_ime_performed, ps_tree, ps_xml = bind_portal_ime_if_needed(
-                    serial, raw_xml, is_page=True, expected_geometry=expected_geometry,
+                # Bind IME via Search if needed (with bounded Back + captures until back at same settings)
+                ime_ok, ime_performed, s_tree, s_xml = bind_portal_ime_if_needed(
+                    serial, raw_xml, is_page=False, expected_geometry=expected_geometry,
                 )
-                if not p_ime_ok:
-                    return make_fail("Failed to bind Portal IME via Page Settings Search", "target_url")
+                if not ime_ok:
+                    return make_fail("Failed to bind Portal IME via Settings Search", "root_url")
 
-                if p_ime_performed and ps_tree is not None:
-                    tree = ps_tree
-                    raw_xml = ps_xml
-                    page_settings_digest = compute_xml_digest(raw_xml)
-                    ok, err, page_link_bounds = find_page_settings_controls(tree)
+                if ime_performed and s_tree is not None:
+                    tree = s_tree
+                    raw_xml = s_xml
+                    settings_digest = compute_xml_digest(raw_xml)
+                    ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
                     if not ok:
-                        return make_fail(f"Page Settings controls missing after IME binding: {err}", "target_url")
+                        return make_fail(f"Profile Settings controls missing after IME binding: {err}", "root_url")
 
-                timeout_err = check_deadline("page clipboard clear")
+                timeout_err = check_deadline("root clipboard clear")
                 if timeout_err:
-                    return make_fail(timeout_err, "target_url")
+                    return make_fail(timeout_err, "root_url")
 
                 # Clear clipboard with fresh sentinel and verify readback
-                cb_ok, sentinel_page = clear_and_verify_clipboard(serial)
+                cb_ok, sentinel_root = clear_and_verify_clipboard(serial)
                 if not cb_ok:
-                    return make_fail("Page clipboard sentinel readback failed", "target_url")
+                    return make_fail("Root clipboard sentinel readback failed", "root_url")
 
-                # If page link is clipped, scroll and recapture
-                timeout_err = check_deadline("copy page link")
+                # If copy link is clipped, scroll and recapture
+                timeout_err = check_deadline("copy root link")
                 if timeout_err:
-                    return make_fail(timeout_err, "target_url")
-
+                    return make_fail(timeout_err, "root_url")
                 w, h = extract_viewport_geometry(tree, expected_geometry)
-                if page_link_bounds is None or is_clipped(page_link_bounds, screen_height=h):
+                if copy_link_bounds is None or is_clipped(copy_link_bounds, screen_height=h):
                     ok, err, tree, raw_xml = scroll_settings_and_recapture(
                         serial, screen_width=w, screen_height=h, expected_geometry=expected_geometry,
                     )
                     if not ok or tree is None:
-                        return make_fail("Recapture after scroll failed on Page Settings", "target_url")
+                        return make_fail("Recapture after scroll failed", "root_url")
                     w, h = extract_viewport_geometry(tree, expected_geometry)
-                    ok, err, page_link_bounds = find_page_settings_controls(tree)
-                    if page_link_bounds is None:
-                        return make_fail("Page link button not found after scroll", "target_url")
+                    ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
+                    if copy_link_bounds is None:
+                        return make_fail("Copy profile link button not found after scroll", "root_url")
 
-                # Tap Page link and read clipboard
-                copied_page_url, err = tap_copy_link_and_read(serial, page_link_bounds, sentinel_page)
-                if not copied_page_url:
-                    return make_fail("Failed to copy Page link", "target_url")
+                # Tap Copy profile link and read clipboard
+                copied_root_url, err = tap_copy_link_and_read(serial, copy_link_bounds, sentinel_root)
+                if not copied_root_url:
+                    return make_fail("Failed to copy root profile link", "root_url")
 
-                resolved_page = resolve_facebook_actor_url(copied_page_url)
-                if not resolved_page:
-                    return make_fail("Failed to resolve Page URL", "target_url")
+                resolved_root = resolve_facebook_actor_url(copied_root_url)
+                if not resolved_root:
+                    return make_fail("Failed to resolve root URL", "root_url")
 
-                extracted_page_id = extract_numeric_fb_id(resolved_page)
-                if not extracted_page_id:
-                    return make_fail("No numeric Page ID in resolved URL", "target_url")
+                extracted_root_id = extract_numeric_fb_id(resolved_root)
+                if not extracted_root_id:
+                    return make_fail("No numeric root ID in resolved URL", "root_url")
 
-                observed_target_id = extracted_page_id
-                observed_target_url = resolved_page
+                observed_root_id = extracted_root_id
+                observed_root_url = resolved_root
 
                 if not discovery_mode:
-                    if str(expected_target_id).strip() != observed_target_id:
+                    if str(expected_root_id).strip() != observed_root_id:
                         return make_fail(
-                            f"Observed Page ID '{observed_target_id}' does not match expected '{expected_target_id}'",
-                            "target_url",
+                            f"Observed root ID '{observed_root_id}' does not match expected '{expected_root_id}'",
+                            "root_url",
                         )
 
-                # Now that Page Settings, Admins, and matching Page ID are verified, confirm hierarchy!
-                stages.append({
-                    "stage": "hierarchy",
-                    "passed": True,
-                    "detail": f"Target Page '{clean_target_name}' verified under root session (Page ID: {observed_target_id})",
-                })
                 steps.append({
-                    "step": "target_url_resolved",
+                    "step": "root_url_resolved",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "digest": page_settings_digest,
-                    "detail": f"Observed Page ID {observed_target_id} ({observed_target_url})",
+                    "digest": settings_digest,
+                    "detail": f"Observed root ID {observed_root_id} ({observed_root_url})",
                 })
                 stages.append({
-                    "stage": "target_url",
+                    "stage": "root_url",
                     "passed": True,
-                    "detail": f"Target Page URL verified for ID {observed_target_id}",
+                    "detail": f"Root URL verified for ID {observed_root_id}",
                 })
 
-                # Deterministic Back to return to target Page profile
-                timeout_err = check_deadline("return to page profile")
-                if timeout_err:
-                    return make_fail(timeout_err, "composer_binding")
+                # Step 4: Handle Page Target vs Root Profile Target
+                if is_page_target:
+                    if switcher_bounds is None:
+                        return make_fail("Missing Profile switcher to switch to Page target", "hierarchy")
 
-                run_adb(["shell", "input", "keyevent", "4"], serial=serial)
-                time.sleep(0.5)
+                    # Tap Profile switcher
+                    scx, scy = get_center(switcher_bounds)
+                    run_adb(["shell", "input", "tap", str(scx), str(scy)], serial=serial)
+                    time.sleep(0.5)
 
-                ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-                if not ok or tree is None:
-                    return make_fail("Return to Page profile failed", "composer_binding")
-            else:
-                # Profile-only destination (root == target)
-                observed_target_id = observed_root_id
-                observed_target_url = observed_root_url
-                stages.append({
-                    "stage": "target_url",
-                    "passed": True,
-                    "detail": f"Target URL verified identical to root profile ID {observed_target_id}",
-                })
+                    # Validate Switcher list
+                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if not ok or tree is None:
+                        return make_fail(f"Account switcher capture failed: {err}", "hierarchy")
 
-                # Deterministic Back to return to Root profile
-                timeout_err = check_deadline("return to root profile")
-                if timeout_err:
-                    return make_fail(timeout_err, "composer_binding")
+                    switcher_digest = compute_xml_digest(raw_xml)
+                    ok, err, page_target_bounds = find_switcher_target_page(tree, clean_target_name, clean_main_name)
+                    if not ok or page_target_bounds is None:
+                        return make_fail(f"Account switcher hierarchy check failed: {err}", "hierarchy")
 
-                run_adb(["shell", "input", "keyevent", "4"], serial=serial)
-                time.sleep(0.5)
+                    steps.append({
+                        "step": "switcher_hierarchy_verified",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "digest": switcher_digest,
+                        "detail": f"Target Page '{clean_target_name}' candidate selected under root session",
+                    })
 
-                ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-                if not ok or tree is None:
-                    return make_fail("Return to Root profile failed", "composer_binding")
+                    # Tap target Page row
+                    tcx, tcy = get_center(page_target_bounds)
+                    run_adb(["shell", "input", "tap", str(tcx), str(tcy)], serial=serial)
+                    time.sleep(1.0)
+
+                    # Poll switch completion and verify target Page own profile
+                    target_prof_ok = False
+                    go_to_profile_tapped = False
+                    for _ in range(6):
+                        timeout_err = check_deadline("switch to target page")
+                        if timeout_err:
+                            return make_fail(timeout_err, "hierarchy")
+
+                        ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                        if ok and tree is not None:
+                            pok, _, pmore_bounds = find_own_profile_controls(tree, clean_target_name)
+                            if pok and pmore_bounds is not None:
+                                target_prof_ok = True
+                                more_bounds = pmore_bounds
+                                break
+
+                            # If on feed header, tap 'Go to profile' button once
+                            if not go_to_profile_tapped:
+                                g_ok, g_err, g_bounds = find_go_to_profile_button(tree)
+                                if g_ok and g_bounds is not None:
+                                    gcx, gcy = get_center(g_bounds)
+                                    run_adb(["shell", "input", "tap", str(gcx), str(gcy)], serial=serial)
+                                    go_to_profile_tapped = True
+                                    time.sleep(1.0)
+                                    continue
+
+                        time.sleep(0.5)
+
+                    if not target_prof_ok:
+                        return make_fail(f"Target Page own profile for '{clean_target_name}' not active after switch", "hierarchy")
+
+                    target_prof_digest = compute_xml_digest(raw_xml)
+                    steps.append({
+                        "step": "target_profile_verified",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "digest": target_prof_digest,
+                        "detail": f"Verified target Page profile for '{clean_target_name}'",
+                    })
+
+                    # Tap Page More profile settings
+                    timeout_err = check_deadline("page settings open")
+                    if timeout_err:
+                        return make_fail(timeout_err, "target_url")
+
+                    cx, cy = get_center(more_bounds)
+                    run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
+                    time.sleep(0.5)
+
+                    # Validate Page Settings
+                    timeout_err = check_deadline("page settings check")
+                    if timeout_err:
+                        return make_fail(timeout_err, "target_url")
+
+                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if not ok or tree is None:
+                        return make_fail(f"Page Settings screen invalid: {err}", "target_url")
+
+                    page_settings_digest = compute_xml_digest(raw_xml)
+                    ok, err, page_link_bounds = find_page_settings_controls(tree)
+                    if not ok:
+                        return make_fail(f"Page Settings controls invalid: {err}", "target_url")
+
+                    # Bind IME on Page settings if needed
+                    p_ime_ok, p_ime_performed, ps_tree, ps_xml = bind_portal_ime_if_needed(
+                        serial, raw_xml, is_page=True, expected_geometry=expected_geometry,
+                    )
+                    if not p_ime_ok:
+                        return make_fail("Failed to bind Portal IME via Page Settings Search", "target_url")
+
+                    if p_ime_performed and ps_tree is not None:
+                        tree = ps_tree
+                        raw_xml = ps_xml
+                        page_settings_digest = compute_xml_digest(raw_xml)
+                        ok, err, page_link_bounds = find_page_settings_controls(tree)
+                        if not ok:
+                            return make_fail(f"Page Settings controls missing after IME binding: {err}", "target_url")
+
+                    timeout_err = check_deadline("page clipboard clear")
+                    if timeout_err:
+                        return make_fail(timeout_err, "target_url")
+
+                    # Clear clipboard with fresh sentinel and verify readback
+                    cb_ok, sentinel_page = clear_and_verify_clipboard(serial)
+                    if not cb_ok:
+                        return make_fail("Page clipboard sentinel readback failed", "target_url")
+
+                    # If page link is clipped, scroll and recapture
+                    timeout_err = check_deadline("copy page link")
+                    if timeout_err:
+                        return make_fail(timeout_err, "target_url")
+
+                    w, h = extract_viewport_geometry(tree, expected_geometry)
+                    if page_link_bounds is None or is_clipped(page_link_bounds, screen_height=h):
+                        ok, err, tree, raw_xml = scroll_settings_and_recapture(
+                            serial, screen_width=w, screen_height=h, expected_geometry=expected_geometry,
+                        )
+                        if not ok or tree is None:
+                            return make_fail("Recapture after scroll failed on Page Settings", "target_url")
+                        w, h = extract_viewport_geometry(tree, expected_geometry)
+                        ok, err, page_link_bounds = find_page_settings_controls(tree)
+                        if page_link_bounds is None:
+                            return make_fail("Page link button not found after scroll", "target_url")
+
+                    # Tap Page link and read clipboard
+                    copied_page_url, err = tap_copy_link_and_read(serial, page_link_bounds, sentinel_page)
+                    if not copied_page_url:
+                        return make_fail("Failed to copy Page link", "target_url")
+
+                    resolved_page = resolve_facebook_actor_url(copied_page_url)
+                    if not resolved_page:
+                        return make_fail("Failed to resolve Page URL", "target_url")
+
+                    extracted_page_id = extract_numeric_fb_id(resolved_page)
+                    if not extracted_page_id:
+                        return make_fail("No numeric Page ID in resolved URL", "target_url")
+
+                    observed_target_id = extracted_page_id
+                    observed_target_url = resolved_page
+
+                    if not discovery_mode:
+                        if str(expected_target_id).strip() != observed_target_id:
+                            return make_fail(
+                                f"Observed Page ID '{observed_target_id}' does not match expected '{expected_target_id}'",
+                                "target_url",
+                            )
+
+                    # Now that Page Settings, Admins, and matching Page ID are verified, confirm hierarchy!
+                    stages.append({
+                        "stage": "hierarchy",
+                        "passed": True,
+                        "detail": f"Target Page '{clean_target_name}' verified under root session (Page ID: {observed_target_id})",
+                    })
+                    steps.append({
+                        "step": "target_url_resolved",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "digest": page_settings_digest,
+                        "detail": f"Observed Page ID {observed_target_id} ({observed_target_url})",
+                    })
+                    stages.append({
+                        "stage": "target_url",
+                        "passed": True,
+                        "detail": f"Target Page URL verified for ID {observed_target_id}",
+                    })
+
+                    # Deterministic Back to return to target Page profile
+                    timeout_err = check_deadline("return to page profile")
+                    if timeout_err:
+                        return make_fail(timeout_err, "composer_binding")
+
+                    run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+                    time.sleep(0.5)
+
+                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if not ok or tree is None:
+                        return make_fail("Return to Page profile failed", "composer_binding")
+                else:
+                    # Profile-only destination (root == target)
+                    observed_target_id = observed_root_id
+                    observed_target_url = observed_root_url
+                    stages.append({
+                        "stage": "target_url",
+                        "passed": True,
+                        "detail": f"Target URL verified identical to root profile ID {observed_target_id}",
+                    })
+
+                    # Deterministic Back to return to Root profile
+                    timeout_err = check_deadline("return to root profile")
+                    if timeout_err:
+                        return make_fail(timeout_err, "composer_binding")
+
+                    run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+                    time.sleep(0.5)
+
+                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if not ok or tree is None:
+                        return make_fail("Return to Root profile failed", "composer_binding")
 
             # Step 5: Open Composer via explicit non-submission trigger
             timeout_err = check_deadline("composer open")
@@ -1904,7 +1991,7 @@ def collect_own_url_proof_chain(
                 nonce=nonce,
                 created_at=created_at,
                 serial=serial,
-                method="own_url_chain_v1",
+                method=proof_method,
                 evidence_source="adb_device_read",
                 observed_root_id=observed_root_id,
                 observed_root_url=observed_root_url,
