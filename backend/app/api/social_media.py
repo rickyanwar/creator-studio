@@ -143,7 +143,7 @@ def get_destination_schedule_preview(
                 existing_slots_utc=simulated_reservations,
                 sleep_start_hour=sleep_start,
                 sleep_end_hour=sleep_end,
-                namespace=f"dest_{dest.id}",
+                namespace=f"dest-{dest.id}",
             )
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Invalid schedule parameters: {e}")

@@ -32,6 +32,7 @@ from app.models.social_publishing import (
     SocialDestination,
 )
 from app.models.target_fanpages import TargetFanpage
+from app.services.publishing_schedule import compute_audience_slot
 
 
 @compiles(ARRAY, "sqlite")
@@ -303,3 +304,100 @@ def test_schedule_preview_respects_legacy_and_ledger_reservations(auth_client, s
     for s in slots_utc:
         diff_sec = abs((s - future_slot).total_seconds())
         assert diff_sec >= 60 * 60, f"Slot {s} was too close to legacy reservation {future_slot}"
+
+
+def test_schedule_preview_exact_six_slots_parity_and_namespace_regression(auth_client, sqlite_db_session, monkeypatch):
+    """6 preview slots exactly match sequential compute_audience_slot calls with dest-{id} namespace.
+
+    Negative control: proves old underscore 'dest_{id}' namespace yields divergent slot jitter.
+    """
+    import app.api.social_media as sm_api
+
+    project = TargetFanpage(
+        id=105,
+        name="Sydney Formula Fanpage",
+        timezone="Australia/Sydney",
+        target_country="AU",
+        publish_sleep_start_hour=22,
+        publish_sleep_end_hour=8,
+    )
+    sqlite_db_session.add(project)
+    sqlite_db_session.commit()
+
+    dest = SocialDestination(
+        id=205,
+        content_project_id=105,
+        kind="facebook_profile",
+        name="Sydney Formula Profile",
+        mode="phone",
+        timezone="Australia/Sydney",
+        daily_target=31,
+        min_gap_minutes=5,
+        is_active=False,
+    )
+    sqlite_db_session.add(dest)
+    sqlite_db_session.commit()
+
+    # Freeze clock to fixed aware UTC datetime across API endpoint
+    fixed_now = datetime(2026, 10, 16, 12, 0, 0, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return fixed_now.astimezone(tz)
+            return fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(sm_api, "datetime", FrozenDatetime)
+
+    # 1. Compute expected 6 slots sequentially using helper with matching dest-{id} namespace
+    expected_slots_hyphen = []
+    simulated_hyphen = []
+    for _ in range(6):
+        next_s = compute_audience_slot(
+            now_utc=fixed_now,
+            timezone_name="Australia/Sydney",
+            daily_target=31,
+            min_gap_minutes=5,
+            existing_slots_utc=simulated_hyphen,
+            sleep_start_hour=22,
+            sleep_end_hour=8,
+            namespace=f"dest-{dest.id}",
+        )
+        simulated_hyphen.append(next_s)
+        expected_slots_hyphen.append(next_s)
+
+    # 2. Call schedule-preview API and verify exact parity on all 6 slots
+    resp = auth_client.get(f"/social-media/destinations/{dest.id}/schedule-preview?limit=6")
+    assert resp.status_code == 200
+    api_slots = [datetime.fromisoformat(s) for s in resp.json()["slots_utc"]]
+
+    assert len(api_slots) == 6
+    for idx in range(6):
+        assert api_slots[idx] == expected_slots_hyphen[idx], (
+            f"Slot {idx} mismatch: api={api_slots[idx]} vs expected={expected_slots_hyphen[idx]}"
+        )
+
+    # 3. Negative control: verify old underscore namespace produces divergent slots
+    simulated_underscore = []
+    divergent_slots_underscore = []
+    for _ in range(6):
+        old_s = compute_audience_slot(
+            now_utc=fixed_now,
+            timezone_name="Australia/Sydney",
+            daily_target=31,
+            min_gap_minutes=5,
+            existing_slots_utc=simulated_underscore,
+            sleep_start_hour=22,
+            sleep_end_hour=8,
+            namespace=f"dest_{dest.id}",
+        )
+        simulated_underscore.append(old_s)
+        divergent_slots_underscore.append(old_s)
+
+    # All 6 slots must differ from old underscore namespace slots
+    assert api_slots != divergent_slots_underscore
+    for idx in range(6):
+        assert api_slots[idx] != divergent_slots_underscore[idx], (
+            f"Slot {idx} should differ from old underscore namespace slot"
+        )
