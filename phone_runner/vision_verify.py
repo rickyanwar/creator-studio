@@ -39,6 +39,7 @@ PROMPT_COMPOSER = (
     'Respond ONLY with a JSON object: {"screen": "composer|post_settings|profile|other", '
     '"author_name": string, "has_attached_photo": boolean, "caption_starts_with": string, '
     '"same_photo_as_reference": boolean}. '
+    'has_attached_photo is true when a photo or a video is attached. '
     'Image 1 is the phone screenshot; image 2 is the photo we intend to post. '
     'caption_starts_with must be the first 40 characters of the text typed in the composer post box, or "" if empty.'
 )
@@ -48,11 +49,19 @@ PROMPT_POST_SETTINGS = (
     '{"screen": "composer|post_settings|profile|other", "share_button_visible": boolean, "audience": string}.'
 )
 
+PROMPT_REEL_SETTINGS = (
+    'Analyze the phone screenshot. Respond ONLY with a JSON object: '
+    '{"screen": "reel_settings|post_settings|composer|profile|other", '
+    '"share_now_visible": boolean, "has_video_thumbnail": boolean}. '
+    'reel_settings is the "Reel Settings" screen with a "Share now" button.'
+)
+
 PROMPT_POSTED = (
     'Analyze the phone screenshot. Respond ONLY with a JSON object: '
     '{"screen": "composer|post_settings|profile|other", '
     '"posts": [{"author_name": string, "caption_starts_with": string, "has_photo": boolean}], '
     '"still_uploading": boolean}. '
+    'has_photo is true when the post shows a photo or a video. '
     'Include every post visible on screen, top to bottom. '
     'caption_starts_with must be the first 40 characters of that post\'s text.'
 )
@@ -254,6 +263,7 @@ def check_composer(
     expected_caption: str = "",
     require_caption: bool = False,
     require_photo: bool = True,
+    require_same_reference: bool = True,
 ) -> tuple[bool, str]:
     if not ans or not isinstance(ans, dict):
         return False, "invalid or empty vision response"
@@ -270,7 +280,7 @@ def check_composer(
         if ans.get("has_attached_photo") is not True:
             return False, "has_attached_photo is not True"
 
-        if ans.get("same_photo_as_reference") is not True:
+        if require_same_reference and ans.get("same_photo_as_reference") is not True:
             return False, "same_photo_as_reference is not True"
 
     cap_ans = ans.get("caption_starts_with") or ""
@@ -292,6 +302,16 @@ def check_post_settings(ans: dict | None) -> tuple[bool, str]:
     if ans.get("share_button_visible") is not True:
         return False, "share_button_visible is not True"
     return True, "post_settings verified"
+
+
+def check_reel_settings(ans: dict | None) -> tuple[bool, str]:
+    if not ans or not isinstance(ans, dict):
+        return False, "invalid or empty vision response"
+    if ans.get("screen") != "reel_settings":
+        return False, f"screen is not reel_settings (got '{ans.get('screen')}')"
+    if ans.get("share_now_visible") is not True:
+        return False, "share_now_visible is not True"
+    return True, "reel_settings verified"
 
 
 def check_posted(
@@ -342,6 +362,7 @@ def verify_gate(
     reference_jpeg: bytes | None = None,
     timeout: float = VISION_MODEL_TIMEOUT_SECONDS,
     total_budget: float = VISION_GATE_BUDGET_SECONDS,
+    require_same_reference: bool = True,
     **kwargs: Any,
 ) -> tuple[bool, dict[str, Any]]:
     png = capture_screenshot_png(serial)
@@ -359,6 +380,8 @@ def verify_gate(
         prompt = PROMPT_COMPOSER
     elif gate == "post_settings":
         prompt = PROMPT_POST_SETTINGS
+    elif gate == "reel_settings":
+        prompt = PROMPT_REEL_SETTINGS
     elif gate == "posted":
         prompt = PROMPT_POSTED
     else:
@@ -395,6 +418,7 @@ def verify_gate(
             expected_caption=expected_caption,
             require_caption=False,
             require_photo=True,
+            require_same_reference=require_same_reference,
         )
     elif gate == "composer_after_typing":
         ok, chk_detail = check_composer(
@@ -403,9 +427,12 @@ def verify_gate(
             expected_caption=expected_caption,
             require_caption=True,
             require_photo=False,
+            require_same_reference=require_same_reference,
         )
     elif gate == "post_settings":
         ok, chk_detail = check_post_settings(ans)
+    elif gate == "reel_settings":
+        ok, chk_detail = check_reel_settings(ans)
     elif gate == "posted":
         ok, chk_detail = check_posted(
             ans,

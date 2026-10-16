@@ -10,11 +10,13 @@ from phone_runner.vision_verify import (
     PROMPT_COMPOSER,
     PROMPT_POST_SETTINGS,
     PROMPT_POSTED,
+    PROMPT_REEL_SETTINGS,
     ask_vision,
     capture_screenshot_png,
     check_composer,
     check_post_settings,
     check_posted,
+    check_reel_settings,
     get_vision_models,
     loose_text_key,
     strip_json_fences,
@@ -423,5 +425,46 @@ def test_composer_after_typing_allows_missing_photo_before_typing_requires_it():
         )
         assert ok_gate_after is True
         assert ev_gate_after["ok"] is True
+
+
+def test_check_reel_settings():
+    assert check_reel_settings(None)[0] is False
+    assert check_reel_settings({"screen": "post_settings", "share_now_visible": True})[0] is False
+    assert check_reel_settings({"screen": "reel_settings", "share_now_visible": False})[0] is False
+    ok, detail = check_reel_settings({"screen": "reel_settings", "share_now_visible": True})
+    assert ok is True
+    assert detail == "reel_settings verified"
+
+
+def test_verify_gate_reel_settings():
+    ans = {"screen": "reel_settings", "share_now_visible": True, "has_video_thumbnail": True}
+    with (
+        mock.patch("phone_runner.vision_verify.capture_screenshot_png", return_value=FAKE_PNG),
+        mock.patch("phone_runner.vision_verify.ask_vision", return_value=(ans, "gemini-model", "ok")),
+    ):
+        ok, ev = verify_gate(FAKE_SERIAL, "reel_settings")
+        assert ok is True
+        assert ev["ok"] is True
+        assert ev["gate"] == "reel_settings"
+
+
+def test_check_composer_require_same_reference_flag():
+    ans = {
+        "screen": "composer",
+        "author_name": "Agung",
+        "has_attached_photo": True,
+        "caption_starts_with": "",
+        "same_photo_as_reference": False,
+    }
+    # Default require_same_reference=True -> fails because same_photo_as_reference is False
+    ok1, d1 = check_composer(ans, expected_author="Agung", require_photo=True, require_same_reference=True)
+    assert ok1 is False
+    assert "same_photo_as_reference is not True" in d1
+
+    # require_same_reference=False -> passes (video case)
+    ok2, d2 = check_composer(ans, expected_author="Agung", require_photo=True, require_same_reference=False)
+    assert ok2 is True
+    assert d2 == "composer verified"
+
 
 

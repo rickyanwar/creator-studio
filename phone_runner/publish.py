@@ -35,7 +35,7 @@ from phone_runner.identity_proof import (
     parse_bounds,
 )
 from phone_runner.humanize import human_pause, human_tap
-from phone_runner.media_staging import get_media_content_uri, stage_media_files
+from phone_runner.media_staging import get_media_content_uri, is_video_path, stage_media_files
 from phone_runner.mobilerun import MobilerunResult, run_mobilerun, type_text
 from phone_runner.modern_composer import (
     attach_first_gallery_item,
@@ -44,6 +44,7 @@ from phone_runner.modern_composer import (
     has_attachment_preview,
     is_empty_composer,
     open_share_intent_composer,
+    reel_settings_state,
     resolve_latest_post_link,
     share_screen_state,
 )
@@ -1008,14 +1009,18 @@ def execute_publish(
                     "checked_at": checked_at,
                 }
 
+            is_video = is_video_path(str(staged[0]["remote_path"])) or (media_kind or "").lower() == "video"
+            evidence["media_type"] = "video" if is_video else "photo"
+
             reference_jpeg: bytes | None = None
-            local_p = staged[0].get("local_path")
-            if local_p and os.path.isfile(str(local_p)):
-                try:
-                    with open(str(local_p), "rb") as f:
-                        reference_jpeg = f.read()
-                except Exception:
-                    reference_jpeg = None
+            if not is_video:
+                local_p = staged[0].get("local_path")
+                if local_p and os.path.isfile(str(local_p)):
+                    try:
+                        with open(str(local_p), "rb") as f:
+                            reference_jpeg = f.read()
+                    except Exception:
+                        reference_jpeg = None
 
             uri = get_media_content_uri(serial, str(staged[0]["remote_path"]))
             if not uri:
@@ -1038,7 +1043,12 @@ def execute_publish(
                 }
 
             # Step d: open share intent composer
-            open_ok, open_detail, open_xml = open_share_intent_composer(serial, uri, dest_name)
+            open_ok, open_detail, open_xml = open_share_intent_composer(
+                serial,
+                uri,
+                dest_name,
+                mime_type="video/mp4" if is_video else "image/jpeg",
+            )
             if not open_ok or not open_xml:
                 stages.append({
                     "stage": "media_attachment",
@@ -1073,6 +1083,7 @@ def execute_publish(
                 expected_caption=caption_str,
                 require_caption=False,
                 reference_jpeg=reference_jpeg,
+                require_same_reference=not is_video,
             )
             evidence["vision_gates"].append(v_ev)
             if not v_ok:
@@ -1365,43 +1376,102 @@ def execute_publish(
                     "checked_at": checked_at,
                 }
 
-            s_state = share_screen_state(share_ui.stdout)
-            if not s_state.get("is_post_settings") or not s_state.get("share_bounds"):
-                evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
-                discard_composer(serial)
+            if is_video:
+                r_state = reel_settings_state(share_ui.stdout)
+                if not r_state.get("is_reel_settings") or not r_state.get("share_now_bounds"):
+                    evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "submission_gate",
+                        "passed": False,
+                        "detail": "Reel Settings screen or Share now button unrecognized",
+                    })
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "share_screen_unrecognized",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
+                reel_cap = r_state.get("caption_text")
+                norm_reel_caption = (
+                    html.unescape(reel_cap).replace("\r\n", "\n").replace("\r", "\n").strip()
+                    if reel_cap is not None
+                    else None
+                )
+                if norm_reel_caption != norm_expected:
+                    evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "content_gate",
+                        "passed": False,
+                        "detail": f"Reel Settings caption mismatch: observed length {len(norm_reel_caption or '')} vs expected {len(norm_expected)}",
+                    })
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "caption_mismatch",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
+                s_state = {
+                    "share_bounds": r_state["share_now_bounds"],
+                    "is_reel_settings": True,
+                }
                 stages.append({
                     "stage": "submission_gate",
-                    "passed": False,
-                    "detail": "Post settings screen or SHARE button unrecognized",
+                    "passed": True,
+                    "detail": "Reel Settings verified; caption carried over",
                 })
-                return {
-                    "status": "failed",
-                    "facebook_post_id": None,
-                    "permalink": None,
-                    "actor_id": expected_target_id,
-                    "publish_may_have_started": False,
-                    "error_code": "share_screen_unrecognized",
-                    "evidence": evidence,
-                    "stages": stages,
-                    "checked_at": checked_at,
-                }
+            else:
+                s_state = share_screen_state(share_ui.stdout)
+                if not s_state.get("is_post_settings") or not s_state.get("share_bounds"):
+                    evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "submission_gate",
+                        "passed": False,
+                        "detail": "Post settings screen or SHARE button unrecognized",
+                    })
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "share_screen_unrecognized",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
 
-            stages.append({
-                "stage": "submission_gate",
-                "passed": True,
-                "detail": f"Post settings verified; audience='{s_state.get('audience')}'",
-            })
+                stages.append({
+                    "stage": "submission_gate",
+                    "passed": True,
+                    "detail": f"Post settings verified; audience='{s_state.get('audience')}'",
+                })
 
-            # Step i: vision gate post_settings
-            v_ok, v_ev = verify_gate(serial, "post_settings")
+            # Step i: vision gate post_settings / reel_settings
+            gate_name = "reel_settings" if is_video else "post_settings"
+            v_ok, v_ev = verify_gate(serial, gate_name)
             evidence["vision_gates"].append(v_ev)
             if not v_ok:
                 evidence["observation_file"] = save_composer_observation(serial, "vision_gate_failed")
                 discard_composer(serial)
                 stages.append({
-                    "stage": "vision_gate_post_settings",
+                    "stage": f"vision_gate_{gate_name}",
                     "passed": False,
-                    "detail": f"Vision gate post_settings failed: {v_ev.get('detail')}",
+                    "detail": f"Vision gate {gate_name} failed: {v_ev.get('detail')}",
                 })
                 return {
                     "status": "failed",
@@ -1416,7 +1486,7 @@ def execute_publish(
                 }
 
             stages.append({
-                "stage": "vision_gate_post_settings",
+                "stage": f"vision_gate_{gate_name}",
                 "passed": True,
                 "detail": v_ev.get("detail", "ok"),
             })
@@ -1468,7 +1538,12 @@ def execute_publish(
 
             # Step k: wait and resolve
             human_pause(6.0, 8.0)
-            post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str)
+            if is_video:
+                post_id, permalink, resolve_detail = resolve_latest_post_link(
+                    serial, caption_str, attempts=8, wait=15.0
+                )
+            else:
+                post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str)
             stages.append(_post_link_stage(post_id, permalink, resolve_detail))
 
             if time.monotonic() - started > PUBLISH_BUDGET_SECONDS - 20:

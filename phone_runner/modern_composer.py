@@ -335,12 +335,18 @@ def has_attachment_preview(xml: str) -> bool:
 
     has_remove_photo = False
     has_photo = False
+    has_remove_video = False
+    has_video = False
     for node in tree.iter("node"):
         desc_exact = (node.attrib.get("content-desc") or "").strip()
         if desc_exact == "Remove photo":
             has_remove_photo = True
         if desc_exact == "Photo":
             has_photo = True
+        if desc_exact == "Remove video":
+            has_remove_video = True
+        if desc_exact == "Video":
+            has_video = True
 
         cls_name = (node.attrib.get("class") or "").lower()
         if "autocompletetextview" in cls_name:
@@ -355,8 +361,61 @@ def has_attachment_preview(xml: str) -> bool:
 
     if has_remove_photo and has_photo:
         return True
+    if has_remove_video and has_video:
+        return True
 
     return False
+
+
+def reel_settings_state(xml: str) -> dict[str, Any]:
+    """Pure parser of Facebook Reel Settings screen."""
+    default_res: dict[str, Any] = {
+        "is_reel_settings": False,
+        "share_now_bounds": None,
+        "caption_text": None,
+    }
+    if not xml or not isinstance(xml, str):
+        return default_res
+
+    try:
+        tree = ET.fromstring(xml.strip())
+    except Exception:
+        return default_res
+
+    has_title = False
+    first_share_bounds: tuple[int, int, int, int] | None = None
+    button_share_bounds: tuple[int, int, int, int] | None = None
+    caption_text: str | None = None
+
+    for node in tree.iter("node"):
+        desc = (node.attrib.get("content-desc") or "").strip()
+        text = (node.attrib.get("text") or "").strip()
+        cls_name = (node.attrib.get("class") or "").lower()
+
+        if text == "Reel Settings" or desc == "Reel Settings":
+            has_title = True
+
+        if desc == "Share now" or text == "Share now":
+            b = parse_bounds(node.attrib.get("bounds", ""))
+            if b:
+                if first_share_bounds is None:
+                    first_share_bounds = b
+                clickable = node.attrib.get("clickable", "").lower() == "true"
+                if clickable or "button" in cls_name:
+                    button_share_bounds = b
+
+        if caption_text is None and "autocompletetextview" in cls_name:
+            raw_text = node.attrib.get("text", "")
+            caption_text = html.unescape(raw_text)
+
+    share_now_bounds = button_share_bounds or first_share_bounds
+    is_reel_settings = bool(has_title and share_now_bounds is not None)
+
+    return {
+        "is_reel_settings": is_reel_settings,
+        "share_now_bounds": share_now_bounds,
+        "caption_text": caption_text,
+    }
 
 
 def discard_composer(serial: str) -> None:
@@ -386,6 +445,7 @@ def open_share_intent_composer(
     serial: str,
     content_uri: str,
     expected_author: str,
+    mime_type: str = "image/jpeg",
 ) -> tuple[bool, str, str | None]:
     cmd = [
         "shell",
@@ -395,7 +455,7 @@ def open_share_intent_composer(
         "-a",
         "android.intent.action.SEND",
         "-t",
-        "image/jpeg",
+        mime_type,
         "--eu",
         "android.intent.extra.STREAM",
         content_uri,
@@ -606,12 +666,14 @@ def extract_post_id_from_url(url: str) -> tuple[str | None, str | None]:
 def resolve_latest_post_link(
     serial: str,
     caption: str | None = None,
+    attempts: int = RESOLVE_ATTEMPTS,
+    wait: float = RESOLVE_RETRY_WAIT_SECONDS,
 ) -> tuple[str | None, str | None, str]:
     """Copies the matching post's link. Portal clipboard reads need the Portal keyboard selected,
     but captions are pasted with the normal keyboard, so select Portal only for this step."""
     try:
         with PortalImeContext(serial):
-            return _resolve_latest_post_link(serial, caption)
+            return _resolve_latest_post_link(serial, caption, attempts=attempts, wait=wait)
     except RuntimeError as exc:
         return None, None, f"portal keyboard unavailable for clipboard read: {exc}"
 
@@ -619,6 +681,8 @@ def resolve_latest_post_link(
 def _resolve_latest_post_link(
     serial: str,
     caption: str | None = None,
+    attempts: int = RESOLVE_ATTEMPTS,
+    wait: float = RESOLVE_RETRY_WAIT_SECONDS,
 ) -> tuple[str | None, str | None, str]:
     """Navigates to own profile, copies matching post link, reads clipboard, resolves post ID and permalink.
 
@@ -631,7 +695,7 @@ def _resolve_latest_post_link(
         return None, None, f"clipboard sentinel failed: {sentinel}"
 
     last_detail = "no post with matching caption visible"
-    for attempt in range(1, RESOLVE_ATTEMPTS + 1):
+    for attempt in range(1, attempts + 1):
         launch_facebook_own_profile(serial)
         time.sleep(4.0)
 
@@ -648,8 +712,8 @@ def _resolve_latest_post_link(
 
         if not more_bounds:
             last_detail = detail
-            if attempt < RESOLVE_ATTEMPTS:
-                time.sleep(RESOLVE_RETRY_WAIT_SECONDS)
+            if attempt < attempts:
+                time.sleep(wait)
             continue
 
         # Found matching post: tap its centre once
@@ -700,4 +764,4 @@ def _resolve_latest_post_link(
 
         return post_id, permalink, f"resolved post {post_id}"
 
-    return None, None, f"post with matching caption not found on own profile after {RESOLVE_ATTEMPTS} attempts: {last_detail}"
+    return None, None, f"post with matching caption not found on own profile after {attempts} attempts: {last_detail}"

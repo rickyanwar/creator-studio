@@ -9,11 +9,13 @@ import pytest
 from phone_runner.adb import AdbResult
 from phone_runner.media_staging import (
     SAFE_STAGED_NAME_RE,
+    VIDEO_EXTENSIONS,
     PinnedIPHTTPSConnection,
     PinnedIPHTTPSHandler,
     ProhibitRedirectHandler,
     download_media_file,
     get_media_content_uri,
+    is_video_path,
     push_media_to_device,
     stage_media_files,
     validate_media_url,
@@ -336,4 +338,58 @@ def test_stage_media_files_cleanup_deletes_mediastore():
     assert rm_calls[0][3] == "/sdcard/Pictures/staging/stage_xyz.jpg"
     assert len(del_calls) == 1
     assert 'content delete --uri content://media/external/images/media --where "_data LIKE \'%stage_xyz.jpg\'"' in del_calls[0][1]
+
+
+def test_is_video_path():
+    for ext in VIDEO_EXTENSIONS:
+        assert is_video_path(f"/tmp/file{ext}") is True
+        assert is_video_path(f"file{ext.upper()}") is True
+    assert is_video_path("/tmp/photo.jpg") is False
+    assert is_video_path("video_without_ext") is False
+
+
+def test_push_media_to_device_defaults_by_type():
+    with mock.patch("phone_runner.media_staging.run_adb", return_value=AdbResult(0, "OK", "")) as mock_adb:
+        # Video goes to /sdcard/Movies/staging
+        rem_v = push_media_to_device("serial_1", "/local/stage_abc.mp4")
+        assert rem_v == "/sdcard/Movies/staging/stage_abc.mp4"
+
+        # Image goes to /sdcard/Pictures/staging
+        rem_p = push_media_to_device("serial_1", "/local/stage_abc.jpg")
+        assert rem_p == "/sdcard/Pictures/staging/stage_abc.jpg"
+
+        # Explicit remote_dir respected
+        rem_exp = push_media_to_device("serial_1", "/local/stage_abc.mp4", remote_dir="/sdcard/Custom")
+        assert rem_exp == "/sdcard/Custom/stage_abc.mp4"
+
+
+def test_get_media_content_uri_video_success():
+    output = "Row: 0 _id=2000000141, _data=/storage/emulated/0/Movies/staging/stage_vid123.mp4\n"
+    with mock.patch("phone_runner.media_staging.run_adb", return_value=AdbResult(0, output, "")) as mock_adb:
+        res = get_media_content_uri("serial_1", "/sdcard/Movies/staging/stage_vid123.mp4")
+        assert res == "content://media/external/video/media/2000000141"
+        mock_adb.assert_called_once()
+        args = mock_adb.call_args[0][0]
+        assert args[0] == "shell"
+        assert 'content query --uri content://media/external/video/media --projection _id:_data --where "_data LIKE \'%stage_vid123.mp4\'"' in args[1]
+
+
+def test_stage_media_files_cleanup_video_deletes_mediastore():
+    mock_adb = mock.MagicMock(return_value=AdbResult(0, "OK", ""))
+    with (
+        mock.patch("phone_runner.media_staging.download_media_file", return_value=("/tmp/stage_xyz.mp4", "sha", 100)),
+        mock.patch("phone_runner.media_staging.push_media_to_device", return_value="/sdcard/Movies/staging/stage_xyz.mp4"),
+        mock.patch("phone_runner.media_staging.run_adb", mock_adb),
+    ):
+        with stage_media_files(["https://cdn.example.com/v.mp4"], serial="serial_1", cleanup_remote=True):
+            pass
+
+    calls = [c[0][0] for c in mock_adb.call_args_list]
+    rm_calls = [c for c in calls if c[:3] == ["shell", "rm", "-f"]]
+    del_calls = [c for c in calls if len(c) == 2 and c[0] == "shell" and "content delete" in c[1]]
+    assert len(rm_calls) == 1
+    assert rm_calls[0][3] == "/sdcard/Movies/staging/stage_xyz.mp4"
+    assert len(del_calls) == 1
+    assert 'content delete --uri content://media/external/video/media --where "_data LIKE \'%stage_xyz.mp4\'"' in del_calls[0][1]
+
 

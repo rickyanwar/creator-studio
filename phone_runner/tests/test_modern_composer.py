@@ -16,6 +16,7 @@ from phone_runner.modern_composer import (
     is_empty_composer,
     normalize_feed_text,
     open_share_intent_composer,
+    reel_settings_state,
     resolve_latest_post_link,
     share_screen_state,
 )
@@ -940,3 +941,59 @@ def test_post_url_allowlist_accepts_post_links_only():
     assert not any(is_allowed_facebook_post_url(u) for u in bad)
     # the identity (profile) allowlist stays strict
     assert not is_allowed_facebook_url("https://www.facebook.com/share/p/1MajvEXHB3/")
+
+
+def test_has_attachment_preview_video():
+    video_xml = """<hierarchy rotation="0">
+      <node class="android.widget.Button" content-desc="Video" bounds="[0,891][1080,2104]" />
+      <node class="android.widget.Button" content-desc="Remove video" bounds="[800,891][1000,1000]" />
+    </hierarchy>"""
+    assert has_attachment_preview(video_xml) is True
+
+    video_only = """<hierarchy rotation="0">
+      <node class="android.widget.Button" content-desc="Video" bounds="[0,891][1080,2104]" />
+    </hierarchy>"""
+    assert has_attachment_preview(video_only) is False
+
+
+def test_reel_settings_state_parsing():
+    fact4_xml = """<hierarchy rotation="0">
+      <node class="android.view.ViewGroup" text="Reel Settings" bounds="[0,0][1080,216]" />
+      <node class="android.widget.Button" content-desc="Back" bounds="[30,108][138,216]" />
+      <node class="android.widget.AutoCompleteTextView" bounds="[330,276][1080,696]" text="My epic reel caption" content-desc="Describe your reel. You can also add hashtags here." />
+      <node class="android.widget.Button" content-desc="Edit cover" bounds="[30,276][300,696]" />
+      <node class="android.widget.Button" clickable="true" content-desc="Share now" bounds="[48,2096][1032,2228]" />
+    </hierarchy>"""
+    state = reel_settings_state(fact4_xml)
+    assert state["is_reel_settings"] is True
+    assert state["share_now_bounds"] == (48, 2096, 1032, 2228)
+    assert state["caption_text"] == "My epic reel caption"
+
+    # Mismatched/missing title
+    no_title_xml = """<hierarchy rotation="0">
+      <node class="android.widget.Button" clickable="true" content-desc="Share now" bounds="[48,2096][1032,2228]" />
+    </hierarchy>"""
+    assert reel_settings_state(no_title_xml)["is_reel_settings"] is False
+
+    # Empty / malformed
+    assert reel_settings_state("")["is_reel_settings"] is False
+
+
+def test_resolve_latest_post_link_uses_custom_attempts(monkeypatch):
+    sleep_calls = []
+    monkeypatch.setattr("phone_runner.modern_composer.time.sleep", lambda s: sleep_calls.append(s))
+    monkeypatch.setattr("phone_runner.modern_composer.clear_and_verify_clipboard", lambda s: (True, "sentinel_xyz"))
+    monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.query_ui_hierarchy", lambda s: AdbResult(0, "<hierarchy />", ""))
+    monkeypatch.setattr("phone_runner.modern_composer.run_adb", lambda *a, **k: AdbResult(0, "OK", ""))
+
+    post_id, permalink, detail = resolve_latest_post_link(
+        TEST_SERIAL,
+        caption="test",
+        attempts=3,
+        wait=7.5,
+    )
+    assert post_id is None and permalink is None
+    assert "after 3 attempts" in detail
+    assert 7.5 in sleep_calls
+

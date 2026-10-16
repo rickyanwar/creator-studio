@@ -24,6 +24,11 @@ from phone_runner.config import (
 CHUNK_SIZE = 64 * 1024
 TAILSCALE_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
 SAFE_STAGED_NAME_RE = re.compile(r"^stage_[A-Za-z0-9_]+\.[a-z0-9]{1,6}$")
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
+
+
+def is_video_path(path: str) -> bool:
+    return str(path).lower().endswith(VIDEO_EXTENSIONS)
 
 
 class ProhibitRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -289,12 +294,14 @@ def download_media_file(
 def push_media_to_device(
     serial: str,
     local_path: str,
-    remote_dir: str = "/sdcard/Pictures/staging",
+    remote_dir: str | None = None,
 ) -> str:
     """Pushes a local staged file to Android storage and notifies MediaStore.
 
     Returns the absolute path on the device.
     """
+    if remote_dir is None:
+        remote_dir = "/sdcard/Movies/staging" if is_video_path(local_path) else "/sdcard/Pictures/staging"
     filename = Path(local_path).name
     remote_path = f"{remote_dir}/{filename}"
 
@@ -327,7 +334,7 @@ def push_media_to_device(
 def get_media_content_uri(
     serial: str,
     remote_path: str,
-    attempts: int = 6,
+    attempts: int = 10,
     wait: float = 1.0,
     sleep: Any = time.sleep,
 ) -> str | None:
@@ -335,8 +342,13 @@ def get_media_content_uri(
     if not SAFE_STAGED_NAME_RE.match(basename):
         return None
 
+    base_uri = (
+        "content://media/external/video/media"
+        if is_video_path(remote_path)
+        else "content://media/external/images/media"
+    )
     query_cmd = (
-        f'content query --uri content://media/external/images/media '
+        f'content query --uri {base_uri} '
         f'--projection _id:_data --where "_data LIKE \'%{basename}\'"'
     )
     for _ in range(attempts):
@@ -344,7 +356,7 @@ def get_media_content_uri(
         if res.returncode == 0 and res.stdout:
             m = re.search(r"_id=(\d+)", res.stdout)
             if m:
-                return f"content://media/external/images/media/{m.group(1)}"
+                return f"{base_uri}/{m.group(1)}"
         sleep(wait)
     return None
 
@@ -387,10 +399,15 @@ def stage_media_files(
                 run_adb(["shell", "rm", "-f", rp], serial=serial)
                 bn = rp.rsplit("/", 1)[-1]
                 if SAFE_STAGED_NAME_RE.match(bn):
+                    base_uri = (
+                        "content://media/external/video/media"
+                        if is_video_path(rp)
+                        else "content://media/external/images/media"
+                    )
                     run_adb(
                         [
                             "shell",
-                            f'content delete --uri content://media/external/images/media --where "_data LIKE \'%{bn}\'"',
+                            f'content delete --uri {base_uri} --where "_data LIKE \'%{bn}\'"',
                         ],
                         serial=serial,
                     )
