@@ -16,6 +16,10 @@ from phone_runner.config import (
     is_serial_valid_format,
 )
 
+# One hung model must not eat the whole gate (a real run lost its 40 s budget to one stuck call).
+VISION_MODEL_TIMEOUT_SECONDS = 25.0
+VISION_GATE_BUDGET_SECONDS = 90.0
+
 DEFAULT_VISION_MODELS = [
     "ag/gemini-3.8-flash-medium",
     "ag/gemini-3.8-flash-low",
@@ -139,8 +143,8 @@ def ask_vision(
     png: bytes,
     prompt: str,
     reference_jpeg: bytes | None = None,
-    timeout: float = 60.0,
-    total_budget: float = 40.0,
+    timeout: float = VISION_MODEL_TIMEOUT_SECONDS,
+    total_budget: float = VISION_GATE_BUDGET_SECONDS,
 ) -> tuple[dict | None, str, str]:
     models = get_vision_models()
     if not models:
@@ -336,8 +340,8 @@ def verify_gate(
     expected_caption: str = "",
     require_caption: bool = False,
     reference_jpeg: bytes | None = None,
-    timeout: float = 60.0,
-    total_budget: float = 40.0,
+    timeout: float = VISION_MODEL_TIMEOUT_SECONDS,
+    total_budget: float = VISION_GATE_BUDGET_SECONDS,
     **kwargs: Any,
 ) -> tuple[bool, dict[str, Any]]:
     png = capture_screenshot_png(serial)

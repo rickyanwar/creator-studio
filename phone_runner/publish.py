@@ -1189,7 +1189,6 @@ def execute_publish(
                 expected_author=dest_name,
                 expected_caption=caption_str,
                 require_caption=True,
-                reference_jpeg=reference_jpeg,
             )
             evidence["vision_gates"].append(v_ev)
             if not v_ok:
