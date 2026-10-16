@@ -18,6 +18,7 @@ from phone_runner.adb import (
     query_activity_state,
     query_ui_hierarchy,
     run_adb,
+    set_device_clipboard_text,
     wake_and_unlock,
 )
 from phone_runner.config import sanitize_actor_name_for_prompt
@@ -26,10 +27,16 @@ from phone_runner.dry_run import (
     normalize_geometry,
     parse_device_identity_evidence,
 )
-from phone_runner.identity_proof import collect_own_url_proof_chain, IdentityProofResult, get_center, parse_bounds
+from phone_runner.identity_proof import (
+    _is_empty_input_text,
+    collect_own_url_proof_chain,
+    get_center,
+    IdentityProofResult,
+    parse_bounds,
+)
 from phone_runner.humanize import human_pause, human_tap
 from phone_runner.media_staging import get_media_content_uri, stage_media_files
-from phone_runner.mobilerun import run_mobilerun, type_text
+from phone_runner.mobilerun import MobilerunResult, run_mobilerun, type_text
 from phone_runner.modern_composer import (
     attach_first_gallery_item,
     composer_state,
@@ -304,6 +311,37 @@ def _hide_keyboard_if_shown(serial: str) -> str:
                     human_pause(1.0, 1.5)
                     return "dialog_kept"
     return "hidden"
+
+
+def _caption_typing_timeout(text: str | None) -> float:
+    """Portal typing is slow for long captions: the 15 s default timed out on a real 426-char caption."""
+    return max(30.0, 10.0 + len(text or "") * 0.15)
+
+
+KEYCODE_PASTE = "279"
+
+
+def _paste_caption(serial: str, caption: str) -> MobilerunResult:
+    """Pastes the caption into the focused input: instant, keeps newlines/emoji/accents, and looks like
+    a person pasting a prepared caption (owner request 2026-10-17). The clipboard is emptied afterwards."""
+    set_res = set_device_clipboard_text(serial, caption)
+    if set_res.returncode != 0:
+        return MobilerunResult(returncode=-1, stdout="", stderr=set_res.stderr or "clipboard set failed")
+    run_adb(["shell", "input", "keyevent", KEYCODE_PASTE], serial=serial)
+    human_pause(1.0, 1.5)
+    set_device_clipboard_text(serial, "")
+    return MobilerunResult(returncode=0, stdout="pasted", stderr="")
+
+
+def _enter_caption(serial: str, caption: str) -> tuple[MobilerunResult, str]:
+    """Paste first; fall back to Portal typing only when paste is unavailable. Returns (result, method)."""
+    if not caption:
+        return MobilerunResult(returncode=0, stdout="", stderr=""), "none"
+    paste_res = _paste_caption(serial, caption)
+    if paste_res.returncode == 0:
+        return paste_res, "paste"
+    typed = type_text(serial=serial, text=caption, clear=False, timeout=_caption_typing_timeout(caption))
+    return typed, "type"
 
 
 def _post_link_stage(post_id: str | None, permalink: str | None, resolve_detail: str) -> dict[str, Any]:
@@ -1025,7 +1063,8 @@ def execute_publish(
                 human_tap(serial, input_bounds)
             human_pause(0.8, 1.5)
 
-            type_res = type_text(serial=serial, text=caption_str, clear=False)
+            type_res, entry_method = _enter_caption(serial, caption_str)
+            evidence["caption_entry"] = entry_method
             if type_res.returncode != 0:
                 evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
                 discard_composer(serial)
@@ -1068,6 +1107,15 @@ def execute_publish(
                 }
 
             typed_state = composer_state(post_type_ui.stdout)
+            if entry_method == "paste" and caption_str and _is_empty_input_text(typed_state.get("input_text")):
+                # Paste was ignored (input still empty): fall back to Portal typing once.
+                fallback = type_text(serial=serial, text=caption_str, clear=False, timeout=_caption_typing_timeout(caption_str))
+                evidence["caption_entry"] = "paste_ignored_then_type"
+                if fallback.returncode == 0:
+                    refreshed = query_ui_hierarchy(serial)
+                    if refreshed.returncode == 0 and refreshed.stdout:
+                        post_type_ui = refreshed
+                        typed_state = composer_state(post_type_ui.stdout)
             norm_expected = html.unescape(caption_str or "").replace("\r\n", "\n").replace("\r", "\n").strip()
             norm_actual = (typed_state.get("input_text") or "").strip()
             if norm_actual != norm_expected:
@@ -1477,7 +1525,8 @@ def execute_publish(
                 human_tap(serial, input_bounds)
                 time.sleep(0.5)
 
-            type_res = type_text(serial=serial, text=caption_str, clear=False)
+            type_res, entry_method = _enter_caption(serial, caption_str)
+            evidence["caption_entry"] = entry_method
             if type_res.returncode != 0:
                 evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
                 discard_composer(serial)
@@ -1520,6 +1569,15 @@ def execute_publish(
                 }
 
             typed_state = composer_state(post_type_ui.stdout)
+            if entry_method == "paste" and caption_str and _is_empty_input_text(typed_state.get("input_text")):
+                # Paste was ignored (input still empty): fall back to Portal typing once.
+                fallback = type_text(serial=serial, text=caption_str, clear=False, timeout=_caption_typing_timeout(caption_str))
+                evidence["caption_entry"] = "paste_ignored_then_type"
+                if fallback.returncode == 0:
+                    refreshed = query_ui_hierarchy(serial)
+                    if refreshed.returncode == 0 and refreshed.stdout:
+                        post_type_ui = refreshed
+                        typed_state = composer_state(post_type_ui.stdout)
             norm_expected = html.unescape(caption_str or "").replace("\r\n", "\n").replace("\r", "\n").strip()
             norm_actual = (typed_state.get("input_text") or "").strip()
             if norm_actual != norm_expected:
@@ -1904,7 +1962,7 @@ def _run_composition_and_publish(
 
     # 2. Deterministic literal typing through subprocess argv (never through adb shell)
     # Always clears any stale draft text and types caption (or clears if caption is empty)
-    type_res = type_text(serial=serial, text=caption, clear=True)
+    type_res = type_text(serial=serial, text=caption, clear=True, timeout=_caption_typing_timeout(caption))
     if type_res.returncode != 0:
         stages.append({
             "stage": "caption_typing",

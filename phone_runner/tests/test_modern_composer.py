@@ -330,7 +330,7 @@ def test_execute_publish_modern_text_only_published(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.human_tap", mock_human_tap)
     monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
     from phone_runner.mobilerun import MobilerunResult
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
 
     resolved_post_id = "pfbid02rX8abc"
     resolved_permalink = f"https://www.facebook.com/{TEST_ROOT_ID}/posts/{resolved_post_id}"
@@ -381,7 +381,7 @@ def test_execute_publish_modern_text_only_uncertain_when_resolve_fails(monkeypat
     monkeypatch.setattr("phone_runner.publish.human_tap", mock_human_tap)
     monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
     from phone_runner.mobilerun import MobilerunResult
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
 
     # Resolve fails
     monkeypatch.setattr(
@@ -480,7 +480,7 @@ def test_execute_publish_modern_caption_mismatch_fails_and_discards(monkeypatch)
 
     monkeypatch.setattr("phone_runner.publish.run_adb", mock_run_adb)
     from phone_runner.mobilerun import MobilerunResult
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     mock_obs = mock.Mock(return_value="/obs/mismatch.json")
     monkeypatch.setattr("phone_runner.publish.save_composer_observation", mock_obs)
 

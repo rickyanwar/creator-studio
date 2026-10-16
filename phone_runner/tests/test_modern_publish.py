@@ -755,7 +755,7 @@ def test_modern_share_intent_happy_path_published(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
 
     gates_called = []
     def mock_verify_gate(serial, gate, **kw):
@@ -875,7 +875,7 @@ def test_modern_share_intent_post_settings_gate_fails(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
 
     def mock_verify_gate(serial, gate, **kw):
         if gate == "post_settings":
@@ -927,7 +927,7 @@ def test_modern_share_intent_posted_gate_fails_uncertain(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
 
     def mock_verify_gate(serial, gate, **kw):
         if gate == "posted":
@@ -1067,7 +1067,7 @@ def test_modern_text_only_uses_old_path(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", mock_open_share)
     mock_gate = mock.Mock()
     monkeypatch.setattr("phone_runner.publish.verify_gate", mock_gate)
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
         lambda s, c: ("post_text_only", "https://facebook.com/posts/post_text_only", "resolved"),
@@ -1111,7 +1111,7 @@ def _patch_modern_happy_flow(monkeypatch, proof, taps):
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     monkeypatch.setattr(
         "phone_runner.publish.verify_gate",
         lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
@@ -1208,7 +1208,7 @@ def test_long_caption_photo_revealed_after_one_swipe(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     monkeypatch.setattr(
         "phone_runner.publish.verify_gate",
         lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
@@ -1272,7 +1272,7 @@ def test_photo_never_visible_after_three_swipes_fails_media_preview_mismatch(mon
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     monkeypatch.setattr(
         "phone_runner.publish.verify_gate",
         lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
@@ -1369,7 +1369,7 @@ def test_caption_changed_while_revealing_photo_fails_before_share(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     monkeypatch.setattr(
         "phone_runner.publish.verify_gate",
         lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
@@ -1405,7 +1405,7 @@ def _patch_long_caption_flow(monkeypatch, ui_seq, adb_handler, taps):
     monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
     monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
-    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     monkeypatch.setattr(
         "phone_runner.publish.verify_gate",
         lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
@@ -1484,3 +1484,60 @@ def test_back_opened_discard_dialog_taps_keep_editing_never_discard(monkeypatch)
     assert (369, 1240, 713, 1402) in taps          # KEEP EDITING
     assert (713, 1240, 957, 1402) not in taps      # never DISCARD
     assert res["status"] == "published"
+
+
+def test_caption_typing_timeout_scales_with_caption_length():
+    from phone_runner.publish import _caption_typing_timeout
+
+    assert _caption_typing_timeout("") == 30.0
+    assert _caption_typing_timeout("x" * 426) > 60.0   # a real 426-char caption timed out at the old 15 s
+    assert _caption_typing_timeout(None) == 30.0
+
+
+def test_caption_is_pasted_from_clipboard_and_clipboard_is_emptied(monkeypatch):
+    import base64
+
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    taps, cmds, typed = [], [], []
+    _patch_modern_happy_flow(monkeypatch, proof, taps)
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "", ""))
+    monkeypatch.setattr("phone_runner.adb.run_adb", lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "", ""))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda **kw: typed.append(kw) or MobilerunResult(0, "OK", ""))
+
+    caption = "Hello with modern share intent"
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption=caption,
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "published"
+    assert res["evidence"]["caption_entry"] == "paste"
+    assert typed == []  # no slow typing
+    clip_sets = [c for c in cmds if "content://com.mobilerun.portal/clipboard/set" in c]
+    b64 = base64.b64encode(caption.encode("utf-8")).decode("ascii")
+    assert clip_sets[0][-1] == f"text_base64:s:{b64}"
+    assert clip_sets[-1][-1] == "text_base64:s:"  # emptied afterwards
+    assert ["shell", "input", "keyevent", "279"] in cmds
+
+
+def test_clipboard_failure_falls_back_to_typing(monkeypatch):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    taps, typed = [], []
+    _patch_modern_happy_flow(monkeypatch, proof, taps)
+    monkeypatch.setattr("phone_runner.publish.set_device_clipboard_text", lambda s, t: AdbResult(-1, "", "Clipboard set failed"))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda **kw: typed.append(kw) or MobilerunResult(0, "OK", ""))
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "published"
+    assert res["evidence"]["caption_entry"] == "type"
+    assert len(typed) == 1 and typed[0]["timeout"] >= 30.0

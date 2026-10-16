@@ -375,6 +375,27 @@ def clear_device_clipboard(serial: str, sentinel: str | None = None) -> AdbResul
     return AdbResult(returncode=0, stdout=sentinel, stderr="")
 
 
+def set_device_clipboard_text(serial: str, text: str) -> AdbResult:
+    """Puts text on the device clipboard via Portal /clipboard/set (base64, so newlines/emoji/accents survive)."""
+    b64_text = base64.b64encode((text or "").encode("utf-8")).decode("ascii")
+    cmd = [
+        "shell",
+        "content",
+        "insert",
+        "--uri",
+        "content://com.mobilerun.portal/clipboard/set",
+        "--bind",
+        f"text_base64:s:{b64_text}",
+    ]
+    res = run_adb(cmd, serial=serial)
+    if res.returncode != 0:
+        return AdbResult(returncode=-1, stdout="", stderr="Clipboard set failed")
+    out_lower = f"{res.stdout}\n{res.stderr}".lower()
+    if "error" in out_lower or "keyboard" in out_lower:
+        return AdbResult(returncode=-1, stdout="", stderr="Clipboard set failed: Portal error")
+    return AdbResult(returncode=0, stdout="", stderr="")
+
+
 def read_device_clipboard(serial: str, expected_sentinel: str | None = None) -> AdbResult:
     """Reads device clipboard via Mobilerun Portal content://com.mobilerun.portal/clipboard/get.
 
