@@ -792,4 +792,3 @@ def test_social_destination_update_bounds_daily_target_1000_1001_and_none():
     # 1001 rejected
     with pytest.raises(ValidationError):
         SocialDestinationUpdate(daily_target=1001)
-
