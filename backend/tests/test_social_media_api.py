@@ -791,7 +791,7 @@ def test_page_profile_project_isolation_create_and_update(client):
     assert prof2_resp.status_code == 201
     prof2_id = prof2_resp.json()["id"]
 
-    # 1. Create phone Page in proj1 with parent from proj2 -> rejected (400)
+    # 1. Create phone Page in proj1 with parent from proj2 -> accepted (201)
     cross_phone_resp = client.post(
         "/social-media/destinations",
         json={
@@ -807,10 +807,11 @@ def test_page_profile_project_isolation_create_and_update(client):
             "is_active": False,
         },
     )
-    assert cross_phone_resp.status_code == 400
-    assert "same content project" in cross_phone_resp.json()["detail"].lower()
+    assert cross_phone_resp.status_code == 201
+    assert cross_phone_resp.json()["parent_profile_id"] == prof2_id
+    assert cross_phone_resp.json()["content_project_id"] == proj1_id
 
-    # 2. Create mixed Page in proj1 with parent from proj2 -> rejected (400)
+    # 2. Create mixed Page in proj1 with parent from proj2 -> accepted (201)
     cross_mixed_resp = client.post(
         "/social-media/destinations",
         json={
@@ -827,8 +828,9 @@ def test_page_profile_project_isolation_create_and_update(client):
             "is_active": False,
         },
     )
-    assert cross_mixed_resp.status_code == 400
-    assert "same content project" in cross_mixed_resp.json()["detail"].lower()
+    assert cross_mixed_resp.status_code == 201
+    assert cross_mixed_resp.json()["parent_profile_id"] == prof2_id
+    assert cross_mixed_resp.json()["content_project_id"] == proj1_id
 
     # 3. Create repliz-only Page in proj1 without parent -> accepted (201)
     repliz_page_resp = client.post(
@@ -866,21 +868,28 @@ def test_page_profile_project_isolation_create_and_update(client):
     assert same_page_resp.status_code == 201
     page1_id = same_page_resp.json()["id"]
 
-    # 5. Update page parent to cross-project profile -> rejected (400)
+    # 5. Update page parent to cross-project profile -> accepted (200)
     up_cross_parent = client.patch(
         f"/social-media/destinations/{page1_id}",
         json={"parent_profile_id": prof2_id},
     )
-    assert up_cross_parent.status_code == 400
-    assert "same content project" in up_cross_parent.json()["detail"].lower()
+    assert up_cross_parent.status_code == 200
+    assert up_cross_parent.json()["parent_profile_id"] == prof2_id
 
-    # 6. Update page content_project_id to proj2 without changing parent -> rejected (400)
+    # Reset parent back to prof1 so page has parent in proj1
+    client.patch(
+        f"/social-media/destinations/{page1_id}",
+        json={"parent_profile_id": prof1_id},
+    )
+
+    # 6. Update page content_project_id to proj2 without changing parent -> accepted (200)
     up_cross_proj = client.patch(
         f"/social-media/destinations/{page1_id}",
         json={"content_project_id": proj2_id},
     )
-    assert up_cross_proj.status_code == 400
-    assert "same content project" in up_cross_proj.json()["detail"].lower()
+    assert up_cross_proj.status_code == 200
+    assert up_cross_proj.json()["content_project_id"] == proj2_id
+    assert up_cross_proj.json()["parent_profile_id"] == prof1_id
 
     # 7. Update both page content_project_id and parent_profile_id to proj2 -> accepted (200)
     up_both_resp = client.patch(
@@ -890,6 +899,83 @@ def test_page_profile_project_isolation_create_and_update(client):
     assert up_both_resp.status_code == 200
     assert up_both_resp.json()["content_project_id"] == proj2_id
     assert up_both_resp.json()["parent_profile_id"] == prof2_id
+
+
+def test_page_parent_profile_must_still_be_a_profile(client):
+    """Parent destination across projects must still be a facebook_profile, not a page."""
+    p1 = client.post("/content-projects", json={"name": "Project One"}).json()["id"]
+    p2 = client.post("/content-projects", json={"name": "Project Two"}).json()["id"]
+
+    page_in_p2 = client.post(
+        "/social-media/destinations",
+        json={
+            "content_project_id": p2,
+            "name": "Repliz Page In P2",
+            "kind": "facebook_page",
+            "mode": "repliz",
+            "repliz_account_id": "rep_p2_solo",
+            "daily_target": 1,
+            "phone_daily_target": 0,
+            "repliz_daily_target": 1,
+            "is_active": False,
+        },
+    ).json()["id"]
+
+    create_resp = client.post(
+        "/social-media/destinations",
+        json={
+            "content_project_id": p1,
+            "name": "Phone Page In P1",
+            "kind": "facebook_page",
+            "mode": "phone",
+            "parent_profile_id": page_in_p2,
+            "facebook_actor_id": "actor_p1_invalid_parent",
+            "daily_target": 1,
+            "phone_daily_target": 1,
+            "repliz_daily_target": 0,
+            "is_active": False,
+        },
+    )
+    assert create_resp.status_code == 400
+    assert "must be a facebook profile" in create_resp.json()["detail"].lower()
+
+    prof1 = client.post(
+        "/social-media/destinations",
+        json={
+            "content_project_id": p1,
+            "name": "Valid Profile P1",
+            "kind": "facebook_profile",
+            "mode": "phone",
+            "facebook_actor_id": "actor_prof1_val",
+            "daily_target": 1,
+            "phone_daily_target": 1,
+            "repliz_daily_target": 0,
+            "is_active": False,
+        },
+    ).json()["id"]
+
+    page_in_p1 = client.post(
+        "/social-media/destinations",
+        json={
+            "content_project_id": p1,
+            "name": "Valid Phone Page In P1",
+            "kind": "facebook_page",
+            "mode": "phone",
+            "parent_profile_id": prof1,
+            "facebook_actor_id": "actor_p1_val_page",
+            "daily_target": 1,
+            "phone_daily_target": 1,
+            "repliz_daily_target": 0,
+            "is_active": False,
+        },
+    ).json()["id"]
+
+    update_resp = client.patch(
+        f"/social-media/destinations/{page_in_p1}",
+        json={"parent_profile_id": page_in_p2},
+    )
+    assert update_resp.status_code == 400
+    assert "must be a facebook profile" in update_resp.json()["detail"].lower()
 
 
 def test_inactive_assignment_priority_reuse_and_active_collision(client, db_session):

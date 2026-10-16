@@ -6,11 +6,15 @@ import logging
 import os
 import re
 import subprocess
+import time
 from typing import Any
+import uuid
+import xml.etree.ElementTree as ET
 
 logger = logging.getLogger("phone_runner.recovery")
 
 A11Y_HELPER_PATH = "/usr/local/bin/enable-mobilerun-a11y.sh"
+PORTAL_A11Y_COMPONENT = "com.mobilerun.portal/.service.MobilerunAccessibilityService"
 
 VALID_RECOVERY_CLASSES = {"routine", "larger_repair", "larger"}
 
@@ -202,10 +206,238 @@ def parse_screen_state(dumpsys_power_output: str) -> str:
     return "unknown"
 
 
+def parse_bounds(bounds_str: str) -> tuple[int, int] | None:
+    if not bounds_str:
+        return None
+    m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds_str)
+    if not m:
+        return None
+    x1, y1, x2, y2 = map(int, m.groups())
+    return (x1 + x2) // 2, (y1 + y2) // 2
+
+
+def find_portal_switch(xml_text: str) -> tuple[int, int, bool] | None:
+    if not xml_text:
+        return None
+    try:
+        root = ET.fromstring(xml_text.strip())
+    except Exception:
+        return None
+
+    has_portal_title = False
+    for node in root.iter("node"):
+        pkg = node.attrib.get("package", "")
+        cls = node.attrib.get("class", "")
+        text = node.attrib.get("text", "")
+        if pkg == "com.android.settings" and "TextView" in cls and text == "Mobilerun Portal":
+            has_portal_title = True
+            break
+
+    if not has_portal_title:
+        return None
+
+    for node in root.iter("node"):
+        pkg = node.attrib.get("package", "")
+        cls = node.attrib.get("class", "")
+        if pkg == "com.android.settings" and cls == "android.widget.Switch":
+            bounds = parse_bounds(node.attrib.get("bounds", ""))
+            if not bounds:
+                continue
+            checked = node.attrib.get("checked", "").lower() == "true"
+            text = node.attrib.get("text", "").strip()
+            is_on = checked or text in ("On", "Aktif")
+            return bounds[0], bounds[1], is_on
+
+    return None
+
+
+def find_dialog_button(
+    xml_text: str,
+    labels: tuple[str, ...] = ("Allow", "Izinkan", "OK", "Turn on", "Aktifkan"),
+) -> tuple[int, int] | None:
+    if not xml_text:
+        return None
+    try:
+        root = ET.fromstring(xml_text.strip())
+    except Exception:
+        return None
+
+    allowed_pkgs = {"com.android.settings", "com.android.permissioncontroller", "android"}
+    norm_labels = {lbl.strip().lower() for lbl in labels}
+    for node in root.iter("node"):
+        pkg = node.attrib.get("package", "")
+        clickable = node.attrib.get("clickable", "").lower() == "true"
+        text = node.attrib.get("text", "").strip()
+        if not clickable or pkg not in allowed_pkgs:
+            continue
+        text_lower = text.lower()
+        if text_lower == "deny":
+            continue
+        if text_lower in norm_labels:
+            bounds = parse_bounds(node.attrib.get("bounds", ""))
+            if bounds:
+                return bounds
+
+    return None
+
+
+def dump_ui_hierarchy(serial: str, subprocess_runner: Any = None) -> str | None:
+    tmp_path = f"/sdcard/uidump_{uuid.uuid4().hex[:8]}.xml"
+    try:
+        dump_res = run_adb(
+            ["shell", "uiautomator", "dump", tmp_path],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+        if dump_res.returncode != 0 or "error" in (dump_res.stdout + dump_res.stderr).lower():
+            return None
+
+        cat_res = run_adb(
+            ["exec-out", "cat", tmp_path],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+        if cat_res.returncode != 0 or not cat_res.stdout.strip():
+            cat_res = run_adb(
+                ["shell", "cat", tmp_path],
+                serial=serial,
+                subprocess_runner=subprocess_runner,
+            )
+        if cat_res.returncode != 0 or not cat_res.stdout.strip():
+            return None
+        return cat_res.stdout
+    finally:
+        run_adb(
+            ["shell", "rm", "-f", tmp_path],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+
+
+def revive_accessibility_via_settings_ui(
+    serial: str,
+    subprocess_runner: Any = None,
+) -> bool:
+    power_res = query_power_state(serial, subprocess_runner=subprocess_runner)
+    was_asleep = parse_screen_state(power_res.stdout) == "asleep"
+
+    def _sleep(seconds: float) -> None:
+        time.sleep(0.0 if subprocess_runner is not None else seconds)
+
+    try:
+        wake_and_unlock(serial, subprocess_runner=subprocess_runner)
+        # Focus stays on NotificationShade (or null) for ~1-2 s after dismiss-keyguard,
+        # even without a secure lock (seen live 2026-10-16); checking at once would always bail out.
+        _sleep(3.0)
+
+        win_res = run_adb(
+            ["shell", "dumpsys", "window"],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+        focus_lines = [l for l in win_res.stdout.splitlines() if "mCurrentFocus" in l]
+        focus_text = " ".join(focus_lines) if focus_lines else win_res.stdout
+        if re.search(r"keyguard|notificationshade", focus_text, re.IGNORECASE):
+            return False
+
+        run_adb(
+            [
+                "shell",
+                "am",
+                "start",
+                "-a",
+                "android.settings.ACCESSIBILITY_DETAILS_SETTINGS",
+                "--es",
+                "android.intent.extra.COMPONENT_NAME",
+                PORTAL_A11Y_COMPONENT,
+            ],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+        _sleep(3.0)
+
+        win_res = run_adb(
+            ["shell", "dumpsys", "window"],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+        focus_lines = [l for l in win_res.stdout.splitlines() if "mCurrentFocus" in l]
+        focus_text = " ".join(focus_lines) if focus_lines else win_res.stdout
+        if "com.android.settings" not in focus_text:
+            run_adb(
+                ["shell", "am", "start", "-a", "android.settings.ACCESSIBILITY_SETTINGS"],
+                serial=serial,
+                subprocess_runner=subprocess_runner,
+            )
+            _sleep(3.0)
+            win_res = run_adb(
+                ["shell", "dumpsys", "window"],
+                serial=serial,
+                subprocess_runner=subprocess_runner,
+            )
+            focus_lines = [l for l in win_res.stdout.splitlines() if "mCurrentFocus" in l]
+            focus_text = " ".join(focus_lines) if focus_lines else win_res.stdout
+            if "com.android.settings" not in focus_text:
+                return False
+
+        ui_xml = dump_ui_hierarchy(serial, subprocess_runner=subprocess_runner)
+        if not ui_xml:
+            return False
+
+        switch_info = find_portal_switch(ui_xml)
+        if switch_info is None:
+            return False
+
+        sx, sy, is_on = switch_info
+        if not is_on:
+            run_adb(
+                ["shell", "input", "tap", str(sx), str(sy)],
+                serial=serial,
+                subprocess_runner=subprocess_runner,
+            )
+            _sleep(3.0)
+
+            dialog_xml = dump_ui_hierarchy(serial, subprocess_runner=subprocess_runner)
+            if not dialog_xml:
+                return False
+
+            btn_coords = find_dialog_button(dialog_xml)
+            if not btn_coords:
+                return False
+
+            bx, by = btn_coords
+            run_adb(
+                ["shell", "input", "tap", str(bx), str(by)],
+                serial=serial,
+                subprocess_runner=subprocess_runner,
+            )
+            _sleep(2.0)
+
+        chk_after = run_adb(
+            ["shell", "settings", "get", "secure", "enabled_accessibility_services"],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+        return chk_after.returncode == 0 and "com.mobilerun.portal/" in chk_after.stdout
+    finally:
+        run_adb(
+            ["shell", "input", "keyevent", "3"],
+            serial=serial,
+            subprocess_runner=subprocess_runner,
+        )
+        if was_asleep:
+            run_adb(
+                ["shell", "input", "keyevent", "223"],
+                serial=serial,
+                subprocess_runner=subprocess_runner,
+            )
+
+
 def check_and_revive_accessibility(
     serial: str,
     subprocess_runner: Any = None,
     allow_helper_script: bool = False,
+    allow_ui_revive: bool = True,
 ) -> dict[str, Any]:
     if not is_serial_allowed(serial):
         return {"check": "accessibility", "status": "failed", "detail": "serial not allowed"}
@@ -215,33 +447,43 @@ def check_and_revive_accessibility(
         serial=serial,
         subprocess_runner=subprocess_runner,
     )
-    if chk.returncode == 0 and "com.mobilerun.portal" in chk.stdout:
+    if chk.returncode == 0 and "com.mobilerun.portal/" in chk.stdout:
         return {"check": "accessibility", "status": "ok", "detail": "mobilerun accessibility enabled"}
 
-    run_adb(
-        [
-            "shell",
-            "settings",
-            "put",
-            "secure",
-            "enabled_accessibility_services",
-            "com.mobilerun.portal/.service.AccessibilityService:com.mobilerun.portal/.AccessibilityService",
-        ],
+    existing = chk.stdout.strip() if chk.returncode == 0 else ""
+    if not existing or existing == "null":
+        new_val = PORTAL_A11Y_COMPONENT
+    else:
+        new_val = f"{existing}:{PORTAL_A11Y_COMPONENT}"
+
+    put1 = run_adb(
+        ["shell", "settings", "put", "secure", "enabled_accessibility_services", new_val],
         serial=serial,
         subprocess_runner=subprocess_runner,
     )
-    run_adb(
+    put2 = run_adb(
         ["shell", "settings", "put", "secure", "accessibility_enabled", "1"],
         serial=serial,
         subprocess_runner=subprocess_runner,
     )
+
+    secure_settings_blocked = False
+    for res in (put1, put2):
+        out_err = f"{res.stdout} {res.stderr}"
+        if "SecurityException" in out_err or "WRITE_SECURE_SETTINGS" in out_err:
+            secure_settings_blocked = True
+
     chk_after = run_adb(
         ["shell", "settings", "get", "secure", "enabled_accessibility_services"],
         serial=serial,
         subprocess_runner=subprocess_runner,
     )
-    if chk_after.returncode == 0 and "com.mobilerun.portal" in chk_after.stdout:
+    if chk_after.returncode == 0 and "com.mobilerun.portal/" in chk_after.stdout:
         return {"check": "accessibility", "status": "recovered", "detail": "accessibility enabled via adb settings"}
+
+    if allow_ui_revive:
+        if revive_accessibility_via_settings_ui(serial, subprocess_runner=subprocess_runner):
+            return {"check": "accessibility", "status": "recovered", "detail": "accessibility enabled via Settings UI"}
 
     if allow_helper_script and os.path.isfile(A11Y_HELPER_PATH) and os.access(A11Y_HELPER_PATH, os.X_OK):
         runner = subprocess_runner or subprocess.run
@@ -259,13 +501,27 @@ def check_and_revive_accessibility(
         except Exception as exc:
             logger.warning("Accessibility helper script execution failed: %s", exc)
 
-    return {"check": "accessibility", "status": "unready", "detail": "accessibility service inactive"}
+    if secure_settings_blocked:
+        return {
+            "check": "accessibility",
+            "status": "failed",
+            "detail": (
+                "secure settings write blocked by the OS (ColorOS permission monitoring); "
+                "enable it on the phone: Settings > Accessibility > Mobilerun Portal > On, "
+                "or Developer options > Disable permission monitoring"
+            ),
+            "error_code": "secure_settings_blocked",
+        }
+
+    return {"check": "accessibility", "status": "failed", "detail": "accessibility service inactive"}
 
 
 def run_deterministic_recovery(
     serial: str,
     subprocess_runner: Any = None,
     allow_helper_script: bool = False,
+    restore_sleep: bool = True,
+    allow_ui_revive: bool = True,
 ) -> tuple[bool, list[dict[str, Any]], str | None]:
     checks: list[dict[str, Any]] = []
 
@@ -287,79 +543,93 @@ def run_deterministic_recovery(
 
     power_res = query_power_state(serial, subprocess_runner=subprocess_runner)
     screen = parse_screen_state(power_res.stdout)
-    if screen == "asleep":
-        wake_and_unlock(serial, subprocess_runner=subprocess_runner)
-        power_res_after = query_power_state(serial, subprocess_runner=subprocess_runner)
-        screen_after = parse_screen_state(power_res_after.stdout)
-        if screen_after != "asleep":
-            checks.append({
-                "check": "display_state",
-                "status": "recovered",
-                "screen": screen_after,
-                "detail": "device successfully woken and unlocked",
-            })
-        else:
-            checks.append({
-                "check": "display_state",
-                "status": "failed",
-                "screen": "asleep",
-                "detail": "device remained asleep after wake attempt",
-            })
-            return False, checks, "screen wake failed"
-    else:
-        checks.append({
-            "check": "display_state",
-            "status": "ok",
-            "screen": screen,
-            "detail": "device display active",
-        })
+    was_asleep = screen == "asleep"
+    woke_screen = False
 
-    ping_res = ping_portal(serial, subprocess_runner=subprocess_runner)
-    portal_ready = ping_res.returncode == 0 and "pong" in ping_res.stdout.lower()
-    if not portal_ready:
-        run_adb(
-            ["shell", "am", "start-foreground-service", "-n", "com.mobilerun.portal/.PortalService"],
-            serial=serial,
-            subprocess_runner=subprocess_runner,
-        )
-        ping_after = ping_portal(serial, subprocess_runner=subprocess_runner)
-        portal_ready = ping_after.returncode == 0 and "pong" in ping_after.stdout.lower()
-        if portal_ready:
-            checks.append({
-                "check": "portal_health",
-                "status": "recovered",
-                "detail": "portal service restarted and responding",
-            })
+    try:
+        if was_asleep:
+            wake_and_unlock(serial, subprocess_runner=subprocess_runner)
+            power_res_after = query_power_state(serial, subprocess_runner=subprocess_runner)
+            screen_after = parse_screen_state(power_res_after.stdout)
+            if screen_after != "asleep":
+                woke_screen = True
+                checks.append({
+                    "check": "display_state",
+                    "status": "recovered",
+                    "screen": screen_after,
+                    "detail": "device successfully woken and unlocked",
+                })
+            else:
+                checks.append({
+                    "check": "display_state",
+                    "status": "failed",
+                    "screen": "asleep",
+                    "detail": "device remained asleep after wake attempt",
+                })
+                return False, checks, "screen wake failed"
         else:
             checks.append({
-                "check": "portal_health",
-                "status": "failed",
-                "detail": "portal ping failed",
+                "check": "display_state",
+                "status": "ok",
+                "screen": screen,
+                "detail": "device display active",
             })
-            a11y_res = check_and_revive_accessibility(
-                serial,
+
+        ping_res = ping_portal(serial, subprocess_runner=subprocess_runner)
+        portal_ready = ping_res.returncode == 0 and "pong" in ping_res.stdout.lower()
+        if not portal_ready:
+            run_adb(
+                ["shell", "am", "start-foreground-service", "-n", "com.mobilerun.portal/.PortalService"],
+                serial=serial,
                 subprocess_runner=subprocess_runner,
-                allow_helper_script=allow_helper_script,
             )
-            checks.append(a11y_res)
-            return False, checks, "portal health check failed"
-    else:
-        checks.append({
-            "check": "portal_health",
-            "status": "ok",
-            "detail": "portal pong received",
-        })
+            ping_after = ping_portal(serial, subprocess_runner=subprocess_runner)
+            portal_ready = ping_after.returncode == 0 and "pong" in ping_after.stdout.lower()
+            if portal_ready:
+                checks.append({
+                    "check": "portal_health",
+                    "status": "recovered",
+                    "detail": "portal service restarted and responding",
+                })
+            else:
+                checks.append({
+                    "check": "portal_health",
+                    "status": "failed",
+                    "detail": "portal ping failed",
+                })
+                a11y_res = check_and_revive_accessibility(
+                    serial,
+                    subprocess_runner=subprocess_runner,
+                    allow_helper_script=allow_helper_script,
+                    allow_ui_revive=allow_ui_revive,
+                )
+                checks.append(a11y_res)
+                return False, checks, "portal health check failed"
+        else:
+            checks.append({
+                "check": "portal_health",
+                "status": "ok",
+                "detail": "portal pong received",
+            })
 
-    a11y_res = check_and_revive_accessibility(
-        serial,
-        subprocess_runner=subprocess_runner,
-        allow_helper_script=allow_helper_script,
-    )
-    checks.append(a11y_res)
-    if a11y_res["status"] not in ("ok", "recovered"):
-        return False, checks, "accessibility unready"
+        a11y_res = check_and_revive_accessibility(
+            serial,
+            subprocess_runner=subprocess_runner,
+            allow_helper_script=allow_helper_script,
+            allow_ui_revive=allow_ui_revive,
+        )
+        checks.append(a11y_res)
+        if a11y_res["status"] not in ("ok", "recovered"):
+            return False, checks, "accessibility unready"
 
-    return True, checks, None
+        return True, checks, None
+    finally:
+        if was_asleep and woke_screen and restore_sleep:
+            run_adb(
+                ["shell", "input", "keyevent", "223"],
+                serial=serial,
+                subprocess_runner=subprocess_runner,
+            )
 
 
 def invoke_hermes_repair(
@@ -432,6 +702,7 @@ def execute_recovery(
     now_utc: datetime | None = None,
     subprocess_runner: Any = None,
     allow_helper_script: bool = False,
+    restore_sleep: bool = True,
 ) -> dict[str, Any]:
     now = now_utc or datetime.now(timezone.utc)
 
@@ -518,6 +789,7 @@ def execute_recovery(
         serial,
         subprocess_runner=subprocess_runner,
         allow_helper_script=allow_helper_script,
+        restore_sleep=restore_sleep,
     )
     if det_ok:
         return {
@@ -618,6 +890,7 @@ def execute_recovery(
             serial,
             subprocess_runner=subprocess_runner,
             allow_helper_script=allow_helper_script,
+            restore_sleep=restore_sleep,
         )
         checks.extend(rechecks)
         if recheck_ok:

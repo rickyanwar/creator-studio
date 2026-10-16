@@ -213,11 +213,6 @@ def create_destination(payload: SocialDestinationCreate, db: DB, _: CurrentUser)
                 raise HTTPException(status_code=400, detail="Parent profile destination not found")
             if parent.kind != "facebook_profile":
                 raise HTTPException(status_code=400, detail="Parent destination must be a Facebook Profile")
-            if parent.content_project_id != payload.content_project_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Parent profile destination must belong to the same content project",
-                )
         if payload.mode == "repliz" and payload.parent_profile_id is not None:
             raise HTTPException(status_code=400, detail="Repliz-only page must not have a parent profile")
 
@@ -351,11 +346,6 @@ def update_destination(
                 raise HTTPException(status_code=400, detail="Parent profile destination not found")
             if parent.kind != "facebook_profile":
                 raise HTTPException(status_code=400, detail="Parent destination must be a Facebook Profile")
-            if parent.content_project_id != content_project_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Parent profile destination must belong to the same content project",
-                )
         if mode == "repliz" and parent_profile_id is not None:
             raise HTTPException(status_code=400, detail="Repliz-only page must not have a parent profile")
 

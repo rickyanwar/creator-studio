@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import subprocess
 from unittest import mock
 import pytest
 
 from phone_runner.recovery import (
     A11Y_HELPER_PATH,
+    PORTAL_A11Y_COMPONENT,
     AdbResult,
     check_and_revive_accessibility,
     execute_recovery,
+    find_dialog_button,
+    find_portal_switch,
     get_allowed_serials,
     invoke_hermes_repair,
     is_serial_allowed,
     is_serial_valid_format,
     is_valid_reason_code,
     parse_screen_state,
+    revive_accessibility_via_settings_ui,
     run_adb,
     run_deterministic_recovery,
     sanitize_error,
@@ -541,3 +546,263 @@ def test_accessibility_helper_script_allowed_path():
         assert res["detail"] == "revived via a11y helper"
         # Must be strictly serial-bound with no shell
         assert any(cmd == [A11Y_HELPER_PATH, "-s", TEST_SERIAL] for cmd in called)
+
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+DETAILS_XML = (FIXTURES_DIR / "a11y_details_page.xml").read_text(encoding="utf-8")
+DIALOG_XML = (FIXTURES_DIR / "a11y_allow_dialog.xml").read_text(encoding="utf-8")
+
+
+def test_find_portal_switch():
+    res = find_portal_switch(DETAILS_XML)
+    assert res == (927, 410, False)
+
+    target = 'switch_widget" class="android.widget.Switch" package="com.android.settings" content-desc="" checkable="true" checked="false"'
+    replacement = 'switch_widget" class="android.widget.Switch" package="com.android.settings" content-desc="" checkable="true" checked="true"'
+    checked_xml = DETAILS_XML.replace(target, replacement)
+    res_checked = find_portal_switch(checked_xml)
+    assert res_checked == (927, 410, True)
+
+    no_title_xml = DETAILS_XML.replace("Mobilerun Portal", "Other App")
+    assert find_portal_switch(no_title_xml) is None
+
+    assert find_portal_switch("") is None
+    assert find_portal_switch("not xml") is None
+
+
+def test_find_dialog_button():
+    res = find_dialog_button(DIALOG_XML)
+    assert res == (786, 2117)
+
+    assert find_dialog_button(DIALOG_XML, labels=("deny", "DENY", "Deny")) is None
+    assert find_dialog_button(DIALOG_XML, labels=("CustomNonExistent",)) is None
+    assert find_dialog_button("") is None
+
+
+def test_append_semantics():
+    called = []
+
+    def fake_runner_existing(cmd, **kwargs):
+        called.append(cmd)
+        cmd_str = " ".join(cmd)
+        if "settings get" in cmd_str:
+            return mock.Mock(returncode=0, stdout="com.other/.Svc\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    check_and_revive_accessibility(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner_existing,
+        allow_ui_revive=False,
+    )
+    put_cmd = next(c for c in called if "settings" in c and "put" in c and "enabled_accessibility_services" in c)
+    assert put_cmd[-1] == f"com.other/.Svc:{PORTAL_A11Y_COMPONENT}"
+
+    called_null = []
+
+    def fake_runner_null(cmd, **kwargs):
+        called_null.append(cmd)
+        cmd_str = " ".join(cmd)
+        if "settings get" in cmd_str:
+            return mock.Mock(returncode=0, stdout="null\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    check_and_revive_accessibility(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner_null,
+        allow_ui_revive=False,
+    )
+    put_null_cmd = next(c for c in called_null if "settings" in c and "put" in c and "enabled_accessibility_services" in c)
+    assert put_null_cmd[-1] == PORTAL_A11Y_COMPONENT
+
+
+def test_security_exception_on_put_ui_revive_disabled():
+    def fake_runner(cmd, **kwargs):
+        cmd_str = " ".join(cmd)
+        if "settings get" in cmd_str:
+            return mock.Mock(returncode=0, stdout="null\n", stderr="")
+        if "settings put" in cmd_str:
+            return mock.Mock(
+                returncode=0,
+                stdout="",
+                stderr="java.lang.SecurityException: Permission denial, must have one of: [android.permission.WRITE_SECURE_SETTINGS]\n",
+            )
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    res = check_and_revive_accessibility(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner,
+        allow_ui_revive=False,
+    )
+    assert res["status"] == "failed"
+    assert res["error_code"] == "secure_settings_blocked"
+    assert res["detail"] == (
+        "secure settings write blocked by the OS (ColorOS permission monitoring); "
+        "enable it on the phone: Settings > Accessibility > Mobilerun Portal > On, "
+        "or Developer options > Disable permission monitoring"
+    )
+
+
+def test_security_exception_on_put_ui_revive_succeeds():
+    called = []
+    dump_count = 0
+
+    def fake_runner(cmd, **kwargs):
+        nonlocal dump_count
+        called.append(cmd)
+        cmd_str = " ".join(cmd)
+        if "dumpsys power" in cmd_str:
+            return mock.Mock(returncode=0, stdout="mWakefulness=Asleep\n", stderr="")
+        if "settings get" in cmd_str:
+            if any(c[-4:] == ["input", "tap", "786", "2117"] for c in called):
+                return mock.Mock(returncode=0, stdout=f"{PORTAL_A11Y_COMPONENT}\n", stderr="")
+            return mock.Mock(returncode=0, stdout="null\n", stderr="")
+        if "settings put" in cmd_str:
+            return mock.Mock(
+                returncode=0,
+                stdout="",
+                stderr="java.lang.SecurityException: Permission denial, must have one of: [android.permission.WRITE_SECURE_SETTINGS]\n",
+            )
+        if "dumpsys window" in cmd_str:
+            return mock.Mock(returncode=0, stdout="mCurrentFocus=Window{123 u0 com.android.settings/.Settings}\n", stderr="")
+        if "uiautomator dump" in cmd_str:
+            dump_count += 1
+            return mock.Mock(returncode=0, stdout="UI hierarchy dumped to: /sdcard/...", stderr="")
+        if "cat" in cmd_str:
+            if dump_count <= 1:
+                return mock.Mock(returncode=0, stdout=DETAILS_XML, stderr="")
+            return mock.Mock(returncode=0, stdout=DIALOG_XML, stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    res = check_and_revive_accessibility(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner,
+        allow_ui_revive=True,
+    )
+    assert res["status"] == "recovered"
+    assert res["detail"] == "accessibility enabled via Settings UI"
+
+    switch_taps = [c for c in called if c[-4:] == ["input", "tap", "927", "410"]]
+    allow_taps = [c for c in called if c[-4:] == ["input", "tap", "786", "2117"]]
+    assert len(switch_taps) == 1
+    assert len(allow_taps) == 1
+
+    keyevent_cmds = [c for c in called if "keyevent" in c]
+    assert any(c[-3:] == ["input", "keyevent", "3"] for c in keyevent_cmds)
+    assert any(c[-3:] == ["input", "keyevent", "223"] for c in keyevent_cmds)
+    assert called[-1][-3:] == ["input", "keyevent", "223"]
+
+
+def test_secure_lock_ui_revive_returns_false_no_taps():
+    called = []
+
+    def fake_runner(cmd, **kwargs):
+        called.append(cmd)
+        cmd_str = " ".join(cmd)
+        if "dumpsys power" in cmd_str:
+            return mock.Mock(returncode=0, stdout="mWakefulness=Awake\n", stderr="")
+        if "dumpsys window" in cmd_str:
+            return mock.Mock(returncode=0, stdout="mCurrentFocus=Window{cb5bf64 u0 NotificationShade}\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    ok = revive_accessibility_via_settings_ui(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner,
+    )
+    assert ok is False
+    assert not any("tap" in c for c in called)
+
+
+def test_run_deterministic_recovery_sleep_restoration_success():
+    called = []
+    screen_wake_count = 0
+
+    def fake_runner(cmd, **kwargs):
+        nonlocal screen_wake_count
+        called.append(cmd)
+        cmd_str = " ".join(cmd)
+        if "get-state" in cmd_str:
+            return mock.Mock(returncode=0, stdout="device\n", stderr="")
+        if "dumpsys power" in cmd_str:
+            if screen_wake_count == 0:
+                return mock.Mock(returncode=0, stdout="mWakefulness=Asleep\nDisplay Power: state=OFF\n", stderr="")
+            return mock.Mock(returncode=0, stdout="mWakefulness=Awake\nDisplay Power: state=ON\n", stderr="")
+        if "keyevent 224" in cmd_str or "dismiss-keyguard" in cmd_str:
+            screen_wake_count += 1
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        if "content query" in cmd_str:
+            return mock.Mock(returncode=0, stdout="Row: 0 result=pong\n", stderr="")
+        if "settings get secure enabled_accessibility_services" in cmd_str:
+            return mock.Mock(returncode=0, stdout=f"{PORTAL_A11Y_COMPONENT}\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    ok, checks, err = run_deterministic_recovery(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner,
+        restore_sleep=True,
+    )
+    assert ok is True
+    assert called[-1][-3:] == ["input", "keyevent", "223"]
+
+
+def test_run_deterministic_recovery_sleep_restoration_failure():
+    called = []
+    screen_wake_count = 0
+
+    def fake_runner(cmd, **kwargs):
+        nonlocal screen_wake_count
+        called.append(cmd)
+        cmd_str = " ".join(cmd)
+        if "get-state" in cmd_str:
+            return mock.Mock(returncode=0, stdout="device\n", stderr="")
+        if "dumpsys power" in cmd_str:
+            if screen_wake_count == 0:
+                return mock.Mock(returncode=0, stdout="mWakefulness=Asleep\nDisplay Power: state=OFF\n", stderr="")
+            return mock.Mock(returncode=0, stdout="mWakefulness=Awake\nDisplay Power: state=ON\n", stderr="")
+        if "keyevent 224" in cmd_str or "dismiss-keyguard" in cmd_str:
+            screen_wake_count += 1
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        if "content query" in cmd_str:
+            return mock.Mock(returncode=1, stdout="", stderr="error")
+        if "settings get secure enabled_accessibility_services" in cmd_str:
+            return mock.Mock(returncode=1, stdout="", stderr="error")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    ok, checks, err = run_deterministic_recovery(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner,
+        restore_sleep=True,
+    )
+    assert ok is False
+    assert called[-1][-3:] == ["input", "keyevent", "223"]
+
+
+def test_run_deterministic_recovery_restore_sleep_false():
+    called = []
+    screen_wake_count = 0
+
+    def fake_runner(cmd, **kwargs):
+        nonlocal screen_wake_count
+        called.append(cmd)
+        cmd_str = " ".join(cmd)
+        if "get-state" in cmd_str:
+            return mock.Mock(returncode=0, stdout="device\n", stderr="")
+        if "dumpsys power" in cmd_str:
+            if screen_wake_count == 0:
+                return mock.Mock(returncode=0, stdout="mWakefulness=Asleep\nDisplay Power: state=OFF\n", stderr="")
+            return mock.Mock(returncode=0, stdout="mWakefulness=Awake\nDisplay Power: state=ON\n", stderr="")
+        if "keyevent 224" in cmd_str or "dismiss-keyguard" in cmd_str:
+            screen_wake_count += 1
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        if "content query" in cmd_str:
+            return mock.Mock(returncode=0, stdout="Row: 0 result=pong\n", stderr="")
+        if "settings get secure enabled_accessibility_services" in cmd_str:
+            return mock.Mock(returncode=0, stdout=f"{PORTAL_A11Y_COMPONENT}\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    ok, checks, err = run_deterministic_recovery(
+        serial=TEST_SERIAL,
+        subprocess_runner=fake_runner,
+        restore_sleep=False,
+    )
+    assert ok is True
+    assert not any(c[-3:] == ["input", "keyevent", "223"] for c in called)

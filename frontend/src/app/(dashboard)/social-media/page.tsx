@@ -216,10 +216,11 @@ export default function SocialMediaPage() {
     const initialProjectId = initialProject?.id ?? "";
     setContentProjectId(initialProjectId);
     setFacebookActorId("");
-    const validProfiles = initialProjectId
-      ? destinations.filter((d) => d.kind === "facebook_profile" && d.content_project_id === initialProjectId)
+    const validProfiles = destinations.filter((d) => d.kind === "facebook_profile");
+    const sameProjectProfiles = initialProjectId
+      ? validProfiles.filter((d) => d.content_project_id === Number(initialProjectId))
       : [];
-    setParentProfileId(validProfiles[0]?.id ?? "");
+    setParentProfileId(sameProjectProfiles.length === 1 ? sameProjectProfiles[0].id : "");
     setReplizAccountId("");
     setMode("phone");
     setTimezone(initialProject?.timezone || "Europe/London");
@@ -271,13 +272,14 @@ export default function SocialMediaPage() {
         setTimezone(p.timezone);
       }
     }
-    const validProfiles = newId
-      ? destinations.filter((d) => d.kind === "facebook_profile" && d.content_project_id === newId)
-      : [];
+    const validProfiles = destinations.filter((d) => d.kind === "facebook_profile");
     if (parentProfileId && validProfiles.some((p) => p.id === parentProfileId)) {
       // Keep valid profile selection
     } else {
-      setParentProfileId(validProfiles[0]?.id ?? "");
+      const sameProjectProfiles = newId
+        ? validProfiles.filter((d) => d.content_project_id === Number(newId))
+        : [];
+      setParentProfileId(sameProjectProfiles.length === 1 ? sameProjectProfiles[0].id : "");
     }
   }
 
@@ -1406,12 +1408,25 @@ export default function SocialMediaPage() {
                       >
                         <option value="">Select administering Facebook Profile…</option>
                         {destinations
-                          .filter((d) => d.kind === "facebook_profile" && d.content_project_id === contentProjectId)
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name} {p.facebook_actor_id ? `(${p.facebook_actor_id})` : "(No Actor ID)"}
-                            </option>
-                          ))}
+                          .filter((d) => d.kind === "facebook_profile")
+                          .slice()
+                          .sort((a, b) => {
+                            const currentProj = contentProjectId !== "" ? Number(contentProjectId) : null;
+                            const aSame = currentProj !== null && a.content_project_id === currentProj;
+                            const bSame = currentProj !== null && b.content_project_id === currentProj;
+                            if (aSame !== bSame) return aSame ? -1 : 1;
+                            return a.name.localeCompare(b.name);
+                          })
+                          .map((p) => {
+                            const actorText = p.facebook_actor_id || "No Actor ID";
+                            const proj = projectMap.get(p.content_project_id);
+                            const projSuffix = proj?.name ? ` — ${proj.name}` : "";
+                            return (
+                              <option key={p.id} value={p.id}>
+                                {p.name} ({actorText}){projSuffix}
+                              </option>
+                            );
+                          })}
                       </select>
                       <p className="text-[10px] text-text-secondary mt-0.5">
                         The main Profile signed in on the phone that owns/administers this Page.

@@ -399,3 +399,23 @@ The social publishing schema migration `c80000000023_delivery_metric_snapshots` 
 ## 7. Current Publication Limitations
 
 Current Facebook own-URL calibration and identity verification chains are supported and fail-closed. However, active modern Facebook publication remains rejected prior to caption typing, media staging, or Next navigation due to draft state and submission flow uncertainty (`media_unsupported_on_modern`, `draft_state_uncertain`, `submission_flow_uncalibrated`). No end-to-end automated modern publication readiness is currently claimed.
+
+---
+
+## 8. Accessibility Self-Heal
+
+When the Mobilerun Portal accessibility service is disabled on the device, routine and on-demand recovery attempts self-healing in the following order:
+
+1. **ADB Secure Settings Write**: Appends `com.mobilerun.portal/.service.MobilerunAccessibilityService` to `enabled_accessibility_services` and sets `accessibility_enabled=1`.
+2. **Settings UI Automation**: If secure settings writes fail or are blocked, the runner launches Settings (`android.settings.ACCESSIBILITY_DETAILS_SETTINGS`), inspects the UI hierarchy, locates the Mobilerun Portal switch, toggles it on, confirms the system "Allow" dialog, and cleanly restores screen/HOME state.
+3. **Helper Script Fallback**: If configured, executes `/usr/local/bin/enable-mobilerun-a11y.sh`.
+4. **Hermes & Owner Escalation**: If all automated revives fail, reports `secure_settings_blocked` with exact actionable steps.
+
+### ColorOS / Realme Permission Monitoring Note
+On ColorOS (Android 14), `adb shell settings put secure` commands fail with `SecurityException: WRITE_SECURE_SETTINGS` (returncode 0 but permission denied in output) because ColorOS permission monitoring blocks remote modifications to secure settings.
+
+### Owner-Side Fix
+To allow ADB commands to modify secure settings:
+- Open **Settings > Developer options**.
+- Enable **Disable permission monitoring** (allows ADB to toggle permissions without prompt).
+- Alternatively, turn on the service manually under **Settings > Accessibility > Mobilerun Portal > On**, and grant background execution in Battery settings.

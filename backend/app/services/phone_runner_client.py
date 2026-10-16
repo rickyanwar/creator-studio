@@ -647,3 +647,67 @@ class PhoneRunnerClient:
             raise
         except Exception as exc:
             raise PhoneRunnerDiscoveryError(f"client_error_{type(exc).__name__}") from exc
+
+    def probe_device(
+        self,
+        *,
+        device: PhoneDevice,
+        wake: bool = False,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Probes device status and Mobilerun Portal readiness via POST /probe.
+
+        Never raises an exception.
+        """
+        if not self.base_url or not self.token:
+            return {"success": False, "status": "missing_configuration"}
+
+        serial = getattr(device, "adb_serial", None)
+        if not isinstance(serial, str) or not serial.strip() or not SERIAL_REGEX.match(serial.strip()):
+            return {
+                "success": False,
+                "status": "runner_unreachable",
+                "detail": "invalid_serial",
+            }
+        clean_serial = serial.strip()
+
+        payload = {"serial": clean_serial, "wake": bool(wake)}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        url = f"{self.base_url}/probe"
+        effective_timeout = timeout if timeout is not None else 15.0
+        timeout_cfg = httpx.Timeout(timeout=effective_timeout, connect=self.connect_timeout)
+
+        try:
+            with httpx.Client(timeout=timeout_cfg) as client:
+                resp = client.post(url, json=payload, headers=headers)
+            if resp.status_code != 200:
+                return {
+                    "success": False,
+                    "status": "runner_unreachable",
+                    "detail": sanitize_error(f"http_{resp.status_code}"),
+                }
+            try:
+                data = resp.json()
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "status": "runner_unreachable",
+                    "detail": sanitize_error(f"malformed_json_{type(exc).__name__}"),
+                }
+            if not isinstance(data, dict):
+                return {
+                    "success": False,
+                    "status": "runner_unreachable",
+                    "detail": "invalid_json_object",
+                }
+            data.setdefault("success", True)
+            return data
+        except Exception as exc:
+            return {
+                "success": False,
+                "status": "runner_unreachable",
+                "detail": sanitize_error(type(exc).__name__),
+            }

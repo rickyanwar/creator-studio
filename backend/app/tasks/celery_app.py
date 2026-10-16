@@ -44,6 +44,7 @@ celery_app = Celery(
         "app.tasks.model_health",
         "app.tasks.f1_drivers_sync",
         "app.tasks.social_delivery",
+        "app.tasks.phone_watchdog",
     ],
 )
 
@@ -327,5 +328,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.social_delivery.dispatch_social_deliveries",
         "schedule": 60,
         "options": {"expires": 55},
+    },
+    # Phone health watchdog: every 10m
+    "check-phone-devices": {
+        "task": "app.tasks.phone_watchdog.check_phone_devices",
+        "schedule": 600,
+        "options": {"expires": 590},
     },
 }
