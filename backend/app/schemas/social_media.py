@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 import ipaddress
 import re
-from typing import Optional
+from typing import Literal, Optional
 import zoneinfo
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 # ── Content Projects ───────────────────────────────────────────────────────────
@@ -335,8 +335,9 @@ class PhoneDeviceCreate(BaseModel):
 
     @model_validator(mode="after")
     def check_available_actor_id(self):
-        if self.status == "available" and not self.expected_profile_actor_id:
-            raise ValueError("expected_profile_actor_id is required before device status can be available")
+        # ponytail: status available requires connection identity (adb_serial), Facebook actor optional
+        if self.status == "available" and (not self.adb_serial or not str(self.adb_serial).strip()):
+            raise ValueError("adb_serial is required before device status can be available")
         return self
 
 
@@ -430,6 +431,98 @@ class PhoneDeviceOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+TAILSCALE_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+SAFE_IDENTIFIER_REGEX = re.compile(r"^[A-Za-z0-9_.:-]+$")
+
+
+class DiscoveredPhoneDevice(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(..., min_length=1, max_length=128)
+    tailscale_ip: str = Field(..., max_length=64)
+    tailscale_node_id: Optional[str] = Field(None, max_length=128)
+    online: StrictBool
+    adb_serial: str = Field(..., max_length=128)
+    adb_state: Literal["device", "offline", "unauthorized", "not_connected", "unavailable"]
+    runner_allowed: StrictBool
+
+    @field_validator("name")
+    def clean_discovered_name(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Name cannot be blank")
+        if re.search(r"[\r\n\x00-\x1f\x7f-\x9f]", s):
+            raise ValueError("Name cannot contain newlines or control characters")
+        return s
+
+    @field_validator("tailscale_ip")
+    def validate_tailscale_ip(cls, v: str) -> str:
+        s = v.strip()
+        try:
+            ip = ipaddress.ip_address(s)
+        except ValueError:
+            raise ValueError("Invalid IP address")
+        if ip.version != 4 or ip not in TAILSCALE_CGNAT_NETWORK:
+            raise ValueError("tailscale_ip must be IPv4 in 100.64.0.0/10")
+        return str(ip)
+
+    @field_validator("tailscale_node_id")
+    def validate_node_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        if not SAFE_IDENTIFIER_REGEX.match(s):
+            raise ValueError("Invalid identifier format; disallowed shell or special characters")
+        return s
+
+    @model_validator(mode="after")
+    def validate_adb_serial_matches_ip(self) -> "DiscoveredPhoneDevice":
+        expected_ip = self.tailscale_ip
+        serial = self.adb_serial.strip()
+        if not SAFE_IDENTIFIER_REGEX.match(serial):
+            raise ValueError("Invalid serial format")
+        if ":" not in serial:
+            raise ValueError("Serial must be in IP:port format")
+        host, _, port_str = serial.partition(":")
+        if host != expected_ip:
+            raise ValueError("Serial host must match tailscale_ip")
+        if not port_str.isdigit():
+            raise ValueError("Serial port must be numeric")
+        port = int(port_str)
+        if not (1 <= port <= 65535):
+            raise ValueError("Serial port must be in range 1..65535")
+        return self
+
+
+class TailscaleConnectionInfo(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    backend_state: Literal["Running"]
+    tailnet_name: Optional[str] = Field(None, max_length=128)
+    account_name: Optional[str] = Field(None, max_length=128)
+
+    @field_validator("tailnet_name", "account_name")
+    def clean_connection_strings(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        if re.search(r"[\r\n\x00-\x1f\x7f-\x9f]", s):
+            raise ValueError("Connection string cannot contain newlines or control characters")
+        return s
+
+
+class PhoneDeviceDiscoveryResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    devices: list[DiscoveredPhoneDevice] = Field(..., max_length=200)
+    warnings: list[Literal["adb_unavailable"]] = Field(default_factory=list, max_length=4)
+    connection: Optional[TailscaleConnectionInfo] = None
 
 
 # ── Assignments ────────────────────────────────────────────────────────────────

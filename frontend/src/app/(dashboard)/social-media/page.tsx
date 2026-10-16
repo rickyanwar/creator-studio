@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { Icon } from "@iconify/react";
+import { AccountDevicesCard } from "@/components/social-media/AccountDevicesCard";
 import {
   listSocialDestinations,
   createSocialDestination,
@@ -107,12 +108,12 @@ export default function SocialMediaPage() {
     () => listContentProjects().then((r) => r.data)
   );
 
-  const { data: devices = [] } = useSWR(
+  const { data: devices = [], mutate: mutateDevices } = useSWR(
     "phone-devices",
     () => listPhoneDevices().then((r) => r.data)
   );
 
-  const { data: assignments = [] } = useSWR(
+  const { data: assignments = [], mutate: mutateAssignments } = useSWR(
     "device-assignments-all",
     () => listDeviceAssignments({ is_active: true }).then((r) => r.data)
   );
@@ -845,6 +846,18 @@ export default function SocialMediaPage() {
           )}
         </div>
       )}
+
+          {/* ── Account to Phone Automation Assignments ── */}
+          <div className="pt-2">
+            <AccountDevicesCard
+              destinations={destinations}
+              devices={devices}
+              assignments={assignments}
+              mutateAssignments={mutateAssignments}
+              mutateDestinations={mutateDestinations}
+              mutateDevices={mutateDevices}
+            />
+          </div>
         </>
       )}
 

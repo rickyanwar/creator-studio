@@ -7,7 +7,12 @@ from app.models.social_publishing import (
     PublishDelivery,
     SocialDestination,
 )
-from app.services.phone_runner_client import PhonePublishResult, PhoneRunnerClient
+from app.services.phone_runner_client import (
+    PhonePublishResult,
+    PhoneRecoveryResult,
+    PhoneRunnerClient,
+    PhoneRunnerDiscoveryError,
+)
 
 TEST_BASE_URL = "http://127.0.0.1:8765"
 TEST_TOKEN = "secret-phone-token-xyz"
@@ -900,3 +905,146 @@ def test_recover_device_preserves_ordinary_timeout(dummy_models):
         t_cfg = client_kwargs["timeout"]
         assert t_cfg.read == 120.0
         assert t_cfg.connect == 10.0
+
+
+def test_discover_devices_success():
+    fake_host_payload = {
+        "devices": [
+            {
+                "name": "realme 9i 5G",
+                "tailscale_ip": "100.64.96.50",
+                "tailscale_node_id": "nTestPhone1",
+                "online": True,
+                "adb_serial": "100.64.96.50:5555",
+                "adb_state": "device",
+                "runner_allowed": True,
+                "secret_key": "leaked_private_token_should_be_stripped",
+                "raw_peer": {"foo": "bar"},
+            }
+        ],
+        "warnings": ["adb_unavailable"],
+        "connection": {
+            "backend_state": "Running",
+            "tailnet_name": "example.test",
+            "account_name": "account@example.test",
+            "leaked_internal": "secret",
+        },
+        "unwhitelisted_root_key": "dangerous_info",
+    }
+    mock_resp = httpx.Response(200, json=fake_host_payload)
+
+    with mock.patch("httpx.Client") as mock_client_cls:
+        mock_instance = mock.MagicMock()
+        mock_instance.get.return_value = mock_resp
+        mock_client_cls.return_value.__enter__.return_value = mock_instance
+
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        res = client.discover_devices()
+
+        assert mock_instance.get.call_count == 1
+        call_url = mock_instance.get.call_args[0][0]
+        assert call_url == f"{TEST_BASE_URL}/devices/discovery"
+        headers = mock_instance.get.call_args[1]["headers"]
+        assert headers["Authorization"] == f"Bearer {TEST_TOKEN}"
+
+        # Timeout bounded to 20s read, 5s connect
+        _, client_kwargs = mock_client_cls.call_args
+        t_cfg = client_kwargs["timeout"]
+        assert t_cfg.read == 20.0
+        assert t_cfg.connect == 5.0
+
+    assert "devices" in res
+    assert "warnings" in res
+    assert res["warnings"] == ["adb_unavailable"]
+    assert "unwhitelisted_root_key" not in res
+
+    dev = res["devices"][0]
+    assert dev["name"] == "realme 9i 5G"
+    assert dev["tailscale_ip"] == "100.64.96.50"
+    assert dev["tailscale_node_id"] == "nTestPhone1"
+    assert dev["online"] is True
+    assert dev["adb_serial"] == "100.64.96.50:5555"
+    assert dev["adb_state"] == "device"
+    assert dev["runner_allowed"] is True
+    assert "secret_key" not in dev
+    assert "raw_peer" not in dev
+
+    assert res["connection"] == {
+        "backend_state": "Running",
+        "tailnet_name": "example.test",
+        "account_name": "account@example.test",
+    }
+    assert "leaked_internal" not in res["connection"]
+
+
+def test_discover_devices_missing_config():
+    client_no_token = PhoneRunnerClient(base_url=TEST_BASE_URL, token="")
+    with pytest.raises(PhoneRunnerDiscoveryError, match="missing_configuration"):
+        client_no_token.discover_devices()
+
+    client_no_url = PhoneRunnerClient(base_url="", token=TEST_TOKEN)
+    with pytest.raises(PhoneRunnerDiscoveryError, match="missing_configuration"):
+        client_no_url.discover_devices()
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 404, 500, 502, 503])
+def test_discover_devices_http_errors(status_code):
+    mock_resp = httpx.Response(status_code, json={"error": "fail"})
+    with mock.patch("httpx.Client") as mock_client_cls:
+        mock_instance = mock.MagicMock()
+        mock_instance.get.return_value = mock_resp
+        mock_client_cls.return_value.__enter__.return_value = mock_instance
+
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        with pytest.raises(PhoneRunnerDiscoveryError, match=f"host_runner_http_{status_code}"):
+            client.discover_devices()
+
+
+def test_discover_devices_timeout():
+    with mock.patch("httpx.Client") as mock_client_cls:
+        mock_instance = mock.MagicMock()
+        mock_instance.get.side_effect = httpx.ReadTimeout("timed out")
+        mock_client_cls.return_value.__enter__.return_value = mock_instance
+
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        with pytest.raises(PhoneRunnerDiscoveryError, match="timeout"):
+            client.discover_devices()
+
+
+def test_discover_devices_malformed_response():
+    mock_resp = httpx.Response(200, text="not json at all")
+    with mock.patch("httpx.Client") as mock_client_cls:
+        mock_instance = mock.MagicMock()
+        mock_instance.get.return_value = mock_resp
+        mock_client_cls.return_value.__enter__.return_value = mock_instance
+
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        with pytest.raises(PhoneRunnerDiscoveryError, match="malformed_json_response"):
+            client.discover_devices()
+
+
+@pytest.mark.parametrize(
+    "bad_payload",
+    [
+        {"devices": "not_a_list"},
+        {"devices": [{"name": "", "tailscale_ip": "100.64.96.50", "online": True, "adb_serial": "100.64.96.50:5555", "adb_state": "device", "runner_allowed": True}]},
+        {"devices": [{"name": "Phone", "tailscale_ip": "192.168.1.1", "online": True, "adb_serial": "192.168.1.1:5555", "adb_state": "device", "runner_allowed": True}]},
+        {"devices": [{"name": "Phone", "tailscale_ip": "100.64.96.50", "online": "yes", "adb_serial": "100.64.96.50:5555", "adb_state": "device", "runner_allowed": True}]},
+        {"devices": [{"name": "Phone", "tailscale_ip": "100.64.96.50", "online": True, "adb_serial": "100.64.96.50:99999", "adb_state": "device", "runner_allowed": True}]},
+        {"devices": [{"name": "Phone", "tailscale_ip": "100.64.96.50", "online": True, "adb_serial": "100.64.96.50:5555", "adb_state": "unknown_state", "runner_allowed": True}]},
+        {"devices": [], "warnings": ["arbitrary_warning_leaking_info"]},
+        {"devices": [], "connection": {"backend_state": "Stopped"}},
+        {"devices": [], "connection": {"backend_state": ""}},
+        {"devices": [], "connection": {"backend_state": "Running", "tailnet_name": "bad\ntailnet"}},
+    ],
+)
+def test_discover_devices_invalid_schema_fails_closed(bad_payload):
+    mock_resp = httpx.Response(200, json=bad_payload)
+    with mock.patch("httpx.Client") as mock_client_cls:
+        mock_instance = mock.MagicMock()
+        mock_instance.get.return_value = mock_resp
+        mock_client_cls.return_value.__enter__.return_value = mock_instance
+
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        with pytest.raises(PhoneRunnerDiscoveryError, match="invalid_response_schema"):
+            client.discover_devices()

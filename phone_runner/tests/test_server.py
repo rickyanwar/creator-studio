@@ -342,3 +342,53 @@ def test_notify_endpoint_telegram_only_and_no_serial_needed(running_server):
         assert body["sent"] is True
         assert body["detail"] == "sent"
         mock_send.assert_called_once_with("Device recovery required for 100.64.96.50:5555")
+
+
+def test_devices_discovery_requires_auth(running_server):
+    status, body = make_request(f"{running_server}/devices/discovery", method="GET")
+    assert status == 401
+    assert body["error"] == "unauthorized"
+
+
+def test_devices_discovery_success(running_server):
+    fake_discovery = {
+        "devices": [
+            {
+                "name": "realme 9i 5G",
+                "tailscale_ip": "100.64.96.50",
+                "tailscale_node_id": "nTestPhone1",
+                "online": True,
+                "adb_serial": "100.64.96.50:5555",
+                "adb_state": "device",
+                "runner_allowed": True,
+            }
+        ],
+        "warnings": [],
+        "connection": {
+            "backend_state": "Running",
+            "tailnet_name": "example.test",
+            "account_name": "account@example.test",
+        },
+    }
+    with mock.patch("phone_runner.server.discover_devices", return_value=fake_discovery):
+        status, body = make_request(
+            f"{running_server}/devices/discovery",
+            method="GET",
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        )
+    assert status == 200
+    assert body == fake_discovery
+
+
+def test_devices_discovery_failure_returns_503(running_server):
+    from phone_runner.discovery import DiscoveryError
+
+    with mock.patch("phone_runner.server.discover_devices", side_effect=DiscoveryError("Tailscale status unavailable")):
+        status, body = make_request(
+            f"{running_server}/devices/discovery",
+            method="GET",
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        )
+    assert status == 503
+    assert body["error"] == "discovery_failed"
+    assert body["detail"] == "Tailscale discovery unavailable"

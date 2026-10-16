@@ -966,6 +966,35 @@ export interface DeviceDryRunResult {
   result: Record<string, unknown>;
 }
 
+export type AdbState =
+  | "device"
+  | "offline"
+  | "unauthorized"
+  | "not_connected"
+  | "unavailable";
+
+export interface DiscoveredPhoneDevice {
+  name: string;
+  tailscale_ip: string;
+  tailscale_node_id: string | null;
+  online: boolean;
+  adb_serial: string;
+  adb_state: AdbState;
+  runner_allowed: boolean;
+}
+
+export interface TailscaleConnectionInfo {
+  backend_state: "Running";
+  tailnet_name: string | null;
+  account_name: string | null;
+}
+
+export interface PhoneDeviceDiscoveryResponse {
+  devices: DiscoveredPhoneDevice[];
+  warnings: ("adb_unavailable" | string)[];
+  connection?: TailscaleConnectionInfo | null;
+}
+
 export interface DestinationDeviceAssignment {
   id: number;
   destination_id: number;

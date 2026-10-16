@@ -20,6 +20,7 @@ from app.models.social_publishing import (
     PublishDelivery,
     SocialDestination,
 )
+from app.schemas.social_media import PhoneDeviceDiscoveryResponse
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,17 @@ class PhoneRecoveryResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+class PhoneRunnerDiscoveryError(Exception):
+    """Raised when phone runner discovery cannot complete safely."""
+
+    def __init__(
+        self,
+        message: str = "Unable to load phones from the server. You can enter connection details manually.",
+    ):
+        super().__init__(message)
+        self.message = message
+
+
 class PhoneRunnerClient:
     """Client for authenticated communication with phone-runner host service."""
 
@@ -92,8 +104,8 @@ class PhoneRunnerClient:
         publish_timeout: float = 280.0,
     ) -> None:
         self.base_url = (
-            base_url or os.environ.get("PHONE_RUNNER_BASE_URL", "http://127.0.0.1:8765")
-        ).rstrip("/")
+            base_url if base_url is not None else os.environ.get("PHONE_RUNNER_BASE_URL", "http://127.0.0.1:8765")
+        ).strip().rstrip("/")
         self.token = (
             token if token is not None else os.environ.get("PHONE_RUNNER_TOKEN", "")
         ).strip()
@@ -593,3 +605,45 @@ class PhoneRunnerClient:
             return False, f"http_{resp.status_code}"
         except Exception as exc:
             return False, sanitize_error(f"notification_error_{type(exc).__name__}")
+
+    def discover_devices(
+        self,
+        *,
+        timeout: float = 20.0,
+        connect_timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        """Discovers Android phone devices from the host runner via GET /devices/discovery."""
+        if not self.base_url or not self.token:
+            raise PhoneRunnerDiscoveryError("missing_configuration")
+
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+        }
+        url = f"{self.base_url}/devices/discovery"
+        timeout_cfg = httpx.Timeout(timeout=timeout, connect=connect_timeout)
+
+        try:
+            with httpx.Client(timeout=timeout_cfg) as client:
+                resp = client.get(url, headers=headers)
+            if resp.status_code != 200:
+                raise PhoneRunnerDiscoveryError(f"host_runner_http_{resp.status_code}")
+            try:
+                data = resp.json()
+            except Exception as exc:
+                raise PhoneRunnerDiscoveryError("malformed_json_response") from exc
+
+            if not isinstance(data, dict):
+                raise PhoneRunnerDiscoveryError("invalid_json_object")
+
+            try:
+                validated = PhoneDeviceDiscoveryResponse.model_validate(data)
+                return validated.model_dump()
+            except Exception as exc:
+                raise PhoneRunnerDiscoveryError("invalid_response_schema") from exc
+
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException, httpx.ReadTimeout) as exc:
+            raise PhoneRunnerDiscoveryError("timeout") from exc
+        except PhoneRunnerDiscoveryError:
+            raise
+        except Exception as exc:
+            raise PhoneRunnerDiscoveryError(f"client_error_{type(exc).__name__}") from exc

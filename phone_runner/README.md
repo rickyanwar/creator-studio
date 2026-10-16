@@ -79,6 +79,37 @@ Public liveness probe. No authentication required.
 
 ---
 
+### `GET /devices/discovery`
+Authenticated read-only discovery of Android devices on the host Tailscale tailnet correlated with ADB state.
+
+**Headers**:
+- `Authorization: Bearer <PHONE_RUNNER_TOKEN>`
+
+**Response (200 OK)**:
+```json
+{
+  "devices": [
+    {
+      "name": "realme 9i 5G",
+      "tailscale_ip": "100.64.96.50",
+      "tailscale_node_id": "nTestPhone1",
+      "online": true,
+      "adb_serial": "100.64.96.50:5555",
+      "adb_state": "device",
+      "runner_allowed": true
+    }
+  ],
+  "warnings": [],
+  "connection": {
+    "backend_state": "Running",
+    "tailnet_name": "example.test",
+    "account_name": "account@example.test"
+  }
+}
+```
+
+---
+
 ### `POST /probe`
 Inspects ADB connectivity, screen power state, display resolution, orientation, app versions, and Mobilerun Portal readiness.
 

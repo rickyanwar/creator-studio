@@ -12,6 +12,7 @@ from phone_runner.config import (
     is_serial_valid_format,
     verify_token,
 )
+from phone_runner.discovery import DiscoveryError, discover_devices
 from phone_runner.dry_run import execute_dry_run
 from phone_runner.probe import probe_device
 from phone_runner.publish import execute_publish
@@ -94,6 +95,17 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/health":
             self.send_json(200, {"status": "ok", "service": "phone-runner"})
+            return
+
+        if self.path == "/devices/discovery":
+            if not self.check_auth():
+                self.send_json(401, {"error": "unauthorized"})
+                return
+            try:
+                data = discover_devices()
+                self.send_json(200, data)
+            except (DiscoveryError, Exception):
+                self.send_json(503, {"error": "discovery_failed", "detail": "Tailscale discovery unavailable"})
             return
 
         self.send_json(404, {"error": "not_found"})

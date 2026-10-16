@@ -30,6 +30,7 @@ from app.schemas.social_media import (
     DestinationDeviceAssignmentVerify,
     DeviceDryRunRequest,
     PhoneDeviceCreate,
+    PhoneDeviceDiscoveryResponse,
     PhoneDeviceOut,
     PhoneDeviceUpdate,
     SocialDestinationCreate,
@@ -365,6 +366,19 @@ def list_devices(db: DB, _: CurrentUser):
     return db.query(PhoneDevice).order_by(PhoneDevice.name).all()
 
 
+@router.get("/devices/discovery", response_model=PhoneDeviceDiscoveryResponse)
+def discover_devices(_: CurrentUser):
+    """Discover phones from host runner."""
+    client = PhoneRunnerClient()
+    try:
+        return client.discover_devices()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to load phones from the server. You can enter connection details manually.",
+        )
+
+
 @router.get("/devices/{device_id}", response_model=PhoneDeviceOut)
 def get_device(device_id: int, db: DB, _: CurrentUser):
     """Get single phone device by ID."""
@@ -424,13 +438,13 @@ def update_device(device_id: int, payload: PhoneDeviceUpdate, db: DB, _: Current
         if db.query(PhoneDevice).filter(PhoneDevice.tailscale_node_id == payload.tailscale_node_id, PhoneDevice.id != device.id).first():
             raise HTTPException(status_code=400, detail="Device with this tailscale_node_id already exists")
 
-    target_status = payload.status if payload.status is not None else device.status
-    target_actor_id = payload.expected_profile_actor_id if payload.expected_profile_actor_id is not None else device.expected_profile_actor_id
+    target_status = payload.status if ("status" in payload.model_fields_set and payload.status is not None) else device.status
+    target_serial = payload.adb_serial if "adb_serial" in payload.model_fields_set else device.adb_serial
 
-    if target_status == "available" and (not target_actor_id or not target_actor_id.strip()):
+    if target_status == "available" and (not target_serial or not str(target_serial).strip()):
         raise HTTPException(
             status_code=400,
-            detail="expected_profile_actor_id is required before device status can be available",
+            detail="adb_serial is required before device status can be available",
         )
 
     for field, val in payload.model_dump(exclude_unset=True).items():

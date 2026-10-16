@@ -94,6 +94,7 @@ def test_auth_required_for_all_endpoints(db_session):
         ("GET", "/social-media/destinations"),
         ("POST", "/social-media/destinations"),
         ("GET", "/social-media/devices"),
+        ("GET", "/social-media/devices/discovery"),
         ("POST", "/social-media/devices"),
         ("GET", "/social-media/assignments"),
         ("POST", "/social-media/assignments"),
@@ -492,24 +493,22 @@ def test_device_registration_and_validation(client):
     }
     assert client.post("/social-media/devices", json=bad_serial).status_code in (400, 422)
 
-    # Status available requires expected_profile_actor_id
+    # Status available requires valid nonempty adb_serial (connection identity)
     bad_available = {
         "name": "Premature Available Phone",
         "status": "available",
-        "expected_profile_actor_id": None,
+        "adb_serial": None,
     }
     resp = client.post("/social-media/devices", json=bad_available)
     assert resp.status_code in (400, 422)
-    assert "expected_profile_actor_id" in resp.text
+    assert "adb_serial" in resp.text
 
-    # Valid maintenance device registration
+    # Valid maintenance device registration without Facebook actor
     valid_dev = {
         "name": "Realme GT Master",
         "tailscale_node_id": "ts_node_realme_1",
         "tailscale_ip": "100.64.0.15",
         "adb_serial": "192.168.1.150:5555",
-        "expected_profile_actor_id": "fb_prof_actor_999",
-        "expected_profile_name": "John Doe",
         "screen_width": 1080,
         "screen_height": 2400,
         "status": "maintenance",
@@ -519,12 +518,14 @@ def test_device_registration_and_validation(client):
     dev = resp.json()
     assert dev["name"] == "Realme GT Master"
     assert dev["status"] == "maintenance"
+    assert dev["expected_profile_actor_id"] is None
     dev_id = dev["id"]
 
-    # Transition to available once actor ID is present
+    # Transition to available once adb_serial is present (Facebook actor optional)
     patch_resp = client.patch(f"/social-media/devices/{dev_id}", json={"status": "available"})
     assert patch_resp.status_code == 200
     assert patch_resp.json()["status"] == "available"
+    assert patch_resp.json()["expected_profile_actor_id"] is None
 
 
 # ==============================================================================
@@ -1881,3 +1882,370 @@ def test_dry_run_rejections_fail_closed_and_do_not_mutate(client, db_session):
     assert asgn_prof.verified_at is None
     # No dangling lease
     assert db_session.query(DeviceLease).filter_by(device_id=dev.id).count() == 0
+
+
+def test_devices_discovery_api_success(client, db_session):
+    mock_payload = {
+        "devices": [
+            {
+                "name": "realme 9i 5G",
+                "tailscale_ip": "100.64.96.50",
+                "tailscale_node_id": "nTestPhone1",
+                "online": True,
+                "adb_serial": "100.64.96.50:5555",
+                "adb_state": "device",
+                "runner_allowed": True,
+            }
+        ],
+        "warnings": ["adb_unavailable"],
+        "connection": {
+            "backend_state": "Running",
+            "tailnet_name": "example.test",
+            "account_name": "account@example.test",
+        },
+    }
+    with mock.patch("app.api.social_media.PhoneRunnerClient.discover_devices", return_value=mock_payload):
+        resp = client.get("/social-media/devices/discovery")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["devices"]) == 1
+    assert data["devices"][0]["name"] == "realme 9i 5G"
+    assert data["devices"][0]["tailscale_node_id"] == "nTestPhone1"
+    assert data["warnings"] == ["adb_unavailable"]
+    assert data["connection"]["tailnet_name"] == "example.test"
+    assert data["connection"]["account_name"] == "account@example.test"
+
+
+def test_devices_discovery_path_ordering_and_no_db_mutation(client, db_session):
+    before_count = db_session.query(PhoneDevice).count()
+
+    mock_payload = {"devices": [], "warnings": [], "connection": None}
+    with mock.patch("app.api.social_media.PhoneRunnerClient.discover_devices", return_value=mock_payload):
+        resp = client.get("/social-media/devices/discovery")
+    assert resp.status_code == 200
+    assert resp.json() == {"devices": [], "warnings": [], "connection": None}
+
+    after_count = db_session.query(PhoneDevice).count()
+    assert before_count == after_count
+
+
+def test_devices_discovery_api_failure_503(client, db_session):
+    with mock.patch("app.api.social_media.PhoneRunnerClient.discover_devices", side_effect=Exception("network down")):
+        resp = client.get("/social-media/devices/discovery")
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Unable to load phones from the server. You can enter connection details manually."
+
+
+def test_devices_discovery_unauth_rejects_before_client_call(client, db_session):
+    """Discovery route requires valid CurrentUser; rejects unauthenticated with 401/403 before calling runner."""
+    orig_overrides = dict(app.dependency_overrides)
+    try:
+        app.dependency_overrides.pop(get_current_user, None)
+        before_count = db_session.query(PhoneDevice).count()
+        with mock.patch("app.api.social_media.PhoneRunnerClient.discover_devices") as mock_discover:
+            resp = client.get("/social-media/devices/discovery")
+            assert resp.status_code in (401, 403)
+            mock_discover.assert_not_called()
+        assert db_session.query(PhoneDevice).count() == before_count
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(orig_overrides)
+
+
+def test_phone_device_neutral_registration_and_serial_requirement(client, db_session):
+    """Phone device is platform-neutral; status available requires valid adb_serial, not Facebook actor."""
+    # 1. Maintenance device registers without actor or serial
+    resp_maint = client.post("/social-media/devices", json={"name": "Blank Maintenance Phone", "status": "maintenance"})
+    assert resp_maint.status_code == 201
+    dev_m = resp_maint.json()
+    assert dev_m["status"] == "maintenance"
+    assert dev_m["adb_serial"] is None
+    assert dev_m["expected_profile_actor_id"] is None
+
+    # 2. Transitioning to available without adb_serial is rejected
+    resp_bad_patch = client.patch(f"/social-media/devices/{dev_m['id']}", json={"status": "available"})
+    assert resp_bad_patch.status_code == 400
+    assert "adb_serial" in resp_bad_patch.json()["detail"]
+
+    # 3. Direct creation as available without adb_serial is rejected
+    resp_bad_create = client.post("/social-media/devices", json={"name": "No Serial Available", "status": "available"})
+    assert resp_bad_create.status_code in (400, 422)
+    assert "adb_serial" in resp_bad_create.text
+
+    # 4. Direct creation as available with adb_serial and NO Facebook actor succeeds
+    resp_avail = client.post(
+        "/social-media/devices",
+        json={
+            "name": "Neutral Available Phone",
+            "adb_serial": "100.64.99.1:5555",
+            "tailscale_ip": "100.64.99.1",
+            "status": "available",
+        },
+    )
+    assert resp_avail.status_code == 201
+    avail_dev = resp_avail.json()
+    assert avail_dev["status"] == "available"
+    assert avail_dev["adb_serial"] == "100.64.99.1:5555"
+    assert avail_dev["expected_profile_actor_id"] is None
+    assert avail_dev["expected_profile_name"] is None
+
+    # 5. Patching explicit null adb_serial while status is available rejects
+    resp_null_serial = client.patch(f"/social-media/devices/{avail_dev['id']}", json={"adb_serial": None})
+    assert resp_null_serial.status_code == 400
+    assert "adb_serial" in resp_null_serial.json()["detail"]
+
+    # 6. Patching explicit null adb_serial with status=maintenance succeeds
+    resp_maint_null = client.patch(
+        f"/social-media/devices/{avail_dev['id']}",
+        json={"status": "maintenance", "adb_serial": None},
+    )
+    assert resp_maint_null.status_code == 200
+    assert resp_maint_null.json()["status"] == "maintenance"
+    assert resp_maint_null.json()["adb_serial"] is None
+
+
+def test_per_assignment_root_verification_neutral_phone_multi_account(client, db_session):
+    """Platform-neutral phone supports distinct root profiles across assignments without setting global device actor."""
+    proj = TargetFanpage(name="Multi Profile Neutral Project", is_connected=True)
+    db_session.add(proj)
+    db_session.commit()
+
+    # Available phone device with NO Facebook default actor configured
+    dev = PhoneDevice(
+        name="Platform Neutral Phone",
+        adb_serial="serial_neutral_multi_99",
+        expected_profile_actor_id=None,
+        expected_profile_name=None,
+        status="available",
+        calibration_verified_at=None,
+    )
+    db_session.add(dev)
+
+    # Root Profile A + Page A
+    root_a = SocialDestination(
+        content_project_id=proj.id,
+        kind="facebook_profile",
+        name="Root Profile A",
+        mode="phone",
+        facebook_actor_id="actor_root_a",
+        daily_target=1,
+        phone_daily_target=1,
+        repliz_daily_target=0,
+        is_active=False,
+    )
+    db_session.add(root_a)
+    db_session.commit()
+
+    page_a = SocialDestination(
+        content_project_id=proj.id,
+        kind="facebook_page",
+        name="Page Dest A",
+        mode="phone",
+        facebook_actor_id="actor_page_a",
+        parent_profile_id=root_a.id,
+        daily_target=1,
+        phone_daily_target=1,
+        repliz_daily_target=0,
+        is_active=False,
+    )
+    db_session.add(page_a)
+
+    # Root Profile B + Page B
+    root_b = SocialDestination(
+        content_project_id=proj.id,
+        kind="facebook_profile",
+        name="Root Profile B",
+        mode="phone",
+        facebook_actor_id="actor_root_b",
+        daily_target=1,
+        phone_daily_target=1,
+        repliz_daily_target=0,
+        is_active=False,
+    )
+    db_session.add(root_b)
+    db_session.commit()
+
+    page_b = SocialDestination(
+        content_project_id=proj.id,
+        kind="facebook_page",
+        name="Page Dest B",
+        mode="phone",
+        facebook_actor_id="actor_page_b",
+        parent_profile_id=root_b.id,
+        daily_target=1,
+        phone_daily_target=1,
+        repliz_daily_target=0,
+        is_active=False,
+    )
+    db_session.add(page_b)
+
+    asgn_a = DestinationDeviceAssignment(
+        destination_id=page_a.id,
+        device_id=dev.id,
+        priority=0,
+        is_active=True,
+    )
+    asgn_b = DestinationDeviceAssignment(
+        destination_id=page_b.id,
+        device_id=dev.id,
+        priority=0,
+        is_active=True,
+    )
+    db_session.add_all([asgn_a, asgn_b])
+    db_session.commit()
+
+    # 1. Uncalibrated / unverified phone NOT eligible for Facebook publishing or destination activation
+    from app.api.social_media import _is_active_verified_assignment
+    from app.services.social_delivery_dispatch import select_and_lease_phone_device
+
+    assert not _is_active_verified_assignment(asgn_a, page_a, db_session)
+    assert not _is_active_verified_assignment(asgn_b, page_b, db_session)
+
+    act_resp = client.patch(f"/social-media/destinations/{page_a.id}", json={"is_active": True})
+    assert act_resp.status_code == 400
+    assert "Cannot activate phone route without verified device assignment and calibration" in act_resp.json()["detail"]
+
+    job = PublishJob(
+        fanpage_id=proj.id,
+        content_type="news_content",
+        status="pending_publish",
+    )
+    db_session.add(job)
+    db_session.flush()
+
+    delivery_unverified = PublishDelivery(
+        publish_job_id=job.id,
+        destination_id=page_a.id,
+        state="scheduled",
+        intended_method="phone",
+        scheduled_for=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db_session.add(delivery_unverified)
+    db_session.commit()
+
+    leased_dev, lease_err = select_and_lease_phone_device(db_session, delivery_unverified)
+    assert leased_dev is None
+    assert "no eligible and available" in (lease_err or "").lower() or "no active" in (lease_err or "").lower()
+
+    # 2. Legacy device-only dry-run rejects without configured legacy actor
+    resp_legacy_fail = client.post(f"/social-media/devices/{dev.id}/dry-run", json={})
+    assert resp_legacy_fail.status_code == 400
+    assert "Device has no expected_profile_actor_id configured" in resp_legacy_fail.json()["detail"]
+
+    # 3. Dry-run with wrong root actor rejects
+    mock_runner_wrong_root = {
+        "success": True,
+        "status": "verified",
+        "stages": [{"stage": "identity_check", "passed": True}],
+        "evidence": {
+            "resolution": "1080x2400",
+            "app_card_version": "1.2.0",
+            "facebook_version": "452.0.0",
+            "portal_version": "0.7.30",
+            "stopped_before_publish": True,
+            "verified_main_profile_id": "wrong_root_actor",
+            "active_composer_actor_id": "actor_page_a",
+        },
+    }
+    with mock.patch("app.api.social_media.PhoneRunnerClient.dry_run", return_value=mock_runner_wrong_root):
+        resp_wrong_root = client.post(f"/social-media/devices/{dev.id}/dry-run", json={"destination_id": page_a.id})
+        assert resp_wrong_root.status_code == 400
+        assert "Main profile mismatch" in resp_wrong_root.json()["detail"]
+
+    # 4. Dry-run with wrong target actor rejects
+    mock_runner_wrong_target = {
+        "success": True,
+        "status": "verified",
+        "stages": [{"stage": "identity_check", "passed": True}],
+        "evidence": {
+            "resolution": "1080x2400",
+            "app_card_version": "1.2.0",
+            "facebook_version": "452.0.0",
+            "portal_version": "0.7.30",
+            "stopped_before_publish": True,
+            "verified_main_profile_id": "actor_root_a",
+            "active_composer_actor_id": "wrong_target_actor",
+        },
+    }
+    with mock.patch("app.api.social_media.PhoneRunnerClient.dry_run", return_value=mock_runner_wrong_target):
+        resp_wrong_target = client.post(f"/social-media/devices/{dev.id}/dry-run", json={"destination_id": page_a.id})
+        assert resp_wrong_target.status_code == 400
+        assert "Target actor mismatch" in resp_wrong_target.json()["detail"]
+
+    # 5. Successful dry-run for Page A under Root A
+    mock_runner_page_a = {
+        "success": True,
+        "status": "verified",
+        "stages": [{"stage": "identity_check", "passed": True}],
+        "evidence": {
+            "resolution": "1080x2400",
+            "app_card_version": "1.2.0",
+            "facebook_version": "452.0.0",
+            "portal_version": "0.7.30",
+            "stopped_before_publish": True,
+            "verified_main_profile_id": "actor_root_a",
+            "active_composer_actor_id": "actor_page_a",
+        },
+    }
+    with mock.patch("app.api.social_media.PhoneRunnerClient.dry_run", return_value=mock_runner_page_a):
+        resp_dry_a = client.post(f"/social-media/devices/{dev.id}/dry-run", json={"destination_id": page_a.id})
+        assert resp_dry_a.status_code == 200
+        assert resp_dry_a.json()["status"] == "success"
+        assert resp_dry_a.json()["assignment_verified"] is True
+
+    db_session.refresh(asgn_a)
+    db_session.refresh(asgn_b)
+    db_session.refresh(dev)
+
+    assert dev.expected_profile_actor_id is None  # Remains unconfigured default
+    assert dev.calibration_verified_at is not None
+    assert asgn_a.verified_at is not None
+    assert asgn_a.verified_profile_actor_id == "actor_root_a"
+    assert asgn_a.verified_target_actor_id == "actor_page_a"
+    assert asgn_b.verified_at is None  # Page B not yet verified
+
+    assert _is_active_verified_assignment(asgn_a, page_a, db_session)
+    assert not _is_active_verified_assignment(asgn_b, page_b, db_session)
+
+    # 6. Successful dry-run for Page B under Root B on the same phone
+    mock_runner_page_b = {
+        "success": True,
+        "status": "verified",
+        "stages": [{"stage": "identity_check", "passed": True}],
+        "evidence": {
+            "resolution": "1080x2400",
+            "app_card_version": "1.2.0",
+            "facebook_version": "452.0.0",
+            "portal_version": "0.7.30",
+            "stopped_before_publish": True,
+            "verified_main_profile_id": "actor_root_b",
+            "active_composer_actor_id": "actor_page_b",
+        },
+    }
+    with mock.patch("app.api.social_media.PhoneRunnerClient.dry_run", return_value=mock_runner_page_b):
+        resp_dry_b = client.post(f"/social-media/devices/{dev.id}/dry-run", json={"destination_id": page_b.id})
+        assert resp_dry_b.status_code == 200
+        assert resp_dry_b.json()["status"] == "success"
+        assert resp_dry_b.json()["assignment_verified"] is True
+
+    db_session.refresh(asgn_b)
+    db_session.refresh(dev)
+
+    assert dev.expected_profile_actor_id is None  # Remains unconfigured default
+    assert asgn_b.verified_at is not None
+    assert asgn_b.verified_profile_actor_id == "actor_root_b"
+    assert asgn_b.verified_target_actor_id == "actor_page_b"
+
+    assert _is_active_verified_assignment(asgn_a, page_a, db_session)
+    assert _is_active_verified_assignment(asgn_b, page_b, db_session)
+
+    # 7. Destination activation succeeds now that assignment and device calibration are verified
+    act_resp_ok = client.patch(f"/social-media/destinations/{page_a.id}", json={"is_active": True})
+    assert act_resp_ok.status_code == 200
+    assert act_resp_ok.json()["is_active"] is True
+
+    # 8. Delivery leasing selects and leases verified phone device
+    leased_dev, lease_err = select_and_lease_phone_device(db_session, delivery_unverified)
+    assert leased_dev is not None
+    assert leased_dev.id == dev.id
+    assert lease_err is None

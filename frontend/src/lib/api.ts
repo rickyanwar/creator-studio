@@ -515,6 +515,7 @@ import type {
   PhoneDevice,
   PhoneDeviceCreate,
   PhoneDeviceUpdate,
+  PhoneDeviceDiscoveryResponse,
   DeviceDryRunRequest,
   DeviceDryRunResult,
   DestinationDeviceAssignment,
@@ -563,6 +564,9 @@ export const createPhoneDevice = (data: PhoneDeviceCreate) =>
 
 export const updatePhoneDevice = (id: number, data: PhoneDeviceUpdate) =>
   api.patch<PhoneDevice>(`/social-media/devices/${id}`, data);
+
+export const discoverPhoneDevices = () =>
+  api.get<PhoneDeviceDiscoveryResponse>("/social-media/devices/discovery");
 
 export const runDeviceDryRun = (id: number, data?: DeviceDryRunRequest) =>
   api.post<DeviceDryRunResult>(`/social-media/devices/${id}/dry-run`, data ?? {});
