@@ -57,6 +57,8 @@ logger = logging.getLogger("phone_runner")
 PUBLISH_BUDGET_SECONDS = 540.0  # backend PhoneRunnerClient.publish_timeout is 600 s
 PRE_SHARE_MAX_SECONDS = 300.0
 PHOTO_REVEAL_SWIPES = 3
+PHOTO_REFLOW_CHECKS = 3
+PHOTO_SWIPE_MAX_START_Y = 2050
 
 
 
@@ -1181,13 +1183,22 @@ def execute_publish(
                 # The keyboard covers the photo below a long caption; hide it first (no swipe on a keyboard).
                 keyboard_state = _hide_keyboard_if_shown(serial)
                 stages.append({"stage": "keyboard_hidden", "passed": True, "detail": keyboard_state})
-                r = query_ui_hierarchy(serial)
-                if r.returncode == 0 and r.stdout:
-                    reveal_xml = r.stdout
-                    photo_visible = has_attachment_preview(reveal_xml)
+                # The layout reflows after the keyboard closes; re-check a few times before scrolling.
+                for _ in range(PHOTO_REFLOW_CHECKS):
+                    r = query_ui_hierarchy(serial)
+                    if r.returncode == 0 and r.stdout:
+                        reveal_xml = r.stdout
+                        photo_visible = has_attachment_preview(reveal_xml)
+                    if photo_visible:
+                        break
+                    time.sleep(1.0)
             while not photo_visible and swipes < PHOTO_REVEAL_SWIPES:
-                # Keyboard is hidden now; swipe in the photo area below the caption box (never inside the text box).
-                run_adb(["shell", "input", "swipe", "540", "2000", "540", "1200", "400"], serial=serial)
+                # Swipe only BELOW the caption box: touching the text box re-opens the keyboard.
+                input_bounds_now = composer_state(reveal_xml).get("input_bounds")
+                start_y = (input_bounds_now[3] + 120) if input_bounds_now else 2000
+                if start_y > PHOTO_SWIPE_MAX_START_Y:
+                    break
+                run_adb(["shell", "input", "swipe", "540", str(start_y), "540", str(max(300, start_y - 800)), "400"], serial=serial)
                 swipes += 1
                 human_pause(1.0, 1.5)
                 r = query_ui_hierarchy(serial)

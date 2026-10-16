@@ -1197,7 +1197,9 @@ def test_long_caption_photo_revealed_after_one_swipe(monkeypatch):
         AdbResult(0, MODERN_FEED_DUMP, ""),
         AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
         AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # typed dump: caption matches, no photo
-        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # after keyboard check: still no photo
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # reflow check 1: still no photo
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # reflow check 2
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # reflow check 3
         AdbResult(0, SWIPED_REVEALED_PHOTO_XML, ""),          # after 1st swipe: photo revealed
         AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
     ])
@@ -1235,7 +1237,7 @@ def test_long_caption_photo_revealed_after_one_swipe(monkeypatch):
     # Exactly one swipe command recorded
     swipe_cmds = [cmd for cmd in adb_commands if "swipe" in cmd]
     assert len(swipe_cmds) == 1
-    assert swipe_cmds[0] == ["shell", "input", "swipe", "540", "2000", "540", "1200", "400"]
+    assert swipe_cmds[0] == ["shell", "input", "swipe", "540", "912", "540", "300", "400"]
 
     # content_gate stage detail confirms swipe count
     content_gate_stage = next(s for s in res["stages"] if s["stage"] == "content_gate")
@@ -1261,6 +1263,9 @@ def test_photo_never_visible_after_three_swipes_fails_media_preview_mismatch(mon
         AdbResult(0, MODERN_FEED_DUMP, ""),
         AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
         AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # typed dump
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # reflow check 1
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # reflow check 2
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # reflow check 3
         AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # swipe 1
         AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # swipe 2
         AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # swipe 3
@@ -1541,3 +1546,40 @@ def test_clipboard_failure_falls_back_to_typing(monkeypatch):
     assert res["status"] == "published"
     assert res["evidence"]["caption_entry"] == "type"
     assert len(typed) == 1 and typed[0]["timeout"] >= 30.0
+
+
+TALL_CAPTION_BOX_NO_PHOTO_XML = f"""<hierarchy rotation="0">
+  <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+  <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="true" />
+  <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+  <node class="android.widget.AutoCompleteTextView" bounds="[0,690][1080,2100]" text="A very long caption that pushed the photo down" />
+</hierarchy>"""
+
+
+def test_no_swipe_when_caption_box_reaches_screen_bottom(monkeypatch):
+    taps, cmds = [], []
+    _patch_long_caption_flow(
+        monkeypatch,
+        [
+            AdbResult(0, MODERN_FEED_DUMP, ""),
+            AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+            AdbResult(0, TALL_CAPTION_BOX_NO_PHOTO_XML, ""),
+            AdbResult(0, TALL_CAPTION_BOX_NO_PHOTO_XML, ""),
+            AdbResult(0, TALL_CAPTION_BOX_NO_PHOTO_XML, ""),
+            AdbResult(0, TALL_CAPTION_BOX_NO_PHOTO_XML, ""),
+        ],
+        lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "OK", ""),
+        taps,
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="A very long caption that pushed the photo down",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["error_code"] == "media_preview_mismatch"
+    assert not [c for c in cmds if "swipe" in c]
+    assert (811, 125, 1026, 233) not in taps
