@@ -131,11 +131,13 @@ class PinnedIPHTTPSHandler(urllib.request.HTTPSHandler):
                 **conn_kwargs,
             )
 
+        # No check_hostname kwarg: Python 3.12 removed HTTPSHandler._check_hostname (crashed live on the
+        # VPS). Hostname + certificate checks still happen in PinnedIPHTTPSConnection.connect via
+        # context.wrap_socket(server_hostname=...) with the default (check_hostname=True) context.
         return self.do_open(
             conn_factory,
             req,
             context=self._context,
-            check_hostname=self._check_hostname,
         )
 
 
