@@ -141,6 +141,15 @@ def test_actor_title_variant_success():
     assert readiness["has_header"] is True
     assert readiness["has_close"] is True
     assert readiness["author_matched"] is True
+    # uiautomator reports the hint as text: the placeholder means an empty composer (seen on the real phone).
+    assert readiness["empty_state_certainty"] is True
+
+
+def test_actor_title_variant_existing_draft_text_is_not_empty():
+    xml = build_measured_actor_title_xml(author="OwnPageTarget", caption_text="Old draft text")
+    tree = ET.fromstring(xml)
+    ok, err, readiness = verify_composer_binding(tree, "OwnPageTarget", window_dump=COMPOSER_WINDOW_DUMP)
+    assert ok is True
     assert readiness["empty_state_certainty"] is False
 
 

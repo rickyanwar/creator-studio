@@ -163,3 +163,12 @@ def test_model_nav_timeout_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured_timeout is not None
     assert captured_timeout <= 120.0
     assert captured_timeout <= (240.0 - 60.0)
+
+
+def test_composer_placeholder_counts_as_empty_input():
+    from phone_runner.identity_proof import _is_empty_input_text
+
+    assert _is_empty_input_text("") is True
+    assert _is_empty_input_text("What's on your mind?") is True
+    assert _is_empty_input_text("  Apa yang Anda pikirkan?  ") is True
+    assert _is_empty_input_text("Marc Márquez is proving") is False

@@ -140,6 +140,15 @@ def compute_xml_digest(xml_text: str) -> str:
     return hashlib.sha256((xml_text or "").encode("utf-8")).hexdigest()
 
 
+# uiautomator reports the input hint as its text, so an empty composer shows the placeholder.
+EMPTY_INPUT_PLACEHOLDERS = ("What's on your mind?", "Apa yang Anda pikirkan?")
+
+
+def _is_empty_input_text(raw_text: str | None) -> bool:
+    text = (raw_text or "").strip()
+    return text == "" or text in EMPTY_INPUT_PLACEHOLDERS
+
+
 KNOWN_PORTAL_IME_IDS = (
     "com.mobilerun.portal/.input.MobilerunKeyboardIME",
 )
@@ -1154,7 +1163,7 @@ def verify_composer_binding(
             input_bounds = b
             raw_text = node.attrib.get("text", "")
             # Empty certainty: empty string or placeholder text
-            empty_certainty = (len(raw_text.strip()) == 0)
+            empty_certainty = _is_empty_input_text(raw_text)
 
         # Check author label
         if norm_author and (norm_author == text.lower() or norm_author == desc.lower()):
@@ -1246,7 +1255,7 @@ def verify_composer_binding(
         return False, f"Caption input package is '{input_node.attrib.get('package')}', expected 'com.facebook.katana'", {}
 
     raw_text = input_node.attrib.get("text", "")
-    empty_certainty = (len(raw_text.strip()) == 0)
+    empty_certainty = _is_empty_input_text(raw_text)
 
     # Unique exact Close Button with actionable enabled/clickable state
     if len(close_buttons) != 1:
