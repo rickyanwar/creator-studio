@@ -663,6 +663,24 @@ def extract_post_id_from_url(url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _find_copy_link(serial: str) -> tuple[int, int, int, int] | None:
+    ui_res = query_ui_hierarchy(serial)
+    if ui_res.returncode != 0 or not ui_res.stdout:
+        return None
+    try:
+        tree = ET.fromstring(ui_res.stdout.strip())
+    except Exception:
+        return None
+    for node in tree.iter("node"):
+        desc = (node.attrib.get("content-desc") or "").strip()
+        text = (node.attrib.get("text") or "").strip()
+        if desc in COPY_LINK_LABELS or text in COPY_LINK_LABELS:
+            bounds = parse_bounds(node.attrib.get("bounds", ""))
+            if bounds:
+                return bounds
+    return None
+
+
 def resolve_latest_post_link(
     serial: str,
     caption: str | None = None,
@@ -720,21 +738,16 @@ def _resolve_latest_post_link(
         human_tap(serial, more_bounds)
         time.sleep(2.0)
 
-        # Step 5: dump, find "Copy link"
-        ui_res_opt = query_ui_hierarchy(serial)
-        copy_link_bounds = None
-        if ui_res_opt.returncode == 0 and ui_res_opt.stdout:
-            try:
-                tree_opt = ET.fromstring(ui_res_opt.stdout.strip())
-                for node in tree_opt.iter("node"):
-                    desc = (node.attrib.get("content-desc") or "").strip()
-                    text = (node.attrib.get("text") or "").strip()
-                    if desc in COPY_LINK_LABELS or text in COPY_LINK_LABELS:
-                        copy_link_bounds = parse_bounds(node.attrib.get("bounds", ""))
-                        if copy_link_bounds:
-                            break
-            except Exception:
-                pass
+        # Step 5: find "Copy link". Reel menus are long and put it at the bottom, and the sheet may still be
+        # animating: re-check once, then scroll the sheet once (a swipe, never a tap).
+        copy_link_bounds = _find_copy_link(serial)
+        if not copy_link_bounds:
+            time.sleep(1.5)
+            copy_link_bounds = _find_copy_link(serial)
+        if not copy_link_bounds:
+            run_adb(["shell", "input", "swipe", "540", "1900", "540", "900", "400"], serial=serial)
+            time.sleep(1.5)
+            copy_link_bounds = _find_copy_link(serial)
 
         if not copy_link_bounds:
             run_adb(["shell", "input", "keyevent", "4"], serial=serial)

@@ -788,7 +788,9 @@ def test_resolve_latest_post_link_copy_link_not_found(monkeypatch):
 
     dumps = [
         AdbResult(0, match_xml, ""),
-        AdbResult(0, no_copy_link_options_xml, ""),
+        AdbResult(0, no_copy_link_options_xml, ""),  # first look
+        AdbResult(0, no_copy_link_options_xml, ""),  # re-check after the sheet settles
+        AdbResult(0, no_copy_link_options_xml, ""),  # after scrolling the sheet once
     ]
     dump_iter = iter(dumps)
 
@@ -997,3 +999,32 @@ def test_resolve_latest_post_link_uses_custom_attempts(monkeypatch):
     assert "after 3 attempts" in detail
     assert 7.5 in sleep_calls
 
+
+
+def test_resolve_scrolls_long_reel_menu_to_find_copy_link(monkeypatch):
+    match_xml = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" content-desc="More options for Agung's post" bounds="[954,406][1080,531]" />
+    <node class="android.view.ViewGroup" text="It spins at up to ten thousand rpm, driven by compressed air." bounds="[36,598][1044,731]" />
+    </node></hierarchy>"""
+    top_of_menu = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" text="Pin post" bounds="[36,324][1044,456]" /></node></hierarchy>"""
+    bottom_of_menu = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" text="Copy link" bounds="[36,1953][1044,2085]" /></node></hierarchy>"""
+    dump_iter = iter([AdbResult(0, match_xml, ""), AdbResult(0, top_of_menu, ""), AdbResult(0, top_of_menu, ""), AdbResult(0, bottom_of_menu, "")])
+    cmds, taps = [], []
+    monkeypatch.setattr("phone_runner.modern_composer.clear_and_verify_clipboard", lambda s: (True, "sentinel_1"))
+    monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.query_ui_hierarchy", lambda s: next(dump_iter))
+    monkeypatch.setattr("phone_runner.modern_composer.human_tap", lambda serial, bounds, rng=None: taps.append(bounds))
+    monkeypatch.setattr("phone_runner.modern_composer.run_adb", lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.modern_composer.read_device_clipboard",
+        lambda s: AdbResult(0, "https://www.facebook.com/story.php?story_fbid=4727818027542791&id=100009439229483", ""),
+    )
+
+    pid, permalink, _ = resolve_latest_post_link(TEST_SERIAL, "It spins at up to ten thousand rpm, driven by compressed air.")
+
+    assert pid == "4727818027542791"
+    assert (36, 1953, 1044, 2085) in taps
+    assert ["shell", "input", "swipe", "540", "1900", "540", "900", "400"] in cmds
