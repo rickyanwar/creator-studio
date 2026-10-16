@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v agent-handoff-guard >/dev/null 2>&1 && agent-handoff-guard || true",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

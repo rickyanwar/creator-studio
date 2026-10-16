@@ -71,3 +71,6 @@ local_media/
 
 # TLS certificates copied from Let's Encrypt by the renewal deploy hook (never commit)
 nginx/ssl/
+
+# Local agent notes, handoff state and scratch reports (never commit)
+.notes/
