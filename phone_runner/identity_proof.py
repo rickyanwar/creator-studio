@@ -1057,6 +1057,11 @@ def _wait_for_window_focus(serial: str, activity_suffix: str, timeout: float = C
         time.sleep(0.5)
 
 
+def _is_profile_switcher_open(tree: ET.Element) -> bool:
+    """The account switcher bottom sheet: a "Dismiss" handle plus Page entries."""
+    return _has_label(tree, ("Dismiss",)) and _has_label(tree, ("Page",))
+
+
 def _try_open_own_root_without_model(
     serial: str,
     main_name: str,
@@ -1102,6 +1107,12 @@ def _try_open_own_root_without_model(
     time.sleep(2.0)
 
     ok_p, err_p, tree_p, raw_xml_p = verify_foreground_facebook(serial, expected_geometry)
+    if ok_p and tree_p is not None and _is_profile_switcher_open(tree_p):
+        # Facebook restores an open profile-switcher sheet over the profile; close it with one Back
+        # (never tap inside it, so the session can never switch to a Page here).
+        run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+        time.sleep(1.2)
+        ok_p, err_p, tree_p, raw_xml_p = verify_foreground_facebook(serial, expected_geometry)
     if ok_p and tree_p is not None:
         if _is_own_root(tree_p):
             logger.info("Deterministic root navigation succeeded: fb://profile intent")

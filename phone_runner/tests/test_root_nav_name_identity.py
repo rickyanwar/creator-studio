@@ -247,3 +247,29 @@ def test_foreign_profile_without_manage_posts_is_never_scrolled(monkeypatch):
 
     assert identity_proof._try_open_own_root_without_model("100.64.96.50:5555", "Agung", None, allow_name_identity=True) is False
     assert cmds == []
+
+
+def test_open_profile_switcher_is_closed_with_back_never_tapped(monkeypatch):
+    import xml.etree.ElementTree as ET
+    from phone_runner import identity_proof
+    from phone_runner.adb import AdbResult
+
+    feed = ET.fromstring('<hierarchy><node text="Feed" bounds="[0,0][10,10]"/></hierarchy>')
+    switcher = ET.fromstring(
+        '<hierarchy><node content-desc="Dismiss" bounds="[0,0][10,10]"/>'
+        '<node text="GP Weekend" bounds="[0,20][10,30]"/><node text="Page" bounds="[0,30][10,40]"/></hierarchy>'
+    )
+    header = ET.fromstring('<hierarchy><node text="Agung" bounds="[0,0][10,10]"/></hierarchy>')
+    trees = iter([feed, feed, switcher, header])
+    cmds = []
+    monkeypatch.setattr(identity_proof.time, "sleep", lambda s: None)
+    monkeypatch.setattr(identity_proof, "launch_facebook_feed", lambda s: None)
+    monkeypatch.setattr(identity_proof, "launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr(identity_proof, "_check_and_tap_go_to_profile", lambda *a, **k: False)
+    monkeypatch.setattr(identity_proof, "verify_foreground_facebook", lambda s, g=None: (True, "", next(trees), "<x/>"))
+    monkeypatch.setattr(identity_proof, "find_own_profile_controls", lambda tree, name: (False, "x", None))
+    monkeypatch.setattr(identity_proof, "find_own_profile_name_identity", lambda tree, name: (tree is header, ""))
+    monkeypatch.setattr(identity_proof, "run_adb", lambda args, serial=None: cmds.append(args) or AdbResult(0, "", ""))
+
+    assert identity_proof._try_open_own_root_without_model("100.64.96.50:5555", "Agung", None, allow_name_identity=True) is True
+    assert cmds == [["shell", "input", "keyevent", "4"]]
