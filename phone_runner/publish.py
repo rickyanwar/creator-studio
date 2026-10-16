@@ -6,6 +6,7 @@ import os
 import re
 import time
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from phone_runner.adb import (
     AdbResult,
@@ -25,7 +26,7 @@ from phone_runner.dry_run import (
     normalize_geometry,
     parse_device_identity_evidence,
 )
-from phone_runner.identity_proof import collect_own_url_proof_chain, IdentityProofResult, get_center
+from phone_runner.identity_proof import collect_own_url_proof_chain, IdentityProofResult, get_center, parse_bounds
 from phone_runner.humanize import human_pause, human_tap
 from phone_runner.media_staging import get_media_content_uri, stage_media_files
 from phone_runner.mobilerun import run_mobilerun, type_text
@@ -272,6 +273,37 @@ def find_publish_button_coords(ui_dump: str) -> tuple[int, int] | None:
             return (x1 + x2) // 2, (y1 + y2) // 2
 
     return None
+
+
+KEEP_EDITING_LABELS = ("KEEP EDITING", "Keep editing")
+
+
+def _hide_keyboard_if_shown(serial: str) -> str:
+    """Hides the on-screen keyboard with one Back press, only when it is shown.
+
+    If Back opened the "Discard changes?" dialog instead, taps KEEP EDITING (never DISCARD).
+    Returns "not_shown", "hidden" or "dialog_kept".
+    """
+    ime = run_adb(["shell", "dumpsys", "input_method"], serial=serial)
+    if ime.returncode != 0 or "mInputShown=true" not in (ime.stdout or ""):
+        return "not_shown"
+    run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+    human_pause(1.0, 1.5)
+    dump = query_ui_hierarchy(serial)
+    if dump.returncode == 0 and dump.stdout:
+        try:
+            tree = ET.fromstring(dump.stdout.strip())
+        except ET.ParseError:
+            return "hidden"
+        for node in tree.iter("node"):
+            label = (node.attrib.get("text") or node.attrib.get("content-desc") or "").strip()
+            if label in KEEP_EDITING_LABELS:
+                bounds = parse_bounds(node.attrib.get("bounds", ""))
+                if bounds:
+                    human_tap(serial, bounds)
+                    human_pause(1.0, 1.5)
+                    return "dialog_kept"
+    return "hidden"
 
 
 def _post_link_stage(post_id: str | None, permalink: str | None, resolve_detail: str) -> dict[str, Any]:
@@ -1097,9 +1129,17 @@ def execute_publish(
             reveal_xml = post_type_ui.stdout
             photo_visible = has_attachment_preview(reveal_xml)
             swipes = 0
+            if not photo_visible:
+                # The keyboard covers the photo below a long caption; hide it first (no swipe on a keyboard).
+                keyboard_state = _hide_keyboard_if_shown(serial)
+                stages.append({"stage": "keyboard_hidden", "passed": True, "detail": keyboard_state})
+                r = query_ui_hierarchy(serial)
+                if r.returncode == 0 and r.stdout:
+                    reveal_xml = r.stdout
+                    photo_visible = has_attachment_preview(reveal_xml)
             while not photo_visible and swipes < PHOTO_REVEAL_SWIPES:
-                # Swipe in the content area above any on-screen keyboard (a swipe on a keyboard could glide-type).
-                run_adb(["shell", "input", "swipe", "540", "1300", "540", "600", "400"], serial=serial)
+                # Keyboard is hidden now; swipe in the photo area below the caption box (never inside the text box).
+                run_adb(["shell", "input", "swipe", "540", "2000", "540", "1200", "400"], serial=serial)
                 swipes += 1
                 human_pause(1.0, 1.5)
                 r = query_ui_hierarchy(serial)
@@ -1136,7 +1176,7 @@ def execute_publish(
 
             typed_state = composer_state(reveal_xml)
             revealed_text = typed_state.get("input_text")
-            if swipes and revealed_text is not None and revealed_text.strip() != norm_expected:
+            if revealed_text is not None and revealed_text.strip() != norm_expected:
                 evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
                 discard_composer(serial)
                 stages.append({

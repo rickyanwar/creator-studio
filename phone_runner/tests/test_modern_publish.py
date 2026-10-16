@@ -1197,6 +1197,7 @@ def test_long_caption_photo_revealed_after_one_swipe(monkeypatch):
         AdbResult(0, MODERN_FEED_DUMP, ""),
         AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
         AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # typed dump: caption matches, no photo
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # after keyboard check: still no photo
         AdbResult(0, SWIPED_REVEALED_PHOTO_XML, ""),          # after 1st swipe: photo revealed
         AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
     ])
@@ -1234,7 +1235,7 @@ def test_long_caption_photo_revealed_after_one_swipe(monkeypatch):
     # Exactly one swipe command recorded
     swipe_cmds = [cmd for cmd in adb_commands if "swipe" in cmd]
     assert len(swipe_cmds) == 1
-    assert swipe_cmds[0] == ["shell", "input", "swipe", "540", "1300", "540", "600", "400"]
+    assert swipe_cmds[0] == ["shell", "input", "swipe", "540", "2000", "540", "1200", "400"]
 
     # content_gate stage detail confirms swipe count
     content_gate_stage = next(s for s in res["stages"] if s["stage"] == "content_gate")
@@ -1386,3 +1387,100 @@ def test_caption_changed_while_revealing_photo_fails_before_share(monkeypatch):
     assert res["error_code"] == "caption_mismatch"
     assert res["publish_may_have_started"] is False
     assert (811, 125, 1026, 233) not in taps
+
+
+def _patch_long_caption_flow(monkeypatch, ui_seq, adb_handler, taps):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", adb_handler)
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.publish.verify_gate",
+        lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
+    )
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+    )
+
+
+KEEP_EDITING_DIALOG_XML = """<hierarchy rotation="0">
+  <node class="android.widget.TextView" bounds="[159,987][921,1060]" text="Discard changes?" />
+  <node class="android.widget.Button" bounds="[369,1240][713,1402]" text="KEEP EDITING" />
+  <node class="android.widget.Button" bounds="[713,1240][957,1402]" text="DISCARD" />
+</hierarchy>"""
+
+
+def test_keyboard_hidden_reveals_photo_without_swipe(monkeypatch):
+    taps, cmds = [], []
+
+    def adb(args, serial=None):
+        cmds.append(list(args))
+        if args[:3] == ["shell", "dumpsys", "input_method"]:
+            return AdbResult(0, "mInputShown=true\n", "")
+        return AdbResult(0, "OK", "")
+
+    _patch_long_caption_flow(monkeypatch, [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),
+        AdbResult(0, SWIPED_REVEALED_PHOTO_XML, ""),   # dump inside _hide_keyboard_if_shown (no dialog)
+        AdbResult(0, SWIPED_REVEALED_PHOTO_XML, ""),   # re-dump after hiding: photo visible
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ], adb, taps)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="A very long caption that pushed the photo down",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "published"
+    assert ["shell", "input", "keyevent", "4"] in cmds
+    assert not [c for c in cmds if "swipe" in c]
+    assert (369, 1240, 713, 1402) not in taps and (713, 1240, 957, 1402) not in taps
+
+
+def test_back_opened_discard_dialog_taps_keep_editing_never_discard(monkeypatch):
+    taps, cmds = [], []
+
+    def adb(args, serial=None):
+        cmds.append(list(args))
+        if args[:3] == ["shell", "dumpsys", "input_method"]:
+            return AdbResult(0, "mInputShown=true\n", "")
+        return AdbResult(0, "OK", "")
+
+    _patch_long_caption_flow(monkeypatch, [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),
+        AdbResult(0, KEEP_EDITING_DIALOG_XML, ""),     # Back opened the dialog
+        AdbResult(0, SWIPED_REVEALED_PHOTO_XML, ""),   # after KEEP EDITING: photo visible
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ], adb, taps)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="A very long caption that pushed the photo down",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert (369, 1240, 713, 1402) in taps          # KEEP EDITING
+    assert (713, 1240, 957, 1402) not in taps      # never DISCARD
+    assert res["status"] == "published"
