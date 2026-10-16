@@ -1261,7 +1261,7 @@ def test_publish_candidate_capture_retry_exhausted_returns_failure():
     assert mock_act.call_count == 3
     mock_own_profile.assert_called_once_with(TEST_SERIAL)
     sleep_args = [call.args[0] for call in mock_sleep.call_args_list]
-    assert sleep_args == [2.5, 1.5]
+    assert sleep_args == [1.0, 2.5, 1.5]  # 1.0 = settle after the fresh Facebook restart
     assert res["status"] == "failed"
     assert res["error_code"] == "identity_mismatch"
     assert res["publish_may_have_started"] is False
@@ -1296,7 +1296,7 @@ def test_publish_candidate_capture_first_attempt_succeeds_never_launches_own_pro
     assert mock_ui.call_count == 1
     assert mock_act.call_count == 1
     mock_own_profile.assert_not_called()
-    mock_sleep.assert_not_called()
+    assert mock_sleep.call_args_list == [mock.call(1.0)]  # only the fresh-restart settle
     assert res["status"] == "published"
 
 

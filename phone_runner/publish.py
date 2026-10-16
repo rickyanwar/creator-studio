@@ -637,6 +637,12 @@ def execute_publish(
             "checked_at": checked_at,
         }
 
+    # Start from a fresh Facebook process (like swiping the app away): earlier runs can leave a
+    # composer, the profile switcher or an old scroll position behind, which made runs flaky.
+    run_adb(["shell", "am", "force-stop", "com.facebook.katana"], serial=serial)
+    time.sleep(1.0)
+    stages.append({"stage": "app_reset", "passed": True, "detail": "Facebook restarted fresh before the run"})
+
     if is_device_secure_locked(serial):
         stages.append({
             "stage": "unlock",
