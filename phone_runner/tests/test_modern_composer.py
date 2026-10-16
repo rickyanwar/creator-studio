@@ -21,6 +21,23 @@ from phone_runner.modern_composer import (
 )
 from phone_runner.publish import execute_publish
 
+
+class _NoopImeContext:
+    def __init__(self, serial):
+        self.serial = serial
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _no_real_portal_ime(monkeypatch):
+    monkeypatch.setattr("phone_runner.modern_composer.PortalImeContext", _NoopImeContext)
+
+
 TEST_SERIAL = "100.64.96.50:5555"
 TEST_ROOT_ID = "100009439229483"
 TEST_ROOT_NAME = "Agung"
@@ -149,6 +166,8 @@ FAKE_PROBE_READY = {
 
 
 @pytest.fixture(autouse=True)
+
+
 def _common_env(monkeypatch):
     monkeypatch.setenv("PHONE_RUNNER_ALLOWED_SERIALS", TEST_SERIAL)
     monkeypatch.setenv("PHONE_RUNNER_MEDIA_HOSTS", "cdn.example.com")
@@ -884,3 +903,40 @@ def test_open_share_intent_composer_wrong_author(monkeypatch):
     assert "wrong author" in detail
     discard_mock.assert_called_once()
 
+
+
+def test_resolve_returns_unproven_when_portal_keyboard_unavailable(monkeypatch):
+    class _Broken:
+        def __init__(self, serial):
+            pass
+
+        def __enter__(self):
+            raise RuntimeError("Failed to query default IME")
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr("phone_runner.modern_composer.PortalImeContext", _Broken)
+    post_id, permalink, detail = resolve_latest_post_link("100.64.96.50:5555", "caption")
+    assert post_id is None and permalink is None
+    assert "portal keyboard unavailable" in detail
+
+
+def test_post_url_allowlist_accepts_post_links_only():
+    from phone_runner.resolver import is_allowed_facebook_post_url, is_allowed_facebook_url
+
+    good = [
+        "https://www.facebook.com/share/p/1MajvEXHB3/",
+        "https://www.facebook.com/share/v/AbC123/",
+        "https://www.facebook.com/story.php?story_fbid=4727735434217717&id=100009439229483",
+    ]
+    bad = [
+        "https://evil.com/share/p/1MajvEXHB3/",
+        "https://www.facebook.com/share/p/1Maj/?next=https://evil.com",
+        "http://www.facebook.com/share/p/1MajvEXHB3/",
+        "https://www.facebook.com/story.php?story_fbid=abc&id=1",
+    ]
+    assert all(is_allowed_facebook_post_url(u) for u in good)
+    assert not any(is_allowed_facebook_post_url(u) for u in bad)
+    # the identity (profile) allowlist stays strict
+    assert not is_allowed_facebook_url("https://www.facebook.com/share/p/1MajvEXHB3/")

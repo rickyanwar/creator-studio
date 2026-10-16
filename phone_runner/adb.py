@@ -11,7 +11,7 @@ from phone_runner.config import (
     get_default_timeout,
     is_serial_valid_format,
 )
-from phone_runner.resolver import is_allowed_facebook_url
+from phone_runner.resolver import is_allowed_facebook_post_url, is_allowed_facebook_url
 
 
 @dataclass(frozen=True)
@@ -451,7 +451,7 @@ def read_device_clipboard(serial: str, expected_sentinel: str | None = None) -> 
     elif re.fullmatch(r"sentinel_[0-9a-fA-F]{16,64}", payload):
         is_sentinel = True
 
-    if is_sentinel or is_allowed_facebook_url(payload):
+    if is_sentinel or is_allowed_facebook_url(payload) or is_allowed_facebook_post_url(payload):
         return AdbResult(returncode=0, stdout=payload, stderr="")
 
     # Unknown content must be withheld, never returned or logged

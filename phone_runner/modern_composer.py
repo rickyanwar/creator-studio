@@ -17,6 +17,7 @@ from phone_runner.adb import (
 )
 from phone_runner.humanize import human_pause, human_tap
 from phone_runner.identity_proof import (
+    PortalImeContext,
     clear_and_verify_clipboard,
     get_center,
     parse_bounds,
@@ -582,7 +583,7 @@ def extract_post_id_from_url(url: str) -> tuple[str | None, str | None]:
         return pid, url.split("&mibextid")[0].split("?mibextid")[0]
 
     # 3. Share URL pattern: /share/p/<token> or /share/<token>
-    m_share = re.search(r"facebook\.com/share/(?:p/)?([A-Za-z0-9]+)", url, re.IGNORECASE)
+    m_share = re.search(r"facebook\.com/share/(?:[prv]/)?([A-Za-z0-9]+)", url, re.IGNORECASE)
     if m_share:
         try:
             opener = build_safe_opener()
@@ -603,6 +604,19 @@ def extract_post_id_from_url(url: str) -> tuple[str | None, str | None]:
 
 
 def resolve_latest_post_link(
+    serial: str,
+    caption: str | None = None,
+) -> tuple[str | None, str | None, str]:
+    """Copies the matching post's link. Portal clipboard reads need the Portal keyboard selected,
+    but captions are pasted with the normal keyboard, so select Portal only for this step."""
+    try:
+        with PortalImeContext(serial):
+            return _resolve_latest_post_link(serial, caption)
+    except RuntimeError as exc:
+        return None, None, f"portal keyboard unavailable for clipboard read: {exc}"
+
+
+def _resolve_latest_post_link(
     serial: str,
     caption: str | None = None,
 ) -> tuple[str | None, str | None, str]:

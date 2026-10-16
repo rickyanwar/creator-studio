@@ -258,6 +258,38 @@ def resolve_vanity_metadata(
                 pass
 
 
+def is_allowed_facebook_post_url(url: str) -> bool:
+    """Allowlist for links copied from a POST's "Copy link" (never used for identity proof).
+
+    Accepts https://www.facebook.com/share/{p,v,r}/<token>/ and story.php / permalink.php with
+    numeric story_fbid + id.
+    """
+    if not isinstance(url, str) or not url or len(url) > MAX_URL_LENGTH:
+        return False
+    if any(ord(c) <= 32 or ord(c) == 127 for c in url) or "#" in url or "\\" in url:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except Exception:
+        return False
+    if parsed.scheme != "https" or parsed.netloc != parsed.hostname or parsed.hostname not in ALLOWED_HOSTS:
+        return False
+    if re.fullmatch(r"/share/[prv]/[A-Za-z0-9]+/?", parsed.path) and not parsed.query:
+        return True
+    if parsed.path in ("/story.php", "/permalink.php"):
+        try:
+            qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        except Exception:
+            return False
+        fbid = qs.get("story_fbid", [""])
+        actor = qs.get("id", [""])
+        return (
+            len(fbid) == 1 and len(actor) == 1
+            and bool(re.fullmatch(r"\d{4,32}", fbid[0])) and bool(re.fullmatch(r"\d{4,32}", actor[0]))
+        )
+    return False
+
+
 def is_allowed_facebook_url(url: str) -> bool:
     """Validates raw URL against strict allowlist rules for Facebook actors and shares."""
     if not isinstance(url, str):
