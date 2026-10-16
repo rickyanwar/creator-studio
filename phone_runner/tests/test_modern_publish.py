@@ -435,7 +435,7 @@ def test_actor_title_empty_state_true_fails_submission_flow_uncalibrated():
         )
 
     assert res["status"] == "failed"
-    assert res["error_code"] == "submission_flow_uncalibrated"
+    assert res["error_code"] == "draft_state_uncertain"
     assert res["publish_may_have_started"] is False
     mock_type.assert_not_called()
     tap_calls = [c for c in mock_adb.call_args_list if "tap" in c[0][0]]
@@ -460,7 +460,7 @@ def test_modern_media_requests_fail_before_staging():
         )
 
     assert res["status"] == "failed"
-    assert res["error_code"] == "media_unsupported_on_modern"
+    assert res["error_code"] == "draft_state_uncertain"
     assert res["publish_may_have_started"] is False
     mock_stage.assert_not_called()
 
@@ -694,3 +694,398 @@ def test_exception_with_submitted_flag_true_or_missing_or_unknown_returns_uncert
     assert err_stage["stage"] == "execution_error"
     assert err_stage["passed"] is False
     assert "RuntimeError" in err_stage["detail"]
+
+
+EMPTY_PROOF_COMPOSER_XML = f"""<hierarchy rotation="0">
+  <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+  <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="false" />
+  <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+  <node class="android.widget.AutoCompleteTextView" bounds="[0,690][1080,792]" text="What's on your mind?" />
+</hierarchy>"""
+
+SHARE_INTENT_COMPOSER_XML = f"""<hierarchy rotation="0">
+  <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+  <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="true" />
+  <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+  <node class="android.widget.AutoCompleteTextView" bounds="[0,690][1080,792]" text="What's on your mind?" />
+  <node class="android.widget.ImageView" content-desc="Photo" bounds="[0,891][1080,1971]" />
+  <node class="android.widget.Button" content-desc="Remove photo" bounds="[800,891][1000,1000]" />
+</hierarchy>"""
+
+TYPED_SHARE_COMPOSER_XML = f"""<hierarchy rotation="0">
+  <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+  <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="true" />
+  <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+  <node class="android.widget.AutoCompleteTextView" bounds="[0,690][1080,792]" text="Hello with modern share intent" />
+  <node class="android.widget.ImageView" content-desc="Photo" bounds="[0,891][1080,1971]" />
+  <node class="android.widget.Button" content-desc="Remove photo" bounds="[800,891][1000,1000]" />
+</hierarchy>"""
+
+POST_SETTINGS_SCREEN_XML = """<hierarchy rotation="0">
+  <node text="Post settings" bounds="[200,100][600,200]" />
+  <node class="android.widget.Button" content-desc="SHARE" bounds="[811,125][1026,233]" />
+  <node class="android.widget.Button" content-desc="Post audience, Public" bounds="[50,300][1030,450]" />
+</hierarchy>"""
+
+
+def test_modern_share_intent_happy_path_published(monkeypatch):
+    # (1) happy path -> published, SHARE tapped exactly once, 4 gates in evidence
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_SHARE_COMPOSER_XML, ""),
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ]
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+
+    gates_called = []
+    def mock_verify_gate(serial, gate, **kw):
+        gates_called.append(gate)
+        return True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "gate passed", "answer": {}}
+
+    monkeypatch.setattr("phone_runner.publish.verify_gate", mock_verify_gate)
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "published"
+    assert res["facebook_post_id"] == "post_123"
+    assert res["permalink"] == "https://facebook.com/posts/post_123"
+    assert res["publish_may_have_started"] is True
+    assert res["error_code"] is None
+
+    # SHARE tapped exactly once
+    share_taps = [b for b in taps if b == (811, 125, 1026, 233)]
+    assert len(share_taps) == 1
+
+    # 4 gates in evidence
+    vision_gates = res["evidence"]["vision_gates"]
+    assert len(vision_gates) == 4
+    assert [g["gate"] for g in vision_gates] == [
+        "composer_before_typing",
+        "composer_after_typing",
+        "post_settings",
+        "posted",
+    ]
+    assert all(g["ok"] is True for g in vision_gates)
+
+
+def test_modern_share_intent_composer_before_typing_gate_fails(monkeypatch):
+    # (2) composer_before_typing gate fails -> failed, nothing typed, no SHARE
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+    ]
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    mock_type = mock.Mock()
+    monkeypatch.setattr("phone_runner.publish.type_text", mock_type)
+
+    def mock_verify_gate(serial, gate, **kw):
+        return False, {"gate": gate, "model": "gemini-flash", "ok": False, "detail": "author mismatch", "answer": {}}
+
+    monkeypatch.setattr("phone_runner.publish.verify_gate", mock_verify_gate)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "failed"
+    assert res["error_code"] == "vision_gate_failed"
+    assert res["publish_may_have_started"] is False
+    mock_type.assert_not_called()
+    share_taps = [b for b in taps if b == (811, 125, 1026, 233)]
+    assert len(share_taps) == 0
+    assert len(res["evidence"]["vision_gates"]) == 1
+
+
+def test_modern_share_intent_post_settings_gate_fails(monkeypatch):
+    # (3) post_settings gate fails -> failed, no SHARE
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_SHARE_COMPOSER_XML, ""),
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ]
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+
+    def mock_verify_gate(serial, gate, **kw):
+        if gate == "post_settings":
+            return False, {"gate": gate, "model": "gemini-flash", "ok": False, "detail": "share button not visible", "answer": {}}
+        return True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "gate passed", "answer": {}}
+
+    monkeypatch.setattr("phone_runner.publish.verify_gate", mock_verify_gate)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "failed"
+    assert res["error_code"] == "vision_gate_failed"
+    assert res["publish_may_have_started"] is False
+    share_taps = [b for b in taps if b == (811, 125, 1026, 233)]
+    assert len(share_taps) == 0
+    assert len(res["evidence"]["vision_gates"]) == 3
+
+
+def test_modern_share_intent_posted_gate_fails_uncertain(monkeypatch):
+    # (4) posted gate fails -> uncertain, facebook_post_id None, resolved id in evidence
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_SHARE_COMPOSER_XML, ""),
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ]
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+
+    def mock_verify_gate(serial, gate, **kw):
+        if gate == "posted":
+            return False, {"gate": gate, "model": "gemini-flash", "ok": False, "detail": "photo not visible on profile", "answer": {}}
+        return True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "gate passed", "answer": {}}
+
+    monkeypatch.setattr("phone_runner.publish.verify_gate", mock_verify_gate)
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c: ("post_uncertain_999", "https://facebook.com/posts/post_uncertain_999", "resolved"),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "uncertain"
+    assert res["error_code"] == "post_vision_mismatch"
+    assert res["publish_may_have_started"] is True
+    assert res["facebook_post_id"] is None
+    assert res["evidence"]["resolved_post_id"] == "post_uncertain_999"
+    assert res["evidence"]["resolved_permalink"] == "https://facebook.com/posts/post_uncertain_999"
+
+    # SHARE was tapped once
+    share_taps = [b for b in taps if b == (811, 125, 1026, 233)]
+    assert len(share_taps) == 1
+    assert len(res["evidence"]["vision_gates"]) == 4
+
+
+def test_modern_share_intent_wrong_author_in_share_composer_fails(monkeypatch):
+    # (5) wrong author "Agung Baelah" in share composer -> failed before typing
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+    ]
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr(
+        "phone_runner.publish.open_share_intent_composer",
+        lambda s, u, a: (False, "wrong author: expected 'OwnPageTarget', observed ['Agung Baelah']", None),
+    )
+    mock_type = mock.Mock()
+    monkeypatch.setattr("phone_runner.publish.type_text", mock_type)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "failed"
+    assert res["error_code"] == "media_attach_failed"
+    assert res["publish_may_have_started"] is False
+    mock_type.assert_not_called()
+    share_taps = [b for b in taps if b == (811, 125, 1026, 233)]
+    assert len(share_taps) == 0
+
+
+def test_modern_share_intent_two_media_urls_fails_before_staging(monkeypatch):
+    # (6) two media urls -> failed before staging
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+    ]
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+
+    mock_stage = mock.MagicMock()
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", mock_stage)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with two media",
+        media_urls=["https://cdn.example.com/p1.jpg", "https://cdn.example.com/p2.jpg"],
+    )
+
+    assert res["status"] == "failed"
+    assert res["error_code"] == "media_attach_failed"
+    assert res["publish_may_have_started"] is False
+    mock_stage.assert_not_called()
+    assert any("multi-image not supported on share-intent path" in s.get("detail", "") for s in res["stages"])
+
+
+def test_modern_text_only_uses_old_path(monkeypatch):
+    # (7) text-only post still uses the old path
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_SHARE_COMPOSER_XML.replace("Hello with modern share intent", "Text only post"), ""),
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ]
+    ui_iter = iter(ui_seq)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+
+    mock_open_share = mock.Mock()
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", mock_open_share)
+    mock_gate = mock.Mock()
+    monkeypatch.setattr("phone_runner.publish.verify_gate", mock_gate)
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c: ("post_text_only", "https://facebook.com/posts/post_text_only", "resolved"),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Text only post",
+        media_urls=None,
+    )
+
+    assert res["status"] == "published"
+    assert res["facebook_post_id"] == "post_text_only"
+    assert res["publish_may_have_started"] is True
+    mock_open_share.assert_not_called()
+    mock_gate.assert_not_called()
+    assert res["evidence"]["vision_gates"] == []
+    share_taps = [b for b in taps if b == (811, 125, 1026, 233)]
+    assert len(share_taps) == 1

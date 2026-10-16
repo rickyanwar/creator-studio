@@ -4,11 +4,13 @@ import http.client
 import ipaddress
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import ssl
 import tempfile
-from typing import Generator
+import time
+from typing import Any, Generator
 import urllib.parse
 import urllib.request
 
@@ -21,6 +23,7 @@ from phone_runner.config import (
 
 CHUNK_SIZE = 64 * 1024
 TAILSCALE_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
+SAFE_STAGED_NAME_RE = re.compile(r"^stage_[A-Za-z0-9_]+\.[a-z0-9]{1,6}$")
 
 
 class ProhibitRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -321,6 +324,31 @@ def push_media_to_device(
     return remote_path
 
 
+def get_media_content_uri(
+    serial: str,
+    remote_path: str,
+    attempts: int = 6,
+    wait: float = 1.0,
+    sleep: Any = time.sleep,
+) -> str | None:
+    basename = remote_path.rsplit("/", 1)[-1]
+    if not SAFE_STAGED_NAME_RE.match(basename):
+        return None
+
+    query_cmd = (
+        f'content query --uri content://media/external/images/media '
+        f'--projection _id:_data --where "_data LIKE \'%{basename}\'"'
+    )
+    for _ in range(attempts):
+        res = run_adb(["shell", query_cmd], serial=serial)
+        if res.returncode == 0 and res.stdout:
+            m = re.search(r"_id=(\d+)", res.stdout)
+            if m:
+                return f"content://media/external/images/media/{m.group(1)}"
+        sleep(wait)
+    return None
+
+
 @contextmanager
 def stage_media_files(
     media_urls: list[str],
@@ -357,3 +385,12 @@ def stage_media_files(
         if cleanup_remote and remote_paths:
             for rp in remote_paths:
                 run_adb(["shell", "rm", "-f", rp], serial=serial)
+                bn = rp.rsplit("/", 1)[-1]
+                if SAFE_STAGED_NAME_RE.match(bn):
+                    run_adb(
+                        [
+                            "shell",
+                            f'content delete --uri content://media/external/images/media --where "_data LIKE \'%{bn}\'"',
+                        ],
+                        serial=serial,
+                    )

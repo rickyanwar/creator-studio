@@ -111,7 +111,7 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        if self.path not in ("/probe", "/dry-run", "/publish", "/recover", "/notify"):
+        if self.path not in ("/probe", "/dry-run", "/publish", "/rehearse", "/recover", "/notify"):
             self.send_json(404, {"error": "not_found"})
             return
 
@@ -159,7 +159,7 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
             self.send_json(200, res)
             return
 
-        # Mutating device operations (/dry-run, /publish, /recover) acquire exclusive non-blocking per-serial lock
+        # Mutating device operations (/dry-run, /publish, /rehearse, /recover) acquire exclusive non-blocking per-serial lock
         serial_lock = get_serial_lock(serial)
         if not serial_lock.acquire(blocking=False):
             self.send_json(409, {"error": "device_busy", "detail": f"Device {serial} is busy running another operation"})
@@ -216,6 +216,41 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
                     media_kind=media_kind,
                     expected_geometry=expected_geometry,
                     app_card_version=app_card_version,
+                )
+                self.send_json(200, res)
+                return
+
+            if self.path == "/rehearse":
+                main_profile = body.get("main_profile")
+                if not main_profile or not isinstance(main_profile, (dict, str)):
+                    self.send_json(400, {"error": "missing_main_profile"})
+                    return
+
+                destination = body.get("destination")
+                if not destination or not isinstance(destination, dict):
+                    self.send_json(400, {"error": "missing_destination"})
+                    return
+
+                caption = body.get("caption", "")
+                media_urls = body.get("media_urls")
+                if media_urls is not None and not isinstance(media_urls, list):
+                    self.send_json(400, {"error": "invalid_media_urls"})
+                    return
+
+                media_kind = body.get("media_kind")
+                expected_geometry = body.get("expected_geometry")
+                app_card_version = body.get("app_card_version")
+
+                res = execute_publish(
+                    serial=serial,
+                    main_profile=main_profile,
+                    destination=destination,
+                    caption=caption,
+                    media_urls=media_urls,
+                    media_kind=media_kind,
+                    expected_geometry=expected_geometry,
+                    app_card_version=app_card_version,
+                    rehearsal=True,
                 )
                 self.send_json(200, res)
                 return

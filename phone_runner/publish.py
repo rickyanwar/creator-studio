@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import hashlib
 import html
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -24,14 +25,30 @@ from phone_runner.dry_run import (
     normalize_geometry,
     parse_device_identity_evidence,
 )
-from phone_runner.identity_proof import collect_own_url_proof_chain, IdentityProofResult
-from phone_runner.media_staging import stage_media_files
+from phone_runner.identity_proof import collect_own_url_proof_chain, IdentityProofResult, get_center
+from phone_runner.humanize import human_pause, human_tap
+from phone_runner.media_staging import get_media_content_uri, stage_media_files
 from phone_runner.mobilerun import run_mobilerun, type_text
+from phone_runner.modern_composer import (
+    attach_first_gallery_item,
+    composer_state,
+    discard_composer,
+    has_attachment_preview,
+    is_empty_composer,
+    open_share_intent_composer,
+    resolve_latest_post_link,
+    share_screen_state,
+)
 from phone_runner.observation import save_composer_observation
 from phone_runner.probe import probe_device
 from phone_runner.result_verification import poll_for_post_result
+from phone_runner.vision_verify import verify_gate
 
 logger = logging.getLogger("phone_runner")
+
+PUBLISH_BUDGET_SECONDS = 250.0
+PRE_SHARE_MAX_SECONDS = 150.0
+
 
 
 def _query_device_capture_with_retry(
@@ -136,7 +153,7 @@ def parse_composer_content_evidence(
 
         # Identify caption input node
         is_caption_node = (
-            ("composer_text_input" in res_id or "caption" in res_id or "edittext" in cls_name)
+            ("composer_text_input" in res_id or "caption" in res_id or "edittext" in cls_name or "autocompletetextview" in cls_name)
             and not any(k in res_id for k in ("search", "privacy", "audience", "filter"))
         )
 
@@ -144,8 +161,9 @@ def parse_composer_content_evidence(
             composer_input_found = True
             raw_unescaped = html.unescape(raw_text).replace("\r\n", "\n").replace("\r", "\n")
             norm_node_text = raw_unescaped.strip()
+            is_placeholder = norm_node_text in ("What's on your mind?", "Apa yang Anda pikirkan?")
             if norm_expected:
-                if norm_node_text and norm_node_text == norm_expected:
+                if norm_node_text and norm_node_text == norm_expected and not is_placeholder:
                     caption_matched = True
             else:
                 # When expected caption is empty, composer node text MUST be empty!
@@ -255,6 +273,17 @@ def find_publish_button_coords(ui_dump: str) -> tuple[int, int] | None:
     return None
 
 
+def _post_link_stage(post_id: str | None, permalink: str | None, resolve_detail: str) -> dict[str, Any]:
+    """Records the copied post link as a stage. The backend stores stages for every outcome
+    (evidence is not stored), so the post id survives even when the delivery ends up uncertain."""
+    resolved = bool(post_id and permalink)
+    return {
+        "stage": "post_link_resolved",
+        "passed": resolved,
+        "detail": f"post_id={post_id} permalink={permalink}" if resolved else resolve_detail,
+    }
+
+
 def execute_publish(
     serial: str,
     main_profile: dict[str, Any] | str,
@@ -264,6 +293,7 @@ def execute_publish(
     media_kind: str | None = None,
     expected_geometry: Any = None,
     app_card_version: str | None = None,
+    rehearsal: bool = False,
 ) -> dict[str, Any]:
     """Executes the guarded multi-gate Facebook publishing workflow.
 
@@ -277,6 +307,7 @@ def execute_publish(
     - Restore initial screen sleep state.
     - Redact sensitive content (tokens, captions, raw media) from logs and evidence.
     """
+    started = time.monotonic()
     checked_at = datetime.now(timezone.utc).isoformat()
     stages: list[dict[str, Any]] = []
 
@@ -577,6 +608,18 @@ def execute_publish(
         has_legacy_marker = (cand_root_id == main_id or cand_composer_id == expected_target_id)
 
         if has_legacy_marker:
+            if rehearsal:
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "rehearsal_unsupported_layout",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
             # Legacy old path: stage media first if required, then run composition and publish
             staged_remote_files: list[str] = []
             if media_list:
@@ -718,33 +761,15 @@ def execute_publish(
         evidence["observed_root_url"] = proof.observed_root_url
         evidence["observed_target_url"] = proof.observed_target_url
         evidence["composer_readiness"] = proof.composer_readiness
-
-        if media_list:
-            stages.append({
-                "stage": "media_staging",
-                "passed": False,
-                "detail": "Media publishing is not supported on modern Facebook composer layout",
-            })
-            evidence["observation_file"] = save_composer_observation(serial, "media_unsupported_on_modern")
-            return {
-                "status": "failed",
-                "facebook_post_id": None,
-                "permalink": None,
-                "actor_id": expected_target_id,
-                "publish_may_have_started": False,
-                "error_code": "media_unsupported_on_modern",
-                "evidence": evidence,
-                "stages": stages,
-                "checked_at": checked_at,
-            }
+        evidence["vision_gates"] = []
 
         readiness = proof.composer_readiness or {}
-        empty_certainty = readiness.get("empty_state_certainty")
-        if empty_certainty is not True:
+        if readiness.get("empty_state_certainty") is False:
+            discard_composer(serial)
             stages.append({
                 "stage": "draft_state_gate",
                 "passed": False,
-                "detail": "Composer empty state cannot be verified with certainty (empty_state_certainty is not True); typing blocked to prevent corrupting or publishing existing draft",
+                "detail": "Composer empty state cannot be verified with certainty; typing blocked to prevent corrupting or publishing existing draft",
             })
             evidence["observation_file"] = save_composer_observation(serial, "draft_state_uncertain")
             return {
@@ -759,24 +784,824 @@ def execute_publish(
                 "checked_at": checked_at,
             }
 
-        header_variant = readiness.get("header_variant")
+        # Step a: dump -> composer_state -> is_empty_composer
+        ui_res = query_ui_hierarchy(serial)
+        if ui_res.returncode != 0 or not ui_res.stdout:
+            discard_composer(serial)
+            stages.append({
+                "stage": "draft_state_gate",
+                "passed": False,
+                "detail": "Failed to dump composer UI hierarchy",
+            })
+            evidence["observation_file"] = save_composer_observation(serial, "draft_state_uncertain")
+            return {
+                "status": "failed",
+                "facebook_post_id": None,
+                "permalink": None,
+                "actor_id": expected_target_id,
+                "publish_may_have_started": False,
+                "error_code": "draft_state_uncertain",
+                "evidence": evidence,
+                "stages": stages,
+                "checked_at": checked_at,
+            }
+
+        c_state = composer_state(ui_res.stdout)
+        is_empty, empty_reason = is_empty_composer(c_state, dest_name)
+        if not is_empty:
+            discard_composer(serial)
+            err_code = "composer_author_mismatch" if "wrong author" in empty_reason else "draft_state_uncertain"
+            stages.append({
+                "stage": "draft_state_gate",
+                "passed": False,
+                "detail": f"Composer empty check failed: {empty_reason}",
+            })
+            evidence["observation_file"] = save_composer_observation(serial, err_code)
+            return {
+                "status": "failed",
+                "facebook_post_id": None,
+                "permalink": None,
+                "actor_id": expected_target_id,
+                "publish_may_have_started": False,
+                "error_code": err_code,
+                "evidence": evidence,
+                "stages": stages,
+                "checked_at": checked_at,
+            }
+
         stages.append({
-            "stage": "submission_gate",
-            "passed": False,
-            "detail": f"Modern composer layout '{header_variant}' submission flow is uncalibrated (Next button to final Post screen unobserved)",
+            "stage": "draft_state_gate",
+            "passed": True,
+            "detail": "Modern composer verified empty and ready",
         })
-        evidence["observation_file"] = save_composer_observation(serial, "submission_flow_uncalibrated")
-        return {
-            "status": "failed",
-            "facebook_post_id": None,
-            "permalink": None,
-            "actor_id": expected_target_id,
-            "publish_may_have_started": False,
-            "error_code": "submission_flow_uncalibrated",
-            "evidence": evidence,
-            "stages": stages,
-            "checked_at": checked_at,
-        }
+
+        # Step b: media staging + attachment / typing
+        if media_list:
+            # Step b: discard_composer(serial) to close that empty proof composer; human_pause()
+            discard_composer(serial)
+            human_pause()
+
+            # Step c: stage media. Only ONE image supported.
+            if len(media_list) > 1:
+                stages.append({
+                    "stage": "media_staging",
+                    "passed": False,
+                    "detail": "multi-image not supported on share-intent path",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "media_attach_failed",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            try:
+                staging_cm = stage_media_files(media_list, serial=serial)
+                staged = staging_cm.__enter__()
+                staged_remote_files = [str(item["remote_path"]) for item in staged]
+                stages.append({
+                    "stage": "media_staging",
+                    "passed": True,
+                    "detail": f"Successfully staged {len(staged_remote_files)} media files to device",
+                })
+            except Exception as exc:
+                stages.append({
+                    "stage": "media_staging",
+                    "passed": False,
+                    "detail": f"Media staging failed: {type(exc).__name__}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "media_attach_failed",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            reference_jpeg: bytes | None = None
+            local_p = staged[0].get("local_path")
+            if local_p and os.path.isfile(str(local_p)):
+                try:
+                    with open(str(local_p), "rb") as f:
+                        reference_jpeg = f.read()
+                except Exception:
+                    reference_jpeg = None
+
+            uri = get_media_content_uri(serial, str(staged[0]["remote_path"]))
+            if not uri:
+                stages.append({
+                    "stage": "media_attachment",
+                    "passed": False,
+                    "detail": "Failed to resolve MediaStore content URI",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "media_attach_failed",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            # Step d: open share intent composer
+            open_ok, open_detail, open_xml = open_share_intent_composer(serial, uri, dest_name)
+            if not open_ok or not open_xml:
+                stages.append({
+                    "stage": "media_attachment",
+                    "passed": False,
+                    "detail": f"Media attachment failed: {open_detail}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "media_attach_failed",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "media_attachment",
+                "passed": True,
+                "detail": open_detail,
+            })
+            c_state = composer_state(open_xml)
+
+            # Step e: vision gate composer_before_typing
+            v_ok, v_ev = verify_gate(
+                serial,
+                "composer_before_typing",
+                expected_author=dest_name,
+                expected_caption=caption_str,
+                require_caption=False,
+                reference_jpeg=reference_jpeg,
+            )
+            evidence["vision_gates"].append(v_ev)
+            if not v_ok:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "vision_gate_composer_before_typing",
+                    "passed": False,
+                    "detail": f"Vision gate composer_before_typing failed: {v_ev.get('detail')}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "vision_gate_failed")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "vision_gate_failed",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "vision_gate_composer_before_typing",
+                "passed": True,
+                "detail": v_ev.get("detail", "ok"),
+            })
+
+            # Step f: tap input, pause, type caption, verify content
+            input_bounds = c_state.get("input_bounds")
+            if input_bounds:
+                human_tap(serial, input_bounds)
+            human_pause(0.8, 1.5)
+
+            type_res = type_text(serial=serial, text=caption_str, clear=False)
+            if type_res.returncode != 0:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "caption_typing",
+                    "passed": False,
+                    "detail": f"Caption typing failed: {type_res.stderr or 'nonzero exit'}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "caption_mismatch",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            post_type_ui = query_ui_hierarchy(serial)
+            if post_type_ui.returncode != 0 or not post_type_ui.stdout:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "content_gate",
+                    "passed": False,
+                    "detail": "Failed to capture UI hierarchy after typing",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "caption_mismatch",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            typed_state = composer_state(post_type_ui.stdout)
+            norm_expected = html.unescape(caption_str or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+            norm_actual = (typed_state.get("input_text") or "").strip()
+            if norm_actual != norm_expected:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "content_gate",
+                    "passed": False,
+                    "detail": f"Caption mismatch: observed length {len(norm_actual)} vs expected {len(norm_expected)}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "caption_mismatch",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            if not has_attachment_preview(post_type_ui.stdout):
+                discard_composer(serial)
+                stages.append({
+                    "stage": "content_gate",
+                    "passed": False,
+                    "detail": "Media preview mismatch: expected attachment preview not found in composer",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "media_preview_mismatch")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "media_preview_mismatch",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "content_gate",
+                "passed": True,
+                "detail": "Caption and media preview verified in composer",
+            })
+
+            # Step g: vision gate composer_after_typing
+            v_ok, v_ev = verify_gate(
+                serial,
+                "composer_after_typing",
+                expected_author=dest_name,
+                expected_caption=caption_str,
+                require_caption=True,
+                reference_jpeg=reference_jpeg,
+            )
+            evidence["vision_gates"].append(v_ev)
+            if not v_ok:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "vision_gate_composer_after_typing",
+                    "passed": False,
+                    "detail": f"Vision gate composer_after_typing failed: {v_ev.get('detail')}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "vision_gate_failed")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "vision_gate_failed",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "vision_gate_composer_after_typing",
+                "passed": True,
+                "detail": v_ev.get("detail", "ok"),
+            })
+
+            # Step h: Next button
+            if not typed_state.get("next_enabled") or not typed_state.get("next_bounds"):
+                discard_composer(serial)
+                stages.append({
+                    "stage": "submission_gate",
+                    "passed": False,
+                    "detail": "Next button disabled or not found after typing",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "share_screen_unrecognized",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            human_tap(serial, typed_state["next_bounds"])
+            human_pause(2.0, 3.0)
+
+            share_ui = query_ui_hierarchy(serial)
+            if share_ui.returncode != 0 or not share_ui.stdout:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "submission_gate",
+                    "passed": False,
+                    "detail": "Failed to capture Post settings screen UI hierarchy",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "share_screen_unrecognized",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            s_state = share_screen_state(share_ui.stdout)
+            if not s_state.get("is_post_settings") or not s_state.get("share_bounds"):
+                discard_composer(serial)
+                stages.append({
+                    "stage": "submission_gate",
+                    "passed": False,
+                    "detail": "Post settings screen or SHARE button unrecognized",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "share_screen_unrecognized",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "submission_gate",
+                "passed": True,
+                "detail": f"Post settings verified; audience='{s_state.get('audience')}'",
+            })
+
+            # Step i: vision gate post_settings
+            v_ok, v_ev = verify_gate(serial, "post_settings")
+            evidence["vision_gates"].append(v_ev)
+            if not v_ok:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "vision_gate_post_settings",
+                    "passed": False,
+                    "detail": f"Vision gate post_settings failed: {v_ev.get('detail')}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "vision_gate_failed")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "vision_gate_failed",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "vision_gate_post_settings",
+                "passed": True,
+                "detail": v_ev.get("detail", "ok"),
+            })
+
+            elapsed = time.monotonic() - started
+            evidence["pre_share_seconds"] = round(elapsed, 1)
+
+            if elapsed > PRE_SHARE_MAX_SECONDS:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "time_budget",
+                    "passed": False,
+                    "detail": f"pre-SHARE time budget exceeded ({round(elapsed, 1)} s)",
+                })
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "time_budget_exceeded",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            if rehearsal:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "rehearsal_stop",
+                    "passed": True,
+                    "detail": "Rehearsal: stopped before SHARE and discarded the draft",
+                })
+                return {
+                    "status": "rehearsal_ok",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": None,
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            # Step j: Tap SHARE exactly once
+            human_tap(serial, s_state["share_bounds"])
+            evidence["publish_may_have_started"] = True
+
+            # Step k: wait and resolve
+            human_pause(6.0, 8.0)
+            post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str)
+            stages.append(_post_link_stage(post_id, permalink, resolve_detail))
+
+            if time.monotonic() - started > PUBLISH_BUDGET_SECONDS - 20:
+                if post_id and permalink:
+                    evidence["posted_gate_skipped"] = "time_budget"
+                    stages.append({
+                        "stage": "post_verification",
+                        "passed": True,
+                        "detail": f"Verified modern post '{post_id}' ({resolve_detail})",
+                    })
+                    return {
+                        "status": "published",
+                        "facebook_post_id": post_id,
+                        "permalink": permalink,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": True,
+                        "error_code": None,
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+                stages.append({
+                    "stage": "post_verification",
+                    "passed": False,
+                    "detail": f"Post publication uncertain: {resolve_detail}",
+                })
+                return {
+                    "status": "uncertain",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": True,
+                    "error_code": "post_identity_unproven",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            # Step l: posted vision gate
+            if post_id and permalink:
+                v_ok, v_ev = verify_gate(
+                    serial,
+                    "posted",
+                    expected_author=dest_name,
+                    expected_caption=caption_str,
+                )
+                evidence["vision_gates"].append(v_ev)
+                if not v_ok:
+                    evidence["resolved_post_id"] = post_id
+                    evidence["resolved_permalink"] = permalink
+                    stages.append({
+                        "stage": "vision_gate_posted",
+                        "passed": False,
+                        "detail": f"Vision gate posted failed: {v_ev.get('detail')}",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "post_vision_mismatch")
+                    return {
+                        "status": "uncertain",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": True,
+                        "error_code": "post_vision_mismatch",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
+                stages.append({
+                    "stage": "vision_gate_posted",
+                    "passed": True,
+                    "detail": v_ev.get("detail", "ok"),
+                })
+                stages.append({
+                    "stage": "post_verification",
+                    "passed": True,
+                    "detail": f"Verified modern post '{post_id}' ({resolve_detail})",
+                })
+                return {
+                    "status": "published",
+                    "facebook_post_id": post_id,
+                    "permalink": permalink,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": True,
+                    "error_code": None,
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "post_verification",
+                "passed": False,
+                "detail": f"Post publication uncertain: {resolve_detail}",
+            })
+            return {
+                "status": "uncertain",
+                "facebook_post_id": None,
+                "permalink": None,
+                "actor_id": expected_target_id,
+                "publish_may_have_started": True,
+                "error_code": "post_identity_unproven",
+                "evidence": evidence,
+                "stages": stages,
+                "checked_at": checked_at,
+            }
+        else:
+            # Text-only post
+            input_bounds = c_state.get("input_bounds")
+            if input_bounds:
+                human_tap(serial, input_bounds)
+                time.sleep(0.5)
+
+            type_res = type_text(serial=serial, text=caption_str, clear=False)
+            if type_res.returncode != 0:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "caption_typing",
+                    "passed": False,
+                    "detail": f"Caption typing failed: {type_res.stderr or 'nonzero exit'}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "caption_mismatch",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            post_type_ui = query_ui_hierarchy(serial)
+            if post_type_ui.returncode != 0 or not post_type_ui.stdout:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "content_gate",
+                    "passed": False,
+                    "detail": "Failed to capture UI hierarchy after typing",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "caption_mismatch",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            typed_state = composer_state(post_type_ui.stdout)
+            norm_expected = html.unescape(caption_str or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+            norm_actual = (typed_state.get("input_text") or "").strip()
+            if norm_actual != norm_expected:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "content_gate",
+                    "passed": False,
+                    "detail": f"Caption mismatch: observed length {len(norm_actual)} vs expected {len(norm_expected)}",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "caption_mismatch")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "caption_mismatch",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "content_gate",
+                "passed": True,
+                "detail": "Caption and media preview verified in composer",
+            })
+
+            # Next button
+            if not typed_state.get("next_enabled") or not typed_state.get("next_bounds"):
+                discard_composer(serial)
+                stages.append({
+                    "stage": "submission_gate",
+                    "passed": False,
+                    "detail": "Next button disabled or not found after typing",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "share_screen_unrecognized",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            human_tap(serial, typed_state["next_bounds"])
+            time.sleep(2.0)
+
+            share_ui = query_ui_hierarchy(serial)
+            if share_ui.returncode != 0 or not share_ui.stdout:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "submission_gate",
+                    "passed": False,
+                    "detail": "Failed to capture Post settings screen UI hierarchy",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "share_screen_unrecognized",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            s_state = share_screen_state(share_ui.stdout)
+            if not s_state.get("is_post_settings") or not s_state.get("share_bounds"):
+                discard_composer(serial)
+                stages.append({
+                    "stage": "submission_gate",
+                    "passed": False,
+                    "detail": "Post settings screen or SHARE button unrecognized",
+                })
+                evidence["observation_file"] = save_composer_observation(serial, "share_screen_unrecognized")
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "share_screen_unrecognized",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "submission_gate",
+                "passed": True,
+                "detail": f"Post settings verified; audience='{s_state.get('audience')}'",
+            })
+
+            elapsed = time.monotonic() - started
+            evidence["pre_share_seconds"] = round(elapsed, 1)
+
+            if elapsed > PRE_SHARE_MAX_SECONDS:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "time_budget",
+                    "passed": False,
+                    "detail": f"pre-SHARE time budget exceeded ({round(elapsed, 1)} s)",
+                })
+                return {
+                    "status": "failed",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": "time_budget_exceeded",
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            if rehearsal:
+                discard_composer(serial)
+                stages.append({
+                    "stage": "rehearsal_stop",
+                    "passed": True,
+                    "detail": "Rehearsal: stopped before SHARE and discarded the draft",
+                })
+                return {
+                    "status": "rehearsal_ok",
+                    "facebook_post_id": None,
+                    "permalink": None,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": False,
+                    "error_code": None,
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            # Tap SHARE exactly once
+            human_tap(serial, s_state["share_bounds"])
+            evidence["publish_may_have_started"] = True
+
+            time.sleep(6.0)
+            post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str)
+            stages.append(_post_link_stage(post_id, permalink, resolve_detail))
+            if post_id and permalink:
+                stages.append({
+                    "stage": "post_verification",
+                    "passed": True,
+                    "detail": f"Verified modern post '{post_id}' ({resolve_detail})",
+                })
+                return {
+                    "status": "published",
+                    "facebook_post_id": post_id,
+                    "permalink": permalink,
+                    "actor_id": expected_target_id,
+                    "publish_may_have_started": True,
+                    "error_code": None,
+                    "evidence": evidence,
+                    "stages": stages,
+                    "checked_at": checked_at,
+                }
+
+            stages.append({
+                "stage": "post_verification",
+                "passed": False,
+                "detail": f"Post publication uncertain: {resolve_detail}",
+            })
+            return {
+                "status": "uncertain",
+                "facebook_post_id": None,
+                "permalink": None,
+                "actor_id": expected_target_id,
+                "publish_may_have_started": True,
+                "error_code": "post_identity_unproven",
+                "evidence": evidence,
+                "stages": stages,
+                "checked_at": checked_at,
+            }
     except Exception as exc:
         err_type = type(exc).__name__
         if evidence.get("publish_may_have_started") is False:

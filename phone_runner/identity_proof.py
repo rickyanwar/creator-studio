@@ -144,6 +144,9 @@ KNOWN_PORTAL_IME_IDS = (
     "com.mobilerun.portal/.input.MobilerunKeyboardIME",
 )
 
+MODEL_NAV_MAX_SECONDS = 120.0
+MODEL_NAV_RESERVE_SECONDS = 60.0
+
 
 class PortalImeContext:
     """Manages Portal IME enablement, selection, and guaranteed restoration."""
@@ -1019,13 +1022,21 @@ def _try_open_own_root_without_model(
     serial: str,
     main_name: str,
     expected_geometry: str | None = None,
+    allow_name_identity: bool = False,
 ) -> bool:
     """Attempts to navigate to candidate own root without model assistance."""
+    def _is_own_root(tree: ET.Element) -> bool:
+        ok, _, more_bounds = find_own_profile_controls(tree, main_name)
+        if ok and more_bounds is not None:
+            return True
+        if allow_name_identity and find_own_profile_name_identity(tree, main_name)[0]:
+            return True
+        return False
+
     # 1. Initial screen checks
     ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
     if ok and tree is not None:
-        is_own, own_err, more_bounds = find_own_profile_controls(tree, main_name)
-        if is_own and more_bounds is not None:
+        if _is_own_root(tree):
             logger.info("Deterministic root navigation succeeded: own profile already open")
             return True
 
@@ -1039,8 +1050,7 @@ def _try_open_own_root_without_model(
 
     ok_f, err_f, tree_f, raw_xml_f = verify_foreground_facebook(serial, expected_geometry)
     if ok_f and tree_f is not None:
-        is_own_f, own_err_f, more_bounds_f = find_own_profile_controls(tree_f, main_name)
-        if is_own_f and more_bounds_f is not None:
+        if _is_own_root(tree_f):
             logger.info("Deterministic root navigation succeeded: feed reset")
             return True
 
@@ -1054,8 +1064,7 @@ def _try_open_own_root_without_model(
 
     ok_p, err_p, tree_p, raw_xml_p = verify_foreground_facebook(serial, expected_geometry)
     if ok_p and tree_p is not None:
-        is_own_p, own_err_p, more_bounds_p = find_own_profile_controls(tree_p, main_name)
-        if is_own_p and more_bounds_p is not None:
+        if _is_own_root(tree_p):
             logger.info("Deterministic root navigation succeeded: fb://profile intent")
             return True
 
@@ -1478,7 +1487,12 @@ def collect_own_url_proof_chain(
                 launch_facebook_feed(serial)
                 time.sleep(0.5)
 
-            nav_opened = _try_open_own_root_without_model(serial, clean_main_name, expected_geometry)
+            nav_opened = _try_open_own_root_without_model(
+                serial,
+                clean_main_name,
+                expected_geometry,
+                allow_name_identity=not is_page_target,
+            )
             if nav_opened:
                 steps.append({
                     "step": "deterministic_root_nav",
@@ -1491,7 +1505,7 @@ def collect_own_url_proof_chain(
                 if timeout_err:
                     return make_fail(timeout_err, "root_url")
 
-                remaining_nav_time = deadline - time_fn()
+                remaining_nav_time = min(MODEL_NAV_MAX_SECONDS, deadline - time_fn() - MODEL_NAV_RESERVE_SECONDS)
                 if remaining_nav_time <= 0:
                     return make_fail("Deadline exceeded before root model navigation", "root_url")
 

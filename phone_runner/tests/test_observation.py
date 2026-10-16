@@ -252,10 +252,21 @@ def test_publish_modern_gates_call_observation_once_and_set_evidence(tmp_path, m
         lambda s: AdbResult(0, MODERN_FEED_DUMP, ""),
     )
 
-    # 1. media_unsupported_on_modern gate
+    # 1. media_attach_failed gate
     proof_media = _make_valid_modern_proof(empty_state_certainty=True)
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/p.jpg", "url": "https://cdn.example.com/photo.jpg"}]
+    empty_comp_xml = f"""<hierarchy rotation="0">
+      <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+      <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="false" />
+      <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+      <node class="android.widget.AutoCompleteTextView" bounds="[0,690][1080,792]" text="What's on your mind?" />
+    </hierarchy>"""
     with (
         mock.patch("phone_runner.publish.collect_own_url_proof_chain", return_value=proof_media),
+        mock.patch("phone_runner.publish.query_ui_hierarchy", return_value=AdbResult(0, empty_comp_xml, "")),
+        mock.patch("phone_runner.publish.stage_media_files", return_value=mock_stage),
+        mock.patch("phone_runner.publish.attach_first_gallery_item", return_value=(False, "attach failed")),
         mock.patch("phone_runner.publish.save_composer_observation", return_value="/obs/media_gate.json") as mock_obs,
     ):
         res_media = execute_publish(
@@ -266,8 +277,8 @@ def test_publish_modern_gates_call_observation_once_and_set_evidence(tmp_path, m
             media_urls=["https://cdn.example.com/photo.jpg"],
         )
     assert res_media["status"] == "failed"
-    assert res_media["error_code"] == "media_unsupported_on_modern"
-    mock_obs.assert_called_once_with(TEST_SERIAL, "media_unsupported_on_modern")
+    assert res_media["error_code"] == "media_attach_failed"
+    mock_obs.assert_called_once_with(TEST_SERIAL, "media_attach_failed")
     assert res_media["evidence"]["observation_file"] == "/obs/media_gate.json"
 
     # 2. draft_state_uncertain gate
@@ -287,10 +298,27 @@ def test_publish_modern_gates_call_observation_once_and_set_evidence(tmp_path, m
     mock_obs.assert_called_once_with(TEST_SERIAL, "draft_state_uncertain")
     assert res_draft["evidence"]["observation_file"] == "/obs/draft_gate.json"
 
-    # 3. submission_flow_uncalibrated gate
+    # 3. share_screen_unrecognized gate
     proof_submit = _make_valid_modern_proof(empty_state_certainty=True)
+    typed_comp_xml = f"""<hierarchy rotation="0">
+      <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+      <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="true" />
+      <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+      <node class="android.widget.AutoCompleteTextView" bounds="[0,690][1080,792]" text="Modern post text" />
+    </hierarchy>"""
+    from phone_runner.mobilerun import MobilerunResult
+    ui_seq = [
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, empty_comp_xml, ""),
+        AdbResult(0, typed_comp_xml, ""),
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+    ]
+    ui_seq_iter = iter(ui_seq)
     with (
         mock.patch("phone_runner.publish.collect_own_url_proof_chain", return_value=proof_submit),
+        mock.patch("phone_runner.publish.query_ui_hierarchy", side_effect=lambda s: next(ui_seq_iter, AdbResult(0, "", ""))),
+        mock.patch("phone_runner.publish.type_text", return_value=MobilerunResult(0, "OK", "")),
+        mock.patch("phone_runner.publish.run_adb", return_value=AdbResult(0, "OK", "")),
         mock.patch("phone_runner.publish.save_composer_observation", return_value="/obs/submit_gate.json") as mock_obs,
     ):
         res_submit = execute_publish(
@@ -300,8 +328,8 @@ def test_publish_modern_gates_call_observation_once_and_set_evidence(tmp_path, m
             caption="Modern post text",
         )
     assert res_submit["status"] == "failed"
-    assert res_submit["error_code"] == "submission_flow_uncalibrated"
-    mock_obs.assert_called_once_with(TEST_SERIAL, "submission_flow_uncalibrated")
+    assert res_submit["error_code"] == "share_screen_unrecognized"
+    mock_obs.assert_called_once_with(TEST_SERIAL, "share_screen_unrecognized")
     assert res_submit["evidence"]["observation_file"] == "/obs/submit_gate.json"
 
 

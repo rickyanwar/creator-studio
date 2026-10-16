@@ -8,10 +8,12 @@ import pytest
 
 from phone_runner.adb import AdbResult
 from phone_runner.media_staging import (
+    SAFE_STAGED_NAME_RE,
     PinnedIPHTTPSConnection,
     PinnedIPHTTPSHandler,
     ProhibitRedirectHandler,
     download_media_file,
+    get_media_content_uri,
     push_media_to_device,
     stage_media_files,
     validate_media_url,
@@ -272,3 +274,66 @@ def test_ambient_proxy_ignored_and_pinned_connection_preserved(tmp_path, monkeyp
         mock_raw_sock.connect.assert_called_once_with(("93.184.216.34", 443))
         mock_ctx.wrap_socket.assert_called_once_with(mock_raw_sock, server_hostname=TEST_HOST)
         assert bcount == 4
+
+
+def test_get_media_content_uri_unsafe_name_returns_none_without_adb():
+    unsafe_paths = [
+        "/sdcard/Pictures/staging/unsafe.jpg",
+        "/sdcard/Pictures/staging/stage_bad;rm.jpg",
+        "/sdcard/Pictures/staging/stage_test.toolongextension",
+        "/sdcard/Pictures/staging/stage_.jpg",
+        "stage_test'quote.jpg",
+        "stage_test$var.jpg",
+    ]
+    with mock.patch("phone_runner.media_staging.run_adb") as mock_adb:
+        for p in unsafe_paths:
+            res = get_media_content_uri("serial_1", p)
+            assert res is None
+        mock_adb.assert_not_called()
+
+
+def test_get_media_content_uri_success():
+    output = "Row: 0 _id=1000000141, _data=/storage/emulated/0/Pictures/staging/stage_abc123.jpg\n"
+    with mock.patch("phone_runner.media_staging.run_adb", return_value=AdbResult(0, output, "")) as mock_adb:
+        res = get_media_content_uri("serial_1", "/sdcard/Pictures/staging/stage_abc123.jpg")
+        assert res == "content://media/external/images/media/1000000141"
+        mock_adb.assert_called_once()
+        args = mock_adb.call_args[0][0]
+        assert args[0] == "shell"
+        assert 'content query --uri content://media/external/images/media --projection _id:_data --where "_data LIKE \'%stage_abc123.jpg\'"' in args[1]
+
+
+def test_get_media_content_uri_retries_and_fails():
+    mock_sleep = mock.Mock()
+    with mock.patch("phone_runner.media_staging.run_adb", return_value=AdbResult(0, "No result\n", "")) as mock_adb:
+        res = get_media_content_uri(
+            "serial_1",
+            "/sdcard/Pictures/staging/stage_abc123.jpg",
+            attempts=3,
+            wait=0.5,
+            sleep=mock_sleep,
+        )
+        assert res is None
+        assert mock_adb.call_count == 3
+        assert mock_sleep.call_count == 3
+
+
+def test_stage_media_files_cleanup_deletes_mediastore():
+    mock_adb = mock.MagicMock(return_value=AdbResult(0, "OK", ""))
+    with (
+        mock.patch("phone_runner.media_staging.download_media_file", return_value=("/tmp/stage_xyz.jpg", "sha", 100)),
+        mock.patch("phone_runner.media_staging.push_media_to_device", return_value="/sdcard/Pictures/staging/stage_xyz.jpg"),
+        mock.patch("phone_runner.media_staging.run_adb", mock_adb),
+    ):
+        with stage_media_files(["https://cdn.example.com/p.jpg"], serial="serial_1", cleanup_remote=True):
+            pass
+
+    # Verify both rm -f and content delete were executed
+    calls = [c[0][0] for c in mock_adb.call_args_list]
+    rm_calls = [c for c in calls if c[:3] == ["shell", "rm", "-f"]]
+    del_calls = [c for c in calls if len(c) == 2 and c[0] == "shell" and "content delete" in c[1]]
+    assert len(rm_calls) == 1
+    assert rm_calls[0][3] == "/sdcard/Pictures/staging/stage_xyz.jpg"
+    assert len(del_calls) == 1
+    assert 'content delete --uri content://media/external/images/media --where "_data LIKE \'%stage_xyz.jpg\'"' in del_calls[0][1]
+

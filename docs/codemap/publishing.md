@@ -243,8 +243,8 @@ Implemented in `backend/app/tasks/status_sync.py`, `backend/app/services/post_me
   - Success (`success`, `published`, `posted`, `done`, `completed`): `deliv.state = 'published'`.
 
 ### 8.2 Three Paths to Obtain `facebook_post_id`
-1. **Direct Phone Verification** (`phone_runner/publish.py:poll_for_post_result`, line 1062):
-   - Polls device UI hierarchy and Facebook activity record for live post ID and permalink after tap.
+1. **Direct Phone Verification** (`phone_runner/modern_composer.py:resolve_latest_post_link`):
+   - Polls device UI hierarchy and profile feed for live post link matching caption prefix after tap.
 2. **Repliz Status Payload Extraction** (`post_metrics.py:extract_post_id`, line 93):
    - Inspects `postId` or `post_id` in Repliz JSON response matching regex `^\d+(_\d+)?$` (top-level or in `data`/`result`).
 3. **Conservative Content Reconciliation** (`social_post_reconciliation.py:reconcile_delivery_repliz`, lines 207-364):
@@ -286,34 +286,112 @@ Mechanisms preventing duplicate social posts across crashes, retries, and concur
 
 ## 10. Phone Fail-Closed Boundaries & Gating Invariants
 
-Implemented in `phone_runner/publish.py` and `phone_runner/identity_proof.py`.
+Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `phone_runner/modern_composer.py`, and `phone_runner/vision_verify.py`.
 
 ### 10.1 Hardware & Lock Gates
-- **Secure Keyguard Detection** (`publish.py:473-491`): `is_device_secure_locked(serial)` checks for PIN, password, or pattern lock. Fails closed with `waiting_for_device` (`secure_lock_detected`). Never attempts to enter credentials or bypass screen lock.
-- **Sleep Restoration** (`publish.py:459, 479, 791-796`): Initial display sleep state recorded; device put back to sleep in `finally` block on any exit path.
+- **Secure Keyguard Detection** (`publish.is_device_secure_locked`): checks for PIN, password, or pattern lock. Fails closed with `waiting_for_device` (`secure_lock_detected`). Never attempts to enter credentials or bypass screen lock.
+- **Sleep Restoration** (`publish.execute_publish`): Initial display sleep state recorded; device put back to sleep in `finally` block on any exit path.
 
 ### 10.2 Identity & Navigation Gates
-- **Conflict Short-Circuit** (`publish.py:525-546`): If candidate capture observes a root ID $\ne$ expected main profile ID or composer ID $\ne$ expected target ID, immediately fails with `identity_mismatch`. LLM navigation is never invoked on conflicting sessions.
-- **Proof Chain Verification** (`publish.py:639-676`, `identity_proof.py:1248-1886`):
-  - Proves actor identity via `own_url_chain_v1` using clipboard sentinel readback.
-  - Verifies exact matching `facebook_version`, `portal_version`, `screen_resolution`, and `app_card_version`.
-- **IME Restoration Guard** (`identity_proof.py:147-264`, `publish.py:659`): `PortalImeContext` records default IME on entry. In `finally` block, restores original IME and verifies readback. If restoration fails, returns `IME_RESTORATION_FAILED` and halts publishing.
+- **Conflict Short-Circuit** (`publish._check_candidate_identity`): If candidate capture observes root ID $\ne$ expected main profile ID or composer ID $\ne$ expected target ID, immediately fails with `identity_mismatch`. Model navigation is never invoked on conflicting sessions.
+- **Proof Chain Verification** (`identity_proof.prove_identity`, `identity_proof.find_own_profile_name_identity`):
+  - Profiles use `own_profile_name_v1`: requires exact profile name on own-profile root screen, owner-only controls (Edit cover photo / Edit profile picture / Dashboard), and matching composer author header.
+  - `own_url_chain_v1` (sentinel clipboard readback) is used when available but not required for profiles (no More-profile-settings dependency).
+  - Pages retain strict URL chain verification.
+- **IME Restoration Guard** (`identity_proof.PortalImeContext`): Records default IME on entry. In `finally` block, restores original IME and verifies readback. If restoration fails, returns `IME_RESTORATION_FAILED` and halts publishing.
 
 ### 10.3 Modern Composer Layout Gates (Fail-Closed)
-- **Media Unsupported** (`publish.py:693-709`): If media attachments are present on modern composer layout, fails closed with `media_unsupported_on_modern`.
-- **Draft State Certainty** (`publish.py:712-730`): If `empty_state_certainty != True`, fails closed with `draft_state_uncertain` to prevent typing over or publishing a preexisting draft.
-- **Submission Flow Calibration** (`publish.py:732-747`): If header variant is `actor_title`, submission flow is uncalibrated (`Next` button flow to final post screen unverified); fails closed with `submission_flow_uncalibrated`.
+- **Draft State Certainty** (`publish.execute_publish`): Empty proof composer checked and discarded before staging; share-intent composer must have empty input. If uncertain, fails closed with `draft_state_uncertain` to prevent typing over or publishing a preexisting draft.
+- **Submission Flow Calibration** (`modern_composer`): Navigates via `Next` to "Post settings" (`UnifiedShareSheetActivity`) with verified `SHARE` button before proceeding.
 
 ### 10.4 Composer Content & Pre-Publish Gates
-- **Literal Text Typing** (`publish.py:948-972`): Caption typed via `mobilerun device type` through subprocess argv (never through `adb shell`). Captions are never interpolated into LLM prompts.
-- **Content Pre-Tap Verification** (`publish.py:994-1036`):
-  - Parses UI hierarchy: verifies caption input node contains exact expected caption (`caption_ok`).
-  - Verifies observed media preview attachments count matches expected count (`media_ok`).
-  - If either fails: exits with `caption_mismatch` or `media_preview_mismatch` before tapping Post.
+- **Literal Text Typing** (`modern_composer.type_caption_portal`): Caption typed via Portal IME (never interpolated into LLM prompts or passed to raw shell).
+- **Content Pre-Tap Verification** (`modern_composer`, `vision_verify.verify_gate`):
+  - Hierarchy verification: verifies caption input node contains expected text and media preview matches.
+  - Pre-SHARE vision verification gates (`composer_before_typing`, `composer_after_typing`, `post_settings`) fail closed (`vision_gate_failed`) on any mismatch or vision API error.
 
 ### 10.5 Post-Tap Verification Gate
-- **Single Submission** (`publish.py:1044-1060`): Taps publish button exactly once (`find_publish_button_coords`). Marks `publish_may_have_started = True`.
-- **Unproven Post ID** (`publish.py:1089-1105`): If `poll_for_post_result` cannot find live post ID from device evidence within 4 attempts, delivery transitions to `uncertain` (`post_identity_unproven`). It is never assumed successful.
+- **Single Submission**: `SHARE` button tapped exactly once with humanized coordinate jitter (`publish_may_have_started = True`).
+- **Post Link Resolution & Downgrade** (`modern_composer.resolve_latest_post_link`): Resolves permalink by finding post matching first 30 normalized caption characters on profile. If unproven within 4 attempts (10s apart), delivery downgrades to `uncertain` (`post_identity_unproven`). Post-SHARE vision failure (`posted` gate) also downgrades to `uncertain` (`post_vision_mismatch`). Never retries after SHARE.
+
+---
+
+## 11. Modern Facebook Composer Flow (2026-10)
+
+Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`, `phone_runner/identity_proof.py`, `phone_runner/media_staging.py`, `phone_runner/vision_verify.py`, and `phone_runner/humanize.py`.
+
+### 11.1 Identity & Navigation Protocol
+- **Profile Name Identity (`own_profile_name_v1`)**:
+  - Facebook Profile destinations require: exact profile name on own-profile root screen, presence of owner-only controls ("Edit cover photo", "Edit profile picture", or "Dashboard"), and composer author header matching exact profile name (`identity_proof.find_own_profile_name_identity`).
+  - URL/numeric-ID chain (`own_url_chain_v1`) is used when available, but not mandatory for profiles. Pages strictly require URL chain.
+  - Exact match prevents posting as Page or mismatched account ("Agung Baelah" != "Agung"). If session is a Page, name check fails and nothing is typed.
+- **Deterministic Root Navigation** (`identity_proof._try_open_own_root_without_model`):
+  - Direct intents (`fb://feed`, `fb://profile`) with `allow_name_identity=True` for profile targets.
+  - Model navigation (`mobilerun`) is last resort: capped at 120s with 60s reserved (`MODEL_NAV_MAX_SECONDS = 120`, `MODEL_NAV_RESERVE_SECONDS = 60`).
+
+### 11.2 Media Attachment via Share Intent
+- Photo attached via Android `SEND` share intent instead of UI gallery picker:
+  - Component: `com.facebook.katana/com.facebook.composer.shareintent.ImplicitShareIntentHandlerDefaultAlias`.
+  - Media URI: `content://media/external/images/media/<id>` from MediaStore content query on staged image file (`media_staging.get_media_content_uri`).
+  - Opens `ComposerActivity` with photo attached ("Photo", "Edit photo", "Remove photo"), correct author header, and empty "What's on your mind?" field.
+  - Back dialog shows "Discard changes?" with `KEEP EDITING` / `DISCARD` (contrasts with proof composer's "Discard post").
+
+### 11.3 Step-by-Step Modern Publishing Pipeline
+
+```
+[1. Verify Root & Proof Composer]
+        │  Verify own-profile identity; open & verify empty proof composer -> DISCARD
+        ▼
+[2. Stage Media & Launch Share Intent]
+        │  Stage image via MediaStore -> SEND share intent opens ComposerActivity
+        ▼
+[3. Vision Gate: composer_before_typing]
+        │  Verify author header, attached photo, empty input (fail-closed)
+        ▼
+[4. Type Caption via Portal IME]
+        │  mobilerun type -> A11y tree check confirms exact caption text
+        ▼
+[5. Vision Gate: composer_after_typing]
+        │  Verify caption rendered with photo intact (fail-closed)
+        ▼
+[6. Tap Next -> Post Settings Screen]
+        │  Opens UnifiedShareSheetActivity with Button "SHARE"
+        ▼
+[7. Vision Gate: post_settings]
+        │  Verify SHARE screen layout (fail-closed)
+        ▼
+[8. Tap SHARE (Exactly Once)]  ──► [Point of No Return]
+        │  Humanized coordinate tap; never retried on failure
+        ▼
+[9. Resolve Post Link]
+        │  modern_composer.resolve_latest_post_link: profile search matching first 30
+        │  chars of normalized caption -> "More options" above post -> "Copy link"
+        │  (up to 4 attempts, 10s apart). Missing link -> state='uncertain'
+        ▼
+[10. Vision Gate: posted]
+        │  Verify live post on profile feed (mismatch -> state='uncertain')
+        ▼
+[11. State: published]
+```
+
+### 11.4 Vision Verification Gates (`vision_verify.py`)
+- Verification only (no agentic decisions): Gemini models via VPS 9Router (`MOBILERUN_API_BASE` + runner key, request sets `"stream": false`). Model IDs filtered to Gemini and intersected with live `/v1/models`.
+- Fail-closed boundary:
+  - **Pre-SHARE gates** (`composer_before_typing`, `composer_after_typing`, `post_settings`): Any failure or API error aborts and discards draft -> `vision_gate_failed`.
+  - **Post-SHARE gates** (`posted`): Submission already executed; failure cannot abort, only downgrades to `uncertain` (`post_vision_mismatch`).
+- Gate verdicts recorded in `evidence.vision_gates`.
+
+### 11.5 Human-like Interaction & Time Budgets
+- **Anti-Bot Interaction (`humanize.py`)**: Random tap coordinates within inner 60% of bounding boxes; randomized 1–3s pauses between actions. Real device, real app only.
+- **Time Limits**:
+  - Backend timeout: `PhoneRunnerClient.publish_timeout = 280`s (triggers `uncertain` on expiration).
+  - Runner internal budget: Aborts safely before SHARE if elapsed time > 150s (`time_budget_exceeded`), ensuring run finishes within 250s.
+
+### 11.6 Rehearsal Mode & Host Requirements
+- **Rehearsal Endpoint**: `POST /rehearse` on phone runner runs full flow through step 7 (`post_settings`), discards draft, and returns `rehearsal_ok`. Used by operators via `.notes/rehearse/rehearse_delivery.py` on VPS host (never called by Celery backend).
+- **Media Host Allowlist**: `/etc/phone-runner.env` requires `PHONE_RUNNER_MEDIA_HOSTS=autostudio.pro` to download staged media.
+- **Python 3.12 TLS Compatibility**: `media_staging.PinnedIPHTTPSHandler` omits `check_hostname` from `do_open()` (removed in Python 3.12); TLS verified via `wrap_socket(server_hostname=...)`.
+- **Operational Deploy Guard**: Never push to `main` while any delivery is `publishing` or an active device lease exists. Container restart kills running `/publish` and strands delivery in `uncertain`.
 
 ---
 
@@ -330,4 +408,5 @@ backend/app/services/publishing_schedule.py:182 - Candidate slot jitter within e
 backend/app/services/social_delivery_policy.py:216 - Automated fallback to Repliz is strictly limited to Pages (kind == 'page'), requires incident state needs_human, forbids uncertain deliveries, and requires verified absence of duplicates.
 phone_runner/recovery.py:563 - Larger repairs enter awaiting_approval with an automatic approval deadline set to exactly 15 minutes (deadline = now + timedelta(minutes=15)) if the owner has not responded.
 backend/app/services/social_post_reconciliation.py:30 - Post reconciliation against Repliz GET /public/content queries up to 3 pages (MAX_PAGINATION_PAGES = 3) and enforces an expected publish time tolerance of +/- 2 hours (DEFAULT_RECONCILIATION_WINDOW = timedelta(hours=2)).
-phone_runner/publish.py:693 - Phone runner fails closed with media_unsupported_on_modern if media attachments are requested on the modern Facebook composer layout.
+phone_runner/identity_proof.py - Profile destination identity verification accepts own_profile_name_v1 (exact profile name, owner-only controls, matching composer author) without requiring own_url_chain_v1.
+phone_runner/media_staging.py - Photo attachments on modern Facebook composer use Android SEND share intent to ImplicitShareIntentHandlerDefaultAlias with MediaStore content URI.
