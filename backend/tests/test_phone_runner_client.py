@@ -819,8 +819,8 @@ def test_phone_runner_client_timeout_budgets_and_constructor_defaults():
     assert client.connect_timeout == 10.0
     # dry run timeout unchanged at 260.0s
     assert client.dry_run_timeout == 260.0
-    # publish delivery timeout is 280.0s (240s collector + 40s prep/cleanup < 300s lease)
-    assert client.publish_timeout == 280.0
+    # publish delivery timeout is 600.0s (runner budget: 300 s before SHARE, 540 s total)
+    assert client.publish_timeout == 600.0
 
 
 def test_phone_runner_client_publish_timeout_custom_override():
@@ -847,7 +847,7 @@ def test_publish_delivery_uses_publish_timeout_budget(dummy_models):
     }
     mock_resp = httpx.Response(200, json=fake_response)
 
-    # 1. Default client: timeout passed to httpx.Client must have read=280.0, connect=10.0
+    # 1. Default client: timeout passed to httpx.Client must have read=600.0, connect=10.0
     client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
     with mock.patch("httpx.Client") as mock_client_cls:
         mock_instance = mock.MagicMock()
@@ -864,7 +864,7 @@ def test_publish_delivery_uses_publish_timeout_budget(dummy_models):
         assert mock_client_cls.call_count == 1
         _, client_kwargs = mock_client_cls.call_args
         t_cfg = client_kwargs["timeout"]
-        assert t_cfg.read == 280.0
+        assert t_cfg.read == 600.0
         assert t_cfg.connect == 10.0
 
     # 2. Custom override: publish_timeout=275.0

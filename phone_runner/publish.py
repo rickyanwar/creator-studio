@@ -47,8 +47,8 @@ from phone_runner.vision_verify import verify_gate
 
 logger = logging.getLogger("phone_runner")
 
-PUBLISH_BUDGET_SECONDS = 250.0
-PRE_SHARE_MAX_SECONDS = 150.0
+PUBLISH_BUDGET_SECONDS = 540.0  # backend PhoneRunnerClient.publish_timeout is 600 s
+PRE_SHARE_MAX_SECONDS = 300.0
 PHOTO_REVEAL_SWIPES = 3
 
 

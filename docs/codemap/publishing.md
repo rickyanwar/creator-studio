@@ -384,8 +384,9 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
 ### 11.5 Human-like Interaction & Time Budgets
 - **Anti-Bot Interaction (`humanize.py`)**: Random tap coordinates within inner 60% of bounding boxes; randomized 1–3s pauses between actions. Real device, real app only.
 - **Time Limits**:
-  - Backend timeout: `PhoneRunnerClient.publish_timeout = 280`s (triggers `uncertain` on expiration).
-  - Runner internal budget: Aborts safely before SHARE if elapsed time > 150s (`time_budget_exceeded`), ensuring run finishes within 250s.
+  - Backend timeout: `PhoneRunnerClient.publish_timeout = 600`s (triggers `uncertain` on expiration). Raised from 280 s on 2026-10-17: a real rehearsal reached SHARE after ~170 s (identity proof + 3 vision gates + typing a 426-char caption).
+  - Runner internal budget: aborts safely before SHARE if elapsed time > 300 s (`time_budget_exceeded`); the whole run stays under 540 s.
+  - Rehearsal facts (2026-10-17): `fb://profile` restores the last scroll position, so deterministic navigation scrolls the own profile back to the top (only when the owner-only "Manage posts" control is visible). A long caption plus the on-screen keyboard hides the attached photo; the runner hides the keyboard with one Back press (tapping KEEP EDITING if the discard dialog appears) before re-checking the photo.
 
 ### 11.6 Rehearsal Mode & Host Requirements
 - **Rehearsal Endpoint**: `POST /rehearse` on phone runner runs full flow through step 7 (`post_settings`), discards draft, and returns `rehearsal_ok`. Used by operators via `.notes/rehearse/rehearse_delivery.py` on VPS host (never called by Celery backend).

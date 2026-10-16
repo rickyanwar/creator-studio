@@ -102,7 +102,7 @@ class PhoneRunnerClient:
         timeout: float = 120.0,
         connect_timeout: float = 10.0,
         dry_run_timeout: float = 260.0,
-        publish_timeout: float = 280.0,
+        publish_timeout: float = 600.0,
     ) -> None:
         self.base_url = (
             base_url if base_url is not None else os.environ.get("PHONE_RUNNER_BASE_URL", "http://127.0.0.1:8765")
@@ -130,7 +130,7 @@ class PhoneRunnerClient:
         Never retries automatically.
         Never logs tokens, captions, or media content.
 
-        Note: publish_timeout governs client HTTP transport socket timeout (280s),
+        Note: publish_timeout governs client HTTP transport socket timeout (600s),
         not a hard host-side execution deadline. Disconnections or read timeouts
         remain mapped to 'uncertain' with no automatic retry.
         """
@@ -190,7 +190,7 @@ class PhoneRunnerClient:
             getattr(device, "adb_serial", None),
         )
 
-        # ponytail: publish_timeout is HTTP transport budget (240s collector + 40s prep/cleanup < 300s dispatch lease); disconnect remains uncertain/no retry
+        # publish_timeout (600 s) covers the runner's own budget (300 s before SHARE, 540 s total); the device lease is 45 min. Disconnect remains uncertain/no retry
         timeout_cfg = httpx.Timeout(
             timeout=self.publish_timeout,
             connect=self.connect_timeout,
