@@ -491,7 +491,7 @@ def test_mixed_1_plus_5_schedule(db_session):
     db_session.add(assign)
     db_session.commit()
 
-    now = datetime(2026, 10, 15, 10, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 15, 7, 0, 0, tzinfo=timezone.utc)
 
     # Create 6 jobs for the mixed destination
     deliveries = []
@@ -526,17 +526,30 @@ def test_mixed_1_plus_5_schedule(db_session):
     )
 
     # Dispatch: Repliz deliveries (1-5) can be submitted ahead of scheduleAt!
-    # Phone delivery (0) is scheduled for now so it dispatches now.
-    processed = dispatch_due_deliveries(
+    # Phone delivery (0) is scheduled in the future (>= now + 60s) so it waits for its slot.
+    processed_first = dispatch_due_deliveries(
         db_session,
         now_utc=now,
         repliz_client=mock_repliz,
         runner_client=mock_runner,
     )
 
-    assert len(processed) == 6
+    # 5 Repliz deliveries submitted ahead of time; Phone waits for due slot
+    assert len(processed_first) == 5
     assert mock_repliz.create_image_schedule.call_count == 5
+    assert mock_runner.publish_delivery.call_count == 0
+
+    # Advance clock to Phone delivery's actual scheduled slot
+    phone_slot = deliveries[0].scheduled_for.replace(tzinfo=timezone.utc)
+    processed_second = dispatch_due_deliveries(
+        db_session,
+        now_utc=phone_slot,
+        repliz_client=mock_repliz,
+        runner_client=mock_runner,
+    )
+    assert len(processed_second) == 1
     assert mock_runner.publish_delivery.call_count == 1
+    assert len(processed_first) + len(processed_second) == 6
 
 
 # ── Test 7: Spaced recovery (no backlog burst on phone revival) ────────────────

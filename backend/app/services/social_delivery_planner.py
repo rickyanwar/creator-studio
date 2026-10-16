@@ -301,22 +301,14 @@ def ensure_deliveries(
                 supported = [supported]
         is_supported = payload.media_kind in supported
 
-        existing_deliveries = (
-            db.query(PublishDelivery)
-            .filter(
-                PublishDelivery.destination_id == destination.id,
-                PublishDelivery.scheduled_for.isnot(None),
-                PublishDelivery.state.notin_(["failed", "skipped"]),
-            )
-            .all()
+        from app.services.publishing_schedule import (
+            compute_audience_slot,
+            get_destination_reservations_utc,
         )
-        existing_slots_utc = [
-            d.scheduled_for.replace(tzinfo=timezone.utc)
-            for d in existing_deliveries
-            if d.scheduled_for is not None
-        ]
 
-        next_slot_utc = compute_next_slot(
+        existing_slots_utc = get_destination_reservations_utc(db, destination)
+
+        next_slot_utc = compute_audience_slot(
             now_utc=aware_now,
             timezone_name=destination.timezone,
             daily_target=destination.daily_target,
@@ -324,6 +316,7 @@ def ensure_deliveries(
             existing_slots_utc=existing_slots_utc,
             sleep_start_hour=sleep_start,
             sleep_end_hour=sleep_end,
+            namespace=f"dest-{destination.id}",
         )
         naive_scheduled_for = next_slot_utc.astimezone(timezone.utc).replace(
             tzinfo=None

@@ -898,6 +898,25 @@ export interface SocialDestinationUpdate {
   is_active?: boolean;
 }
 
+export interface SchedulePreviewSlot {
+  slot_utc: string;
+  slot_local: string;
+}
+
+export interface SchedulePreviewResponse {
+  slots_utc: string[];
+  slots_local: string[];
+  slots: SchedulePreviewSlot[];
+  timezone: string;
+  target_country: string | null;
+  daily_limit: number;
+  min_gap_minutes: number;
+  sleep_start: number | null;
+  sleep_end: number | null;
+  basis: "local_time_estimate";
+  note: string;
+}
+
 export interface PhoneDevice {
   id: number;
   name: string;

@@ -7,6 +7,7 @@ import hmac
 import os
 import re
 from typing import Optional
+import zoneinfo
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from sqlalchemy.orm import joinedload, selectinload
@@ -33,11 +34,17 @@ from app.schemas.social_media import (
     PhoneDeviceDiscoveryResponse,
     PhoneDeviceOut,
     PhoneDeviceUpdate,
+    SchedulePreviewResponse,
+    SchedulePreviewSlot,
     SocialDestinationCreate,
     SocialDestinationOut,
     SocialDestinationUpdate,
 )
 from app.services.phone_runner_client import PhoneRunnerClient
+from app.services.publishing_schedule import (
+    compute_audience_slot,
+    get_destination_reservations_utc,
+)
 from app.services.social_delivery_policy import validate_route
 
 router = APIRouter(prefix="/social-media", tags=["social-media"])
@@ -83,6 +90,86 @@ def get_destination(destination_id: int, db: DB, _: CurrentUser):
     if not dest:
         raise HTTPException(status_code=404, detail="Destination not found")
     return dest
+
+
+@router.get(
+    "/destinations/{destination_id}/schedule-preview",
+    response_model=SchedulePreviewResponse,
+)
+def get_destination_schedule_preview(
+    destination_id: int,
+    db: DB,
+    _: CurrentUser,
+    limit: int = Query(6, ge=1, le=12),
+):
+    """Read-only preview of next available hypothetical publishing slots for a destination."""
+    dest = db.query(SocialDestination).filter_by(id=destination_id).first()
+    if not dest:
+        raise HTTPException(status_code=404, detail="Destination not found")
+
+    project = db.query(TargetFanpage).filter_by(id=dest.content_project_id).first()
+    target_country = project.target_country if project else None
+    sleep_start = project.publish_sleep_start_hour if project else None
+    sleep_end = project.publish_sleep_end_hour if project else None
+
+    tz_name = (dest.timezone or (project.timezone if project else None) or "Europe/London").strip()
+    try:
+        dest_tz = zoneinfo.ZoneInfo(tz_name)
+    except Exception:
+        raise HTTPException(status_code=422, detail=f"Invalid destination timezone: {tz_name}")
+
+    daily_target = int(dest.daily_target) if dest.daily_target and dest.daily_target > 0 else 1
+    min_gap = int(dest.min_gap_minutes) if dest.min_gap_minutes is not None and dest.min_gap_minutes >= 0 else 5
+
+    try:
+        existing_reservations = get_destination_reservations_utc(db, dest)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Unable to retrieve existing publishing reservations")
+
+    slots_utc: list[datetime] = []
+    slots_local: list[str] = []
+    preview_slots: list[SchedulePreviewSlot] = []
+
+    now_utc = datetime.now(timezone.utc)
+    simulated_reservations = list(existing_reservations)
+
+    for _ in range(limit):
+        try:
+            next_slot = compute_audience_slot(
+                now_utc=now_utc,
+                timezone_name=tz_name,
+                daily_target=daily_target,
+                min_gap_minutes=min_gap,
+                existing_slots_utc=simulated_reservations,
+                sleep_start_hour=sleep_start,
+                sleep_end_hour=sleep_end,
+                namespace=f"dest_{dest.id}",
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid schedule parameters: {e}")
+        except Exception:
+            raise HTTPException(status_code=503, detail="Unable to calculate upcoming schedule slots")
+
+        simulated_reservations.append(next_slot)
+        slots_utc.append(next_slot)
+
+        loc_str = next_slot.astimezone(dest_tz).isoformat()
+        slots_local.append(loc_str)
+        preview_slots.append(SchedulePreviewSlot(slot_utc=next_slot, slot_local=loc_str))
+
+    return SchedulePreviewResponse(
+        slots_utc=slots_utc,
+        slots_local=slots_local,
+        slots=preview_slots,
+        timezone=tz_name,
+        target_country=target_country,
+        daily_limit=daily_target,
+        min_gap_minutes=min_gap,
+        sleep_start=sleep_start,
+        sleep_end=sleep_end,
+        basis="local_time_estimate",
+        note="Estimated local activity windows; no account audience Insights connected.",
+    )
 
 
 @router.post(

@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { Icon } from "@iconify/react";
 import { AccountDevicesCard } from "@/components/social-media/AccountDevicesCard";
+import { SchedulePreview } from "@/components/social-media/SchedulePreview";
 import {
   listSocialDestinations,
   createSocialDestination,
@@ -186,6 +187,7 @@ export default function SocialMediaPage() {
   const [replizAccountId, setReplizAccountId] = useState("");
   const [mode, setMode] = useState<SocialDestinationMode>("phone");
   const [timezone, setTimezone] = useState("Europe/London");
+  const [timezoneDirty, setTimezoneDirty] = useState<boolean>(false);
   const [dailyTarget, setDailyTarget] = useState<number>(1);
   const [phoneDailyTarget, setPhoneDailyTarget] = useState<number>(1);
   const [replizDailyTarget, setReplizDailyTarget] = useState<number>(0);
@@ -210,7 +212,8 @@ export default function SocialMediaPage() {
     setServerError(null);
     setKind(initialKind);
     setName("");
-    const initialProjectId = projects[0]?.id ?? "";
+    const initialProject = projects[0];
+    const initialProjectId = initialProject?.id ?? "";
     setContentProjectId(initialProjectId);
     setFacebookActorId("");
     const validProfiles = initialProjectId
@@ -219,7 +222,8 @@ export default function SocialMediaPage() {
     setParentProfileId(validProfiles[0]?.id ?? "");
     setReplizAccountId("");
     setMode("phone");
-    setTimezone("Europe/London");
+    setTimezone(initialProject?.timezone || "Europe/London");
+    setTimezoneDirty(false);
     setDailyTarget(1);
     setPhoneDailyTarget(1);
     setReplizDailyTarget(0);
@@ -240,6 +244,7 @@ export default function SocialMediaPage() {
     setReplizAccountId(dest.repliz_account_id || "");
     setMode(dest.mode);
     setTimezone(dest.timezone || "Europe/London");
+    setTimezoneDirty(true);
     if (dest.kind === "facebook_page" && dest.mode === "mixed") {
       const target = Math.max(2, dest.daily_target);
       setDailyTarget(target);
@@ -260,6 +265,12 @@ export default function SocialMediaPage() {
 
   function handleContentProjectChange(newId: number | "") {
     setContentProjectId(newId);
+    if (!editingId && !timezoneDirty && newId) {
+      const p = projectMap.get(Number(newId));
+      if (p?.timezone) {
+        setTimezone(p.timezone);
+      }
+    }
     const validProfiles = newId
       ? destinations.filter((d) => d.kind === "facebook_profile" && d.content_project_id === newId)
       : [];
@@ -272,6 +283,9 @@ export default function SocialMediaPage() {
 
   function handleModeChange(newMode: SocialDestinationMode) {
     setMode(newMode);
+    if (!editingId && (newMode === "phone" || newMode === "mixed")) {
+      setIsActive(false);
+    }
     if (newMode === "phone") {
       setPhoneDailyTarget(dailyTarget);
       setReplizDailyTarget(0);
@@ -335,6 +349,10 @@ export default function SocialMediaPage() {
 
     setSaving(true);
     try {
+      const effectiveIsActive = (!editingId && (mode === "phone" || (kind === "facebook_page" && mode === "mixed")))
+        ? false
+        : isActive;
+
       if (editingId) {
         const payload: SocialDestinationUpdate = {
           content_project_id: Number(contentProjectId),
@@ -350,7 +368,7 @@ export default function SocialMediaPage() {
           repliz_daily_target: replizDailyTarget,
           min_gap_minutes: minGapMinutes,
           supported_media: supportedMedia,
-          is_active: isActive,
+          is_active: effectiveIsActive,
         };
         await updateSocialDestination(editingId, payload);
       } else {
@@ -368,7 +386,7 @@ export default function SocialMediaPage() {
           repliz_daily_target: replizDailyTarget,
           min_gap_minutes: minGapMinutes,
           supported_media: supportedMedia,
-          is_active: isActive,
+          is_active: effectiveIsActive,
         };
         await createSocialDestination(payload);
       }
@@ -848,7 +866,7 @@ export default function SocialMediaPage() {
       )}
 
           {/* ── Account to Phone Automation Assignments ── */}
-          <div className="pt-2">
+          <div id="account-devices" className="pt-2">
             <AccountDevicesCard
               destinations={destinations}
               devices={devices}
@@ -1419,16 +1437,30 @@ export default function SocialMediaPage() {
               {/* Pacing & Quotas */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Timezone</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="label mb-0">Timezone</label>
+                    {contentProjectId && projectMap.get(Number(contentProjectId)) && (
+                      <span className="text-[10px] text-text-secondary">
+                        Project default: {projectMap.get(Number(contentProjectId))?.timezone}
+                        {projectMap.get(Number(contentProjectId))?.target_country ? ` (${projectMap.get(Number(contentProjectId))?.target_country})` : ""}
+                      </span>
+                    )}
+                  </div>
                   <input
                     className="input-rect text-xs py-2"
                     value={timezone}
-                    onChange={(e) => setTimezone(e.target.value)}
+                    onChange={(e) => {
+                      setTimezone(e.target.value);
+                      setTimezoneDirty(true);
+                    }}
                     required
                   />
+                  <p className="text-[10px] text-text-secondary mt-0.5">
+                    Target audience local timezone. Respects DST.
+                  </p>
                 </div>
                 <div>
-                  <label className="label">Total Daily Target</label>
+                  <label className="label">Daily post limit</label>
                   <input
                     type="number"
                     min={kind === "facebook_page" && mode === "mixed" ? 2 : 1}
@@ -1441,6 +1473,9 @@ export default function SocialMediaPage() {
                     }
                     required
                   />
+                  <p className="text-[10px] text-text-secondary mt-0.5">
+                    Maximum posts per local calendar day; fewer posts may be scheduled when content or available time is limited.
+                  </p>
                 </div>
               </div>
 
@@ -1486,7 +1521,7 @@ export default function SocialMediaPage() {
               )}
 
               <div>
-                <label className="label">Min Gap Between Posts (Minutes)</label>
+                <label className="label">Minimum spacing (minutes)</label>
                 <input
                   type="number"
                   min={1}
@@ -1495,24 +1530,132 @@ export default function SocialMediaPage() {
                   onChange={(e) => setMinGapMinutes(parseInt(e.target.value) || 5)}
                   required
                 />
-              </div>
-
-              {/* Active Toggle with Note */}
-              <div className="p-3 rounded-lg bg-bg-paper-hover border border-divider-soft space-y-1">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isActive}
-                    onChange={(e) => setIsActive(e.target.checked)}
-                    className="w-4 h-4 rounded text-primary-main focus:ring-primary-main"
-                  />
-                  <span className="text-xs font-semibold text-text-primary">Activate Destination</span>
-                </label>
-                <p className="text-[10px] text-text-secondary pl-6">
-                  Phone and Mixed destinations will be rejected by the server if an actor ID and verified device calibration do not exist.
-                  Keep unchecked as an inactive draft during setup.
+                <p className="text-[10px] text-text-secondary mt-0.5">
+                  Safety minimum between posts. Routine posts are spread through the target’s local active hours with varied intervals.
                 </p>
               </div>
+
+              {/* Phone Scheduling Note */}
+              {(mode === "phone" || (kind === "facebook_page" && mode === "mixed")) && (
+                <div className="p-2.5 rounded bg-bg-paper-hover border border-divider-soft text-[10px] text-text-secondary flex items-start gap-2">
+                  <Icon icon="solar:smartphone-line-duotone" width={16} className="text-primary-main shrink-0 mt-0.5" />
+                  <span>
+                    Phone uploads start when their scheduled slot is due, after account and device verification.
+                  </span>
+                </div>
+              )}
+
+              {/* Active Toggle with Note */}
+              {(() => {
+                const isPhoneRoute = mode === "phone" || (kind === "facebook_page" && mode === "mixed");
+                const isNewPhone = !editingId && isPhoneRoute;
+
+                let hasActor = false;
+                let hasVerifiedAssignment = false;
+                let parentActorMissing = false;
+
+                if (editingId && isPhoneRoute) {
+                  hasActor = Boolean(facebookActorId && facebookActorId.trim());
+                  if (kind === "facebook_page") {
+                    const parent = destinations.find((d) => d.id === parentProfileId);
+                    if (!parent || !parent.facebook_actor_id) {
+                      parentActorMissing = true;
+                    }
+                  }
+
+                  const activeAssignments = (assignmentsByDest.get(editingId) || []).filter((a) => a.is_active);
+                  for (const a of activeAssignments) {
+                    const dev = deviceMap.get(a.device_id);
+                    if (a.verified_at && dev && dev.calibration_verified_at && dev.status === "available") {
+                      if (kind === "facebook_profile") {
+                        if (a.verified_profile_actor_id === facebookActorId.trim()) {
+                          hasVerifiedAssignment = true;
+                          break;
+                        }
+                      } else if (kind === "facebook_page") {
+                        const parent = destinations.find((d) => d.id === parentProfileId);
+                        if (
+                          parent &&
+                          a.verified_profile_actor_id === parent.facebook_actor_id &&
+                          a.verified_target_actor_id === facebookActorId.trim()
+                        ) {
+                          hasVerifiedAssignment = true;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+
+                return (
+                  <div className="p-3 rounded-lg bg-bg-paper-hover border border-divider-soft space-y-2">
+                    <label className={`flex items-center gap-2 ${isNewPhone ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}>
+                      <input
+                        type="checkbox"
+                        checked={isNewPhone ? false : isActive}
+                        disabled={isNewPhone}
+                        onChange={(e) => {
+                          if (!isNewPhone) {
+                            setIsActive(e.target.checked);
+                          }
+                        }}
+                        className="w-4 h-4 rounded text-primary-main focus:ring-primary-main"
+                      />
+                      <span className="text-xs font-semibold text-text-primary">Activate Destination</span>
+                    </label>
+
+                    {isNewPhone && (
+                      <p className="text-[11px] text-amber-500/90 pl-6">
+                        Save as a draft, assign a phone in Account Devices, then verify the account before activating.
+                      </p>
+                    )}
+
+                    {!isNewPhone && isPhoneRoute && (!hasActor || !hasVerifiedAssignment || parentActorMissing) && (
+                      <div className="pl-6 text-[11px] text-amber-500/90 space-y-1">
+                        <p>Prerequisites for activating phone automation:</p>
+                        <ul className="list-disc pl-4 space-y-0.5 text-[10px]">
+                          {!hasActor && <li>Destination Facebook Actor ID must be set.</li>}
+                          {parentActorMissing && <li>Parent Facebook Profile must have a Facebook Actor ID.</li>}
+                          {!hasVerifiedAssignment && (
+                            <li>
+                              Verified active device assignment and calibration required. Assign and verify in{" "}
+                              <a
+                                href="#account-devices"
+                                onClick={() => setModalOpen(false)}
+                                className="underline font-medium hover:text-amber-400"
+                              >
+                                Account Devices
+                              </a>.
+                            </li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                    {!isPhoneRoute && (
+                      <p className="text-[10px] text-text-secondary pl-6">
+                        Repliz destination can be activated once configured.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Schedule Preview (existing destination edit only) */}
+              {editingId && (
+                <div className="pt-2">
+                  <SchedulePreview destinationId={editingId} />
+                </div>
+              )}
+
+              {!editingId && (
+                <div className="p-2.5 rounded bg-bg-paper-hover border border-divider-soft text-[10px] text-text-secondary flex items-start gap-2">
+                  <Icon icon="solar:info-circle-linear" width={16} className="text-primary-main shrink-0 mt-0.5" />
+                  <span>
+                    Schedule preview will be available after saving this destination.
+                  </span>
+                </div>
+              )}
 
               {/* Submit Buttons */}
               <div className="flex justify-end gap-2 pt-3 border-t border-divider-soft">
@@ -1528,7 +1671,13 @@ export default function SocialMediaPage() {
                   disabled={saving}
                   className="btn-primary text-xs py-2 px-5"
                 >
-                  {saving ? "Saving…" : editingId ? "Update Destination" : "Create Destination"}
+                  {saving
+                    ? "Saving…"
+                    : !editingId && (mode === "phone" || (kind === "facebook_page" && mode === "mixed"))
+                    ? "Save Draft"
+                    : editingId
+                    ? "Update Destination"
+                    : "Create Destination"}
                 </button>
               </div>
             </form>

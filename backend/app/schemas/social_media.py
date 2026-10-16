@@ -64,7 +64,7 @@ class SocialDestinationCreate(BaseModel):
     repliz_account_id: Optional[str] = None
     mode: str = "phone"
     timezone: str = "Europe/London"
-    daily_target: int = 1
+    daily_target: int = Field(default=1, ge=1, le=1000)
     phone_daily_target: int = 0
     repliz_daily_target: int = 0
     min_gap_minutes: int = 5
@@ -108,6 +108,8 @@ class SocialDestinationCreate(BaseModel):
     def validate_daily_target(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("daily_target must be positive")
+        if v > 1000:
+            raise ValueError("daily_target cannot exceed 1000")
         return v
 
     @field_validator("phone_daily_target", "repliz_daily_target")
@@ -157,7 +159,7 @@ class SocialDestinationUpdate(BaseModel):
     repliz_account_id: Optional[str] = None
     mode: Optional[str] = None
     timezone: Optional[str] = None
-    daily_target: Optional[int] = None
+    daily_target: Optional[int] = Field(default=None, ge=1, le=1000)
     phone_daily_target: Optional[int] = None
     repliz_daily_target: Optional[int] = None
     min_gap_minutes: Optional[int] = None
@@ -207,8 +209,11 @@ class SocialDestinationUpdate(BaseModel):
 
     @field_validator("daily_target")
     def validate_daily_target(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and v <= 0:
-            raise ValueError("daily_target must be positive")
+        if v is not None:
+            if v <= 0:
+                raise ValueError("daily_target must be positive")
+            if v > 1000:
+                raise ValueError("daily_target cannot exceed 1000")
         return v
 
     @field_validator("phone_daily_target", "repliz_daily_target")
@@ -263,6 +268,28 @@ class SocialDestinationOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SchedulePreviewSlot(BaseModel):
+    slot_utc: datetime
+    slot_local: str
+
+
+class SchedulePreviewResponse(BaseModel):
+    slots_utc: list[datetime]
+    slots_local: list[str]
+    slots: list[SchedulePreviewSlot]
+    timezone: str
+    target_country: Optional[str] = None
+    daily_limit: int
+    min_gap_minutes: int
+    sleep_start: Optional[int] = None
+    sleep_end: Optional[int] = None
+    basis: Literal["local_time_estimate"] = "local_time_estimate"
+    note: Literal["Estimated local activity windows; no account audience Insights connected."] = (
+        "Estimated local activity windows; no account audience Insights connected."
+    )
+
 
 
 # ── Phone Devices ──────────────────────────────────────────────────────────────

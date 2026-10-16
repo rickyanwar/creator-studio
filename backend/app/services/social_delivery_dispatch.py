@@ -17,6 +17,7 @@ from typing import Any, Sequence
 import uuid
 
 import httpx
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -92,17 +93,196 @@ def _now(now_utc: datetime | None = None) -> datetime:
     return now_utc.astimezone(timezone.utc)
 
 
+def claim_paced_delivery_for_dispatch(
+    db: Session,
+    delivery_id: int,
+    eligible_states: Sequence[str] | None = None,
+    now_utc: datetime | None = None,
+) -> tuple[PublishDelivery | None, str | None]:
+    """Atomically claim a delivery for dispatch under destination row lock.
+
+    Serializes actual-send decisions and claims per destination.
+    Enforces:
+    1. Consistent lock ordering: SocialDestination -> PublishDelivery.
+    2. Re-verifies fresh candidate state (.populate_existing) under lock.
+    3. Blocks adjacent immediate live sends if another immediate send is currently 'publishing'.
+    4. Safe minGap guard: queries recent live sends using scalar / EXISTS logic (no PG NULLS FIRST shadowing).
+    5. Excludes future Repliz pre-schedule submission times from live-send guard.
+    6. Counts recent immediate Repliz accepted status (repliz_scheduled) as actual live sends.
+    7. Clean lock release via db.commit() on skip or claim.
+    """
+    now = _now(now_utc)
+    naive_now = now.replace(tzinfo=None)
+
+    if eligible_states is None:
+        eligible_states = ["scheduled", "waiting_for_slot", "waiting_for_device"]
+
+    deliv_stub = (
+        db.query(PublishDelivery.id, PublishDelivery.destination_id)
+        .filter(PublishDelivery.id == delivery_id)
+        .first()
+    )
+    if not deliv_stub or deliv_stub.destination_id is None:
+        return None, None
+    dest_id = deliv_stub.destination_id
+
+    # 1. Lock destination first (dest -> delivery to prevent deadlocks)
+    dest = (
+        db.query(SocialDestination)
+        .filter_by(id=dest_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if not dest or not dest.is_active:
+        db.commit()
+        return None, None
+
+    # 2. Lock candidate delivery under destination lock
+    candidate = (
+        db.query(PublishDelivery)
+        .filter(
+            PublishDelivery.id == delivery_id,
+            PublishDelivery.destination_id == dest_id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if not candidate:
+        db.commit()
+        return None, None
+
+    # Verify candidate fresh state
+    if candidate.state not in eligible_states:
+        db.commit()
+        return None, None
+    if candidate.claim_token is not None:
+        db.commit()
+        return None, None
+    if candidate.uncertain_since is not None or candidate.state == "uncertain":
+        db.commit()
+        return None, None
+    if candidate.facebook_post_id is not None or candidate.repliz_schedule_id is not None:
+        db.commit()
+        return None, None
+
+    # Phone deliveries must wait until due slot
+    if candidate.intended_method == "phone":
+        if candidate.scheduled_for and candidate.scheduled_for > naive_now:
+            db.commit()
+            return None, None
+
+    is_immediate = (
+        candidate.intended_method == "phone"
+        or candidate.scheduled_for is None
+        or candidate.scheduled_for <= naive_now
+    )
+
+    if is_immediate:
+        # A. Treat another in-progress immediate Phone/live send as blocking regardless of minGap
+        active_immediate = (
+            db.query(PublishDelivery.id)
+            .filter(
+                PublishDelivery.destination_id == dest_id,
+                PublishDelivery.id != candidate.id,
+                PublishDelivery.state == "publishing",
+                or_(
+                    PublishDelivery.intended_method == "phone",
+                    PublishDelivery.scheduled_for.is_(None),
+                    PublishDelivery.scheduled_for <= naive_now,
+                ),
+            )
+            .first()
+        )
+        if active_immediate:
+            db.commit()
+            return None, None
+
+        # B. Check min_gap_minutes against recent live sends
+        min_gap_min = getattr(dest, "min_gap_minutes", None) or 0
+        if min_gap_min > 0:
+            gap_cutoff = naive_now - timedelta(minutes=float(min_gap_min))
+
+            recent_live_send = (
+                db.query(PublishDelivery.id)
+                .filter(
+                    PublishDelivery.destination_id == dest_id,
+                    PublishDelivery.id != candidate.id,
+                    or_(
+                        # 1. Phone or direct live send published recently
+                        and_(
+                            PublishDelivery.state == "published",
+                            or_(
+                                PublishDelivery.intended_method.is_(None),
+                                PublishDelivery.intended_method != "repliz",
+                            ),
+                            func.coalesce(PublishDelivery.published_at, PublishDelivery.claimed_at) >= gap_cutoff,
+                            func.coalesce(PublishDelivery.published_at, PublishDelivery.claimed_at) <= naive_now,
+                        ),
+                        # 2. Immediate Repliz accepted/published recently (exclude future pre-schedules)
+                        and_(
+                            PublishDelivery.state.in_(["published", "repliz_scheduled"]),
+                            PublishDelivery.intended_method == "repliz",
+                            func.coalesce(PublishDelivery.published_at, PublishDelivery.claimed_at) >= gap_cutoff,
+                            func.coalesce(PublishDelivery.published_at, PublishDelivery.claimed_at) <= naive_now,
+                            or_(
+                                PublishDelivery.scheduled_for.is_(None),
+                                PublishDelivery.scheduled_for <= PublishDelivery.published_at,
+                                PublishDelivery.scheduled_for <= naive_now,
+                            ),
+                        ),
+                    ),
+                )
+                .first()
+            )
+            if recent_live_send:
+                db.commit()
+                return None, None
+
+    # Atomic claim write under lock
+    token = uuid.uuid4().hex
+    candidate.state = "publishing"
+    candidate.claim_token = token
+    candidate.claimed_at = naive_now
+    candidate.updated_at = naive_now
+
+    event = DeliveryEvent(
+        delivery_id=candidate.id,
+        event_type="claim_acquired",
+        details={
+            "claim_token": token,
+            "eligible_states": list(eligible_states),
+            "intended_method": candidate.intended_method,
+            "is_immediate": is_immediate,
+        },
+        created_at=naive_now,
+    )
+    db.add(event)
+    db.commit()
+    return candidate, token
+
+
 def claim_delivery_for_dispatch(
     db: Session,
     delivery_id: int,
     eligible_states: Sequence[str] | None = None,
     now_utc: datetime | None = None,
+    paced: bool = False,
 ) -> tuple[PublishDelivery | None, str | None]:
     """Atomically claim a delivery for dispatch before any remote side effect.
 
     Sets state to 'publishing', records claim_token and claimed_at, commits immediately.
     Returns (delivery, claim_token) if claimed, else (None, None).
     """
+    if paced:
+        return claim_paced_delivery_for_dispatch(
+            db,
+            delivery_id=delivery_id,
+            eligible_states=eligible_states,
+            now_utc=now_utc,
+        )
+
     now = _now(now_utc)
     naive_now = now.replace(tzinfo=None)
     token = uuid.uuid4().hex
@@ -141,6 +321,7 @@ def claim_delivery_for_dispatch(
 
     delivery = db.query(PublishDelivery).filter_by(id=delivery_id).first()
     return delivery, token
+
 
 
 def recover_stale_deliveries_and_leases(
@@ -1322,7 +1503,7 @@ def _recovering_phone_destinations_query(
     if device_id is not None:
         eligible_ids_query = eligible_ids_query.filter(PhoneDevice.id == device_id)
 
-    return db.query(SocialDestination).filter(SocialDestination.id.in_(eligible_ids_query))
+    return db.query(SocialDestination).filter(SocialDestination.id.in_(eligible_ids_query)).order_by(SocialDestination.id.asc())
 
 
 def replan_recovering_phone_deliveries(
@@ -1337,6 +1518,11 @@ def replan_recovering_phone_deliveries(
     """
     now = _now(now_utc)
     naive_now = now.replace(tzinfo=None)
+
+    from app.services.publishing_schedule import (
+        compute_audience_slot,
+        get_destination_reservations_utc,
+    )
 
     destinations = _recovering_phone_destinations_query(db, device_id=device_id).all()
     replanned: list[PublishDelivery] = []
@@ -1362,34 +1548,41 @@ def replan_recovering_phone_deliveries(
             except Exception:
                 supported = [supported]
 
-        existing = (
-            db.query(PublishDelivery)
-            .filter(
-                PublishDelivery.destination_id == dest.id,
-                PublishDelivery.id.notin_([w.id for w in waiting]),
-                PublishDelivery.scheduled_for.isnot(None),
-                PublishDelivery.state.notin_(["failed", "skipped"]),
-            )
-            .all()
-        )
-        existing_slots_utc = [
-            d.scheduled_for.replace(tzinfo=timezone.utc)
-            for d in existing
-            if d.scheduled_for is not None
-        ]
+        fanpage = getattr(dest, "content_project", None)
+        if fanpage is None and dest.content_project_id:
+            fanpage = db.query(TargetFanpage).filter_by(id=dest.content_project_id).first()
+        sleep_start = fanpage.publish_sleep_start_hour if fanpage else None
+        sleep_end = fanpage.publish_sleep_end_hour if fanpage else None
 
+        supported_waiting: list[PublishDelivery] = []
         for deliv in waiting:
-            if deliv.media_kind not in supported:
+            if deliv.media_kind in supported:
+                supported_waiting.append(deliv)
+            else:
                 deliv.state = "waiting_for_slot"
                 deliv.last_error = f"Unsupported media kind '{deliv.media_kind}'"
-                continue
 
-            next_slot = compute_next_slot(
+        if not supported_waiting:
+            continue
+
+        all_reservations = get_destination_reservations_utc(db, dest)
+        existing_slots_utc = list(all_reservations)
+        for w in supported_waiting:
+            if w.scheduled_for is not None:
+                stale_ts = w.scheduled_for.replace(tzinfo=timezone.utc)
+                if stale_ts in existing_slots_utc:
+                    existing_slots_utc.remove(stale_ts)
+
+        for deliv in supported_waiting:
+            next_slot = compute_audience_slot(
                 now_utc=now,
                 timezone_name=dest.timezone,
                 daily_target=dest.daily_target,
                 min_gap_minutes=dest.min_gap_minutes,
                 existing_slots_utc=existing_slots_utc,
+                sleep_start_hour=sleep_start,
+                sleep_end_hour=sleep_end,
+                namespace=f"dest-{dest.id}",
             )
             existing_slots_utc.append(next_slot)
             naive_slot = next_slot.astimezone(timezone.utc).replace(tzinfo=None)
@@ -1404,6 +1597,148 @@ def replan_recovering_phone_deliveries(
                     details={
                         "scheduled_for": naive_slot.isoformat(),
                         "reason": "phone_device_recovered",
+                    },
+                    created_at=naive_now,
+                )
+            )
+            replanned.append(deliv)
+
+    if replanned:
+        db.commit()
+
+    return replanned
+
+
+def replan_stale_scheduled_deliveries(
+    db: Session,
+    now_utc: datetime | None = None,
+) -> list[PublishDelivery]:
+    """Replan untouched scheduled deliveries overdue by >10 minutes.
+
+    Prevents immediate burst execution after server maintenance or downtime.
+    Serializes per-destination using row lock. Re-checks fresh row state
+    and external IDs to ensure concurrent claims are not overwritten. Moves
+    untouched records to the next valid paced future slot and synchronizes
+    parent PublishJob.scheduled_for.
+    """
+    from app.services.publishing_schedule import (
+        compute_audience_slot,
+        get_destination_reservations_utc,
+    )
+
+    now = _now(now_utc)
+    naive_now = now.replace(tzinfo=None)
+    stale_cutoff = naive_now - timedelta(minutes=10)
+
+    stale_deliveries = (
+        db.query(PublishDelivery)
+        .filter(
+            PublishDelivery.state == "scheduled",
+            PublishDelivery.attempt_count == 0,
+            PublishDelivery.claim_token.is_(None),
+            PublishDelivery.repliz_schedule_id.is_(None),
+            PublishDelivery.facebook_post_id.is_(None),
+            PublishDelivery.uncertain_since.is_(None),
+            PublishDelivery.scheduled_for < stale_cutoff,
+        )
+        .order_by(PublishDelivery.scheduled_for.asc(), PublishDelivery.id.asc())
+        .all()
+    )
+    if not stale_deliveries:
+        return []
+
+    by_dest: dict[int, list[int]] = {}
+    for deliv in stale_deliveries:
+        by_dest.setdefault(deliv.destination_id, []).append(deliv.id)
+
+    replanned: list[PublishDelivery] = []
+    for dest_id in sorted(by_dest):
+        deliv_ids = by_dest[dest_id]
+        destination = (
+            db.query(SocialDestination)
+            .filter_by(id=dest_id)
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+        if not destination or not destination.is_active:
+            continue
+
+        fanpage = getattr(destination, "content_project", None)
+        if fanpage is None and destination.content_project_id:
+            fanpage = db.query(TargetFanpage).filter_by(id=destination.content_project_id).first()
+        sleep_start = fanpage.publish_sleep_start_hour if fanpage else None
+        sleep_end = fanpage.publish_sleep_end_hour if fanpage else None
+
+        # Re-fetch candidate deliveries with row lock and populate_existing
+        locked_delivs = (
+            db.query(PublishDelivery)
+            .filter(
+                PublishDelivery.id.in_(deliv_ids),
+                PublishDelivery.destination_id == dest_id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .order_by(PublishDelivery.scheduled_for.asc(), PublishDelivery.id.asc())
+            .all()
+        )
+
+        eligible_delivs: list[PublishDelivery] = []
+        for deliv in locked_delivs:
+            if (
+                deliv.state == "scheduled"
+                and deliv.attempt_count == 0
+                and deliv.claim_token is None
+                and deliv.repliz_schedule_id is None
+                and deliv.facebook_post_id is None
+                and deliv.uncertain_since is None
+                and deliv.scheduled_for is not None
+                and deliv.scheduled_for < stale_cutoff
+            ):
+                eligible_delivs.append(deliv)
+
+        if not eligible_delivs:
+            continue
+
+        all_reservations = get_destination_reservations_utc(db, destination)
+        existing_slots_utc = list(all_reservations)
+        for deliv in eligible_delivs:
+            stale_ts = deliv.scheduled_for.replace(tzinfo=timezone.utc)
+            if stale_ts in existing_slots_utc:
+                existing_slots_utc.remove(stale_ts)
+
+        for deliv in eligible_delivs:
+            old_scheduled = deliv.scheduled_for
+            next_slot = compute_audience_slot(
+                now_utc=now,
+                timezone_name=destination.timezone,
+                daily_target=destination.daily_target,
+                min_gap_minutes=destination.min_gap_minutes,
+                existing_slots_utc=existing_slots_utc,
+                sleep_start_hour=sleep_start,
+                sleep_end_hour=sleep_end,
+                namespace=f"dest-{destination.id}",
+            )
+            existing_slots_utc.append(next_slot)
+            naive_slot = next_slot.astimezone(timezone.utc).replace(tzinfo=None)
+
+            deliv.scheduled_for = naive_slot
+            deliv.last_error = None
+
+            # Synchronize parent PublishJob.scheduled_for if matching old slot or None
+            job = db.query(PublishJob).filter_by(id=deliv.publish_job_id).first()
+            if job and (job.scheduled_for == old_scheduled or job.scheduled_for is None):
+                job.scheduled_for = naive_slot
+
+            db.add(
+                DeliveryEvent(
+                    delivery_id=deliv.id,
+                    event_type="rescheduled",
+                    details={
+                        "reason": "overdue_untouched_replan",
+                        "previous_scheduled_for": old_scheduled.isoformat() if old_scheduled else None,
+                        "scheduled_for": naive_slot.isoformat(),
+                        "publish_job_id": deliv.publish_job_id,
                     },
                     created_at=naive_now,
                 )
@@ -1435,6 +1770,7 @@ def dispatch_due_deliveries(
 
     recover_stale_deliveries_and_leases(db, now_utc=now)
     replan_recovering_phone_deliveries(db, now_utc=now)
+    replan_stale_scheduled_deliveries(db, now_utc=now)
 
     # Check awaiting approval incidents whose 15-minute silence window has passed
     awaiting_incidents = (
@@ -1478,12 +1814,7 @@ def dispatch_due_deliveries(
     processed: list[PublishDelivery] = []
 
     for candidate in candidates:
-        # Phone deliveries must wait until due slot
-        if candidate.intended_method == "phone":
-            if candidate.scheduled_for and candidate.scheduled_for > naive_now:
-                continue
-
-        delivery, token = claim_delivery_for_dispatch(
+        delivery, token = claim_paced_delivery_for_dispatch(
             db,
             candidate.id,
             eligible_states=["scheduled"],

@@ -512,6 +512,7 @@ import type {
   SocialDestination,
   SocialDestinationCreate,
   SocialDestinationUpdate,
+  SchedulePreviewResponse,
   PhoneDevice,
   PhoneDeviceCreate,
   PhoneDeviceUpdate,
@@ -551,6 +552,11 @@ export const updateSocialDestination = (id: number, data: SocialDestinationUpdat
 
 export const deleteSocialDestination = (id: number) =>
   api.delete<SocialDestination>(`/social-media/destinations/${id}`);
+
+export const getSchedulePreview = (destinationId: number, limit: number = 6) =>
+  api.get<SchedulePreviewResponse>(`/social-media/destinations/${destinationId}/schedule-preview`, {
+    params: { limit },
+  });
 
 // ── Phone Devices (A1a/U0) ───────────────────────────────────────────────────
 export const listPhoneDevices = (params?: { status?: string }) =>

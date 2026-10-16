@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import sqlite3
+import zoneinfo
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
@@ -387,13 +388,20 @@ def test_timezone_rollover_and_min_gap(db_session: Session):
     db_session.flush()
 
     d1 = ensure_deliveries(db_session, job1, now_utc=t0)[0]
-    # First delivery scheduled at 01:00 UTC
-    assert d1.scheduled_for == datetime(2026, 10, 15, 1, 0)
+    tokyo_tz = zoneinfo.ZoneInfo("Asia/Tokyo")
+    d1_tokyo = d1.scheduled_for.replace(tzinfo=timezone.utc).astimezone(tokyo_tz)
+    # First delivery scheduled on Oct 15 in Tokyo within active hours and >= t0 + 60s
+    assert d1_tokyo.date() == datetime(2026, 10, 15).date()
+    assert 7 <= d1_tokyo.hour < 22
+    assert d1.scheduled_for >= datetime(2026, 10, 15, 1, 1)
 
     # Second delivery with same now_utc cannot fit on Oct 15 in Tokyo (target 1/day reached)
-    # Must roll over to next calendar day in Tokyo: 2026-10-16 00:00 JST = 2026-10-15 15:00 UTC
+    # Must roll over to next calendar day in Tokyo (Oct 16), within active hours, separated by min_gap
     d2 = ensure_deliveries(db_session, job2, now_utc=t0)[0]
-    assert d2.scheduled_for == datetime(2026, 10, 15, 15, 0)
+    d2_tokyo = d2.scheduled_for.replace(tzinfo=timezone.utc).astimezone(tokyo_tz)
+    assert d2_tokyo.date() == datetime(2026, 10, 16).date()
+    assert 7 <= d2_tokyo.hour < 22
+    assert (d2.scheduled_for - d1.scheduled_for).total_seconds() >= 60 * 60
 
 
 def test_planner_cap_rollover_honors_sleep_window(db_session: Session):
@@ -440,12 +448,17 @@ def test_planner_cap_rollover_honors_sleep_window(db_session: Session):
     db_session.flush()
 
     d1 = ensure_deliveries(db_session, job1, now_utc=t0)[0]
-    assert d1.scheduled_for == datetime(2026, 10, 15, 12, 0)
+    # First delivery scheduled on Oct 15 UTC outside sleep window [23..7) and >= t0 + 60s
+    assert d1.scheduled_for.date() == datetime(2026, 10, 15).date()
+    assert 7 <= d1.scheduled_for.hour < 23
+    assert d1.scheduled_for >= datetime(2026, 10, 15, 12, 1)
 
     # Job 2 cannot fit on Oct 15 (daily target 1 reached).
-    # Normal rollover lands at 00:00 midnight; with sleep window [23..7), it lands at 07:00!
+    # Rollover lands on next calendar day (Oct 16) outside sleep window [23..7)
     d2 = ensure_deliveries(db_session, job2, now_utc=t0)[0]
-    assert d2.scheduled_for == datetime(2026, 10, 16, 7, 0)
+    assert d2.scheduled_for.date() == datetime(2026, 10, 16).date()
+    assert 7 <= d2.scheduled_for.hour < 23
+    assert (d2.scheduled_for - d1.scheduled_for).total_seconds() >= 60 * 60
 
 
 def test_immutable_snapshots_after_job_edit(db_session: Session):
