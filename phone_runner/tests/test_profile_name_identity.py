@@ -75,6 +75,7 @@ class AdbCommandRecorder:
             ["shell", "ime", "disable"],
             ["shell", "ime", "set"],
             ["shell", "input", "tap"],
+            ["shell", "dumpsys", "window", "displays"],
             ["shell", "input", "keyevent"],
             ["shell", "input", "swipe"],
             ["shell", "am", "start"],

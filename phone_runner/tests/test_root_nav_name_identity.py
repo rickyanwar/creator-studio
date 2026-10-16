@@ -172,3 +172,31 @@ def test_composer_placeholder_counts_as_empty_input():
     assert _is_empty_input_text("What's on your mind?") is True
     assert _is_empty_input_text("  Apa yang Anda pikirkan?  ") is True
     assert _is_empty_input_text("Marc Márquez is proving") is False
+
+
+def test_wait_for_window_focus_polls_until_composer(monkeypatch):
+    from phone_runner import identity_proof
+    from phone_runner.adb import AdbResult
+
+    focus = iter([
+        "mCurrentFocus=Window{1 u0 com.facebook.katana/com.facebook.katana.activity.FbMainTabActivity}",
+        "mCurrentFocus=Window{2 u0 com.facebook.katana/com.facebook.composer.activity.ComposerActivity}",
+    ])
+    monkeypatch.setattr(identity_proof.time, "sleep", lambda s: None)
+    monkeypatch.setattr(identity_proof, "run_adb", lambda args, serial=None: AdbResult(0, next(focus), ""))
+    assert identity_proof._wait_for_window_focus("100.64.96.50:5555", "ComposerActivity") is True
+
+
+def test_wait_for_window_focus_times_out(monkeypatch):
+    from phone_runner import identity_proof
+    from phone_runner.adb import AdbResult
+
+    clock = iter([0.0, 3.0, 9.0, 12.0])
+    monkeypatch.setattr(identity_proof.time, "sleep", lambda s: None)
+    monkeypatch.setattr(identity_proof.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        identity_proof,
+        "run_adb",
+        lambda args, serial=None: AdbResult(0, "mCurrentFocus=Window{1 u0 com.facebook.katana/com.facebook.katana.activity.FbMainTabActivity}", ""),
+    )
+    assert identity_proof._wait_for_window_focus("100.64.96.50:5555", "ComposerActivity", timeout=8.0) is False

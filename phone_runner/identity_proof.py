@@ -1027,6 +1027,27 @@ def _check_and_tap_go_to_profile(
     return False
 
 
+COMPOSER_OPEN_WAIT_SECONDS = 8.0
+
+
+def _wait_for_window_focus(serial: str, activity_suffix: str, timeout: float = COMPOSER_OPEN_WAIT_SECONDS) -> bool:
+    """Polls the focused window until it is the given activity (a fixed sleep was too short on the real phone)."""
+    deadline = time.monotonic() + timeout
+    time.sleep(0.8)
+    while True:
+        # run_adb directly (not query_window_state) so callers' window-state sequence is untouched.
+        win = run_adb(["shell", "dumpsys", "window", "displays"], serial=serial)
+        out = win.stdout or ""
+        if win.returncode != 0 or "mCurrentFocus=" not in out:
+            return False  # no usable focus info: let the normal composer verification decide
+        if re.search(r"mCurrentFocus=Window\{[^}]*" + re.escape(activity_suffix) + r"\}", out):
+            time.sleep(0.5)
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
+
+
 def _try_open_own_root_without_model(
     serial: str,
     main_name: str,
@@ -1935,7 +1956,7 @@ def collect_own_url_proof_chain(
             # Tap composer trigger
             tcx, tcy = get_center(trigger_bounds)
             run_adb(["shell", "input", "tap", str(tcx), str(tcy)], serial=serial)
-            time.sleep(0.8)
+            _wait_for_window_focus(serial, "ComposerActivity")
 
             # Step 6: Validate Composer Binding
             timeout_err = check_deadline("composer binding verification")
