@@ -1161,3 +1161,228 @@ def test_name_proof_rejected_for_page_destination(monkeypatch):
     assert res["status"] != "published"
     assert res["publish_may_have_started"] is False
     assert (811, 125, 1026, 233) not in taps
+
+
+TYPED_LONG_CAPTION_NO_PHOTO_XML = f"""<hierarchy rotation="0">
+  <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+  <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="true" />
+  <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+  <node class="android.widget.AutoCompleteTextView" bounds="[0,690][1080,792]" text="A very long caption that pushed the photo down" />
+</hierarchy>"""
+
+SWIPED_REVEALED_PHOTO_XML = f"""<hierarchy rotation="0">
+  <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+  <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="true" />
+  <node class="android.view.ViewGroup" bounds="[252,325][424,384]" text="{TEST_DEST_NAME}" />
+  <node class="android.widget.ImageView" content-desc="Photo" bounds="[0,891][1080,1971]" />
+  <node class="android.widget.Button" content-desc="Remove photo" bounds="[800,891][1000,1000]" />
+</hierarchy>"""
+
+
+def test_long_caption_photo_revealed_after_one_swipe(monkeypatch):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    taps = []
+    adb_commands = []
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr(
+        "phone_runner.publish.run_adb",
+        lambda args, serial=None: adb_commands.append(list(args)) or AdbResult(0, "OK", ""),
+    )
+
+    ui_iter = iter([
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # typed dump: caption matches, no photo
+        AdbResult(0, SWIPED_REVEALED_PHOTO_XML, ""),          # after 1st swipe: photo revealed
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ])
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.publish.verify_gate",
+        lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
+    )
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="A very long caption that pushed the photo down",
+        media_urls=["https://cdn.example.com/p.jpg"],
+        rehearsal=False,
+    )
+
+    assert res["status"] == "published"
+    assert res["facebook_post_id"] == "post_123"
+    assert res["publish_may_have_started"] is True
+    assert res["error_code"] is None
+
+    # Exactly one swipe command recorded
+    swipe_cmds = [cmd for cmd in adb_commands if "swipe" in cmd]
+    assert len(swipe_cmds) == 1
+    assert swipe_cmds[0] == ["shell", "input", "swipe", "540", "1300", "540", "600", "400"]
+
+    # content_gate stage detail confirms swipe count
+    content_gate_stage = next(s for s in res["stages"] if s["stage"] == "content_gate")
+    assert content_gate_stage["passed"] is True
+    assert "photo visible after 1 swipes" in content_gate_stage["detail"]
+
+
+def test_photo_never_visible_after_three_swipes_fails_media_preview_mismatch(monkeypatch):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    taps = []
+    adb_commands = []
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr(
+        "phone_runner.publish.run_adb",
+        lambda args, serial=None: adb_commands.append(list(args)) or AdbResult(0, "OK", ""),
+    )
+
+    ui_iter = iter([
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # typed dump
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # swipe 1
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # swipe 2
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),  # swipe 3
+    ])
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.publish.verify_gate",
+        lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="A very long caption that pushed the photo down",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "failed"
+    assert res["error_code"] == "media_preview_mismatch"
+    assert res["publish_may_have_started"] is False
+
+    # 3 swipe commands executed
+    swipe_cmds = [cmd for cmd in adb_commands if "swipe" in cmd]
+    assert len(swipe_cmds) == 3
+
+    # No Next tap, no SHARE tap
+    assert (810, 96, 1068, 204) not in taps
+    assert (811, 125, 1026, 233) not in taps
+
+    content_gate_stage = next(s for s in res["stages"] if s["stage"] == "content_gate")
+    assert content_gate_stage["passed"] is False
+    assert "after 3 swipes" in content_gate_stage["detail"]
+
+
+def test_observation_order_save_before_discard(monkeypatch):
+    call_order = []
+    monkeypatch.setattr(
+        "phone_runner.publish.save_composer_observation",
+        lambda s, r: call_order.append(("save_obs", r)) or "/tmp/obs.json",
+    )
+    monkeypatch.setattr(
+        "phone_runner.publish.discard_composer",
+        lambda s: call_order.append(("discard", s)),
+    )
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: AdbResult(0, MODERN_FEED_DUMP, ""))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    proof = _make_valid_modern_proof(empty_state_certainty=False)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello",
+        media_urls=None,
+    )
+
+    assert res["status"] == "failed"
+    assert res["error_code"] == "draft_state_uncertain"
+    assert call_order == [("save_obs", "draft_state_uncertain"), ("discard", TEST_SERIAL)]
+    assert call_order[0][0] == "save_obs"
+    assert call_order[1][0] == "discard"
+
+
+
+SWIPED_CHANGED_CAPTION_XML = f"""<hierarchy rotation="0">
+  <node class="android.widget.Button" bounds="[30,108][138,216]" content-desc="Close" />
+  <node class="android.widget.Button" bounds="[810,96][1068,204]" content-desc="Next" enabled="true" />
+  <node class="android.widget.AutoCompleteTextView" bounds="[0,300][1080,700]" text="A very long caption that pushed the photo down glide" />
+  <node class="android.widget.ImageView" content-desc="Photo" bounds="[0,891][1080,1971]" />
+  <node class="android.widget.Button" content-desc="Remove photo" bounds="[800,891][1000,1000]" />
+</hierarchy>"""
+
+
+def test_caption_changed_while_revealing_photo_fails_before_share(monkeypatch):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+    ui_iter = iter([
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, ""),
+        AdbResult(0, SWIPED_CHANGED_CAPTION_XML, ""),
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ])
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.publish.verify_gate",
+        lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="A very long caption that pushed the photo down",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "failed"
+    assert res["error_code"] == "caption_mismatch"
+    assert res["publish_may_have_started"] is False
+    assert (811, 125, 1026, 233) not in taps

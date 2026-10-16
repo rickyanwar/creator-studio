@@ -369,3 +369,59 @@ def test_check_posted_posts_array():
     assert ok is False
     assert "no posts found" in detail
 
+
+def test_composer_after_typing_allows_missing_photo_before_typing_requires_it():
+    ans_no_photo = {
+        "screen": "composer",
+        "author_name": "Agung",
+        "has_attached_photo": False,
+        "caption_starts_with": "Hello world! This is my post",
+        "same_photo_as_reference": False,
+    }
+    # check_composer directly
+    ok_before, detail_before = check_composer(
+        ans_no_photo,
+        expected_author="Agung",
+        expected_caption="Hello world! This is my post",
+        require_caption=True,
+        require_photo=True,
+    )
+    assert ok_before is False
+    assert "has_attached_photo is not True" in detail_before
+
+    ok_after, detail_after = check_composer(
+        ans_no_photo,
+        expected_author="Agung",
+        expected_caption="Hello world! This is my post",
+        require_caption=True,
+        require_photo=False,
+    )
+    assert ok_after is True
+    assert detail_after == "composer verified"
+
+    # verify_gate integration
+    with (
+        mock.patch("phone_runner.vision_verify.capture_screenshot_png", return_value=FAKE_PNG),
+        mock.patch("phone_runner.vision_verify.ask_vision", return_value=(ans_no_photo, "gemini-model", "ok")),
+    ):
+        # composer_before_typing fails with has_attached_photo False
+        ok_gate_before, ev_gate_before = verify_gate(
+            FAKE_SERIAL,
+            "composer_before_typing",
+            expected_author="Agung",
+        )
+        assert ok_gate_before is False
+        assert "has_attached_photo is not True" in ev_gate_before["detail"]
+
+        # composer_after_typing passes with has_attached_photo False
+        ok_gate_after, ev_gate_after = verify_gate(
+            FAKE_SERIAL,
+            "composer_after_typing",
+            expected_author="Agung",
+            expected_caption="Hello world! This is my post",
+            require_caption=True,
+        )
+        assert ok_gate_after is True
+        assert ev_gate_after["ok"] is True
+
+

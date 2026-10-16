@@ -249,6 +249,7 @@ def check_composer(
     expected_author: str,
     expected_caption: str = "",
     require_caption: bool = False,
+    require_photo: bool = True,
 ) -> tuple[bool, str]:
     if not ans or not isinstance(ans, dict):
         return False, "invalid or empty vision response"
@@ -261,11 +262,12 @@ def check_composer(
     if author != expected_author.strip():
         return False, f"author mismatch: expected '{expected_author.strip()}', got '{author}'"
 
-    if ans.get("has_attached_photo") is not True:
-        return False, "has_attached_photo is not True"
+    if require_photo:
+        if ans.get("has_attached_photo") is not True:
+            return False, "has_attached_photo is not True"
 
-    if ans.get("same_photo_as_reference") is not True:
-        return False, "same_photo_as_reference is not True"
+        if ans.get("same_photo_as_reference") is not True:
+            return False, "same_photo_as_reference is not True"
 
     cap_ans = ans.get("caption_starts_with") or ""
     if require_caption:
@@ -388,6 +390,7 @@ def verify_gate(
             expected_author=expected_author,
             expected_caption=expected_caption,
             require_caption=False,
+            require_photo=True,
         )
     elif gate == "composer_after_typing":
         ok, chk_detail = check_composer(
@@ -395,6 +398,7 @@ def verify_gate(
             expected_author=expected_author,
             expected_caption=expected_caption,
             require_caption=True,
+            require_photo=False,
         )
     elif gate == "post_settings":
         ok, chk_detail = check_post_settings(ans)
