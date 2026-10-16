@@ -200,3 +200,50 @@ def test_wait_for_window_focus_times_out(monkeypatch):
         lambda args, serial=None: AdbResult(0, "mCurrentFocus=Window{1 u0 com.facebook.katana/com.facebook.katana.activity.FbMainTabActivity}", ""),
     )
     assert identity_proof._wait_for_window_focus("100.64.96.50:5555", "ComposerActivity", timeout=8.0) is False
+
+
+def test_fb_profile_scrolled_down_is_scrolled_back_to_top(monkeypatch):
+    import xml.etree.ElementTree as ET
+    from phone_runner import identity_proof
+    from phone_runner.adb import AdbResult
+
+    scrolled = ET.fromstring('<hierarchy><node text="Manage posts" bounds="[0,0][10,10]"/></hierarchy>')
+    header = ET.fromstring('<hierarchy><node text="Agung" bounds="[0,0][10,10]"/></hierarchy>')
+    trees = iter([scrolled, scrolled, scrolled, scrolled, header])
+    swipes = []
+
+    monkeypatch.setattr(identity_proof.time, "sleep", lambda s: None)
+    monkeypatch.setattr(identity_proof, "launch_facebook_feed", lambda s: None)
+    monkeypatch.setattr(identity_proof, "launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr(identity_proof, "_check_and_tap_go_to_profile", lambda *a, **k: False)
+    monkeypatch.setattr(identity_proof, "verify_foreground_facebook", lambda s, g=None: (True, "", next(trees), "<x/>"))
+    monkeypatch.setattr(identity_proof, "find_own_profile_controls", lambda tree, name: (False, "x", None))
+    monkeypatch.setattr(
+        identity_proof,
+        "find_own_profile_name_identity",
+        lambda tree, name: (tree is header, "ok" if tree is header else "no header"),
+    )
+    monkeypatch.setattr(identity_proof, "run_adb", lambda args, serial=None: swipes.append(args) or AdbResult(0, "", ""))
+
+    assert identity_proof._try_open_own_root_without_model("100.64.96.50:5555", "Agung", None, allow_name_identity=True) is True
+    assert swipes == [["shell", "input", "swipe", "540", "700", "540", "1900", "300"]] * 2
+
+
+def test_foreign_profile_without_manage_posts_is_never_scrolled(monkeypatch):
+    import xml.etree.ElementTree as ET
+    from phone_runner import identity_proof
+    from phone_runner.adb import AdbResult
+
+    foreign = ET.fromstring('<hierarchy><node text="Add friend" bounds="[0,0][10,10]"/></hierarchy>')
+    cmds = []
+    monkeypatch.setattr(identity_proof.time, "sleep", lambda s: None)
+    monkeypatch.setattr(identity_proof, "launch_facebook_feed", lambda s: None)
+    monkeypatch.setattr(identity_proof, "launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr(identity_proof, "_check_and_tap_go_to_profile", lambda *a, **k: False)
+    monkeypatch.setattr(identity_proof, "verify_foreground_facebook", lambda s, g=None: (True, "", foreign, "<x/>"))
+    monkeypatch.setattr(identity_proof, "find_own_profile_controls", lambda tree, name: (False, "x", None))
+    monkeypatch.setattr(identity_proof, "find_own_profile_name_identity", lambda tree, name: (False, "visitor"))
+    monkeypatch.setattr(identity_proof, "run_adb", lambda args, serial=None: cmds.append(args) or AdbResult(0, "", ""))
+
+    assert identity_proof._try_open_own_root_without_model("100.64.96.50:5555", "Agung", None, allow_name_identity=True) is False
+    assert cmds == []

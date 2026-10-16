@@ -1028,6 +1028,15 @@ def _check_and_tap_go_to_profile(
 
 
 COMPOSER_OPEN_WAIT_SECONDS = 8.0
+PROFILE_SCROLL_TO_TOP_SWIPES = 4
+OWN_PROFILE_SCROLLED_MARKERS = ("Manage posts",)
+
+
+def _has_label(tree: ET.Element, labels: tuple[str, ...]) -> bool:
+    for node in tree.iter("node"):
+        if (node.attrib.get("text") or "").strip() in labels or (node.attrib.get("content-desc") or "").strip() in labels:
+            return True
+    return False
 
 
 def _wait_for_window_focus(serial: str, activity_suffix: str, timeout: float = COMPOSER_OPEN_WAIT_SECONDS) -> bool:
@@ -1096,6 +1105,19 @@ def _try_open_own_root_without_model(
     if ok_p and tree_p is not None:
         if _is_own_root(tree_p):
             logger.info("Deterministic root navigation succeeded: fb://profile intent")
+            return True
+
+    # 4. fb://profile restores the last scroll position, so the profile header (owner controls,
+    # More profile settings) can be above the screen. Scroll back to the top and re-check.
+    for _ in range(PROFILE_SCROLL_TO_TOP_SWIPES):
+        # Only scroll on our own profile: "Manage posts" is an owner-only control.
+        if not ok_p or tree_p is None or not _has_label(tree_p, OWN_PROFILE_SCROLLED_MARKERS):
+            break
+        run_adb(["shell", "input", "swipe", "540", "700", "540", "1900", "300"], serial=serial)
+        time.sleep(1.2)
+        ok_p, err_p, tree_p, raw_xml_p = verify_foreground_facebook(serial, expected_geometry)
+        if ok_p and tree_p is not None and _is_own_root(tree_p):
+            logger.info("Deterministic root navigation succeeded: fb://profile after scrolling to top")
             return True
 
     return False
