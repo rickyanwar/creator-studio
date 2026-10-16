@@ -287,32 +287,68 @@ def find_publish_button_coords(ui_dump: str) -> tuple[int, int] | None:
 KEEP_EDITING_LABELS = ("KEEP EDITING", "Keep editing")
 
 
+KEYBOARD_HIDE_ATTEMPTS = 3
+KEYBOARD_CLOSE_POLLS = 6  # x 0.5 s
+
+
+def _ime_shown(serial: str) -> bool | None:
+    res = run_adb(["shell", "dumpsys", "input_method"], serial=serial)
+    if res.returncode != 0 or not res.stdout:
+        return None
+    if "mInputShown=true" in res.stdout:
+        return True
+    if "mInputShown=false" in res.stdout:
+        return False
+    return None
+
+
+def _tap_keep_editing_if_dialog(serial: str) -> bool:
+    """If the "Discard changes?" dialog is open, taps KEEP EDITING (never DISCARD)."""
+    for _ in range(2):
+        dump = query_ui_hierarchy(serial)
+        if dump.returncode == 0 and dump.stdout:
+            break
+        time.sleep(1.0)
+    else:
+        return False
+    try:
+        tree = ET.fromstring(dump.stdout.strip())
+    except ET.ParseError:
+        return False
+    for node in tree.iter("node"):
+        label = (node.attrib.get("text") or node.attrib.get("content-desc") or "").strip()
+        if label in KEEP_EDITING_LABELS:
+            bounds = parse_bounds(node.attrib.get("bounds", ""))
+            if bounds:
+                human_tap(serial, bounds)
+                human_pause(1.0, 1.5)
+                return True
+    return False
+
+
 def _hide_keyboard_if_shown(serial: str) -> str:
-    """Hides the on-screen keyboard with one Back press, only when it is shown.
+    """Hides the on-screen keyboard with Back, only while it is shown, and waits until the system
+    reports it closed (on the real phone Back can take seconds to apply).
 
     If Back opened the "Discard changes?" dialog instead, taps KEEP EDITING (never DISCARD).
-    Returns "not_shown", "hidden" or "dialog_kept".
+    Returns "not_shown", "hidden", "dialog_kept" or "still_shown".
     """
-    ime = run_adb(["shell", "dumpsys", "input_method"], serial=serial)
-    if ime.returncode != 0 or "mInputShown=true" not in (ime.stdout or ""):
+    if _ime_shown(serial) is not True:
         return "not_shown"
-    run_adb(["shell", "input", "keyevent", "4"], serial=serial)
-    human_pause(1.0, 1.5)
-    dump = query_ui_hierarchy(serial)
-    if dump.returncode == 0 and dump.stdout:
-        try:
-            tree = ET.fromstring(dump.stdout.strip())
-        except ET.ParseError:
+    for _ in range(KEYBOARD_HIDE_ATTEMPTS):
+        run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+        closed = False
+        for _ in range(KEYBOARD_CLOSE_POLLS):
+            time.sleep(0.5)
+            if _ime_shown(serial) is False:
+                closed = True
+                break
+        if _tap_keep_editing_if_dialog(serial):
+            return "dialog_kept"
+        if closed:
+            human_pause(0.8, 1.2)
             return "hidden"
-        for node in tree.iter("node"):
-            label = (node.attrib.get("text") or node.attrib.get("content-desc") or "").strip()
-            if label in KEEP_EDITING_LABELS:
-                bounds = parse_bounds(node.attrib.get("bounds", ""))
-                if bounds:
-                    human_tap(serial, bounds)
-                    human_pause(1.0, 1.5)
-                    return "dialog_kept"
-    return "hidden"
+    return "still_shown"
 
 
 def _caption_typing_timeout(text: str | None) -> float:
@@ -1184,14 +1220,19 @@ def execute_publish(
                 keyboard_state = _hide_keyboard_if_shown(serial)
                 stages.append({"stage": "keyboard_hidden", "passed": True, "detail": keyboard_state})
                 # The layout reflows after the keyboard closes; re-check a few times before scrolling.
+                fresh_dump = False
                 for _ in range(PHOTO_REFLOW_CHECKS):
                     r = query_ui_hierarchy(serial)
                     if r.returncode == 0 and r.stdout:
                         reveal_xml = r.stdout
+                        fresh_dump = True
                         photo_visible = has_attachment_preview(reveal_xml)
                     if photo_visible:
                         break
                     time.sleep(1.0)
+                if not fresh_dump or keyboard_state == "still_shown":
+                    # Never swipe from a stale layout or over an open keyboard.
+                    swipes = PHOTO_REVEAL_SWIPES
             while not photo_visible and swipes < PHOTO_REVEAL_SWIPES:
                 # Swipe only BELOW the caption box: touching the text box re-opens the keyboard.
                 input_bounds_now = composer_state(reveal_xml).get("input_bounds")

@@ -1434,7 +1434,8 @@ def test_keyboard_hidden_reveals_photo_without_swipe(monkeypatch):
     def adb(args, serial=None):
         cmds.append(list(args))
         if args[:3] == ["shell", "dumpsys", "input_method"]:
-            return AdbResult(0, "mInputShown=true\n", "")
+            back_pressed = ["shell", "input", "keyevent", "4"] in cmds
+            return AdbResult(0, "mInputShown=false\n" if back_pressed else "mInputShown=true\n", "")
         return AdbResult(0, "OK", "")
 
     _patch_long_caption_flow(monkeypatch, [
@@ -1582,4 +1583,36 @@ def test_no_swipe_when_caption_box_reaches_screen_bottom(monkeypatch):
 
     assert res["error_code"] == "media_preview_mismatch"
     assert not [c for c in cmds if "swipe" in c]
+    assert (811, 125, 1026, 233) not in taps
+
+
+def test_keyboard_that_never_closes_fails_without_swipe_or_share(monkeypatch):
+    taps, cmds = [], []
+
+    def adb(args, serial=None):
+        cmds.append(list(args))
+        if args[:3] == ["shell", "dumpsys", "input_method"]:
+            return AdbResult(0, "mInputShown=true\n", "")
+        return AdbResult(0, "OK", "")
+
+    _patch_long_caption_flow(
+        monkeypatch,
+        [AdbResult(0, MODERN_FEED_DUMP, ""), AdbResult(0, EMPTY_PROOF_COMPOSER_XML, "")]
+        + [AdbResult(0, TYPED_LONG_CAPTION_NO_PHOTO_XML, "")] * 12,
+        adb,
+        taps,
+    )
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="A very long caption that pushed the photo down",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["error_code"] == "media_preview_mismatch"
+    assert not [c for c in cmds if "swipe" in c]
+    assert cmds.count(["shell", "input", "keyevent", "4"]) == 3
     assert (811, 125, 1026, 233) not in taps
