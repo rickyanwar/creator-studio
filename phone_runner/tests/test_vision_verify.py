@@ -468,3 +468,23 @@ def test_check_composer_require_same_reference_flag():
 
 
 
+
+
+def test_after_typing_accepts_visible_end_fragment_of_long_caption():
+    from phone_runner.vision_verify import check_composer
+
+    expected = "It spins at up to ten thousand rpm, driven by compressed air.\n\n#F1 #Pitstop #Motorsport"
+    ans = {"screen": "composer", "author_name": "Agung", "caption_starts_with": "#F1 #Pitstop #Motorsport"}
+    ok, _ = check_composer(ans, "Agung", expected, require_caption=True, require_photo=False)
+    assert ok is True
+
+
+def test_after_typing_rejects_text_not_in_caption():
+    from phone_runner.vision_verify import check_composer
+
+    expected = "It spins at up to ten thousand rpm, driven by compressed air."
+    ans = {"screen": "composer", "author_name": "Agung", "caption_starts_with": "Lewis Hamilton wins again"}
+    ok, _ = check_composer(ans, "Agung", expected, require_caption=True, require_photo=False)
+    assert ok is False
+    short = {"screen": "composer", "author_name": "Agung", "caption_starts_with": "#F1"}
+    assert check_composer(short, "Agung", expected + " #F1", require_caption=True, require_photo=False)[0] is False

@@ -257,6 +257,19 @@ def _match_loose_caption(observed: str | None, expected: str | None) -> bool:
     return obs_key == exp_key
 
 
+CAPTION_FRAGMENT_MIN_CHARS = 10
+
+
+def _caption_fragment_in(observed: str | None, expected: str | None) -> bool:
+    """True when the visible caption text is part of the expected caption. A long caption scrolls the
+    post box to its END after pasting, so only a later fragment is on screen (exact text is checked
+    from the accessibility tree)."""
+    obs_key = loose_text_key(observed, 10_000)
+    if len(obs_key) < CAPTION_FRAGMENT_MIN_CHARS:
+        return False
+    return obs_key[:40] in loose_text_key(expected, 100_000)
+
+
 def check_composer(
     ans: dict | None,
     expected_author: str,
@@ -285,7 +298,7 @@ def check_composer(
 
     cap_ans = ans.get("caption_starts_with") or ""
     if require_caption:
-        if not _match_loose_caption(cap_ans, expected_caption):
+        if not (_match_loose_caption(cap_ans, expected_caption) or _caption_fragment_in(cap_ans, expected_caption)):
             return False, f"caption mismatch: observed '{cap_ans}' does not loosely match expected '{expected_caption}'"
     else:
         if cap_ans.strip() != "":
