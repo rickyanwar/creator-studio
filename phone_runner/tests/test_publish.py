@@ -6,6 +6,7 @@ import pytest
 from phone_runner.adb import AdbResult
 from phone_runner.mobilerun import MobilerunResult
 from phone_runner.publish import (
+    _query_device_capture_with_retry,
     execute_publish,
     find_publish_button_coords,
     parse_composer_content_evidence,
@@ -383,6 +384,7 @@ def test_sleep_screen_restored_on_exit():
     probe_asleep = dict(FAKE_PROBE_READY, screen="asleep")
     with (
         mock.patch("phone_runner.publish.probe_device", return_value=probe_asleep),
+        mock.patch("phone_runner.publish.time.sleep"),
         mock.patch("phone_runner.publish.wake_and_unlock", return_value=AdbResult(0, "OK", "")) as mock_wake,
         mock.patch("phone_runner.publish.is_device_secure_locked", return_value=False),
         mock.patch("phone_runner.publish.launch_facebook_feed", return_value=AdbResult(0, "OK", "")),
@@ -1072,6 +1074,7 @@ def test_publish_app_card_invalid_blocks_before_device_actions():
 def test_publish_pre_publish_ui_capture_nonzero_blocks_typing_and_tap():
     with (
         mock.patch("phone_runner.publish.probe_device", return_value=FAKE_PROBE_READY),
+        mock.patch("phone_runner.publish.time.sleep"),
         mock.patch("phone_runner.publish.verify_mobilerun_service", return_value=(True, "ok")),
         mock.patch("phone_runner.publish.launch_facebook_feed", return_value=AdbResult(0, "OK", "")),
         mock.patch("phone_runner.publish.run_mobilerun", return_value=MobilerunResult(0, "Navigated", "")),
@@ -1098,6 +1101,7 @@ def test_publish_pre_publish_ui_capture_nonzero_blocks_typing_and_tap():
 def test_publish_pre_publish_activity_capture_nonzero_blocks_typing_and_tap():
     with (
         mock.patch("phone_runner.publish.probe_device", return_value=FAKE_PROBE_READY),
+        mock.patch("phone_runner.publish.time.sleep"),
         mock.patch("phone_runner.publish.verify_mobilerun_service", return_value=(True, "ok")),
         mock.patch("phone_runner.publish.launch_facebook_feed", return_value=AdbResult(0, "OK", "")),
         mock.patch("phone_runner.publish.run_mobilerun", return_value=MobilerunResult(0, "Navigated", "")),
@@ -1198,3 +1202,170 @@ def test_realme_composer_fixture_identity_and_content_safety():
         expected_media_count=0,
     )
     assert cap_ok_match is False
+
+
+def test_publish_candidate_capture_retry_success_continues_flow():
+    """First capture attempt fails nonzero, second attempt succeeds; flow continues without failure stage."""
+    ui_attempts = [
+        AdbResult(1, "", "transient uiautomator dump error during post-wake animation"),
+        AdbResult(0, FAKE_TEXT_COMPOSER_DUMP, ""),
+    ]
+    act_attempts = [
+        AdbResult(1, "", "transient activity query failure"),
+        AdbResult(0, FAKE_SESSION_DUMP, ""),
+    ]
+    with (
+        mock.patch("phone_runner.publish.probe_device", return_value=FAKE_PROBE_READY),
+        mock.patch("phone_runner.publish.time.sleep") as mock_sleep,
+        mock.patch("phone_runner.publish.query_ui_hierarchy", side_effect=ui_attempts) as mock_ui,
+        mock.patch("phone_runner.publish.query_activity_state", side_effect=act_attempts) as mock_act,
+        mock.patch(
+            "phone_runner.publish._run_composition_and_publish",
+            return_value={"status": "published", "stages": []},
+        ) as mock_run,
+    ):
+        res = execute_publish(
+            serial=TEST_SERIAL,
+            main_profile={"id": "1001", "name": "Ricky Anwar"},
+            destination={"id": "1001", "name": "Ricky Anwar", "kind": "facebook_profile"},
+            caption="Test caption text",
+        )
+
+    assert mock_ui.call_count == 2
+    assert mock_act.call_count == 2
+    mock_sleep.assert_called_with(1.5)
+    assert not any(s.get("stage") == "identity_gate" and not s.get("passed") for s in res["stages"])
+    assert res["status"] == "published"
+    mock_run.assert_called_once()
+
+
+def test_publish_candidate_capture_retry_exhausted_returns_failure():
+    """All 3 capture attempts fail nonzero; returns exact existing failure dict and sleep restored."""
+    with (
+        mock.patch("phone_runner.publish.probe_device", return_value=FAKE_PROBE_READY),
+        mock.patch("phone_runner.publish.time.sleep") as mock_sleep,
+        mock.patch("phone_runner.publish.query_ui_hierarchy", return_value=AdbResult(1, "", "persistent dump fail")) as mock_ui,
+        mock.patch("phone_runner.publish.query_activity_state", return_value=AdbResult(0, FAKE_SESSION_DUMP, "")) as mock_act,
+    ):
+        res = execute_publish(
+            serial=TEST_SERIAL,
+            main_profile={"id": "1001", "name": "Ricky Anwar"},
+            destination={"id": "1001", "name": "Ricky Anwar", "kind": "facebook_profile"},
+            caption="Test caption text",
+        )
+
+    assert mock_ui.call_count == 3
+    assert mock_act.call_count == 3
+    sleep_args = [call.args[0] for call in mock_sleep.call_args_list]
+    assert sleep_args == [1.5, 1.5]
+    assert res["status"] == "failed"
+    assert res["error_code"] == "identity_mismatch"
+    assert res["publish_may_have_started"] is False
+    assert any(
+        s.get("stage") == "identity_gate"
+        and s.get("passed") is False
+        and s.get("detail") == "Identity verification failed: device capture failed (UI hierarchy or activity read nonzero)"
+        for s in res["stages"]
+    )
+
+
+def test_publish_asleep_device_sleeps_2s_before_first_capture():
+    """When device was asleep at entry, a 2.0s sleep occurs before the first capture call."""
+    probe_asleep = dict(FAKE_PROBE_READY, screen="asleep")
+    call_order = []
+
+    def record_sleep(sec):
+        call_order.append(("sleep", sec))
+
+    def record_ui(serial):
+        call_order.append(("query_ui", serial))
+        return AdbResult(0, FAKE_TEXT_COMPOSER_DUMP, "")
+
+    with (
+        mock.patch("phone_runner.publish.probe_device", return_value=probe_asleep),
+        mock.patch("phone_runner.publish.time.sleep", side_effect=record_sleep),
+        mock.patch("phone_runner.publish.wake_and_unlock", return_value=AdbResult(0, "OK", "")),
+        mock.patch("phone_runner.publish.is_device_secure_locked", return_value=False),
+        mock.patch("phone_runner.publish.launch_facebook_feed", return_value=AdbResult(0, "OK", "")),
+        mock.patch("phone_runner.publish.run_mobilerun", return_value=MobilerunResult(0, "Navigated", "")),
+        mock.patch("phone_runner.publish.query_ui_hierarchy", side_effect=record_ui),
+        mock.patch("phone_runner.publish.query_activity_state", return_value=AdbResult(0, FAKE_SESSION_DUMP, "")),
+        mock.patch("phone_runner.publish.run_adb", return_value=AdbResult(0, "OK", "")),
+        mock.patch(
+            "phone_runner.publish.poll_for_post_result",
+            return_value=("998877665544", "https://fb.com/posts/998877665544", {}),
+        ),
+        mock.patch("phone_runner.publish.put_to_sleep") as mock_put_to_sleep,
+    ):
+        res = execute_publish(
+            serial=TEST_SERIAL,
+            main_profile={"id": "1001", "name": "Ricky Anwar"},
+            destination={"id": "1001", "name": "Ricky Anwar", "kind": "facebook_profile"},
+            caption="Test caption text",
+        )
+
+    assert ("sleep", 2.0) in call_order
+    ui_indices = [i for i, call in enumerate(call_order) if call[0] == "query_ui"]
+    sleep_2_indices = [i for i, call in enumerate(call_order) if call == ("sleep", 2.0)]
+    assert len(ui_indices) > 0
+    assert len(sleep_2_indices) == 1
+    assert sleep_2_indices[0] < ui_indices[0]
+    assert res["status"] == "published"
+    mock_put_to_sleep.assert_called_once_with(TEST_SERIAL)
+
+
+def test_query_device_capture_with_retry_first_attempt_ok():
+    with (
+        mock.patch("phone_runner.publish.time.sleep") as mock_sleep,
+        mock.patch("phone_runner.publish.query_ui_hierarchy", return_value=AdbResult(0, "UI", "")) as mock_ui,
+        mock.patch("phone_runner.publish.query_activity_state", return_value=AdbResult(0, "ACT", "")) as mock_act,
+    ):
+        ui_res, act_res = _query_device_capture_with_retry(TEST_SERIAL)
+
+    assert mock_ui.call_count == 1
+    assert mock_act.call_count == 1
+    mock_sleep.assert_not_called()
+    assert ui_res.returncode == 0
+    assert act_res.returncode == 0
+
+
+def test_query_device_capture_with_retry_second_attempt_ok():
+    with (
+        mock.patch("phone_runner.publish.time.sleep") as mock_sleep,
+        mock.patch(
+            "phone_runner.publish.query_ui_hierarchy",
+            side_effect=[AdbResult(1, "", "dump fail"), AdbResult(0, "UI", "")],
+        ) as mock_ui,
+        mock.patch(
+            "phone_runner.publish.query_activity_state",
+            side_effect=[AdbResult(0, "ACT", ""), AdbResult(0, "ACT", "")],
+        ) as mock_act,
+    ):
+        ui_res, act_res = _query_device_capture_with_retry(TEST_SERIAL)
+
+    assert mock_ui.call_count == 2
+    assert mock_act.call_count == 2
+    mock_sleep.assert_called_once_with(1.5)
+    assert ui_res.returncode == 0
+    assert act_res.returncode == 0
+
+
+def test_query_device_capture_with_retry_all_fail():
+    with (
+        mock.patch("phone_runner.publish.time.sleep") as mock_sleep,
+        mock.patch(
+            "phone_runner.publish.query_ui_hierarchy",
+            return_value=AdbResult(1, "", "dump fail"),
+        ) as mock_ui,
+        mock.patch(
+            "phone_runner.publish.query_activity_state",
+            return_value=AdbResult(0, "ACT", ""),
+        ) as mock_act,
+    ):
+        ui_res, act_res = _query_device_capture_with_retry(TEST_SERIAL)
+
+    assert mock_ui.call_count == 3
+    assert mock_act.call_count == 3
+    assert [c.args[0] for c in mock_sleep.call_args_list] == [1.5, 1.5]
+    assert ui_res.returncode == 1
+    assert act_res.returncode == 0

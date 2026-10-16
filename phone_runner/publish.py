@@ -3,6 +3,7 @@ import hashlib
 import html
 import logging
 import re
+import time
 from typing import Any
 
 from phone_runner.adb import (
@@ -29,6 +30,23 @@ from phone_runner.probe import probe_device
 from phone_runner.result_verification import poll_for_post_result
 
 logger = logging.getLogger("phone_runner")
+
+
+def _query_device_capture_with_retry(
+    serial: str,
+    max_attempts: int = 3,
+    delay_sec: float = 1.5,
+) -> tuple[AdbResult, AdbResult]:
+    """Capture UI hierarchy and activity state with bounded retries."""
+    ui_res = query_ui_hierarchy(serial)
+    act_res = query_activity_state(serial)
+    attempts = 1
+    while attempts < max_attempts and (ui_res.returncode != 0 or act_res.returncode != 0):
+        time.sleep(delay_sec)
+        ui_res = query_ui_hierarchy(serial)
+        act_res = query_activity_state(serial)
+        attempts += 1
+    return ui_res, act_res
 
 
 def verify_mobilerun_service(serial: str) -> tuple[bool, str]:
@@ -493,8 +511,10 @@ def execute_publish(
     # 5. Execute guarded candidate capture, proof/staging, composition, and submission
     staging_cm = None
     try:
-        ui_cand_res = query_ui_hierarchy(serial)
-        act_cand_res = query_activity_state(serial)
+        if was_asleep:
+            time.sleep(2.0)
+
+        ui_cand_res, act_cand_res = _query_device_capture_with_retry(serial)
 
         if ui_cand_res.returncode != 0 or act_cand_res.returncode != 0:
             stages.append({
