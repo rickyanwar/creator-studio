@@ -715,7 +715,11 @@ def execute_publish(
             and proof.observed_target_id == expected_target_id
             and proof.active_composer_actor_id == expected_target_id
             and proof.serial == serial
-            and proof.method == "own_url_chain_v1"
+            and (
+                proof.method == "own_url_chain_v1"
+                # Owner decision 2026-10-16: exact-name proof is enough for PROFILE destinations only.
+                or (proof.method == "own_profile_name_v1" and dest_kind == "facebook_profile")
+            )
             and bool(proof.resolution)
             and proof.resolution == actual_geom
             and bool(proof.app_card_version)

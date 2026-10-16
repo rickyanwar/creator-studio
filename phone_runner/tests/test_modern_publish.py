@@ -1089,3 +1089,75 @@ def test_modern_text_only_uses_old_path(monkeypatch):
     assert res["evidence"]["vision_gates"] == []
     share_taps = [b for b in taps if b == (811, 125, 1026, 233)]
     assert len(share_taps) == 1
+
+
+def _patch_modern_happy_flow(monkeypatch, proof, taps):
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+    ui_iter = iter([
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_SHARE_COMPOSER_XML, ""),
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ])
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False: MobilerunResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.publish.verify_gate",
+        lambda serial, gate, **kw: (True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "ok", "answer": {}}),
+    )
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+    )
+
+
+def test_name_proof_accepted_for_profile_destination(monkeypatch):
+    import dataclasses
+
+    proof = dataclasses.replace(_make_valid_modern_proof(empty_state_certainty=True), method="own_profile_name_v1")
+    taps = []
+    _patch_modern_happy_flow(monkeypatch, proof, taps)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "published"
+    assert res["facebook_post_id"] == "post_123"
+    link_stages = [s for s in res["stages"] if s["stage"] == "post_link_resolved"]
+    assert link_stages and "post_123" in link_stages[0]["detail"]
+
+
+def test_name_proof_rejected_for_page_destination(monkeypatch):
+    import dataclasses
+
+    proof = dataclasses.replace(_make_valid_modern_proof(empty_state_certainty=True), method="own_profile_name_v1")
+    taps = []
+    _patch_modern_happy_flow(monkeypatch, proof, taps)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_page"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] != "published"
+    assert res["publish_may_have_started"] is False
+    assert (811, 125, 1026, 233) not in taps
