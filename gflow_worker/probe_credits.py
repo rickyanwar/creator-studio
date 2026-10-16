@@ -100,34 +100,7 @@ async def run(project: str, out_dir: str):
                 if "accounts.google.com" in current_url or "ServiceLogin" in current_url:
                     break
 
-                # 2. Dismiss overlay / chat close button if present
-                for close_sel in [
-                    "button:has(.google-symbols:text-is('close'))",
-                    "button:has-text('close')",
-                    "[aria-label*='Close']",
-                    "[aria-label*='Tutup']",
-                ]:
-                    try:
-                        btn = page.locator(close_sel)
-                        if await btn.count():
-                            await btn.first.click(timeout=1000)
-                            await asyncio.sleep(0.5)
-                    except Exception:
-                        pass
-
-                # 3. Dismiss onboarding / dialogs ("Got it", "Mengerti", "OK", "Start Creating")
-                for ok_sel in ["Got it", "Mengerti", "OK", "Start Creating", "Mulai Berkreasi"]:
-                    try:
-                        btn = page.locator("button, [role=button]").filter(
-                            has_text=re.compile(rf"^\s*{ok_sel}\s*$", re.I)
-                        )
-                        if await btn.count():
-                            await btn.first.click(timeout=1000)
-                            await asyncio.sleep(0.5)
-                    except Exception:
-                        pass
-
-                # 4. Check if credit text is already visible on the page
+                # 2. Check if credit text is already visible on the page
                 try:
                     text = await page.evaluate("() => document.body ? document.body.innerText : ''")
                     credits_val = extract_credits_from_text(text)
@@ -136,26 +109,38 @@ async def run(project: str, out_dir: str):
                 except Exception:
                     pass
 
-                # 5. If account menu not opened yet, try to click PRO/ULTRA badge or avatar
+                # 3. Dismiss onboarding / dialogs only BEFORE clicking menu
                 if not menu_clicked:
-                    try:
-                        badge = page.locator("button, a, [role=button]").filter(
-                            has_text=re.compile(r"^\s*(PRO|ULTRA)\s*$", re.I)
-                        )
-                        if await badge.count():
-                            await badge.first.click(timeout=1500)
-                            menu_clicked = True
-                            await asyncio.sleep(1.0)
-                        else:
-                            avatar = page.locator(
-                                "header button, nav button, [aria-haspopup='menu'], [aria-label*='Google Account'], [aria-label*='Akun Google']"
-                            ).last
-                            if await avatar.count():
-                                await avatar.click(timeout=1500)
+                    for ok_sel in ["Got it", "Mengerti", "OK", "Start Creating", "Mulai Berkreasi"]:
+                        try:
+                            btn = page.locator("button, [role=button]").filter(
+                                has_text=re.compile(rf"^\s*{ok_sel}\s*$", re.I)
+                            )
+                            if await btn.count():
+                                await btn.first.click(timeout=1000)
+                                await asyncio.sleep(0.5)
+                        except Exception:
+                            pass
+
+                    # 4. Open account menu via flow-header-user-icon or PRO/ULTRA badge
+                    for u_sel in [
+                        "flow-header-user-icon .header-user-button",
+                        "flow-header-user-icon [role='button']",
+                        "flow-header-user-icon button",
+                        "button:has-text('PRO'), [role='button']:has-text('PRO')",
+                        "button:has-text('ULTRA'), [role='button']:has-text('ULTRA')",
+                        "[aria-label*='Google Account']",
+                        "[aria-label*='Akun Google']",
+                    ]:
+                        try:
+                            loc = page.locator(u_sel)
+                            if await loc.count():
+                                await loc.first.click(timeout=1500)
                                 menu_clicked = True
-                                await asyncio.sleep(1.0)
-                    except Exception:
-                        pass
+                                await asyncio.sleep(1.5)
+                                break
+                        except Exception:
+                            pass
 
                 await asyncio.sleep(poll_interval)
 
