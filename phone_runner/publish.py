@@ -10,6 +10,7 @@ from phone_runner.adb import (
     AdbResult,
     is_device_secure_locked,
     launch_facebook_feed,
+    launch_facebook_own_profile,
     ping_portal,
     put_to_sleep,
     query_activity_state,
@@ -26,6 +27,7 @@ from phone_runner.dry_run import (
 from phone_runner.identity_proof import collect_own_url_proof_chain, IdentityProofResult
 from phone_runner.media_staging import stage_media_files
 from phone_runner.mobilerun import run_mobilerun, type_text
+from phone_runner.observation import save_composer_observation
 from phone_runner.probe import probe_device
 from phone_runner.result_verification import poll_for_post_result
 
@@ -41,6 +43,13 @@ def _query_device_capture_with_retry(
     ui_res = query_ui_hierarchy(serial)
     act_res = query_activity_state(serial)
     attempts = 1
+    if attempts < max_attempts and (ui_res.returncode != 0 or act_res.returncode != 0):
+        logger.info("first capture failed; opened own profile (fb://profile) to get a static screen")
+        launch_facebook_own_profile(serial)
+        time.sleep(2.5)
+        ui_res = query_ui_hierarchy(serial)
+        act_res = query_activity_state(serial)
+        attempts += 1
     while attempts < max_attempts and (ui_res.returncode != 0 or act_res.returncode != 0):
         time.sleep(delay_sec)
         ui_res = query_ui_hierarchy(serial)
@@ -716,6 +725,7 @@ def execute_publish(
                 "passed": False,
                 "detail": "Media publishing is not supported on modern Facebook composer layout",
             })
+            evidence["observation_file"] = save_composer_observation(serial, "media_unsupported_on_modern")
             return {
                 "status": "failed",
                 "facebook_post_id": None,
@@ -736,6 +746,7 @@ def execute_publish(
                 "passed": False,
                 "detail": "Composer empty state cannot be verified with certainty (empty_state_certainty is not True); typing blocked to prevent corrupting or publishing existing draft",
             })
+            evidence["observation_file"] = save_composer_observation(serial, "draft_state_uncertain")
             return {
                 "status": "failed",
                 "facebook_post_id": None,
@@ -754,6 +765,7 @@ def execute_publish(
             "passed": False,
             "detail": f"Modern composer layout '{header_variant}' submission flow is uncalibrated (Next button to final Post screen unobserved)",
         })
+        evidence["observation_file"] = save_composer_observation(serial, "submission_flow_uncalibrated")
         return {
             "status": "failed",
             "facebook_post_id": None,
