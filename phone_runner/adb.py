@@ -194,6 +194,22 @@ def launch_facebook_feed(serial: str) -> AdbResult:
     )
 
 
+def launch_facebook_own_profile(serial: str) -> AdbResult:
+    return run_adb(
+        [
+            "shell",
+            "am",
+            "start",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            "fb://profile",
+            "com.facebook.katana",
+        ],
+        serial=serial,
+    )
+
+
 def query_ui_hierarchy(serial: str) -> AdbResult:
     """Dumps and reads the active UI hierarchy XML safely.
 

@@ -6,7 +6,7 @@ Phone Profile adapters, timeout/uncertainty handling, and paced backlog draining
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import json
 import logging
@@ -57,6 +57,7 @@ class PhonePublishResult:
     publish_may_have_started: bool = False
     error_code: str | None = None
     evidence: dict[str, Any] | None = None
+    stages: list[dict] = field(default_factory=list)
 
 
 # PhoneRunnerClient is implemented by P1 in parallel
@@ -72,7 +73,7 @@ except ImportError:
     PhonePublishResult = None
     PhoneRecoveryResult = None
 
-    def sanitize_error(text: str) -> str:
+    def sanitize_error(text: str, max_length: int = 256) -> str:
         if not text:
             return ""
         cleaned = re.sub(r"(Bearer\s+)[A-Za-z0-9_\-\.]+", r"\1[REDACTED]", text)
@@ -82,7 +83,10 @@ except ImportError:
             cleaned,
             flags=re.IGNORECASE,
         )
-        return re.sub(r"[\r\n]+", " ", cleaned).strip()[:256]
+        cleaned = re.sub(r"[\r\n]+", " ", cleaned).strip()
+        if len(cleaned) > max_length:
+            cleaned = cleaned[: max_length - 3] + "..." if max_length >= 3 else cleaned[:max_length]
+        return cleaned
 
 
 def _now(now_utc: datetime | None = None) -> datetime:
@@ -1227,6 +1231,29 @@ def evaluate_and_execute_fallback(
     return res_deliv
 
 
+def _compose_phone_last_error(base_error: str, stages: list[dict[str, Any]] | None) -> str:
+    """Compose delivery.last_error from error_code and first failing stage."""
+    failing: dict[str, Any] | None = None
+    if isinstance(stages, list):
+        for s in stages:
+            if isinstance(s, dict) and not s.get("passed", True):
+                failing = s
+                break
+    if not failing:
+        return sanitize_error(base_error, max_length=300)
+
+    parts: list[str] = [base_error.strip()] if base_error else []
+    stage_name = str(failing.get("stage") or "").strip()
+    if stage_name:
+        parts.append(stage_name)
+    stage_detail = str(failing.get("detail") or "").strip()
+    if stage_detail:
+        parts.append(stage_detail)
+
+    composed = ": ".join([p for p in parts if p])
+    return sanitize_error(composed, max_length=300)
+
+
 def dispatch_phone_delivery(
     db: Session,
     delivery: PublishDelivery,
@@ -1394,25 +1421,34 @@ def dispatch_phone_delivery(
                 else:
                     reason = "actor_id_mismatch"
                     delivery.last_error = "Phone publish reported success with mismatched actor ID"
+                uncertain_details: dict[str, Any] = {
+                    "reason": reason,
+                    "publish_may_have_started": True,
+                }
+                if getattr(result, "stages", None):
+                    uncertain_details["stages"] = result.stages
                 db.add(
                     DeliveryEvent(
                         delivery_id=delivery.id,
                         event_type="uncertain",
-                        details={
-                            "reason": reason,
-                            "publish_may_have_started": True,
-                        },
+                        details=uncertain_details,
                         created_at=naive_now,
                     )
                 )
         elif result.status == "waiting_for_device":
             delivery.state = "waiting_for_device"
-            delivery.last_error = sanitize_error(result.error_code or "Device not ready")
+            delivery.last_error = _compose_phone_last_error(
+                result.error_code or "Device not ready",
+                getattr(result, "stages", None),
+            )
+            wfd_details: dict[str, Any] = {"error_code": sanitize_error(result.error_code or "")}
+            if getattr(result, "stages", None):
+                wfd_details["stages"] = result.stages
             db.add(
                 DeliveryEvent(
                     delivery_id=delivery.id,
                     event_type="waiting_for_device",
-                    details={"error_code": sanitize_error(result.error_code or "")},
+                    details=wfd_details,
                     created_at=naive_now,
                 )
             )
@@ -1440,25 +1476,34 @@ def dispatch_phone_delivery(
             delivery.state = "uncertain"
             delivery.uncertain_since = naive_now
             delivery.last_error = sanitize_error(result.error_code or "Publish may have started; awaiting reconciliation")
+            uncertain_details = {
+                "error_code": sanitize_error(result.error_code or ""),
+                "publish_may_have_started": True,
+            }
+            if getattr(result, "stages", None):
+                uncertain_details["stages"] = result.stages
             db.add(
                 DeliveryEvent(
                     delivery_id=delivery.id,
                     event_type="uncertain",
-                    details={
-                        "error_code": sanitize_error(result.error_code or ""),
-                        "publish_may_have_started": True,
-                    },
+                    details=uncertain_details,
                     created_at=naive_now,
                 )
             )
         else:  # failed
             delivery.state = "failed"
-            delivery.last_error = sanitize_error(result.error_code or "Phone publish failed")
+            delivery.last_error = _compose_phone_last_error(
+                result.error_code or "Phone publish failed",
+                getattr(result, "stages", None),
+            )
+            failed_details: dict[str, Any] = {"error_code": sanitize_error(result.error_code or "")}
+            if getattr(result, "stages", None):
+                failed_details["stages"] = result.stages
             db.add(
                 DeliveryEvent(
                     delivery_id=delivery.id,
                     event_type="failed",
-                    details={"error_code": sanitize_error(result.error_code or "")},
+                    details=failed_details,
                     created_at=naive_now,
                 )
             )

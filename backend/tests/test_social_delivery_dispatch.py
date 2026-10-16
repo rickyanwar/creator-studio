@@ -49,6 +49,7 @@ from app.models.target_fanpages import TargetFanpage
 from app.services.phone_runner_client import PhoneRecoveryResult, PhoneRunnerClient
 from app.services.social_delivery_dispatch import (
     PhonePublishResult,
+    _compose_phone_last_error,
     claim_delivery_for_dispatch,
     dispatch_due_deliveries,
     dispatch_phone_delivery,
@@ -2271,3 +2272,249 @@ def test_phone_dispatch_http200_page_actor_validation_regression(
         # Must never be retryable as a fresh post
         processed = dispatch_due_deliveries(db_session, now_utc=now, runner_client=client)
         assert len(processed) == 0
+
+
+def test_phone_dispatch_failed_stores_stages_and_composed_last_error(db_session):
+    fanpage, dest = _create_project_and_dest(
+        db_session,
+        kind="facebook_profile",
+        mode="phone",
+        repliz_id=None,
+        actor_id="actor_p1",
+        daily_target=1,
+        phone_target=1,
+        repliz_target=0,
+    )
+    dev = _create_phone_device(db_session, actor_id="actor_p1")
+    assign = DestinationDeviceAssignment(
+        destination_id=dest.id,
+        device_id=dev.id,
+        priority=0,
+        is_active=True,
+        verified_profile_actor_id="actor_p1",
+        verified_target_actor_id="actor_p1",
+        verified_at=datetime(2026, 1, 1, 0, 0, 0),
+    )
+    db_session.add(assign)
+    db_session.commit()
+
+    now = datetime(2026, 10, 15, 10, 0, 0, tzinfo=timezone.utc)
+    job, delivery = _create_job_and_delivery(
+        db_session, fanpage, dest, intended_method="phone", scheduled_for=now.replace(tzinfo=None)
+    )
+
+    stages = [
+        {"stage": "wake", "passed": True, "detail": "screen awake"},
+        {
+            "stage": "root_url",
+            "passed": False,
+            "detail": "Operation timed out: deadline exceeded before root own profile check",
+        },
+        {"stage": "composer", "passed": False, "detail": "not reached"},
+    ]
+    mock_runner = MagicMock()
+    mock_runner.publish_delivery.return_value = PhonePublishResult(
+        status="failed",
+        error_code="identity_unverified",
+        stages=stages,
+    )
+
+    res = dispatch_phone_delivery(db_session, delivery, runner_client=mock_runner, now_utc=now)
+
+    assert res.state == "failed"
+    assert (
+        res.last_error
+        == "identity_unverified: root_url: Operation timed out: deadline exceeded before root own profile check"
+    )
+
+    event = (
+        db_session.query(DeliveryEvent)
+        .filter_by(delivery_id=delivery.id, event_type="failed")
+        .first()
+    )
+    assert event is not None
+    assert event.details.get("error_code") == "identity_unverified"
+    assert event.details.get("stages") == stages
+
+
+def test_phone_dispatch_failed_without_stages_omits_stages_in_event_details(db_session):
+    fanpage, dest = _create_project_and_dest(
+        db_session,
+        kind="facebook_profile",
+        mode="phone",
+        repliz_id=None,
+        actor_id="actor_p1",
+        daily_target=1,
+        phone_target=1,
+        repliz_target=0,
+    )
+    dev = _create_phone_device(db_session, actor_id="actor_p1")
+    assign = DestinationDeviceAssignment(
+        destination_id=dest.id,
+        device_id=dev.id,
+        priority=0,
+        is_active=True,
+        verified_profile_actor_id="actor_p1",
+        verified_target_actor_id="actor_p1",
+        verified_at=datetime(2026, 1, 1, 0, 0, 0),
+    )
+    db_session.add(assign)
+    db_session.commit()
+
+    now = datetime(2026, 10, 15, 10, 0, 0, tzinfo=timezone.utc)
+    job, delivery = _create_job_and_delivery(
+        db_session, fanpage, dest, intended_method="phone", scheduled_for=now.replace(tzinfo=None)
+    )
+
+    mock_runner = MagicMock()
+    mock_runner.publish_delivery.return_value = PhonePublishResult(
+        status="failed",
+        error_code="identity_unverified",
+        stages=[],
+    )
+
+    res = dispatch_phone_delivery(db_session, delivery, runner_client=mock_runner, now_utc=now)
+
+    assert res.state == "failed"
+    assert res.last_error == "identity_unverified"
+
+    event = (
+        db_session.query(DeliveryEvent)
+        .filter_by(delivery_id=delivery.id, event_type="failed")
+        .first()
+    )
+    assert event is not None
+    assert event.details.get("error_code") == "identity_unverified"
+    assert "stages" not in event.details
+
+
+def test_phone_dispatch_waiting_for_device_stores_stages_and_composed_last_error(db_session):
+    fanpage, dest = _create_project_and_dest(
+        db_session,
+        kind="facebook_profile",
+        mode="phone",
+        repliz_id=None,
+        actor_id="actor_p1",
+        daily_target=1,
+        phone_target=1,
+        repliz_target=0,
+    )
+    dev = _create_phone_device(db_session, actor_id="actor_p1")
+    assign = DestinationDeviceAssignment(
+        destination_id=dest.id,
+        device_id=dev.id,
+        priority=0,
+        is_active=True,
+        verified_profile_actor_id="actor_p1",
+        verified_target_actor_id="actor_p1",
+        verified_at=datetime(2026, 1, 1, 0, 0, 0),
+    )
+    db_session.add(assign)
+    db_session.commit()
+
+    now = datetime(2026, 10, 15, 10, 0, 0, tzinfo=timezone.utc)
+    job, delivery = _create_job_and_delivery(
+        db_session, fanpage, dest, intended_method="phone", scheduled_for=now.replace(tzinfo=None)
+    )
+
+    stages = [{"stage": "portal", "passed": False, "detail": "accessibility service disabled"}]
+    mock_runner = MagicMock()
+    mock_runner.publish_delivery.return_value = PhonePublishResult(
+        status="waiting_for_device",
+        error_code="device_unready",
+        stages=stages,
+    )
+
+    res = dispatch_phone_delivery(
+        db_session,
+        delivery,
+        runner_client=mock_runner,
+        now_utc=now,
+        auto_recover=False,
+    )
+
+    assert res.state == "waiting_for_device"
+    assert res.last_error == "device_unready: portal: accessibility service disabled"
+
+    event = (
+        db_session.query(DeliveryEvent)
+        .filter_by(delivery_id=delivery.id, event_type="waiting_for_device")
+        .first()
+    )
+    assert event is not None
+    assert event.details.get("error_code") == "device_unready"
+    assert event.details.get("stages") == stages
+
+
+def test_phone_dispatch_uncertain_stores_stages_in_event_details(db_session):
+    fanpage, dest = _create_project_and_dest(
+        db_session,
+        kind="facebook_profile",
+        mode="phone",
+        repliz_id=None,
+        actor_id="actor_p1",
+        daily_target=1,
+        phone_target=1,
+        repliz_target=0,
+    )
+    dev = _create_phone_device(db_session, actor_id="actor_p1")
+    assign = DestinationDeviceAssignment(
+        destination_id=dest.id,
+        device_id=dev.id,
+        priority=0,
+        is_active=True,
+        verified_profile_actor_id="actor_p1",
+        verified_target_actor_id="actor_p1",
+        verified_at=datetime(2026, 1, 1, 0, 0, 0),
+    )
+    db_session.add(assign)
+    db_session.commit()
+
+    now = datetime(2026, 10, 15, 10, 0, 0, tzinfo=timezone.utc)
+    job, delivery = _create_job_and_delivery(
+        db_session, fanpage, dest, intended_method="phone", scheduled_for=now.replace(tzinfo=None)
+    )
+
+    stages = [
+        {"stage": "composer", "passed": True, "detail": "ready"},
+        {"stage": "post_submit", "passed": False, "detail": "read timeout waiting for post id"},
+    ]
+    mock_runner = MagicMock()
+    mock_runner.publish_delivery.return_value = PhonePublishResult(
+        status="uncertain",
+        publish_may_have_started=True,
+        error_code="timeout_uncertain",
+        stages=stages,
+    )
+
+    res = dispatch_phone_delivery(db_session, delivery, runner_client=mock_runner, now_utc=now)
+
+    assert res.state == "uncertain"
+    event = (
+        db_session.query(DeliveryEvent)
+        .filter_by(delivery_id=delivery.id, event_type="uncertain")
+        .first()
+    )
+    assert event is not None
+    assert event.details.get("stages") == stages
+
+
+def test_compose_phone_last_error_sanitization_and_length_limit():
+    stages = [
+        {"stage": "wake", "passed": True, "detail": "ok"},
+        {
+            "stage": "auth_check",
+            "passed": False,
+            "detail": "Bearer my_super_secret_token_123 failed password='secret'",
+        },
+    ]
+    err = _compose_phone_last_error("auth_failed", stages)
+    assert "my_super_secret_token_123" not in err
+    assert "[REDACTED]" in err
+    assert "Bearer [REDACTED]" in err
+
+    very_long_detail = "Z" * 350
+    stages_long = [{"stage": "long_stage", "passed": False, "detail": very_long_detail}]
+    err_long = _compose_phone_last_error("error_code", stages_long)
+    assert len(err_long) <= 300
+    assert err_long.endswith("...")

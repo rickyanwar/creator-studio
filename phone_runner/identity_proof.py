@@ -14,6 +14,7 @@ from phone_runner.adb import (
     clear_device_clipboard,
     is_device_secure_locked,
     launch_facebook_feed,
+    launch_facebook_own_profile,
     parse_rotation,
     parse_screen_state,
     query_activity_state,
@@ -929,20 +930,13 @@ def find_go_to_profile_button(tree: ET.Element) -> tuple[bool, str, tuple[int, i
     return False, "No 'Go to profile' control found", None
 
 
-def _try_open_own_root_without_model(
+def _check_and_tap_go_to_profile(
     serial: str,
+    tree: ET.Element,
     main_name: str,
     expected_geometry: str | None = None,
 ) -> bool:
-    """Attempts to navigate to candidate own root without model assistance."""
-    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-    if not ok or tree is None:
-        return False
-
-    is_own, own_err, more_bounds = find_own_profile_controls(tree, main_name)
-    if is_own and more_bounds is not None:
-        return True
-
+    """Finds 'Go to profile' button, taps it, and verifies navigation to own root."""
     g_ok, g_err, g_bounds = find_go_to_profile_button(tree)
     if not g_ok or g_bounds is None:
         return False
@@ -951,13 +945,60 @@ def _try_open_own_root_without_model(
     run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
     time.sleep(1.0)
 
-    ok2, err2, tree2, raw_xml2 = verify_foreground_facebook(serial, expected_geometry)
-    if not ok2 or tree2 is None:
+    ok, err, tree2, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+    if not ok or tree2 is None:
         return False
 
-    is_own2, own_err2, more_bounds2 = find_own_profile_controls(tree2, main_name)
-    if is_own2 and more_bounds2 is not None:
+    is_own, own_err, more_bounds = find_own_profile_controls(tree2, main_name)
+    if is_own and more_bounds is not None:
         return True
+
+    return False
+
+
+def _try_open_own_root_without_model(
+    serial: str,
+    main_name: str,
+    expected_geometry: str | None = None,
+) -> bool:
+    """Attempts to navigate to candidate own root without model assistance."""
+    # 1. Initial screen checks
+    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+    if ok and tree is not None:
+        is_own, own_err, more_bounds = find_own_profile_controls(tree, main_name)
+        if is_own and more_bounds is not None:
+            logger.info("Deterministic root navigation succeeded: own profile already open")
+            return True
+
+        if _check_and_tap_go_to_profile(serial, tree, main_name, expected_geometry):
+            logger.info("Deterministic root navigation succeeded: go to profile")
+            return True
+
+    # 2. Reset to feed deterministically: launch fb://feed, sleep 2.0s, repeat two checks
+    launch_facebook_feed(serial)
+    time.sleep(2.0)
+
+    ok_f, err_f, tree_f, raw_xml_f = verify_foreground_facebook(serial, expected_geometry)
+    if ok_f and tree_f is not None:
+        is_own_f, own_err_f, more_bounds_f = find_own_profile_controls(tree_f, main_name)
+        if is_own_f and more_bounds_f is not None:
+            logger.info("Deterministic root navigation succeeded: feed reset")
+            return True
+
+        if _check_and_tap_go_to_profile(serial, tree_f, main_name, expected_geometry):
+            logger.info("Deterministic root navigation succeeded: feed reset")
+            return True
+
+    # 3. Direct own profile intent: launch fb://profile, sleep 2.0s, verify own profile
+    launch_facebook_own_profile(serial)
+    time.sleep(2.0)
+
+    ok_p, err_p, tree_p, raw_xml_p = verify_foreground_facebook(serial, expected_geometry)
+    if ok_p and tree_p is not None:
+        is_own_p, own_err_p, more_bounds_p = find_own_profile_controls(tree_p, main_name)
+        if is_own_p and more_bounds_p is not None:
+            logger.info("Deterministic root navigation succeeded: fb://profile intent")
+            return True
 
     return False
 

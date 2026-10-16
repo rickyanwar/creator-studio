@@ -1048,3 +1048,100 @@ def test_discover_devices_invalid_schema_fails_closed(bad_payload):
         client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
         with pytest.raises(PhoneRunnerDiscoveryError, match="invalid_response_schema"):
             client.discover_devices()
+
+
+def test_publish_delivery_maps_stages_truncation_sanitization_and_filtering(dummy_models):
+    device, delivery, main_profile, destination = dummy_models
+
+    long_detail = "X" * 250
+    raw_stages = [
+        {"stage": "wake", "passed": True, "detail": "screen awake", "extra_meta": "dropped"},
+        # Malformed: not a dict
+        "invalid_stage_string",
+        # Malformed: missing stage
+        {"passed": True, "detail": "no stage name"},
+        # Malformed: empty stage name
+        {"stage": "   ", "passed": True, "detail": "empty"},
+        # Malformed: non-string stage
+        {"stage": 12345, "passed": True, "detail": "numeric"},
+        # Malformed: non-bool passed
+        {"stage": "ping", "passed": "true", "detail": "string bool"},
+        {"stage": "ping2", "passed": 1, "detail": "int bool"},
+        # Valid stage with long detail and bearer token
+        {"stage": "auth", "passed": False, "detail": f"Bearer secret-token-abc {long_detail}"},
+        # None detail should become empty string
+        {"stage": "portal", "passed": True, "detail": None},
+    ]
+    # Add 25 more valid stages to test truncation to 20
+    for i in range(25):
+        raw_stages.append({"stage": f"step_{i}", "passed": True, "detail": f"ok_{i}"})
+
+    fake_response = {
+        "status": "failed",
+        "error_code": "identity_unverified",
+        "stages": raw_stages,
+    }
+
+    mock_resp = httpx.Response(200, json=fake_response)
+    with mock.patch("httpx.Client.post", return_value=mock_resp):
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        result = client.publish_delivery(
+            device=device,
+            delivery=delivery,
+            main_profile=main_profile,
+            destination=destination,
+        )
+
+    assert result.status == "failed"
+    assert result.error_code == "identity_unverified"
+    # Must keep at most 20 items
+    assert len(result.stages) == 20
+
+    # First item: only {"stage", "passed", "detail"} kept
+    assert result.stages[0] == {"stage": "wake", "passed": True, "detail": "screen awake"}
+    assert "extra_meta" not in result.stages[0]
+
+    # Second item corresponds to 'auth' stage (malformed ones skipped)
+    auth_stage = result.stages[1]
+    assert auth_stage["stage"] == "auth"
+    assert auth_stage["passed"] is False
+    assert "Bearer [REDACTED]" in auth_stage["detail"]
+    assert "secret-token-abc" not in auth_stage["detail"]
+    assert len(auth_stage["detail"]) <= 200
+
+    # Third item corresponds to 'portal' with None detail
+    assert result.stages[2] == {"stage": "portal", "passed": True, "detail": ""}
+
+    # Total stages capped at 20
+    assert result.stages[-1]["stage"] == "step_16"
+
+
+def test_publish_delivery_stages_default_empty_on_non_list_or_errors(dummy_models):
+    device, delivery, main_profile, destination = dummy_models
+
+    # Response with non-list stages
+    fake_response = {
+        "status": "failed",
+        "error_code": "bad_stages",
+        "stages": "not_a_list",
+    }
+    mock_resp = httpx.Response(200, json=fake_response)
+    with mock.patch("httpx.Client.post", return_value=mock_resp):
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        result = client.publish_delivery(
+            device=device,
+            delivery=delivery,
+            main_profile=main_profile,
+            destination=destination,
+        )
+    assert result.stages == []
+
+    # Connect error construction site
+    with mock.patch("httpx.Client.post", side_effect=httpx.ConnectError("refused")):
+        res_connect = client.publish_delivery(
+            device=device,
+            delivery=delivery,
+            main_profile=main_profile,
+            destination=destination,
+        )
+    assert res_connect.stages == []

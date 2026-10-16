@@ -29,7 +29,7 @@ REASON_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 VALID_RECOVERY_CLASSES = {"routine", "larger_repair", "larger"}
 
 
-def sanitize_error(text: str) -> str:
+def sanitize_error(text: str, max_length: int = 256) -> str:
     """Strip bearer tokens, secrets, passwords and bound string length."""
     if not text:
         return ""
@@ -41,8 +41,8 @@ def sanitize_error(text: str) -> str:
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(r"[\r\n]+", " ", cleaned).strip()
-    if len(cleaned) > 256:
-        cleaned = cleaned[:253] + "..."
+    if len(cleaned) > max_length:
+        cleaned = cleaned[: max_length - 3] + "..." if max_length >= 3 else cleaned[:max_length]
     return cleaned
 
 
@@ -57,6 +57,7 @@ class PhonePublishResult:
     publish_may_have_started: bool = False
     error_code: str | None = None
     evidence: dict[str, object] = field(default_factory=dict)
+    stages: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -228,6 +229,28 @@ class PhoneRunnerClient:
                 )
 
             data = resp.json()
+            raw_stages = data.get("stages")
+            stages: list[dict[str, Any]] = []
+            if isinstance(raw_stages, list):
+                for item in raw_stages:
+                    if not isinstance(item, dict):
+                        continue
+                    stage_name = item.get("stage")
+                    passed = item.get("passed")
+                    if not isinstance(stage_name, str) or not stage_name.strip():
+                        continue
+                    if not isinstance(passed, bool):
+                        continue
+                    detail = item.get("detail")
+                    detail_str = str(detail) if detail is not None else ""
+                    stages.append({
+                        "stage": stage_name.strip(),
+                        "passed": passed,
+                        "detail": sanitize_error(detail_str)[:200],
+                    })
+                    if len(stages) >= 20:
+                        break
+
             return PhonePublishResult(
                 status=data.get("status", "failed"),
                 facebook_post_id=data.get("facebook_post_id"),
@@ -236,6 +259,7 @@ class PhoneRunnerClient:
                 publish_may_have_started=bool(data.get("publish_may_have_started", False)),
                 error_code=data.get("error_code"),
                 evidence=data.get("evidence") or {},
+                stages=stages,
             )
 
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
