@@ -179,6 +179,25 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
   - Timeout -> `VisualEngineError('timeout')`.
   - Transport / HTTP 5xx -> Retries once; raises `VisualEngineError('transport')`.
 
+### gpt-cli engine layer (2026-10, owner plan `docs/plans/RENCANA-GPTCLI-CREATOR-STUDIO.md`; runbook `docs/runbooks/gptcli-engine.md`)
+- **Entry point** `visual_engine.generate_ex(db, req, *, timeout, fanpage_id, exclude) -> GenerationResult(image, engine, meta, event_id)`. `generate()` is now `generate_ex(...).image`.
+  - When gpt-cli does not apply (switch off, no token, or fanpage not listed) it calls `_generate_legacy`, which is the old `generate` body verbatim: own daily cap over all `image_gen` events, own event.
+- **Engine order** comes from `engine_router.plan_engines`:
+  - night (00:00 to `ai_day_start` WIB) → Codex only, paced by `codex_budget.wait_night_gap`;
+  - day → `gptcli_first`, or Codex first for `share`/`overflow` up to `codex_share_percent` of day jobs;
+  - `gptcli_unavailable` → Codex.
+  - Codex is dropped when its 5 h usage (`codex_budget.get_codex_usage`, estimate by default), rest flag or Codex-only daily cap forbids it.
+  - Empty order → `VisualEngineError('quota')` by day, `VisualEngineDeferred(until)` at night.
+- **gpt serve client** `gptcli_client.generate_image` (POST `/v1/images/generations`, size `gptcli_size`, thread `gptcli_thread`, `X-Request-Id = request_id_for(prompt, images)`).
+  - Temporary errors (sleeping, quota, soft_cap, logged_out, unavailable, cloudflare_challenge, unreachable) set Redis `gptcli:unavailable_until`.
+- **One `image_gen` event per call**, with `error_message` starting `plan=<reason>;`. `outcome` is success | recovered | failed | deferred.
+- **ChatGPT results** skip full QA and go through `identity_check.check_identity` instead: SFace < 0.25 rejects at once, otherwise Gemini FlashFast must say same person with confidence ≥ 0.6. Team radio layouts also get the OCR check (`redesign_pipeline._radio_ocr_ok`). A failed or unsure check means `generate_ex(..., exclude={"gptcli"})` runs and the Codex image takes the old QA.
+  - In `speaker_design.compose_speaker_design(..., content_kind="news"|"facebook")` the old `identity_score ≥ 0.40` check applies to Codex images only.
+- **Night deferral**: `VisualEngineDeferred` propagates out of `redesign_card` / `compose_speaker_design`. The tasks call `design_renderer._defer_job`, which sets `pending_design` plus `publish_jobs.design_not_before`, with no Celery retry and no long ETA.
+  - `render_pending_designs` skips jobs whose `design_not_before` is in the future, and re-dispatches deferred `ig_recreate` jobs (queue `visual`) once the time passes.
+  - A manual IG preview fails fast instead of waiting.
+- **Queue**: `engine_router.render_queue_for(db, fanpage, "news"|"facebook"|"instagram")` returns `"visual"` when gpt-cli applies and the content toggle is `chatgpt`. Every News/FB dispatch site uses it; otherwise the old queue is kept.
+
 ### AI Card Redesign Pipeline (`services/redesign_pipeline.py`)
 
 1. **Classification & Layout Choice**:

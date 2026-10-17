@@ -251,6 +251,7 @@ Template Annotation & Fallback:
 | `vision_check_photo_quality` | 2723-2790 | Mode 5 Pin | Evaluates skin texture, hair, fabric weave; requires detail_score >= 6 | Parse/API error | **Fail-Closed**: returns `False` |
 | `vision_has_watermark` | 2791-2825 | Mode 5 Pin | Flags agency watermarks, logos, URLs, copyright credits (LAT, XPB, RaceFans) | Parse/API error | **Fail-Closed**: returns `True` |
 | `analyze_subject_side` | 3569-3607 | Inset slot | Locates main subject head: `LEFT`, `RIGHT`, `CENTER` | Parse/API error | **Fail-Open**: returns `"center"` |
+| `identity_check.check_identity` (separate module, 2026-10) | — | gpt-cli face check (`context="visual_identity"`) | SFace first (score < 0.25 with faces found = reject, no Gemini); otherwise Gemini compares the main face of image 2 with the subject in image 1, strict JSON `{same_person, confidence, notes}` | Parse/API error, `confidence < 0.6`, or a non-boolean `same_person` | **Fail-Closed**: rejected, caller falls back to Codex; logs one `image_identity` event |
 
 ---
 

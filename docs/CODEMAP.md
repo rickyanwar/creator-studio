@@ -73,6 +73,7 @@ Big modules: `services/design_images.py` (3.8k lines: templates, photo sourcing,
 - Text (owner rule 2026-10-17): configured default `FlashFast` (9Router combo = gemini-3.8-flash high/low/medium/plain), then `ai_caption.ROUTER_MODEL_FALLBACKS` = FlashFast, `ag/gemini-3.8-flash-medium`, `-low`, `-high` (deduplicated, dead models skipped). No Claude / GPT-OSS / other Gemini.
 - Vision: `design_images._vision_chat`: `NINE_ROUTER_VISION_MODEL=FlashFast`, then `_VISION_MODEL_FALLBACKS` = FlashFast + the same three gemini-3.8-flash ids. Never My-Combo (it contains Claude, which drops images).
 - Images: `services/visual_engine.py` → 9Router `/images/generations` with `cx/*` (the only allowed use of Codex).
+  - 2026-10: optional gpt-cli engine (`gptcli_enabled`). ChatGPT web via gpt serve goes first and Codex shares/falls back (`engine_router`, `gptcli_client`, `codex_budget`); ChatGPT images get the double face check `identity_check`. Switch off = the old path, untouched. See `docs/runbooks/gptcli-engine.md`.
 
 ## 5. API surface
 
@@ -128,6 +129,6 @@ Frontend: `frontend/src/app/(dashboard)/*` pages. The pages are `dashboard`, `fa
 
 - `docs/ai-video-worker.md`, `docs/muse-*.md`, `docs/research-desk-api.md`, `docs/hermes-strategist-api.md`
 - `docs/spec-*.md`, `docs/hermes/skills/*`
-- `docs/runbooks/`: viral radar incidents/deploy, ig-viewer self-heal, visual-engine incidents
+- `docs/runbooks/`: viral radar incidents/deploy, ig-viewer self-heal, visual-engine incidents, gpt-cli image engine
 - `phone_runner/README.md`
 - Operational history and gotchas live in Claude's memory (`MEMORY.md`), not here.
