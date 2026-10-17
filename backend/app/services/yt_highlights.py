@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 # opus-4-6-thinking 24s; the configured default (My-Combo) and
 # gpt-oss-120b both timed out at 240s — so this chain never starts at the
 # default model, and skips the one that can't handle long prompts.
-_PREFERRED_MODELS = ("ag/claude-sonnet-4-6", "ag/claude-opus-4-6-thinking")
+# 2026-10-17 (owner, FINAL): only the FlashFast combo (gemini-3.8-flash) for text.
+_PREFERRED_MODELS = ("FlashFast",)
 _SKIPPED_MODELS = {"ag/gpt-oss-120b-medium"}
 _MODEL_TIMEOUT_S = 180.0
 _TOTAL_BUDGET_S = 720.0   # stop trying new models after this — the video worker is single-slot

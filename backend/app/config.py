@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     # broken the same way). "ag/gemini-3.8-flash-low" is the current
     # equivalent-tier replacement, confirmed working directly against a real
     # photo the same day (~2.5s).
-    nine_router_vision_model: str = "ag/gemini-3.8-flash-low"
+    nine_router_vision_model: str = "FlashFast"   # owner rule 2026-10-17: FlashFast combo = gemini-3.8-flash
 
     # ── AI Providers (fallback) ───────────────────
     gemini_api_key: str = ""

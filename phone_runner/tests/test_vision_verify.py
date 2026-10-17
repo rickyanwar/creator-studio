@@ -52,8 +52,10 @@ def test_model_filtering_live_intersection(monkeypatch):
     fake_resp = mock.MagicMock()
     fake_resp.read.return_value = json.dumps({
         "data": [
-            {"id": "ag/gemini-3.8-flash"},
-            {"id": "ag/gemini-3.7-flash-high"},
+            {"id": "FlashFast"},
+            {"id": "My-Combo"},
+            {"id": "ag/gemini-3.8-flash-high"},
+            {"id": "ag/gemini-3.8-flash-medium"},
             {"id": "some/other-model"},
         ]
     }).encode("utf-8")
@@ -61,7 +63,8 @@ def test_model_filtering_live_intersection(monkeypatch):
 
     with mock.patch("urllib.request.urlopen", return_value=fake_resp):
         models = get_vision_models()
-        assert models == ["ag/gemini-3.8-flash", "ag/gemini-3.7-flash-high"]
+        # FlashFast combo first (owner rule 2026-10-17); My-Combo is never used for vision
+        assert models == ["FlashFast", "ag/gemini-3.8-flash-medium", "ag/gemini-3.8-flash-high"]
 
 
 def test_strip_json_fences():

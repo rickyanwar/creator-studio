@@ -106,6 +106,7 @@ class RadarLlm:
 
             seen = set()
             deduped = []
+            # Shared chain: FlashFast combo first, then the gemini-3.8-flash ids (owner rule 2026-10-17).
             for m in ai_caption.ROUTER_MODEL_FALLBACKS:
                 if m not in seen:
                     seen.add(m)

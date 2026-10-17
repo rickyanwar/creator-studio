@@ -20,16 +20,15 @@ from phone_runner.config import (
 VISION_MODEL_TIMEOUT_SECONDS = 25.0
 VISION_GATE_BUDGET_SECONDS = 90.0
 
+# Owner rule 2026-10-17 (FINAL): vision uses ONLY the FlashFast combo (= gemini-3.8-flash
+# medium/low/high) and those three ids. Never My-Combo (it can route to Claude, which ignores images).
+VISION_COMBOS = ("FlashFast",)
+
 DEFAULT_VISION_MODELS = [
+    "FlashFast",
     "ag/gemini-3.8-flash-medium",
     "ag/gemini-3.8-flash-low",
     "ag/gemini-3.8-flash-high",
-    "ag/gemini-3.8-flash",
-    "ag/gemini-3.7-flash-medium",
-    "ag/gemini-3.7-flash-high",
-    "ag/gemini-3.6-flash-medium",
-    "ag/gemini-pro-agent",
-    "ag/gemini-3.1-pro-low",
 ]
 
 _MODELS_CACHE: dict[str, Any] = {"timestamp": 0.0, "ids": set()}
@@ -76,7 +75,7 @@ def get_vision_models() -> list[str]:
 
     candidates = [
         m for m in raw_models
-        if "gemini" in m.lower()
+        if (m in VISION_COMBOS or "gemini" in m.lower())
         and not m.startswith("cx/")
         and "claude" not in m.lower()
     ]

@@ -12,7 +12,7 @@ import redis as _redis
 
 from app.config import get_settings
 from app.services.fanpage_caption import caption_settings
-from app.services.fanpage_language import fanpage_language
+from app.services.fanpage_language import fanpage_language, language_name
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -133,7 +133,7 @@ def build_caption_prompt(
     must_include = ", ".join(cs.must_include) if cs.must_include else "none"
     must_avoid = ", ".join(cs.must_avoid) if cs.must_avoid else "none"
 
-    language = cs.language
+    language = language_name(cs.language)
     tone = cs.tone
     max_length = cs.max_length
     hashtag_count = cs.hashtag_count
@@ -198,21 +198,14 @@ def _router_enabled() -> bool:
 # fallback after every model here is exhausted.
 #
 # 2026-10-11: removed retired 3.6/3.7-flash-* and 3.5-flash-high model IDs.
+# 2026-10-17 (owner, FINAL): text copywriting uses ONLY the FlashFast combo (= gemini-3.8-flash
+# medium/low/high; 9Router does the fallback inside the combo), then those three ids directly.
+# No Claude / GPT-OSS / other Gemini ids: the owner is dropping them.
 ROUTER_MODEL_FALLBACKS = [
-    "ag/claude-opus-4-6-thinking",
-    "ag/claude-sonnet-4-6",
-    "ag/gpt-oss-120b-medium",
-    "ag/gemini-3.8-flash-low",
+    "FlashFast",
     "ag/gemini-3.8-flash-medium",
+    "ag/gemini-3.8-flash-low",
     "ag/gemini-3.8-flash-high",
-    "ag/gemini-3.8-flash",
-    "ag/gemini-3.5-flash-extra-low",
-    "ag/gemini-3.5-flash-low",
-    "ag/gemini-3-flash",
-    "ag/gemini-3-flash-agent",
-    "ag/gemini-3-flash",
-    "ag/gemini-pro-agent",
-    "ag/gemini-3.1-pro-low",
 ]
 
 

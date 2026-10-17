@@ -25,7 +25,7 @@ _cache: dict = {"cfg": None, "at": 0.0}
 # copy (2026-08-20, user request), kept separate from the general `model` (used
 # by news copy and everything else) so it can be dialed back from the Settings
 # UI without touching the rest of the pipeline if it misbehaves.
-_DEFAULT_DISCUSSION_MODEL = "smart-combo"
+_DEFAULT_DISCUSSION_MODEL = "FlashFast"  # owner rule 2026-10-17: FlashFast combo only
 
 
 @dataclass
