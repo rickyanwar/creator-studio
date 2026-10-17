@@ -309,6 +309,7 @@ Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `pho
 
 ### 10.4 Composer Content & Pre-Publish Gates
 - **Literal Text Typing** (`modern_composer.type_caption_portal`): Caption typed via Portal IME (never interpolated into LLM prompts or passed to raw shell).
+- **Caption paste + Enter** (`publish._enter_caption`): the caption is pasted from the Portal clipboard (typing is the fallback). When it ends in a `#hashtag` or `@mention`, one Enter (keycode 66) follows, because Facebook's suggestion list otherwise covers the caption and the `composer_after_typing` vision gate read a suggestion (`#motorsport`) instead of the text (2026-10-17). Both caption checks strip the trailing newline.
 - **Content Pre-Tap Verification** (`modern_composer`, `vision_verify.verify_gate`):
   - Hierarchy verification: verifies caption input node contains expected text and media preview matches.
   - Pre-SHARE vision verification gates (`composer_before_typing`, `composer_after_typing`, `post_settings`) fail closed (`vision_gate_failed`) on any mismatch or vision API error.
@@ -328,6 +329,7 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
   - Facebook Profile destinations require: exact profile name on own-profile root screen, presence of owner-only controls ("Edit cover photo", "Edit profile picture", or "Dashboard"), and composer author header matching exact profile name (`identity_proof.find_own_profile_name_identity`).
   - URL/numeric-ID chain (`own_url_chain_v1`) is used when available, but not mandatory for profiles. Pages strictly require URL chain.
   - Exact match prevents posting as Page or mismatched account ("Agung Baelah" != "Agung"). If session is a Page, name check fails and nothing is typed.
+  - **Page id on the phone**: for New Pages Experience pages the URL chain sees the page's profile-style id (e.g. GP Weekend `100094901131361`), not the classic page id Repliz reports as `generatedId` (`113659828455762`). A phone `facebook_page` destination must store the profile-style id in `facebook_actor_id`; the classic id fails closed with `identity_unverified`. Page rehearsal (GP Weekend under Agung) passed every gate on 2026-10-17, and a profile run that starts in the Page session switches back to the root profile.
 - **Deterministic Root Navigation** (`identity_proof._try_open_own_root_without_model`):
   - Direct intents (`fb://feed`, `fb://profile`) with `allow_name_identity=True` for profile targets.
   - Model navigation (`mobilerun`) is last resort: capped at 120s with 60s reserved (`MODEL_NAV_MAX_SECONDS = 120`, `MODEL_NAV_RESERVE_SECONDS = 60`).

@@ -358,6 +358,13 @@ def _caption_typing_timeout(text: str | None) -> float:
 
 
 KEYCODE_PASTE = "279"
+KEYCODE_ENTER = "66"
+TRAILING_TAG_RE = re.compile(r"[#@][^\s#@]+\s*$")
+
+
+def _ends_with_tag_token(caption: str | None) -> bool:
+    """True when the caption ends in a #hashtag or @mention, which leaves Facebook's suggestion list open."""
+    return bool(TRAILING_TAG_RE.search(caption or ""))
 
 
 def _paste_caption(serial: str, caption: str) -> MobilerunResult:
@@ -378,9 +385,16 @@ def _enter_caption(serial: str, caption: str) -> tuple[MobilerunResult, str]:
         return MobilerunResult(returncode=0, stdout="", stderr=""), "none"
     paste_res = _paste_caption(serial, caption)
     if paste_res.returncode == 0:
-        return paste_res, "paste"
-    typed = type_text(serial=serial, text=caption, clear=False, timeout=_caption_typing_timeout(caption))
-    return typed, "type"
+        result, method = paste_res, "paste"
+    else:
+        result = type_text(serial=serial, text=caption, clear=False, timeout=_caption_typing_timeout(caption))
+        method = "type"
+    if result.returncode == 0 and _ends_with_tag_token(caption):
+        # One Enter closes the hashtag/mention suggestion list that otherwise covers the caption
+        # (it made the vision gate read a suggestion instead of the text). The caption checks strip it.
+        run_adb(["shell", "input", "keyevent", KEYCODE_ENTER], serial=serial)
+        human_pause(0.6, 1.0)
+    return result, method
 
 
 RESOLVE_RESERVE_SECONDS = 45.0

@@ -1527,6 +1527,39 @@ def test_caption_is_pasted_from_clipboard_and_clipboard_is_emptied(monkeypatch):
     assert clip_sets[0][-1] == f"text_base64:s:{b64}"
     assert clip_sets[-1][-1] == "text_base64:s:"  # emptied afterwards
     assert ["shell", "input", "keyevent", "279"] in cmds
+    assert ["shell", "input", "keyevent", "66"] not in cmds  # no trailing hashtag: no Enter
+
+
+def test_caption_ending_in_hashtag_gets_one_enter_to_close_suggestions(monkeypatch):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    taps, cmds = [], []
+    _patch_modern_happy_flow(monkeypatch, proof, taps)
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "", ""))
+    monkeypatch.setattr("phone_runner.adb.run_adb", lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "", ""))
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent #MotoGP #Motorsport",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    keyevents = [c[-1] for c in cmds if c[:3] == ["shell", "input", "keyevent"]]
+    assert keyevents.count("66") == 1
+    assert keyevents.index("66") == keyevents.index("279") + 1  # Enter right after the paste
+    # The fixture composer XML always holds the plain caption, so the later caption check fails here.
+    assert res["publish_may_have_started"] is False
+
+
+def test_ends_with_tag_token():
+    from phone_runner.publish import _ends_with_tag_token
+
+    assert _ends_with_tag_token("Race day #MotoGP")
+    assert _ends_with_tag_token("thanks @tsering9393_ ")
+    assert not _ends_with_tag_token("Race day #MotoGP today")
+    assert not _ends_with_tag_token("")
+    assert not _ends_with_tag_token("Price is 5 # of laps")
 
 
 def test_clipboard_failure_falls_back_to_typing(monkeypatch):
