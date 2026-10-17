@@ -1635,6 +1635,11 @@ def replan_recovering_phone_deliveries(
             deliv.scheduled_for = naive_slot
             deliv.state = "scheduled"
             deliv.last_error = None
+            # The failed attempt never started publishing (waiting_for_device), so drop its claim:
+            # claim_paced_delivery_for_dispatch skips any row that still has a claim_token, which
+            # left recovered deliveries stuck in "scheduled" forever (delivery 152, 2026-10-17).
+            deliv.claim_token = None
+            deliv.claimed_at = None
             db.add(
                 DeliveryEvent(
                     delivery_id=deliv.id,
