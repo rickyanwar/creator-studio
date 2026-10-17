@@ -55,11 +55,12 @@ def get_hermes_path() -> str:
 
 
 def get_hermes_timeout() -> float:
-    # A one-shot Hermes agent run needs more than a CLI call; the backend /recover client waits 120 s.
+    # A one-shot Hermes repair took 173 s live (2026-10-17: Portal force-stopped, ColorOS blocks adb
+    # secure-settings writes). The backend /recover client waits 330 s.
     try:
-        return float(os.environ.get("HERMES_TIMEOUT_SEC", "60.0"))
+        return float(os.environ.get("HERMES_TIMEOUT_SEC", "240.0"))
     except ValueError:
-        return 60.0
+        return 240.0
 
 
 def get_recovery_settle_seconds() -> float:

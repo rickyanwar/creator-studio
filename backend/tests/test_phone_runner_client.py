@@ -903,7 +903,8 @@ def test_recover_device_preserves_ordinary_timeout(dummy_models):
         assert mock_client_cls.call_count == 1
         _, client_kwargs = mock_client_cls.call_args
         t_cfg = client_kwargs["timeout"]
-        assert t_cfg.read == 120.0
+        # /recover has its own budget for a one-shot Hermes repair (measured 173 s live)
+        assert t_cfg.read == 330.0
         assert t_cfg.connect == 10.0
 
 

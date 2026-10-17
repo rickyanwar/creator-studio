@@ -103,6 +103,7 @@ class PhoneRunnerClient:
         connect_timeout: float = 10.0,
         dry_run_timeout: float = 260.0,
         publish_timeout: float = 600.0,
+        recover_timeout: float = 330.0,
     ) -> None:
         self.base_url = (
             base_url if base_url is not None else os.environ.get("PHONE_RUNNER_BASE_URL", "http://127.0.0.1:8765")
@@ -113,6 +114,9 @@ class PhoneRunnerClient:
         self.timeout = timeout
         self.connect_timeout = connect_timeout
         self.dry_run_timeout = dry_run_timeout
+        # /recover may run a one-shot Hermes repair (measured 173 s live, 2026-10-17) after the
+        # deterministic checks; the runner caps Hermes at 240 s, so give the call its own budget.
+        self.recover_timeout = recover_timeout
         self.publish_timeout = publish_timeout
 
     def publish_delivery(
@@ -399,7 +403,7 @@ class PhoneRunnerClient:
         )
 
         timeout_cfg = httpx.Timeout(
-            timeout=self.timeout,
+            timeout=self.recover_timeout,
             connect=self.connect_timeout,
         )
 
