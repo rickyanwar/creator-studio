@@ -662,6 +662,7 @@ def test_find_matching_post_more_options_empty_caption():
 
 
 def test_resolve_latest_post_link_matches_on_third_attempt(monkeypatch):
+    monkeypatch.setattr("phone_runner.modern_composer.PROFILE_POST_SEARCH_SWIPES", 1)  # one swipe per attempt in this scenario
     # 5f: first 2 attempts no match, 3rd attempt match -> returns the id parsed from the mocked clipboard
     # "https://www.facebook.com/agung/posts/pfbid0abcDEF123"; assert More options was tapped exactly once.
     no_match_xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
@@ -735,6 +736,7 @@ def test_resolve_latest_post_link_matches_on_third_attempt(monkeypatch):
 
 
 def test_resolve_latest_post_link_never_matches(monkeypatch):
+    monkeypatch.setattr("phone_runner.modern_composer.PROFILE_POST_SEARCH_SWIPES", 1)  # one swipe per attempt in this scenario
     # 5g: never matches -> (None, None, detail containing "not found on own profile after 4 attempts");
     # assert no tap other than swipes happened.
     no_match_xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
@@ -1028,3 +1030,32 @@ def test_resolve_scrolls_long_reel_menu_to_find_copy_link(monkeypatch):
     assert pid == "4727818027542791"
     assert (36, 1953, 1044, 2085) in taps
     assert ["shell", "input", "swipe", "540", "1900", "540", "900", "400"] in cmds
+
+
+def test_resolve_scrolls_down_a_fresh_profile_until_the_post_appears(monkeypatch):
+    top = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.TextView" text="Personal details" bounds="[36,300][800,360]" /></node></hierarchy>"""
+    post = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" content-desc="More options for Agung's post" bounds="[954,1901][1080,2026]" />
+    <node class="android.view.ViewGroup" text="The 2026 Grand Prix car has a rear wing flap that tilts flat" bounds="[36,2093][1044,2226]" />
+    </node></hierarchy>"""
+    menu = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" text="Copy link" bounds="[36,1953][1044,2085]" /></node></hierarchy>"""
+    dumps = iter([AdbResult(0, top, ""), AdbResult(0, top, ""), AdbResult(0, top, ""), AdbResult(0, post, ""), AdbResult(0, menu, "")])
+    cmds, taps = [], []
+    monkeypatch.setattr("phone_runner.modern_composer.clear_and_verify_clipboard", lambda s: (True, "sentinel_1"))
+    monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.query_ui_hierarchy", lambda s: next(dumps))
+    monkeypatch.setattr("phone_runner.modern_composer.human_tap", lambda serial, bounds, rng=None: taps.append(bounds))
+    monkeypatch.setattr("phone_runner.modern_composer.run_adb", lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.modern_composer.read_device_clipboard",
+        lambda s: AdbResult(0, "https://www.facebook.com/story.php?story_fbid=4728190000000000&id=100009439229483", ""),
+    )
+
+    pid, _, _ = resolve_latest_post_link(TEST_SERIAL, "The 2026 Grand Prix car has a rear wing flap that tilts flat")
+
+    assert pid == "4728190000000000"
+    assert len([c for c in cmds if "swipe" in c]) == 3
+    assert (954, 1901, 1080, 2026) in taps

@@ -63,6 +63,7 @@ SHARE_INTENT_COMPONENT = "com.facebook.katana/com.facebook.composer.shareintent.
 CAPTION_MATCH_PREFIX_CHARS = 30
 RESOLVE_ATTEMPTS = 4
 RESOLVE_RETRY_WAIT_SECONDS = 10.0
+PROFILE_POST_SEARCH_SWIPES = 6
 
 
 def normalize_feed_text(value: str | None) -> str:
@@ -721,8 +722,12 @@ def _resolve_latest_post_link(
         stdout1 = ui_res.stdout if ui_res.returncode == 0 and ui_res.stdout else ""
         more_bounds, detail = find_matching_post_more_options(stdout1, caption)
 
-        if not more_bounds:
+        # A fresh Facebook process opens fb://profile at the TOP (details, badges, friends); the newest
+        # post is several screens down, so keep scrolling (swipes only) until the matching post shows up.
+        swipes = 0
+        while not more_bounds and swipes < PROFILE_POST_SEARCH_SWIPES:
             run_adb(["shell", "input", "swipe", "540", "1600", "540", "800", "300"], serial=serial)
+            swipes += 1
             time.sleep(2.0)
             ui_res2 = query_ui_hierarchy(serial)
             stdout2 = ui_res2.stdout if ui_res2.returncode == 0 and ui_res2.stdout else ""
