@@ -36,7 +36,16 @@ All settings are in **Settings → AI Image Engine (ChatGPT / Codex)** (`/api/se
 
 Codex is removed from the order when its 5-hour usage reaches `codex_fallback_max_pct` (day) or `codex_night_max_pct` (night), when it is resting (`codex:rest_until`, set after a 429 or at ≥ `codex_rest_pct`), or when the Codex daily cap is reached. Its share is only used while usage is below `codex_share_max_pct`.
 
-**Codex usage %:** 9Router's quota endpoint needs a dashboard login, so the app **estimates** it. The estimate is Codex images in the last 5 h divided by `codex_window_capacity_est` (default 60). An unknown usage counts as 100 %, never 0 %. `codex_usage_url` is optional. Its parser expects the Codex `rate_limit.primary_window.used_percent` shape, which is unverified; any other shape falls back to the estimate.
+**Codex usage %:** the real numbers come from 9Router's Quota page. 9Router reads OpenAI's own `chatgpt.com/backend-api/wham/usage` (the same source as Codex CLI `/status`).
+- **Sync timer (VPS):** `codex-usage-sync.timer` runs `/opt/codex-usage/sync.sh` every 25–40 min, randomized and low frequency. Repo copy: `deploy/codex-usage/`.
+  - `fetch.js` calls the local 9Router `/api/usage/<codex connection id>` through 9Router's own CLI client. That client uses a local machine token, so no dashboard password is needed and no token is ever printed or stored by us. 9Router applies its own proxy/egress path, exactly as when the Quota page is opened.
+  - The script writes `{window_pct (5 h session), weekly_pct, resets_at, source:"9router", accounts}` to Redis `codex:usage_cache` with a 45-minute TTL.
+  - `limitReached` counts as 100 %.
+  - With several Codex accounts, the least-used one counts, because 9Router rotates between them.
+- `codex_budget.get_codex_usage` reads that cache first.
+- **Fallbacks:** without a fresh cache it uses `codex_usage_url` (optional), and otherwise the **estimate**: Codex images in the last 5 h divided by `codex_window_capacity_est` (default 60). An unknown usage counts as 100 %, never 0 %.
+- **Checks:** `systemctl list-timers codex-usage-sync.timer`, `journalctl -u codex-usage-sync.service -n 5`, and `docker exec studio-redis-1 redis-cli GET codex:usage_cache`.
+- If a 9Router update breaks `fetch.js`, the sync logs "codex usage fetch failed" and the app falls back to the estimate. Nothing else breaks.
 
 ## Quality gates
 

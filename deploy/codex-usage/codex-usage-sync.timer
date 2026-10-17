@@ -1,0 +1,11 @@
+[Unit]
+Description=Codex quota sync every 25-40 min (randomized, low frequency)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=25min
+RandomizedDelaySec=15min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

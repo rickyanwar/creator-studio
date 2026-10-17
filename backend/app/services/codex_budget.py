@@ -173,12 +173,11 @@ def estimate_usage(db, now: datetime) -> CodexUsage:
 
 
 def get_codex_usage(db, now: datetime) -> CodexUsage:
+    # The real numbers come first: the VPS timer /opt/codex-usage/sync.sh (every 25-40 min) reads them from the
+    # local 9Router quota endpoint and caches them here for 45 min. Without a fresh cache: URL, then the estimate.
     row = _settings(db)
     raw_url = getattr(row, "codex_usage_url", None)
-    if not raw_url or not str(raw_url).strip():
-        return estimate_usage(db, now)
-
-    url = str(raw_url).strip()
+    url = str(raw_url).strip() if raw_url else ""
 
     r = None
     try:
@@ -204,6 +203,9 @@ def get_codex_usage(db, now: datetime) -> CodexUsage:
                 )
         except Exception as exc:
             logger.warning("codex_budget: cache read error: %s", exc)
+
+    if not url:
+        return estimate_usage(db, now)
 
     api_key = ""
     try:

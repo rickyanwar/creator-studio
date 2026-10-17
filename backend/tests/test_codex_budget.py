@@ -1,5 +1,6 @@
 """Tests for Codex budget service (backend/app/services/codex_budget.py)."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -123,6 +124,23 @@ def test_empty_codex_usage_url_falls_back_to_estimate():
         u = get_codex_usage(db_empty, now)
         mock_get.assert_not_called()
         assert u.source == "estimate"
+
+
+def test_synced_9router_numbers_win_without_a_usage_url():
+    # Written by the VPS timer /opt/codex-usage/sync.sh (real 9Router quota), exact production shape.
+    now = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
+    fake_redis = FakeRedis()
+    fake_redis.set(codex_budget.USAGE_CACHE_KEY, json.dumps({
+        "window_pct": 12, "weekly_pct": 78, "resets_at": "2026-10-17T20:18:03.000+00:00", "source": "9router", "accounts": 1,
+    }))
+    db = _make_db(_make_settings(codex_usage_url=None), event_count=59)
+
+    with patch.object(codex_budget, "_redis", return_value=fake_redis), patch("httpx.get") as mock_get:
+        u = get_codex_usage(db, now)
+
+    mock_get.assert_not_called()
+    assert (u.window_pct, u.weekly_pct, u.source) == (12.0, 78.0, "9router")
+    assert u.resets_at == datetime(2026, 10, 17, 20, 18, 3, tzinfo=timezone.utc)
 
 
 # ── Test 3: URL source success and caching ───────────────────────────────────

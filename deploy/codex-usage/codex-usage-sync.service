@@ -1,0 +1,8 @@
+[Unit]
+Description=Sync the real Codex quota from 9Router into the Studio Redis (gpt-cli engine)
+After=docker.service
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=/opt/codex-usage/sync.sh
