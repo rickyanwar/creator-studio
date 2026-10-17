@@ -14,7 +14,7 @@ Comprehensive architectural mapping of image sourcing, face detection, crop geom
 - **Vision Transport & Payloads** (`design_images.py:40`): `_vision_datauri(image_bytes, max_dim=768, quality=78)` rescales images to <=768px JPEG quality 78 before sending to 9Router. Prevents HTTP 413 Payload Too Large when bundling up to 8 candidate data-URIs. Callers keep original uncompressed bytes for final rendering.
 - **Model Fallback Chain & Circuit Breaking** (`design_images.py:77-105`):
   - Primary: `settings.nine_router_vision_model`.
-  - Ordered fallbacks (`_VISION_MODEL_FALLBACKS`): `ag/gemini-3.8-flash-low`, `medium`, `high`, `plain`, `ag/gemini-3.5-flash-extra-low`, `low`, `ag/gemini-3-flash`, `ag/gemini-3-flash-agent`, `ag/gemini-pro-agent`, `ag/gemini-3.1-pro-low`.
+  - Ordered fallbacks (`_VISION_MODEL_FALLBACKS`, 2026-10-17): `FlashFast` (combo), `ag/gemini-3.8-flash-medium`, `-low`, `-high` — owner rule: Gemini 3.8 Flash only.
   - Excluded models: `ag/claude-*` (ignores image), plain `ag/gemini-3-flash` (returns empty), `ag/gemini-3.1-flash-image` (hallucinates descriptions), and any `cx/*` model.
   - Active dead-model filtering: `model_health.is_dead(model)` prunes known broken endpoints; retains full list if all are flagged dead.
 - **Low-Level Vision Execution** (`design_images.py:108-174`): `_vision_chat` sets `OpenAI(timeout=30.0, max_retries=0)` to prevent SDK exponential backoff from compounding across model fallback attempts. Emits telemetry via `ai_caption.log_ai_copy_event` (tracks `latency_ms`, `models_tried`, `outcome="success"|"recovered"|"failed"`).

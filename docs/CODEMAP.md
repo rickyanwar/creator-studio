@@ -70,8 +70,8 @@ Big modules: `services/design_images.py` (3.8k lines: templates, photo sourcing,
 ## 4. AI routing
 
 - Config: `services/nine_router.py` (Settings row id=1 first, then `NINE_ROUTER_*` env, 30 s cache).
-- Text: `services/ai_caption.py` `ROUTER_MODEL_FALLBACKS` (Opus → Sonnet → gpt-oss → many Gemini Flash → Pro), skipping models marked dead by `model_health` (Redis, 6 h probe). After that come direct Gemini, then Groq.
-- Vision: `design_images._vision_chat` with `_VISION_MODEL_FALLBACKS` (Gemini only; Claude drops images).
+- Text (owner rule 2026-10-17): configured default `FlashFast` (9Router combo = gemini-3.8-flash high/low/medium/plain), then `ai_caption.ROUTER_MODEL_FALLBACKS` = FlashFast, `ag/gemini-3.8-flash-medium`, `-low`, `-high` (deduplicated, dead models skipped). No Claude / GPT-OSS / other Gemini.
+- Vision: `design_images._vision_chat`: `NINE_ROUTER_VISION_MODEL=FlashFast`, then `_VISION_MODEL_FALLBACKS` = FlashFast + the same three gemini-3.8-flash ids. Never My-Combo (it contains Claude, which drops images).
 - Images: `services/visual_engine.py` → 9Router `/images/generations` with `cx/*` (the only allowed use of Codex).
 
 ## 5. API surface

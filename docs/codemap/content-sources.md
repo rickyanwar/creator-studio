@@ -128,7 +128,7 @@ Comprehensive architecture and implementation map covering content discovery, de
   - Layer 2 Model Check: Calls `factcheck_discussion_claim` via primary router model (`discussion.py:391`).
   - Layer 3 Cross-Check: Calls `factcheck_discussion_claim` forced to Groq (`discussion.py:402`). Both providers must validate claim as `valid`.
 - **Copy Constraints** (`backend/app/services/news_copywriter.py:266, 300`):
-  - Uses `NineRouterConfig.discussion_model` ("smart-combo") (`news_copywriter.py:588`).
+  - Uses `NineRouterConfig.discussion_model` (default and prod: "FlashFast" since 2026-10-17).
   - Max question length: 90 characters (`_DISCUSSION_MAX_QUESTION_CHARS`, `news_copywriter.py:266`).
   - `discussion_label_mode`: `"discussion"` forces yes/no question ending in `?`; `"hot_take"` forces punchy declarative claim (`news_copywriter.py:308-313`).
 - **Consumption**: `_consume_one` (`discussion.py:518`) pops oldest pending idea (FIFO). Resolves discussion template. Creates `PublishJob(content_type=discussion, status=pending_design)`. In auto mode, schedules `render_discussion` with 5–90s countdown (`discussion.py:597`).
@@ -316,7 +316,7 @@ Comprehensive architecture and implementation map covering content discovery, de
 
 ## Verified claims
 
-1. `backend/app/services/nine_router.py:28` - Default discussion model is hardcoded to "smart-combo" to isolate Mode 4 hot-take copy from general news copy.
+1. `backend/app/services/nine_router.py:28` - Default discussion model is "FlashFast" (owner rule 2026-10-17: text and vision use only the FlashFast combo + gemini-3.8-flash ids).
 2. `backend/app/services/model_health.py:128` - Model health probing strictly asserts that model names starting with "cx/" are never probed.
 3. `backend/app/services/ai_caption.py:253` - OpenAI SDK max_retries is set to 0 to prevent internal retries from stacking on top of ROUTER_MODEL_FALLBACKS.
 4. `backend/app/services/news_copywriter.py:623` - If Groq output fails JSON parsing, it retries once via Gemini before failing.
