@@ -483,7 +483,9 @@ def render_ig_recreate(self, job_id: int):
             except Exception:
                 pass
 
+        ai_attempted = False
         if fanpage.visual_engine in ('chatgpt', 'auto', 'gflow'):
+            ai_attempted = True
             if fanpage.visual_engine == 'gflow':
                 logger.info("Treating gflow as chatgpt for redesign_card")
                 
@@ -503,6 +505,9 @@ def render_ig_recreate(self, job_id: int):
             if res.ok:
                 job.design_image_path = res.image_path
                 job.design_image_url = res.image_url
+                job.design_engine = getattr(res, "engine", None) or "codex"
+                res_note = getattr(res, "engine_note", "") or None
+                job.design_engine_note = res_note[:200] if res_note else None
                 job.status = PublishJobStatus.pending_publish
                 if decision:
                     decision.preview_status = "done"
@@ -651,6 +656,8 @@ def render_ig_recreate(self, job_id: int):
 
         job.design_image_path = str(designs_dir / filename)
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
+        job.design_engine = "template"
+        job.design_engine_note = "AI image failed → template" if ai_attempted else None
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
         db.commit()

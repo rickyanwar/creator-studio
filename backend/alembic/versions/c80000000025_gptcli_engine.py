@@ -34,9 +34,13 @@ def upgrade() -> None:
     op.add_column("settings", sa.Column("codex_night_gap_jitter_s", sa.Integer(), nullable=False, server_default="60"))
     op.add_column("settings", sa.Column("codex_usage_url", sa.String(length=512), nullable=True))
     op.add_column("publish_jobs", sa.Column("design_not_before", sa.DateTime(), nullable=True))
+    op.add_column("publish_jobs", sa.Column("design_engine", sa.String(length=16), nullable=True))
+    op.add_column("publish_jobs", sa.Column("design_engine_note", sa.String(length=200), nullable=True))
 
 
 def downgrade() -> None:
+    op.drop_column("publish_jobs", "design_engine_note")
+    op.drop_column("publish_jobs", "design_engine")
     op.drop_column("publish_jobs", "design_not_before")
     op.drop_column("settings", "codex_usage_url")
     op.drop_column("settings", "codex_night_gap_jitter_s")

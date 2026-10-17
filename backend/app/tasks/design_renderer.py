@@ -529,6 +529,17 @@ def render_design(self, job_id: int):
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
         job.design_template_id = template.id
         job.last_image_marker = image_marker
+        if image_marker == "speaker_design":
+            job.design_engine = getattr(speaker_design, "engine", None) or "codex"
+            note = getattr(speaker_design, "engine_note", "") or None
+            job.design_engine_note = note[:200] if note else None
+        else:
+            job.design_engine = "template"
+            job.design_engine_note = (
+                "AI image failed → template"
+                if getattr(fanpage, "news_visual_engine", None) == "chatgpt"
+                else None
+            )
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
         if gallery_image:
@@ -740,6 +751,8 @@ def render_discussion(self, job_id: int):
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
         job.design_template_id = template.id
         job.last_image_marker = image_marker
+        job.design_engine = "template"
+        job.design_engine_note = None
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
         if gallery_image:
@@ -853,6 +866,8 @@ def render_pinterest(self, job_id: int):
             job.design_image_url = gallery_image.public_url
             job.design_template_id = None
             job.last_image_marker = f"gallery:{gallery_image.id}"
+            job.design_engine = "template"
+            job.design_engine_note = None
             job.status = PublishJobStatus.pending_publish
             job.last_error = None
             gallery_image.is_used = True
@@ -941,6 +956,8 @@ def render_pinterest(self, job_id: int):
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
         job.design_template_id = template.id
         job.last_image_marker = f"gallery:{gallery_image.id}"
+        job.design_engine = "template"
+        job.design_engine_note = None
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
         gallery_image.is_used = True
@@ -1231,6 +1248,17 @@ def render_facebook_photo(self, job_id: int):
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
         job.design_template_id = template.id
         job.last_image_marker = image_marker
+        if image_marker == "speaker_design":
+            job.design_engine = getattr(speaker_design, "engine", None) or "codex"
+            note = getattr(speaker_design, "engine_note", "") or None
+            job.design_engine_note = note[:200] if note else None
+        else:
+            job.design_engine = "template"
+            job.design_engine_note = (
+                "AI image failed → template"
+                if getattr(fanpage, "fb_visual_engine", None) == "chatgpt"
+                else None
+            )
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
         if gallery_image:

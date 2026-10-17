@@ -60,6 +60,9 @@ class PublishJob(Base):
     design_template_id = Column(Integer, nullable=True)     # FK to design_templates (Phase 2D)
     # Night deferral (gpt-cli plan B10): render_pending_designs / recover_stuck_renders skip the job until then.
     design_not_before = Column(DateTime, nullable=True)
+    # Who made the post image (gpt-cli plan, owner 2026-10-17): chatgpt | codex | codex_fallback | template; NULL = unknown (old posts).
+    design_engine = Column(String(16), nullable=True)
+    design_engine_note = Column(String(200), nullable=True)
     # AI's own call (from the same news-copy generation, see news_copywriter.py
     # build_news_copy_prompt TASK 1) on whether this is significant enough
     # breaking news to skip the normal per-fanpage publish pacing/daily-cap

@@ -14,6 +14,8 @@ class PublishJobOut(BaseModel):
     design_image_url: Optional[str] = None
     design_template_id: Optional[int] = None
     design_subtitle: Optional[str] = None
+    design_engine: Optional[str] = None
+    design_engine_note: Optional[str] = None
     # Mode 7 (youtube_clip)
     video_url: Optional[str] = None
     video_thumbnail_url: Optional[str] = None

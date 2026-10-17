@@ -30,6 +30,8 @@ def _enrich_job(job, db) -> PublishJobOut:
     out.ig_post_url = post.ig_post_url if post else None
     out.article_url = article.article_url if article else None
     out.article_source_name = news_source.name if news_source else None
+    out.design_engine = getattr(job, "design_engine", None)
+    out.design_engine_note = getattr(job, "design_engine_note", None)
 
     # S9: Mode-6 source photo link — resolve gallery_image keyword → fbid → URL.
     from app.models.publish_jobs import ContentType as CT
@@ -239,6 +241,8 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
         "design_caption": job.design_caption,
         "caption": job.ai_generated_caption,
         "design_image_url": job.design_image_url,
+        "design_engine": job.design_engine,
+        "design_engine_note": job.design_engine_note,
         "article_title": article.scraped_title if article else None,
         "article_url": article.article_url if article else None,
         "fanpage_id": job.fanpage_id,
@@ -280,6 +284,8 @@ async def upload_design_image(job_id: int, db: DB, _: CurrentUser, file: UploadF
 
     job.design_image_path = str(designs_dir / filename)
     job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
+    job.design_engine = "template"
+    job.design_engine_note = "Designer (manual)"
     job.status = PublishJobStatus.pending_publish
     job.last_error = None
 
@@ -451,6 +457,8 @@ def reedit_job(job_id: int, db: DB, _: CurrentUser):
     job.scheduled_for = None
     job.design_image_path = None
     job.design_image_url = None
+    job.design_engine = None
+    job.design_engine_note = None
     job.last_error = None
     # last_image_marker is deliberately left untouched here — it's what the
     # next select_image_for_job call excludes.
