@@ -21,6 +21,16 @@ from phone_runner.adb import (
     set_device_clipboard_text,
     wake_and_unlock,
 )
+from urllib.parse import urlparse
+from phone_runner.album_composer import (
+    ALBUM_MAX_PHOTOS,
+    ALBUM_STAGE_GAP_SECONDS,
+    attach_album_from_gallery,
+    has_album_preview,
+    picker_minute_labels,
+    read_phone_epoch,
+    read_phone_timezone,
+)
 from phone_runner.config import sanitize_actor_name_for_prompt
 from phone_runner.dry_run import (
     get_local_app_card_version,
@@ -979,64 +989,208 @@ def execute_publish(
         })
 
         # Step b: media staging + attachment / typing
+        is_album = len(media_list) > 1
+        album_count = len(media_list)
         if media_list:
-            # Step b: discard_composer(serial) to close that empty proof composer; human_pause()
-            discard_composer(serial)
-            human_pause()
+            if not is_album:
+                # Step b: discard_composer(serial) to close that empty proof composer; human_pause()
+                discard_composer(serial)
+                human_pause()
 
-            # Step c: stage media. Only ONE image supported.
-            if len(media_list) > 1:
-                stages.append({
-                    "stage": "media_staging",
-                    "passed": False,
-                    "detail": "multi-image not supported on share-intent path",
-                })
-                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
-                return {
-                    "status": "failed",
-                    "facebook_post_id": None,
-                    "permalink": None,
-                    "actor_id": expected_target_id,
-                    "publish_may_have_started": False,
-                    "error_code": "media_attach_failed",
-                    "evidence": evidence,
-                    "stages": stages,
-                    "checked_at": checked_at,
-                }
+                try:
+                    staging_cm = stage_media_files(media_list, serial=serial)
+                    staged = staging_cm.__enter__()
+                    staged_remote_files = [str(item["remote_path"]) for item in staged]
+                    stages.append({
+                        "stage": "media_staging",
+                        "passed": True,
+                        "detail": f"Successfully staged {len(staged_remote_files)} media files to device",
+                    })
+                except Exception as exc:
+                    stages.append({
+                        "stage": "media_staging",
+                        "passed": False,
+                        "detail": f"Media staging failed: {type(exc).__name__}",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
 
-            try:
-                staging_cm = stage_media_files(media_list, serial=serial)
-                staged = staging_cm.__enter__()
-                staged_remote_files = [str(item["remote_path"]) for item in staged]
+                is_video = is_video_path(str(staged[0]["remote_path"])) or (media_kind or "").lower() == "video"
+                evidence["media_type"] = "video" if is_video else "photo"
+
+                reference_jpeg: bytes | None = None
+                if not is_video:
+                    local_p = staged[0].get("local_path")
+                    if local_p and os.path.isfile(str(local_p)):
+                        try:
+                            with open(str(local_p), "rb") as f:
+                                reference_jpeg = f.read()
+                        except Exception:
+                            reference_jpeg = None
+
+                uri = get_media_content_uri(serial, str(staged[0]["remote_path"]))
+                if not uri:
+                    stages.append({
+                        "stage": "media_attachment",
+                        "passed": False,
+                        "detail": "Failed to resolve MediaStore content URI",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
+                # Step d: open share intent composer
+                open_ok, open_detail, open_xml = open_share_intent_composer(
+                    serial,
+                    uri,
+                    dest_name,
+                    mime_type="video/mp4" if is_video else "image/jpeg",
+                )
+                if not open_ok or not open_xml:
+                    stages.append({
+                        "stage": "media_attachment",
+                        "passed": False,
+                        "detail": f"Media attachment failed: {open_detail}",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
                 stages.append({
-                    "stage": "media_staging",
+                    "stage": "media_attachment",
                     "passed": True,
-                    "detail": f"Successfully staged {len(staged_remote_files)} media files to device",
+                    "detail": open_detail,
                 })
-            except Exception as exc:
-                stages.append({
-                    "stage": "media_staging",
-                    "passed": False,
-                    "detail": f"Media staging failed: {type(exc).__name__}",
-                })
-                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
-                return {
-                    "status": "failed",
-                    "facebook_post_id": None,
-                    "permalink": None,
-                    "actor_id": expected_target_id,
-                    "publish_may_have_started": False,
-                    "error_code": "media_attach_failed",
-                    "evidence": evidence,
-                    "stages": stages,
-                    "checked_at": checked_at,
-                }
+                c_state = composer_state(open_xml)
+            else:
+                # Album path
+                if len(media_list) > ALBUM_MAX_PHOTOS:
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "media_staging",
+                        "passed": False,
+                        "detail": f"album of {len(media_list)} photos is over the {ALBUM_MAX_PHOTOS}-photo limit",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
 
-            is_video = is_video_path(str(staged[0]["remote_path"])) or (media_kind or "").lower() == "video"
-            evidence["media_type"] = "video" if is_video else "photo"
+                if (media_kind or "").lower() == "video" or any(is_video_path(urlparse(u).path) for u in media_list):
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "media_staging",
+                        "passed": False,
+                        "detail": "albums support photos only",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
 
-            reference_jpeg: bytes | None = None
-            if not is_video:
+                start_epoch = read_phone_epoch(serial)
+                tz = read_phone_timezone(serial)
+
+                try:
+                    staging_cm = stage_media_files(media_list, serial=serial, min_gap_seconds=ALBUM_STAGE_GAP_SECONDS)
+                    staged = staging_cm.__enter__()
+                    staged_remote_files = [str(item["remote_path"]) for item in staged]
+                    stages.append({
+                        "stage": "media_staging",
+                        "passed": True,
+                        "detail": f"Successfully staged {len(staged_remote_files)} media files to device",
+                    })
+                except Exception as exc:
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "media_staging",
+                        "passed": False,
+                        "detail": f"Media staging failed: {type(exc).__name__}",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
+                end_epoch = read_phone_epoch(serial)
+                if start_epoch is None or end_epoch is None or tz is None:
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "media_staging",
+                        "passed": False,
+                        "detail": "phone clock or timezone unreadable",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
+                allowed = picker_minute_labels(start_epoch, end_epoch, tz)
+                is_video = False
+                evidence["media_type"] = "album"
+                evidence["album_count"] = len(staged)
+
+                reference_jpeg: bytes | None = None
                 local_p = staged[0].get("local_path")
                 if local_p and os.path.isfile(str(local_p)):
                     try:
@@ -1045,58 +1199,35 @@ def execute_publish(
                     except Exception:
                         reference_jpeg = None
 
-            uri = get_media_content_uri(serial, str(staged[0]["remote_path"]))
-            if not uri:
+                open_ok, open_detail, open_xml = attach_album_from_gallery(
+                    serial, len(staged), allowed, dest_name
+                )
+                if not open_ok or not open_xml:
+                    discard_composer(serial)
+                    stages.append({
+                        "stage": "media_attachment",
+                        "passed": False,
+                        "detail": f"Media attachment failed: {open_detail}",
+                    })
+                    evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
+                    return {
+                        "status": "failed",
+                        "facebook_post_id": None,
+                        "permalink": None,
+                        "actor_id": expected_target_id,
+                        "publish_may_have_started": False,
+                        "error_code": "media_attach_failed",
+                        "evidence": evidence,
+                        "stages": stages,
+                        "checked_at": checked_at,
+                    }
+
                 stages.append({
                     "stage": "media_attachment",
-                    "passed": False,
-                    "detail": "Failed to resolve MediaStore content URI",
+                    "passed": True,
+                    "detail": open_detail,
                 })
-                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
-                return {
-                    "status": "failed",
-                    "facebook_post_id": None,
-                    "permalink": None,
-                    "actor_id": expected_target_id,
-                    "publish_may_have_started": False,
-                    "error_code": "media_attach_failed",
-                    "evidence": evidence,
-                    "stages": stages,
-                    "checked_at": checked_at,
-                }
-
-            # Step d: open share intent composer
-            open_ok, open_detail, open_xml = open_share_intent_composer(
-                serial,
-                uri,
-                dest_name,
-                mime_type="video/mp4" if is_video else "image/jpeg",
-            )
-            if not open_ok or not open_xml:
-                stages.append({
-                    "stage": "media_attachment",
-                    "passed": False,
-                    "detail": f"Media attachment failed: {open_detail}",
-                })
-                evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
-                return {
-                    "status": "failed",
-                    "facebook_post_id": None,
-                    "permalink": None,
-                    "actor_id": expected_target_id,
-                    "publish_may_have_started": False,
-                    "error_code": "media_attach_failed",
-                    "evidence": evidence,
-                    "stages": stages,
-                    "checked_at": checked_at,
-                }
-
-            stages.append({
-                "stage": "media_attachment",
-                "passed": True,
-                "detail": open_detail,
-            })
-            c_state = composer_state(open_xml)
+                c_state = composer_state(open_xml)
 
             # Step e: vision gate composer_before_typing
             v_ok, v_ev = verify_gate(
@@ -1252,7 +1383,7 @@ def execute_publish(
             })
 
             reveal_xml = post_type_ui.stdout
-            photo_visible = has_attachment_preview(reveal_xml)
+            photo_visible = has_attachment_preview(reveal_xml) or (is_album and has_album_preview(reveal_xml, album_count))
             swipes = 0
             if not photo_visible:
                 # The keyboard covers the photo below a long caption; hide it first (no swipe on a keyboard).
@@ -1265,7 +1396,7 @@ def execute_publish(
                     if r.returncode == 0 and r.stdout:
                         reveal_xml = r.stdout
                         fresh_dump = True
-                        photo_visible = has_attachment_preview(reveal_xml)
+                        photo_visible = has_attachment_preview(reveal_xml) or (is_album and has_album_preview(reveal_xml, album_count))
                     if photo_visible:
                         break
                     time.sleep(1.0)
@@ -1285,7 +1416,7 @@ def execute_publish(
                 if r.returncode != 0 or not r.stdout:
                     break
                 reveal_xml = r.stdout
-                photo_visible = has_attachment_preview(reveal_xml)
+                photo_visible = has_attachment_preview(reveal_xml) or (is_album and has_album_preview(reveal_xml, album_count))
 
             if not photo_visible:
                 evidence["observation_file"] = save_composer_observation(serial, "media_preview_mismatch")

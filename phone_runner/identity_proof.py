@@ -36,6 +36,7 @@ from phone_runner.resolver import (
     resolve_facebook_actor_url,
     share_url_matches_expected_id,
 )
+from phone_runner.interstitials import clear_interstitials
 
 logger = logging.getLogger("phone_runner")
 
@@ -1117,6 +1118,13 @@ def _try_open_own_root_without_model(
     if ok_p and tree_p is not None:
         if _is_own_root(tree_p):
             logger.info("Deterministic root navigation succeeded: fb://profile intent")
+            return True
+
+    inter = clear_interstitials(serial)
+    if inter.tapped:
+        ok_p, err_p, tree_p, raw_xml_p = verify_foreground_facebook(serial, expected_geometry)
+        if ok_p and tree_p is not None and _is_own_root(tree_p):
+            logger.info("Deterministic root navigation succeeded: fb://profile intent after clearing interstitials")
             return True
 
     # 4. fb://profile restores the last scroll position, so the profile header (owner controls,

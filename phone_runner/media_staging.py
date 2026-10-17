@@ -366,6 +366,7 @@ def stage_media_files(
     media_urls: list[str],
     serial: str,
     cleanup_remote: bool = True,
+    min_gap_seconds: float = 0.0,
 ) -> Generator[list[dict[str, object]], None, None]:
     """Context manager for staging media locally and onto device with guaranteed cleanup.
 
@@ -377,8 +378,10 @@ def stage_media_files(
     remote_paths: list[str] = []
 
     try:
-        for u in media_urls:
+        for idx, u in enumerate(media_urls):
             local_p, sha, bcount = download_media_file(u, dest_dir=temp_dir)
+            if idx > 0 and min_gap_seconds > 0:
+                time.sleep(min_gap_seconds)
             remote_p = push_media_to_device(serial, local_p)
             remote_paths.append(remote_p)
             staged.append({

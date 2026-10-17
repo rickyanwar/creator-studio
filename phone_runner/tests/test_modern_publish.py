@@ -1033,13 +1033,14 @@ def test_modern_share_intent_two_media_urls_fails_before_staging(monkeypatch):
         destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
         caption="Hello with two media",
         media_urls=["https://cdn.example.com/p1.jpg", "https://cdn.example.com/p2.jpg"],
+        media_kind="video",
     )
 
     assert res["status"] == "failed"
     assert res["error_code"] == "media_attach_failed"
     assert res["publish_may_have_started"] is False
     mock_stage.assert_not_called()
-    assert any("multi-image not supported on share-intent path" in s.get("detail", "") for s in res["stages"])
+    assert any("albums support photos only" in s.get("detail", "") for s in res["stages"])
 
 
 def test_modern_text_only_uses_old_path(monkeypatch):

@@ -23,6 +23,7 @@ from phone_runner.identity_proof import (
     get_center,
     parse_bounds,
 )
+from phone_runner.interstitials import clear_interstitials
 from phone_runner.resolver import build_safe_opener
 
 # Module-level rule constants for A3 calibration confirmation
@@ -482,6 +483,7 @@ def open_share_intent_composer(
             state = composer_state(xml)
             if not state.get("in_composer"):
                 last_err = "not in composer"
+                clear_interstitials(serial)
             elif not any(name == expected_author for name in state.get("author_names", [])):
                 last_err = f"wrong author: expected '{expected_author}', observed {state.get('author_names')}"
             elif (state.get("input_text") or "").strip() not in EMPTY_COMPOSER_PLACEHOLDERS:
@@ -754,6 +756,9 @@ def _resolve_latest_post_link(
             break
         launch_facebook_own_profile(serial)
         time.sleep(4.0)
+        inter = clear_interstitials(serial, post_share=True)
+        if inter.blocked_reason == "facebook_post_problem":
+            return None, None, "facebook showed a posting problem on screen; not retried"
         _show_profile_all_tab_reloaded(serial)
 
         ui_res = query_ui_hierarchy(serial)
