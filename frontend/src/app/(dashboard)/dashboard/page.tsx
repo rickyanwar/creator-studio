@@ -43,8 +43,8 @@ export default function DashboardPage() {
     setRestartMsg(null);
     try {
       await restartBeat();
-      setRestartMsg("Beat restarted — should be active in ~15 seconds.");
-      setTimeout(() => mutateHealth(), 15000);
+      setRestartMsg("Restart requested — beat restarts within ~30 seconds.");
+      setTimeout(() => mutateHealth(), 45000);
     } catch {
       setRestartMsg("Restart failed — check VPS manually.");
     } finally {

@@ -6,6 +6,8 @@ from app.api.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
+RESTART_BEAT_FLAG = "ops:restart_beat_requested"
+
 
 @router.post("/crawl-now")
 def trigger_crawl(_: CurrentUser):
@@ -33,20 +35,17 @@ def trigger_cleanup(_: CurrentUser):
 
 @router.post("/restart-beat")
 def restart_beat(_: CurrentUser):
-    """Restart the Celery beat scheduler container via Docker socket."""
+    """Request a Celery beat restart. The API no longer has the Docker socket (security, 2026-10-18):
+    it only sets a Redis flag; the host timer studio-restart-beat.timer restarts beat within ~30 s."""
     try:
-        import docker
-        client = docker.from_env()
-        # Container is named <project>-beat-1 (project = directory name on VPS = "studio")
-        containers = client.containers.list(filters={"name": "beat"})
-        if not containers:
-            raise HTTPException(status_code=404, detail="Beat container not found — is it running?")
-        containers[0].restart(timeout=15)
-        return {"ok": True}
-    except HTTPException:
-        raise
+        import redis
+        from datetime import datetime, timezone
+        from app.config import get_settings
+        r = redis.from_url(get_settings().redis_url, decode_responses=True)
+        r.set(RESTART_BEAT_FLAG, datetime.now(timezone.utc).isoformat(), ex=600)
+        return {"ok": True, "queued": True}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=f"Could not queue the beat restart: {type(exc).__name__}")
 
 
 @router.get("/task-status/{task_id}")

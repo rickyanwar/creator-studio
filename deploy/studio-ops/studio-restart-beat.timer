@@ -1,0 +1,10 @@
+[Unit]
+Description=Check every 30 s for a dashboard beat-restart request
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

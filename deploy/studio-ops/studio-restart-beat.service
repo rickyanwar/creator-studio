@@ -1,0 +1,8 @@
+[Unit]
+Description=Restart Studio Celery beat when the dashboard requested it
+After=docker.service
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=/opt/studio-ops/restart-beat-if-requested.sh
