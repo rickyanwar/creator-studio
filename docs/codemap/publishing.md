@@ -166,6 +166,27 @@ Implemented in `backend/app/services/social_delivery_policy.py`.
   $$\text{method} = \begin{cases} \text{"phone"}, & \text{if } (\text{slot\_index} \pmod L) < \text{phone\_daily\_target} \\ \text{"repliz"}, & \text{otherwise} \end{cases}$$
 - Example (Phone=2, Repliz=1): Slot 0=Phone, Slot 1=Phone, Slot 2=Repliz, Slot 3=Phone...
 
+### 5.3 Brand-First Social Endpoints & Estimated Times (`backend/app/api/social_brands.py`)
+Mounted at `/social-media` (prefix `/social-media`), read-only except GPT-CLI toggle:
+- `GET /social-media/brands`: returns `list[BrandSummaryOut]` with per-brand channels, today counts (published, scheduled, failed, needs_attention), next post at, attention alerts.
+- `GET /social-media/brands/{id}`: returns `BrandDetailOut` with today's AI images count by engine (`chatgpt`, `codex`, `codex_fallback`, `template`) and WIB day boundary.
+- `PUT /social-media/brands/{id}/gptcli`: toggles `gptcli_fanpage_ids` in Settings.
+- `GET /social-media/destinations/{id}/estimated-times`: returns `EstimatedTimesOut` with today's real delivery slots and simulated upcoming audience slots.
+- `GET /social-media/destinations/{id}/recent`: returns recent deliveries with content type, title, design engine.
+- `GET /social-media/repliz-accounts`: lists connected Facebook accounts from Repliz API.
+
+**Estimated Times & Slot Index Rule** (`api/social_brands.py:get_destination_estimated_times`):
+1. **Day window**: computed for destination timezone `[start_naive_utc, end_naive_utc)` on current local date.
+2. **Real slots**: today's `PublishDelivery` rows (`published`, `failed`, `in_progress`, `scheduled`), mapped to `EstimatedSlotOut` with local time, WIB time, and method (`actual_method or intended_method`).
+3. **Remaining slots**: `remaining = daily_target - non_failed_real_slots`.
+4. **Simulated slots**:
+   - Starts with `get_destination_reservations_utc(db, dest)` into `simulated_reservations`.
+   - Loops up to `remaining + 3` times: calls `compute_audience_slot(...)` to find `next_slot`.
+   - **Slot Index Rule**: planner slot index `idx` = count of existing simulated reservations on the same local date (`slot.astimezone(dest_tz).date() == slot_local_date`).
+   - Mixed mode method selection: `choose_method_for_slot(dest.mode, slot_index=idx, phone_daily_target, repliz_daily_target)`. In mixed mode: `idx mod (phone + repliz) < phone` -> `"phone"`, else `"repliz"`.
+   - Appends `next_slot` to `simulated_reservations`.
+5. **Assembly**: real slots + estimated slots merged, sorted by `at` UTC timestamp, and indexed sequentially `0..N-1`.
+
 ---
 
 ## 6. Phone -> Repliz Fallback Policy

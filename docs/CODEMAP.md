@@ -93,14 +93,15 @@ Main routers:
 | Fanpages & content | `fanpages`, `publish_jobs`, `yt_clips` (under `/fanpages`), `templates`, `gallery`, `news_sources`, `ig_sources` |
 | Mode 8 | `ai_video_ideas` + `ai_video_jobs` (both `/ai-video`) |
 | Analytics & strategy | `analytics`, `strategy` |
-| Social publishing | `social_media` (destinations, devices, assignments, schedule-preview), `content_projects` |
+| Social publishing | `social_media` (destinations, devices, assignments, schedule-preview), `social_brands` (`/social-media/brands`, `/destinations/{id}/estimated-times`, `/recent`, `/repliz-accounts`), `content_projects` |
 | Ops | `settings`, `jobs`, `dashboard`, `logs`, `notifications`, `scraper_health`, `f1_drivers`, `radar` |
 
-Frontend: `frontend/src/app/(dashboard)/*` pages. The pages are `dashboard`, `fanpages`, `fanpages/[id]` (tabs per mode), `queue`, `history`, `sources`, `news-sources`, `gallery`, `templates`, `templates/[id]`, `designer/[jobId]`, `ai-video`, `radar`, `analytics`, `strategy`, `social-media`, `content-projects`, `settings` and `logs`. The client is `frontend/src/lib/api.ts` (axios, baseURL `NEXT_PUBLIC_API_URL` = `https://autostudio.pro/api` on the VPS). UI text stays English.
+Frontend: `frontend/src/app/(dashboard)/*` pages. The pages are `dashboard`, `fanpages`, `fanpages/[id]` (tabs per mode), `queue`, `history`, `sources`, `news-sources`, `gallery`, `templates` (styles, defaults, templates), `templates/[id]`, `designer/[jobId]`, `ai-video`, `radar`, `analytics`, `strategy`, `social-media` (brands overview, accounts, brands/[id], channels/new, channels/[id], legacy), `content-projects`, `settings` and `logs`. The client is `frontend/src/lib/api.ts` (axios, baseURL `NEXT_PUBLIC_API_URL` = `https://autostudio.pro/api` on the VPS). UI text stays English.
 
 ## 6. Data model (central tables)
 
-- `target_fanpages`: the hub. Mode toggles, timezone/target_country, sleep hours, daily limit, watermark. Also acts as the "content project" parent of `social_destinations`.
+- `target_fanpages`: the hub. Mode toggles, timezone/target_country, sleep hours, daily limit, watermark. Style & colors (`template_style` nullable: `gp` | `highlight` | `classic`, `brand_override`, `accent_color` = override primary, `accent_secondary_color`, `badge_color`, `badge_text_color`, `quote_mark_color`, `quote_streak`). Also acts as the "content project" parent of `social_destinations`.
+- `design_templates`: curated styles (`gp`, `highlight`, `classic`), `style`, `is_hidden` (15 legacy templates hidden; 9 active style templates across 3 styles × news/quote/discussion, GP default), default colors in `template_json.brandDefaults`.
 - `publish_jobs`: one row per piece of content. `publish_deliveries` + `delivery_events`: per-destination ledger with immutable caption/media snapshots.
 - `social_destinations`, `phone_devices`, `destination_device_assignments`, `device_leases`, `recovery_incidents`, `operational_notifications`: migration c80000000021.
 - Idea queues: `discussion_content_ideas`, `pinterest_content_ideas`, `facebook_photo_ideas`, `yt_clip_ideas`, `video_ideas`.
@@ -108,7 +109,7 @@ Frontend: `frontend/src/app/(dashboard)/*` pages. The pages are `dashboard`, `fa
 - Mode 8: `gflow_accounts`, `gflow_workers`, `video_jobs`, research tables.
 - Metrics & strategy: `post_metric_snapshots`, `strategy_memories`, `strategy_recommendations`.
 - `settings`: singleton, Fernet-encrypted secrets. `api_tokens`.
-- Alembic: latest c80000000023 (`delivery_metric_snapshots`). Never use autogenerate.
+- Alembic: latest c80000000028 (`move_projects_to_styles`; c80000000026 brand look columns, c80000000027 9 style templates / 15 legacy hidden / backup `design_templates_bak_c27`, c80000000028 moved projects to styles / queued jobs remapped / backup `brand_move_bak_c28_*`). Never use autogenerate.
 
 ## 7. Known issues found 2026-10-16
 
