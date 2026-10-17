@@ -736,7 +736,7 @@ def notify_owner_via_hermes(
 
     if subprocess_runner is not None:
         hermes_bin = os.environ.get("HERMES_PATH", "hermes")
-        cmd = [hermes_bin, "send", "--to", "telegram", "--message", clean_msg]
+        cmd = [hermes_bin, "send", "-t", "telegram", clean_msg]  # real CLI syntax: hermes send -t <target> <message>
         try:
             proc = subprocess_runner(
                 cmd,

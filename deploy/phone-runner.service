@@ -40,8 +40,11 @@ Environment=MOBILERUN_TELEMETRY_ENABLED=false
 Environment=XDG_CONFIG_HOME=/var/lib/phone-runner/.config
 Environment=XDG_CACHE_HOME=/var/lib/phone-runner/.cache
 # Absolute path to the Hermes CLI (not on the unit's default PATH). Home stays read-only by contract
-# (no ReadWritePaths under /root); if Hermes cannot run here, the backend watchdog falls back to Telegram directly.
+# (no ReadWritePaths under /root). Hermes must write /root/.hermes, so recovery.py starts it through
+# `systemd-run` as a transient unit OUTSIDE this sandbox (HERMES_OUTSIDE_SANDBOX=1); the runner itself
+# keeps ProtectHome=read-only. If Hermes still fails, the backend watchdog falls back to Telegram directly.
 Environment=HERMES_PATH=/root/.local/bin/hermes
+Environment=HERMES_OUTSIDE_SANDBOX=1
 EnvironmentFile=/etc/phone-runner.env
 ExecStart=/usr/bin/python3 -m phone_runner.server
 Restart=always

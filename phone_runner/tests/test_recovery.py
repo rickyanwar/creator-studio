@@ -37,6 +37,8 @@ def env_setup(monkeypatch):
     monkeypatch.setenv("ADB_PATH", "adb")
     monkeypatch.setenv("HERMES_PATH", "hermes")
     monkeypatch.setenv("HERMES_TIMEOUT_SEC", "30.0")
+    monkeypatch.setenv("RECOVERY_SETTLE_SEC", "0")
+    monkeypatch.delenv("HERMES_OUTSIDE_SANDBOX", raising=False)
 
 
 def test_serial_validation():
@@ -215,9 +217,9 @@ def test_hermes_fallback_on_unreachable_device_success():
     def fake_runner(cmd, **kwargs):
         nonlocal device_healthy, hermes_called
         cmd_str = " ".join(cmd)
-        if cmd[0] == "hermes" and cmd[1] == "heal":
+        if cmd[0] == "hermes" and cmd[1] == "-z":
             hermes_called = True
-            assert cmd == ["hermes", "heal", "--serial", TEST_SERIAL, "--reason", "device_offline"]
+            assert cmd[:2] == ["hermes", "-z"] and TEST_SERIAL in cmd[2] and "device_offline" in cmd[2] and "do NOT open" in cmd[2]
             assert kwargs.get("shell") is False
             device_healthy = True
             return mock.Mock(returncode=0, stdout="device connection healed", stderr="")
@@ -248,7 +250,7 @@ def test_hermes_fallback_on_unreachable_device_success():
 
 def test_hermes_timeout_handling():
     def fake_runner(cmd, **kwargs):
-        if cmd[0] == "hermes" and cmd[1] == "heal":
+        if cmd[0] == "hermes" and cmd[1] == "-z":
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=30.0)
         return mock.Mock(returncode=1, stdout="", stderr="offline")
 
@@ -276,7 +278,7 @@ def test_notification_command_construction():
     assert ok is True
     assert len(commands_run) == 1
     argv, kwargs = commands_run[0]
-    assert argv == ["hermes", "send", "--to", "telegram", "--message", "Test notification message"]
+    assert argv == ["hermes", "send", "-t", "telegram", "Test notification message"]
     assert kwargs.get("shell") is False
 
 
@@ -288,7 +290,7 @@ def test_routine_exhaustion_reports_needs_human():
         if cmd[0] == "hermes" and cmd[1] == "send":
             notif_sent = True
             return mock.Mock(returncode=0, stdout="sent", stderr="")
-        if cmd[0] == "hermes" and cmd[1] == "heal":
+        if cmd[0] == "hermes" and cmd[1] == "-z":
             return mock.Mock(returncode=1, stdout="", stderr="heal failed: port blocked")
         return mock.Mock(returncode=1, stdout="", stderr="offline")
 
@@ -342,7 +344,7 @@ def test_larger_repair_awaiting_approval_within_window():
 
     def fake_runner(cmd, **kwargs):
         nonlocal hermes_healed
-        if cmd[0] == "hermes" and cmd[1] == "heal":
+        if cmd[0] == "hermes" and cmd[1] == "-z":
             hermes_healed = True
         return mock.Mock(returncode=1, stdout="", stderr="offline")
 
@@ -373,7 +375,7 @@ def test_larger_repair_auto_approves_after_silence_past_deadline():
     def fake_runner(cmd, **kwargs):
         nonlocal hermes_healed
         cmd_str = " ".join(cmd)
-        if cmd[0] == "hermes" and cmd[1] == "heal":
+        if cmd[0] == "hermes" and cmd[1] == "-z":
             hermes_healed = True
             return mock.Mock(returncode=0, stdout="healed", stderr="")
         if "get-state" in cmd_str:
@@ -408,7 +410,7 @@ def test_larger_repair_owner_rejection_blocks_repair():
 
     def fake_runner(cmd, **kwargs):
         nonlocal hermes_called
-        if cmd[0] == "hermes" and cmd[1] == "heal":
+        if cmd[0] == "hermes" and cmd[1] == "-z":
             hermes_called = True
         return mock.Mock(returncode=1, stdout="", stderr="offline")
 
@@ -433,7 +435,7 @@ def test_larger_repair_owner_approval_proceeds():
     def fake_runner(cmd, **kwargs):
         nonlocal hermes_called
         cmd_str = " ".join(cmd)
-        if cmd[0] == "hermes" and cmd[1] == "heal":
+        if cmd[0] == "hermes" and cmd[1] == "-z":
             hermes_called = True
             return mock.Mock(returncode=0, stdout="healed", stderr="")
         if "get-state" in cmd_str:
@@ -806,3 +808,39 @@ def test_run_deterministic_recovery_restore_sleep_false():
     )
     assert ok is True
     assert not any(c[-3:] == ["input", "keyevent", "223"] for c in called)
+
+
+def test_hermes_runs_outside_the_sandbox_under_the_unit(monkeypatch):
+    from phone_runner import recovery
+
+    monkeypatch.setenv("HERMES_PATH", "/root/.local/bin/hermes")
+    monkeypatch.setenv("HERMES_OUTSIDE_SANDBOX", "1")
+    cmd = recovery.hermes_command(["send", "-t", "telegram", "hi"], 15.0)
+    assert cmd[:5] == ["systemd-run", "--quiet", "--wait", "--pipe", "--collect"]
+    assert cmd[-5:] == ["/root/.local/bin/hermes", "send", "-t", "telegram", "hi"]
+    monkeypatch.delenv("HERMES_OUTSIDE_SANDBOX")
+    assert recovery.hermes_command(["send"], 15.0) == ["/root/.local/bin/hermes", "send"]
+
+
+def test_late_recheck_resolves_instead_of_false_needs_human(monkeypatch):
+    from phone_runner import recovery
+
+    results = iter([(False, [{"check": "portal", "status": "failed"}], "portal not ready"),
+                    (True, [{"check": "portal", "status": "ok"}], None)])
+    monkeypatch.setattr(recovery, "run_deterministic_recovery", lambda *a, **k: next(results))
+    monkeypatch.setattr(recovery, "invoke_hermes_repair", lambda *a, **k: (False, "hermes healing failed"))
+    sent = []
+    monkeypatch.setattr(recovery, "send_owner_notification", lambda msg, **k: sent.append(msg) or (True, "sent"))
+
+    res = recovery.execute_recovery(TEST_SERIAL, recovery_class="routine", reason="portal_unready")
+
+    assert res["status"] == "resolved"
+    assert sent == []  # no Telegram page for a device that recovered
+
+
+def test_repair_prompt_forbids_facebook_and_posting():
+    from phone_runner.recovery import build_hermes_repair_prompt
+
+    prompt = build_hermes_repair_prompt(TEST_SERIAL, "portal_unready")
+    assert TEST_SERIAL in prompt and "content://com.mobilerun.portal/ping" in prompt
+    assert "do NOT open, tap, type in or change Facebook" in prompt and "never post" in prompt

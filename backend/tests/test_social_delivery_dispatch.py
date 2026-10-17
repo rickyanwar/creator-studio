@@ -1632,7 +1632,7 @@ def test_page_fallback_to_repliz_when_all_gates_met(db_session):
     # Subprocess runner was called for Hermes owner notices
     assert mock_subproc.call_count >= 1
     call_args = mock_subproc.call_args_list[0][0][0]
-    assert call_args[:4] == ["hermes", "send", "--to", "telegram"]
+    assert call_args[:4] == ["hermes", "send", "-t", "telegram"]
 
     # OperationalNotification row persisted
     notif = db_session.query(OperationalNotification).filter_by(dedupe_key=f"fallback:{delivery.id}").first()
