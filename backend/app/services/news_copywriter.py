@@ -147,6 +147,7 @@ def build_news_copy_prompt(
     content = (article.scraped_content or "")[:_MAX_CONTENT_CHARS]
 
     language = cs.language
+    language = language_name(language)
     tone = cs.tone
     max_length = cs.max_length
     hashtag_count = cs.hashtag_count
@@ -155,7 +156,7 @@ def build_news_copy_prompt(
 
     if fit_chars is not None:
         news_title_rules = f"""1. "title" — the headline that will be printed ON the image design.
-   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Translate to {language} if needed.
+   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Write it in {language} ALWAYS, even when the source article is in English or another language (translate faithfully).
    - The headline is printed in big letters in a fixed space: it MUST be at most {fit_chars} characters and should USE most of that space: aim for {fit_chars - 16} to {fit_chars} characters (the ** markers do not count).
    - Make it MORE engaging, not flatter: lead with the name or the hook, use a strong active verb, cut filler words (articles, 'that', 'very', redundant qualifiers, the competition name when obvious), prefer the concrete result/claim. Keep every NAME and the key FACT. Never invent or exaggerate.
    - Always keep the key context a fan needs: the event/place (e.g. Mandalika, Indonesian GP), the result or the concrete injury/fact. Cut filler, never context.
@@ -164,30 +165,32 @@ def build_news_copy_prompt(
    - GOOD example: "Bagnaia crashes out in Indonesia: **No feeling, no grip**" (49 chars)
    - BAD example: "Francesco Bagnaia has officially confirmed after the race that he suffered from terrible tire grip issues and crashed out of the Indonesian Grand Prix" (152 chars, way too long for the space)
    - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 4 words) in double asterisks so it renders in red. Mark exactly ONE phrase; leave the rest unmarked.
-   - No hashtags, no emoji, no quote marks"""
+   - No hashtags, no emoji, no quote marks
+   - The "title" and "subtitle" are printed on the image: both MUST be in {language}. Never leave them in the source language."""
     else:
         news_title_rules = f"""1. "title" — the headline that will be printed ON the image design.
-   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a hook ("BREAKING:" / "OFFICIAL:" / "CONFIRMED:" when it genuinely fits), a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Translate to {language} if needed.
+   - Stay close to the source TITLE above: keep all its facts and names — do NOT invent, exaggerate, or imply something the article doesn't say. Within that constraint, punch it up: stronger verbs, urgency, a hook ("BREAKING:" / "OFFICIAL:" / "CONFIRMED:" when it genuinely fits), a touch of drama in how it's phrased. Slightly clickbait in DELIVERY is good — a flat wire-service rewrite is not the goal — but never clickbait in SUBSTANCE (no bait-and-switch, no withheld info the reader has to click to get; a design card has no "click" to withhold behind anyway). Write it in {language} ALWAYS, even when the source article is in English or another language (translate faithfully).
    - Keep roughly the SAME LENGTH as the source TITLE (or slightly longer with the hook) — do NOT shorten it or compress it into a vague topic label.
    - GOOD example: source "Di Giannantonio to join Red Bull KTM Factory Racing" → "BREAKING: Fabio Di Giannantonio is officially joining Red Bull KTM Factory Racing!"
    - BAD example: "MotoGP Shake-Up" (dropped the facts, too short)
    - BAD example: "You Won't Believe What Marquez Just Did" (withholds the actual news — this is the "far from the original title" failure mode to avoid)
    - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 5 words) in double asterisks so it renders in red, e.g. "Marc Marquez takes **his first pole** at Sachsenring". Mark exactly ONE phrase; leave the rest unmarked.
    - Maximum {_effective_title_max_chars(fanpage, article)} characters (the ** markers do not count)
-   - No hashtags, no emoji, no quote marks"""
+   - No hashtags, no emoji, no quote marks
+   - The "title" and "subtitle" are printed on the image: both MUST be in {language}. Never leave them in the source language."""
 
     quote_shorten = getattr(fanpage, "quote_shorten_enabled", False)
     if quote_shorten:
         q_limit = quote_fit_chars if quote_fit_chars is not None else 120
         quote_title_rules = f"""1. "title" — the quote itself, printed on the image next to a large quote-mark icon.
-   - Translate to {language} if needed. You may shorten the quote to at most {q_limit} characters by keeping the most important contiguous part(s) of what was actually said; use '…' where words were cut. Never add, paraphrase into new claims, or change the meaning.
+   - Write it in {language} ALWAYS, even when the source article is in English or another language (translate faithfully). You may shorten the quote to at most {q_limit} characters by keeping the most important contiguous part(s) of what was actually said; use '…' where words were cut. Never add, paraphrase into new claims, or change the meaning.
    - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
    - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
    - Maximum {q_limit} characters.
    - IMPORTANT: this exact text (words, language) is reused verbatim as the caption's 🗣️ line below — write it as a real, accurate quote, not a mashed-up paraphrase that adds claims from elsewhere in the article."""
     else:
         quote_title_rules = f"""1. "title" — the quote itself, printed on the image next to a large quote-mark icon.
-   - Translate to {language} if needed. Use the speaker's EXACT words from the article, word for word. If the article is in another language, translate faithfully sentence by sentence. Do NOT shorten, summarise, merge sentences or drop clauses.
+   - Write it in {language} ALWAYS, even when the source article is in English or another language (translate faithfully). Use the speaker's EXACT words from the article, word for word. If the article is in another language, translate faithfully sentence by sentence. Do NOT shorten, summarise, merge sentences or drop clauses.
    - Do NOT include the speaker's name here (that goes in "subtitle") and do NOT wrap it in quotation marks (the design already implies it's a quote).
    - HIGHLIGHT the single most powerful phrase (2 to 5 words) in double asterisks, same rule as the news title.
    - IMPORTANT: this exact text (words, language) is reused verbatim as the caption's 🗣️ line below — write it as a real, accurate quote, not a mashed-up paraphrase that adds claims from elsewhere in the article."""
@@ -286,7 +289,7 @@ def _discussion_caption_block(fanpage, source_name: str | None) -> str:
     cta_text = cs.cta_text
     custom_prompt = cs.custom_prompt
     return f"""3. "caption" — the Facebook post text that accompanies the image (no ** markers here).
-   - Language: {cs.language}
+   - Language: {language_name(cs.language)}
    - Tone: {cs.tone}
    - Maximum length: {cs.max_length} characters
    - The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
@@ -318,7 +321,7 @@ def build_discussion_news_prompt(fanpage, article) -> str:
     news_source = article.news_source if article else None
     source_name = news_source.name if news_source else "the original source"
     content = (article.scraped_content or "")[:_MAX_CONTENT_CHARS]
-    language = fanpage_language(fanpage)
+    language = language_name(fanpage_language(fanpage))
     label_point = _discussion_label_point(
         fanpage,
         discussion_example='an open question, e.g. "Is George the most hated driver on the grid?"',
@@ -354,7 +357,7 @@ def build_discussion_evergreen_prompt(fanpage, seed_text: str, subject_hint: str
     against, so the model is told to avoid hard facts (specific stats, dates,
     results) that it might get wrong, and stick to subjective debate.
     """
-    language = fanpage_language(fanpage)
+    language = language_name(fanpage_language(fanpage))
     hint_line = f'\nSUBJECT HINT: {subject_hint}' if subject_hint else ""
     label_point = _discussion_label_point(
         fanpage,
@@ -416,7 +419,7 @@ def build_discussion_general_prompt(
     softer week-long guidance — user's explicit ask (2026-08-22): a single
     day's whole batch must read as genuinely different card-to-card, which
     is a tighter bar than merely not repeating within the week."""
-    language = fanpage_language(fanpage)
+    language = language_name(fanpage_language(fanpage))
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     label_point = _discussion_label_point(
         fanpage,

@@ -90,7 +90,7 @@ def test_generators_read_global_caption_settings_only():
         scraped_content="Article body content",
     )
     news_prompt = build_news_copy_prompt(fp, article)
-    assert "- Language: it" in news_prompt
+    assert "- Language: Italian" in news_prompt
     assert "- Tone: global_tone_epic" in news_prompt
     assert "- Maximum length: 222 characters" in news_prompt
     assert "EXACTLY 4 relevant, specific hashtags" in news_prompt
@@ -102,7 +102,7 @@ def test_generators_read_global_caption_settings_only():
 
     # 2. Discussion news prompt
     disc_prompt = build_discussion_news_prompt(fp, article)
-    assert "- Language: it" in disc_prompt
+    assert "- Language: Italian" in disc_prompt
     assert "- Tone: global_tone_epic" in disc_prompt
     assert "- Maximum length: 222 characters" in disc_prompt
     assert "EXACTLY 4 specific" in disc_prompt
@@ -112,7 +112,7 @@ def test_generators_read_global_caption_settings_only():
 
     # 3. AI caption prompt
     cap_prompt = build_caption_prompt(fp, "ig_user", "original ig caption", source=source)
-    assert "- Language: it" in cap_prompt
+    assert "- Language: Italian" in cap_prompt
     assert "- Tone: global_tone_epic" in cap_prompt
     assert "- Maximum length: 222 characters" in cap_prompt
     assert "- Include 4 relevant hashtags" in cap_prompt

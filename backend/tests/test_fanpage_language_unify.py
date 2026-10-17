@@ -155,15 +155,15 @@ def test_generators_use_fanpage_language():
         scraped_content="Contenu de test",
     )
     news_prompt = build_news_copy_prompt(fp, article)
-    assert "- Language: fr" in news_prompt
+    assert "- Language: French" in news_prompt
 
     # 2. discussion
     disc_prompt = build_discussion_news_prompt(fp, article)
-    assert "- Language: fr" in disc_prompt
+    assert "- Language: French" in disc_prompt
 
     # 3. ai_caption
     cap_prompt = build_caption_prompt(fp, "source_user", "orig text")
-    assert "- Language: fr" in cap_prompt
+    assert "- Language: French" in cap_prompt
 
     # 4. ig_recreate
     with patch("app.services.ai_caption.generate_caption", return_value=("Titre 10", "gemini")) as mock_ai:
@@ -177,11 +177,11 @@ def test_generators_use_fanpage_language():
     # 5. facebook_photo_source
     with patch("app.services.ai_caption.generate_caption", return_value=("Ligne", "gemini")) as mock_ai:
         _localize_discussion("Debat", fp)
-        assert "- Language: fr" in mock_ai.call_args[0][0]
+        assert "- Language: French" in mock_ai.call_args[0][0]
 
     with patch("app.services.ai_caption.generate_caption", return_value=("Citation", "gemini")) as mock_ai:
         _localize_quote("Original quote", fp)
-        assert "Translate this quote to fr" in mock_ai.call_args[0][0]
+        assert "Translate this quote to French" in mock_ai.call_args[0][0]
 
     # 6. yt_clip caption prompt
     idea = SimpleNamespace(

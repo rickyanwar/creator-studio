@@ -27,7 +27,7 @@ import httpx
 from PIL import Image
 from sqlalchemy.exc import IntegrityError
 
-from app.services.fanpage_language import fanpage_language
+from app.services.fanpage_language import fanpage_language, language_name
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +250,7 @@ def _localize_discussion(text: str, fanpage) -> str:
     prompt = (
         f'Rewrite this fan-debate line for the Facebook page "{fanpage.name}".\n'
         f'LINE: "{text}"\n'
-        f"- Language: {lang}\n"
+        f"- Language: {language_name(lang)}\n"
         f"- Keep the same debate, names and facts — do not add anything new.\n"
         f"- Keep its form (a question stays a question) and make it punchy.\n"
         f"- Normal sentence case, NOT all caps.\n"
@@ -276,10 +276,10 @@ def _localize_quote(text: str, fanpage) -> str:
 
     lang = fanpage_language(fanpage)
     prompt = (
-        f'Translate this quote to {lang} for the Facebook page "{fanpage.name}".\n'
+        f'Translate this quote to {language_name(lang)} for the Facebook page "{fanpage.name}".\n'
         f"QUOTE: {text}\n"
         f"- Preserve the exact meaning — do not paraphrase or embellish. If it's already in "
-        f"{lang}, keep the wording.\n"
+        f"{language_name(lang)}, keep the wording.\n"
         f"- Write it in normal sentence case, NOT all caps — the source graphic's capitals are only styling.\n"
         f"- If it's longer than {_QUOTE_MAX_CHARS} characters, keep only its most striking complete "
         f"sentence(s), word-for-word, so it fits. Never summarize.\n"
