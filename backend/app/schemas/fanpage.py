@@ -43,6 +43,13 @@ class FanpageBase(BaseModel):
     default_quote_template_id: Optional[int] = None
     default_news_template_id: Optional[int] = None
     accent_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    template_style: Optional[str] = Field(None, pattern=r"^(gp|highlight|classic)$")
+    brand_override: bool = False
+    accent_secondary_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    badge_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    badge_text_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    quote_mark_color: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    quote_streak: Optional[bool] = None
 
     # ── Mode 2 caption criteria (separate from Mode 1) ──
     mode2_caption_tone: str = "informative"
@@ -211,6 +218,7 @@ class FanpageBase(BaseModel):
 
 
 class FanpageUpdate(FanpageBase):
+    brand_override: Optional[bool] = None
     ig_mode: Optional[Literal["repost", "recreate_template", "recreate_chatgpt"]] = None
 
     @field_validator("timezone", mode="before")
@@ -257,6 +265,11 @@ class FanpageOut(FanpageBase):
     is_connected: bool
     last_synced_at: Optional[datetime] = None
     created_at: datetime
+
+    @field_validator("brand_override", mode="before")
+    @classmethod
+    def clean_brand_override(cls, v):
+        return False if v is None else v
 
     @computed_field
     @property

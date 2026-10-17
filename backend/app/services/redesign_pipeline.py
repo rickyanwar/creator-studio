@@ -25,6 +25,7 @@ from app.services.visual_qa import check_generated, radio_text_matches
 from app.services.identity_check import check_identity, IdentityResult
 from app.services.design_images import _vision_chat, _vision_datauri
 from app.services.upscaler import upscale_image_bytes
+from app.services.brand_look import brand_look
 
 
 def _radio_ocr_ok(image_bytes: bytes, expected_header: tuple, expected_lines: tuple) -> tuple[bool, str]:
@@ -460,6 +461,7 @@ def redesign_card(
                         ),
                         "scale": settings.design_render_scale,
                         "accent": fanpage.accent_color,
+                        "look": brand_look(fanpage, template_json),
                     },
                     timeout=_RENDER_TIMEOUT,
                 )

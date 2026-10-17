@@ -114,64 +114,127 @@ function recolorStreakDataUri(srcDataUri, accentHex) {
   });
 }
 
-function adaptTemplateForAccent(templateJson, accentHex) {
+const LOOK_HEX = /^#[0-9A-Fa-f]{6}$/;
+// Accepts a plain hex string (old callers, one more release) or a look object.
+// Returns {primary, secondary, badge, badgeText, quoteMarks, streak} with upper-case hex, or null.
+function normalizeLook(input) {
+  let src = null;
+  if (typeof input === "string") src = { primary: input };
+  else if (input && typeof input === "object") src = input;
+  if (!src || typeof src.primary !== "string" || !LOOK_HEX.test(src.primary)) return null;
+  const pick = (v, fb) => (typeof v === "string" && LOOK_HEX.test(v) ? v.toUpperCase() : fb);
+  const autoInk = (hex) => (relativeLuminance(hexToRgb(hex)) > 0.5 ? "#0B0B0B" : "#FFFFFF");
+  const primary = src.primary.toUpperCase();
+  const secondary = pick(src.secondary, primary);
+  const badge = pick(src.badge, primary);
+  const badgeText = pick(src.badgeText, autoInk(badge));
+  const quoteMarks = pick(src.quoteMarks, badge);
+  const streak = src.streak !== false;
+  return { primary, secondary, badge, badgeText, quoteMarks, streak };
+}
+
+function adaptTemplateForAccent(templateJson, lookOrHex) {
+  if (!templateJson) return templateJson;
+  const look = normalizeLook(lookOrHex);
   const tpl = JSON.parse(JSON.stringify(templateJson));
-  const rgb = hexToRgb(accentHex);
-  const lum = relativeLuminance(rgb);
-  const isLight = lum > 0.5;
-  const darkTextColor = "#0B0B0B";
+  if (!look) return tpl;
 
-  const topColor = rgbToHex(...adjustLightness(rgb, 0.06));
-  const botColor = rgbToHex(...adjustLightness(rgb, -0.06));
-  const strokeRgb = adjustLightness(rgb, 0.20);
-  const strokeColor = `rgba(${Math.round(strokeRgb[0])},${Math.round(strokeRgb[1])},${Math.round(strokeRgb[2])},0.35)`;
-  const accentGlowColor = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.40)`;
+  const isDarkInk = (hex) => relativeLuminance(hexToRgb(hex)) <= 0.5;
+  const gradStops = (hex) => [
+    { offset: 0, color: rgbToHex(...adjustLightness(hexToRgb(hex), 0.06)) },
+    { offset: 1, color: rgbToHex(...adjustLightness(hexToRgb(hex), -0.06)) },
+  ];
+  const strokeOf = (hex) => {
+    const s = adjustLightness(hexToRgb(hex), 0.25);
+    return `rgba(${Math.round(s[0])},${Math.round(s[1])},${Math.round(s[2])},0.55)`;
+  };
+  const secRgb = hexToRgb(look.secondary);
+  const glow = `rgba(${secRgb[0]},${secRgb[1]},${secRgb[2]},0.40)`;
+  const noShadow = { color: "rgba(0,0,0,0)", blur: 0, offsetX: 0, offsetY: 0 };
+  const tabInk = look.quoteMarks === look.badge
+    ? look.badgeText
+    : (relativeLuminance(hexToRgb(look.quoteMarks)) > 0.5 ? "#0B0B0B" : "#FFFFFF");
+  const hasSubtitleBadge = (tpl.objects || []).some((o) => o && o.placeholderRole === "subtitleBadge");
 
-  const objects = tpl.objects || [];
-  for (const obj of objects) {
+  for (const obj of (tpl.objects || [])) {
+    if (!obj) continue;
     const role = obj.placeholderRole;
     if (role === "title") {
-      obj.titleAccentColor = accentHex;
-      obj.titleHighlightGlow = { color: accentGlowColor, blur: 10 };
+      const blur = (obj.titleHighlightGlow && typeof obj.titleHighlightGlow.blur === "number")
+        ? obj.titleHighlightGlow.blur
+        : 10;
+      obj.titleAccentColor = look.secondary;
+      obj.titleHighlightGlow = { color: glow, blur };
     } else if (role === "caption") {
-      obj.titleAccentColor = accentHex;
-      obj.captionHighlightGlow = { color: accentGlowColor, blur: 10 };
-    } else if (role === "labelBadge") {
-      obj.stroke = strokeColor;
-      if (obj.fill && typeof obj.fill === "object" && obj.fill.colorStops) {
-        obj.fill.colorStops = [
-          { offset: 0, color: topColor },
-          { offset: 1, color: botColor },
-        ];
+      if (obj.titleAccentColor) {
+        obj.titleAccentColor = look.secondary;
       }
+      if (obj.captionHighlightGlow) {
+        const blur = typeof obj.captionHighlightGlow.blur === "number"
+          ? obj.captionHighlightGlow.blur
+          : 8;
+        obj.captionHighlightGlow = { color: glow, blur };
+      }
+    } else if (role === "subtitle") {
+      if (obj.titleAccentColor) {
+        obj.titleAccentColor = look.secondary;
+      }
+      if (hasSubtitleBadge) {
+        obj.fill = look.badgeText;
+        if (isDarkInk(look.badgeText)) {
+          obj.shadow = { color: "rgba(0,0,0,0)", blur: 0, offsetX: 0, offsetY: 0 };
+        }
+      }
+    } else if (role === "labelBadge") {
+      if (obj.fill && typeof obj.fill === "object" && obj.fill.colorStops) {
+        obj.fill.colorStops = gradStops(look.badge);
+        obj.stroke = strokeOf(look.badge);
+      } else {
+        obj.fill = look.badge;
+      }
+      obj.discussionFill = look.badge;
+      obj.hotFill = look.badge;
     } else if (role === "label") {
-      if (isLight) {
-        obj.fill = darkTextColor;
+      obj.fill = look.badgeText;
+      obj.discussionColor = look.badgeText;
+      obj.hotColor = look.badgeText;
+      if (isDarkInk(look.badgeText)) {
         obj.shadow = { color: "rgba(0,0,0,0)", blur: 0, offsetX: 0, offsetY: 0 };
       }
+    } else if (role === "subtitleBadge") {
+      obj.fill = look.badge;
     } else if (role === "quoteIcon") {
-      for (const child of (obj.objects || [])) {
-        const ctype = child.type;
-        if (ctype === "rect") {
-          child.stroke = strokeColor;
-          if (child.fill && typeof child.fill === "object" && child.fill.colorStops) {
-            child.fill.colorStops = [
-              { offset: 0, color: topColor },
-              { offset: 1, color: botColor },
-            ];
-          }
-        } else if (ctype === "path") {
-          if (isLight) {
-            child.fill = darkTextColor;
-            child.shadow = { color: "rgba(0,0,0,0)", blur: 0, offsetX: 0, offsetY: 0 };
+      if (Array.isArray(obj.objects)) {
+        for (const child of obj.objects) {
+          if (!child) continue;
+          const ctype = child.type;
+          if (ctype === "rect") {
+            if (child.fill && typeof child.fill === "object" && child.fill.colorStops) {
+              child.fill.colorStops = gradStops(look.quoteMarks);
+              child.stroke = strokeOf(look.quoteMarks);
+            } else {
+              child.fill = look.quoteMarks;
+            }
+          } else if (ctype === "path") {
+            child.fill = tabInk;
+            if (isDarkInk(tabInk)) {
+              child.shadow = { color: "rgba(0,0,0,0)", blur: 0, offsetX: 0, offsetY: 0 };
+            }
+          } else if (ctype === "image") {
+            if (look.streak === false) {
+              child.visible = false;
+            }
           }
         }
+      } else {
+        obj.fill = look.quoteMarks;
       }
     }
   }
   return tpl;
 }
 
+window.normalizeLook = normalizeLook;
 window.adaptTemplateForAccent = adaptTemplateForAccent;
 window.recolorStreakDataUri = recolorStreakDataUri;
 
@@ -269,14 +332,15 @@ window.renderTemplate = function renderTemplate(args) {
     // If accent is set and template opts in, adapt template and streak
     const prepTemplate = async () => {
       let tpl = templateJson;
-      if (accent && templateJson && templateJson.accentFollowsFanpage) {
-        tpl = adaptTemplateForAccent(templateJson, accent);
-        // Recolor streak image in quoteIcon if present
+      const look = normalizeLook(accent);
+      if (look && templateJson && templateJson.accentFollowsFanpage) {
+        tpl = adaptTemplateForAccent(templateJson, look);
+        // Recolor streak image in quoteIcon if present (skip hidden ones)
         for (const obj of (tpl.objects || [])) {
           if (obj.placeholderRole === "quoteIcon") {
             for (const child of (obj.objects || [])) {
-              if (child.type === "image" && child.src) {
-                child.src = await recolorStreakDataUri(child.src, accent);
+              if (child.type === "image" && child.src && child.visible !== false) {
+                child.src = await recolorStreakDataUri(child.src, look.quoteMarks);
               }
             }
           }
@@ -860,7 +924,7 @@ window.renderTemplate = function renderTemplate(args) {
         if (quoteIcon && titleObj) {
           const gap = typeof quoteIcon.iconGap === "number" ? quoteIcon.iconGap : 20;
           quoteIcon.set("top", titleObj.top - gap - quoteIcon.height);
-          // ponytail: streak PNG and tab use fixed red gradient (#EC3A2E→#E1302A) as-is; tinting plugs in here later
+          // tab and streak are tinted in prepTemplate from look.quoteMarks
         }
 
         // ── Text scrim: keep the dark overlay hugging the TEXT only ──

@@ -172,6 +172,15 @@ def update_fanpage(fanpage_id: int, body: FanpageUpdate, db: DB, _: CurrentUser)
     for field, value in dump.items():
         setattr(fp, field, value)
 
+    if "template_style" in dump and dump["template_style"] is not None:
+        from app.services.template_styles import CATEGORIES, style_template_ids
+
+        ids = style_template_ids(db, dump["template_style"])
+        for cat in CATEGORIES:
+            key = f"default_{cat}_template_id"
+            if key not in dump and ids.get(cat) is not None:
+                setattr(fp, key, ids[cat])
+
     if fp.ai_video_templates is not None:
         fp.ai_video_template = fp.ai_video_templates[0] if fp.ai_video_templates else None
 

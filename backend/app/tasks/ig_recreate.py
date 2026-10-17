@@ -21,6 +21,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from app.database import SessionLocal
 from app.config import get_settings
 from app.services.fanpage_language import fanpage_language
+from app.services.brand_look import brand_look
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -643,6 +644,7 @@ def render_ig_recreate(self, job_id: int):
                 ),
                 "scale": settings.design_render_scale,
                 "accent": fanpage.accent_color,
+                "look": brand_look(fanpage, template_json),
             },
             timeout=_RENDER_TIMEOUT,
         )

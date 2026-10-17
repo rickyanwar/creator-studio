@@ -76,7 +76,14 @@ export interface Fanpage {
   mode2_default_template_id: number | null;
   default_quote_template_id: number | null;
   default_news_template_id: number | null;
+  template_style?: "gp" | "highlight" | "classic" | null;
+  brand_override?: boolean;
   accent_color: string | null;
+  accent_secondary_color?: string | null;
+  badge_color?: string | null;
+  badge_text_color?: string | null;
+  quote_mark_color?: string | null;
+  quote_streak?: boolean | null;
   ig_recreate_enabled: boolean;
   ig_recreate_quote_template_id: number | null;
   ig_recreate_news_template_id: number | null;
@@ -725,6 +732,21 @@ export interface AiVideoTemplate {
   liveries: string[];
   narrator_presets: string[];
   topic_ideas: string[];
+}
+
+export interface Template {
+  id: number;
+  name: string;
+  category: "quote" | "news" | "discussion" | null;
+  template_json?: unknown;
+  canvas_width: number;
+  canvas_height: number;
+  is_default: boolean;
+  fanpage_id: number | null;
+  style?: string | null;
+  is_hidden?: boolean;
+  brand_defaults?: Record<string, unknown> | null;
+  replacement_style?: string | null;
 }
 
 export interface AnalyticsMetricsStatus {

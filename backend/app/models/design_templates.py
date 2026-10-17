@@ -29,5 +29,7 @@ class DesignTemplate(Base):
     # template_id / default_news_template_id) instead of separate per-mode
     # template fields — see app/services/design_images.resolve_template.
     category = Column(String(16), nullable=True)
+    style = Column(String(16), nullable=True, index=True)  # gp | highlight | classic; None = user-made or legacy
+    is_hidden = Column(Boolean, default=False, nullable=False, server_default="false")  # legacy: hidden from pickers, still renderable
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

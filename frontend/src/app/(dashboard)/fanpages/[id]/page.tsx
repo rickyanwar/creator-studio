@@ -48,6 +48,7 @@ import { YtClipSection } from "@/components/fanpages/YtClipSection";
 import { AiVideoSection } from "@/components/fanpages/AiVideoSection";
 import { GlobalPublishMode } from "@/components/fanpages/GlobalPublishMode";
 import { SettingsTabs, type SettingsTab, type SettingsTabId } from "@/components/fanpages/SettingsTabs";
+import DesignTemplatesSection from "@/components/brand/DesignTemplatesSection";
 
 
 const TARGET_COUNTRIES = [
@@ -269,7 +270,7 @@ function IGSourceCard({
           ))}
         </div>
         <p className="text-[10px] text-text-secondary group/tooltip relative">
-          Viral only: the post waits until it passes this fanpage's radar rules, then is reposted/recreated. Nothing is posted while Radar shadow mode is on.
+          Viral only: the post waits until it passes this fanpage&apos;s radar rules, then is reposted/recreated. Nothing is posted while Radar shadow mode is on.
         </p>
       </div>
 
@@ -785,6 +786,17 @@ export default function FanpageEditPage() {
         ...form,
         mode2_caption_language: form.caption_language,
       };
+      delete payload.accent_color;
+      delete payload.accent_secondary_color;
+      delete payload.badge_color;
+      delete payload.badge_text_color;
+      delete payload.quote_mark_color;
+      delete payload.quote_streak;
+      delete payload.brand_override;
+      delete payload.template_style;
+      delete payload.default_news_template_id;
+      delete payload.default_quote_template_id;
+      delete payload.default_discussion_template_id;
       await updateFanpage(fanpageId, payload);
       // A save just committed, so the form now matches the server exactly —
       // safe (and correct) to let it resume following live server data again.
@@ -1075,72 +1087,7 @@ export default function FanpageEditPage() {
       </section>
 
       {/* ── Section: Design Templates (shared by Mode 2 news + IG recreate) ── */}
-      <section className="card space-y-5">
-        <div>
-          <h2 className="text-base font-semibold text-text-primary">Design Templates</h2>
-          <p className="text-xs text-text-secondary mt-0.5">
-            One setting per category, used everywhere that category of content is rendered — news designs from
-            Mode 2 (news-scrape) and IG recreate (classified &quot;news&quot;) share the News Template;
-            IG recreate posts classified &quot;quote&quot; use the Quote Template; Mode 4 debate cards use the
-            Discussion Template. If no Discussion Template is set, it falls back to the News Template.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Quote Template</label>
-            <select
-              className="input w-full"
-              value={(form.default_quote_template_id as number | null) ?? ""}
-              onChange={(e) => set("default_quote_template_id", e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">— shared default (quote-tagged) —</option>
-              {allTemplates.filter((t) => t.category !== "news" && t.category !== "discussion").map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">News Template</label>
-            <select
-              className="input w-full"
-              value={(form.default_news_template_id as number | null) ?? ""}
-              onChange={(e) => set("default_news_template_id", e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">— shared default (news-tagged) —</option>
-              {allTemplates.filter((t) => t.category !== "quote" && t.category !== "discussion").map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">Discussion Template (Mode 4)</label>
-            <select
-              className="input w-full"
-              value={(form.default_discussion_template_id as number | null) ?? ""}
-              onChange={(e) => set("default_discussion_template_id", e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">— shared default (discussion-tagged) —</option>
-              {allTemplates.filter((t) => t.category === "discussion" || t.category == null).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.canvas_width}×{t.canvas_height}){t.is_default ? " · shared default" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <p className="text-[11px] text-text-secondary">
-          Mode 5 (Pinterest) has no separate template setting — it reuses the Quote/News Templates in this section,
-          picked per idea by whether the photo has a detected face (face → Quote, no face → News).
-        </p>
-        <p className="text-[11px] text-text-secondary">
-          Create, edit or tag templates by category in{" "}
-          <a href="/templates" className="text-primary-main hover:underline">Template Designer</a>.
-        </p>
-      </section>
+      <DesignTemplatesSection fanpage={fp} onSaved={() => mutate(undefined, { revalidate: true })} />
 
       {/* ── Section: Watermark ── */}
       <section className="card space-y-5">
@@ -1590,73 +1537,6 @@ export default function FanpageEditPage() {
               <p className="text-[10px] text-text-secondary mt-1">
                 1 ChatGPT image per post; falls back to the normal template on failure.
               </p>
-            </div>
-
-            {/* Template accent colour */}
-            <div>
-              <label className="label">Template accent colour</label>
-              <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                {[
-                  { name: "red", hex: "#E8362B" },
-                  { name: "yellow", hex: "#FFC400" },
-                  { name: "green", hex: "#91F64C" },
-                  { name: "orange", hex: "#FF7A1A" },
-                  { name: "blue", hex: "#2F80ED" },
-                  { name: "cyan", hex: "#22D3EE" },
-                  { name: "purple", hex: "#9B5CFF" },
-                  { name: "pink", hex: "#FF3E8A" },
-                ].map((swatch) => {
-                  const isSelected = (form.accent_color as string | null)?.toUpperCase() === swatch.hex;
-                  return (
-                    <button
-                      key={swatch.hex}
-                      type="button"
-                      title={`${swatch.name} (${swatch.hex})`}
-                      onClick={() => set("accent_color", swatch.hex)}
-                      className={`w-7 h-7 rounded-full border-2 transition-transform flex items-center justify-center ${
-                        isSelected ? "scale-110 border-white shadow-md" : "border-transparent hover:scale-105"
-                      }`}
-                      style={{ backgroundColor: swatch.hex }}
-                    >
-                      {isSelected && (
-                        <Icon icon="solar:check-bold" width={14} className="text-white drop-shadow" />
-                      )}
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => set("accent_color", null)}
-                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                    !form.accent_color
-                      ? "border-primary-main bg-primary-main/10 text-primary-main font-semibold"
-                      : "border-hairline text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  Default template
-                </button>
-              </div>
-              <div className="flex items-center gap-2 mt-2">
-                <input
-                  type="color"
-                  className="w-8 h-8 rounded border border-hairline cursor-pointer bg-transparent"
-                  value={(form.accent_color as string | null) ?? "#FFC400"}
-                  onChange={(e) => set("accent_color", e.target.value.toUpperCase())}
-                />
-                <input
-                  type="text"
-                  className="input-rect w-32 font-mono text-xs uppercase"
-                  placeholder="#RRGGBB"
-                  value={(form.accent_color as string | null) ?? ""}
-                  onChange={(e) => {
-                    const val = e.target.value.trim();
-                    set("accent_color", val ? val.toUpperCase() : null);
-                  }}
-                />
-                <span className="text-[11px] text-text-secondary">
-                  GP News &amp; Quote template accent color (hex or null)
-                </span>
-              </div>
             </div>
 
             <div className="flex items-center justify-between p-3 rounded-lg border border-hairline">
@@ -2873,7 +2753,7 @@ export default function FanpageEditPage() {
                 value={(form.visual_engine as string) ?? "off"}
                 onChange={(e) => set("visual_engine", e.target.value)}
               >
-                <option value="off">Off (don't edit other images)</option>
+                <option value="off">Off (don&apos;t edit other images)</option>
                 <option value="gflow">Google Flow (gflow)</option>
                 <option value="chatgpt">ChatGPT (cx/gpt-image)</option>
                 <option value="auto">Auto (let AI choose)</option>

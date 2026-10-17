@@ -36,7 +36,8 @@ function enqueue(fn) {
   return run;
 }
 
-async function renderOnce({ template_json, width, height, title, subtitle, caption, label, watermark, watermark_image, image_src, image_srcs, focus_points, image_zooms, scale, accent }) {
+async function renderOnce(body) {
+  const { template_json, width, height, title, subtitle, caption, label, watermark, watermark_image, image_src, image_srcs, focus_points, image_zooms, scale } = body || {};
   const browser = await chromium.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
@@ -64,7 +65,7 @@ async function renderOnce({ template_json, width, height, title, subtitle, capti
         focusPoints: Array.isArray(focus_points) ? focus_points : null,
         imageZooms: Array.isArray(image_zooms) ? image_zooms : null,
         scale: Number(scale) > 0 ? Number(scale) : 2,
-        accent: accent || null,
+        accent: (body.look && typeof body.look === "object" && !Array.isArray(body.look)) ? body.look : (body.accent || null),
       }
     );
 

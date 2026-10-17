@@ -32,7 +32,7 @@ Job Override (job_template_id)
           └─► None: Proceed to Fanpage Setting
 
 Fanpage Default Setting
-   └─► Fanpage attribute lookup:
+   └─► Fanpage attribute lookup (auto-populated from fanpage.template_style via template_styles.style_template_ids):
           "quote"      -> fanpage.default_quote_template_id
           "discussion" -> fanpage.default_discussion_template_id
           "news" / all -> fanpage.default_news_template_id

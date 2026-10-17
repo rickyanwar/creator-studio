@@ -24,6 +24,7 @@ import httpx
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.config import get_settings
+from app.services.brand_look import brand_look
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -514,6 +515,7 @@ def render_design(self, job_id: int):
                 "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
                 "accent": fanpage.accent_color,
+                "look": brand_look(fanpage, template_json),
             },
             timeout=_RENDER_TIMEOUT,
         )
@@ -736,6 +738,7 @@ def render_discussion(self, job_id: int):
                 "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
                 "accent": fanpage.accent_color,
+                "look": brand_look(fanpage, template_json),
             },
             timeout=_RENDER_TIMEOUT,
         )
@@ -941,6 +944,7 @@ def render_pinterest(self, job_id: int):
             "image_zooms": None,
             "scale": settings.design_render_scale,
             "accent": fanpage.accent_color,
+            "look": brand_look(fanpage, template_json),
         }
 
         resp = httpx.post(f"{settings.renderer_url.rstrip('/')}/render", json=payload, timeout=_RENDER_TIMEOUT)
@@ -1233,6 +1237,7 @@ def render_facebook_photo(self, job_id: int):
                 "image_zooms": image_zooms,
                 "scale": settings.design_render_scale,
                 "accent": fanpage.accent_color,
+                "look": brand_look(fanpage, template_json),
             },
             timeout=_RENDER_TIMEOUT,
         )

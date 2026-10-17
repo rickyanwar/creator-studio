@@ -1,10 +1,18 @@
+import copy
 from datetime import timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, DB
+from app.services.template_styles import (
+    CATEGORIES,
+    LEGACY_TEMPLATE_STYLE,
+    STYLE_LABELS,
+    STYLES,
+    style_defaults,
+)
 
 router = APIRouter(prefix="/templates", tags=["design-templates"])
 
@@ -30,6 +38,15 @@ class UpdateTemplateBody(TemplateBody):
     is_default: Optional[bool] = None
 
 
+class StyleDefaultsBody(BaseModel):
+    primary: str = Field(..., pattern=r"^#[0-9A-Fa-f]{6}$")
+    secondary: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    badge: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    badgeText: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    quoteMarks: Optional[str] = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    streak: Optional[bool] = None
+
+
 def _serialize(t, include_json: bool = False):
     out = {
         "id": t.id,
@@ -39,6 +56,10 @@ def _serialize(t, include_json: bool = False):
         "canvas_height": t.canvas_height,
         "is_default": t.is_default,
         "category": t.category,
+        "style": t.style,
+        "is_hidden": bool(t.is_hidden),
+        "brand_defaults": (t.template_json or {}).get("brandDefaults") if isinstance(t.template_json, dict) else None,
+        "replacement_style": LEGACY_TEMPLATE_STYLE.get(t.name) if t.fanpage_id is None else None,
         "has_content": t.template_json is not None,
         "placeholder_config": t.placeholder_config,
         "updated_at": t.updated_at.replace(tzinfo=timezone.utc).isoformat() if t.updated_at else None,
@@ -46,6 +67,37 @@ def _serialize(t, include_json: bool = False):
     if include_json:
         out["template_json"] = t.template_json
     return out
+
+
+def _serialize_style(db, style: str) -> dict[str, Any]:
+    from app.models.design_templates import DesignTemplate
+
+    raw_defaults = style_defaults(db, style)
+    allowed_keys = ("primary", "secondary", "badge", "badgeText", "quoteMarks", "streak")
+    defaults = {k: raw_defaults[k] for k in allowed_keys if k in raw_defaults and raw_defaults[k] is not None}
+
+    tpl_rows = (
+        db.query(DesignTemplate.id, DesignTemplate.name, DesignTemplate.category)
+        .filter(
+            DesignTemplate.fanpage_id.is_(None),
+            DesignTemplate.style == style,
+            DesignTemplate.category.in_(CATEGORIES),
+            DesignTemplate.is_hidden == False,
+        )
+        .order_by(DesignTemplate.id.asc())
+        .all()
+    )
+    templates: dict[str, Optional[dict[str, Any]]] = {cat: None for cat in CATEGORIES}
+    for row_id, row_name, cat in tpl_rows:
+        if templates[cat] is None:
+            templates[cat] = {"id": row_id, "name": row_name}
+
+    return {
+        "style": style,
+        "label": STYLE_LABELS.get(style, style),
+        "defaults": defaults,
+        "templates": templates,
+    }
 
 
 @router.get("")
@@ -78,6 +130,40 @@ def create_template(body: TemplateBody, db: DB, _: CurrentUser):
     db.commit()
     db.refresh(t)
     return _serialize(t, include_json=True)
+
+
+@router.get("/styles")
+def list_template_styles(db: DB, _: CurrentUser):
+    return [_serialize_style(db, s) for s in STYLES]
+
+
+@router.put("/styles/{style}/defaults")
+def update_style_defaults(style: str, body: StyleDefaultsBody, db: DB, _: CurrentUser):
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models.design_templates import DesignTemplate
+
+    if style not in STYLES:
+        raise HTTPException(status_code=404, detail="Unknown style")
+
+    new_defaults = {k: v for k, v in body.model_dump().items() if v is not None}
+
+    tpls = (
+        db.query(DesignTemplate)
+        .filter(
+            DesignTemplate.fanpage_id.is_(None),
+            DesignTemplate.style == style,
+            DesignTemplate.is_hidden == False,
+        )
+        .all()
+    )
+    for t in tpls:
+        tj = copy.deepcopy(t.template_json or {})
+        tj["brandDefaults"] = new_defaults
+        t.template_json = tj
+        flag_modified(t, "template_json")
+
+    db.commit()
+    return _serialize_style(db, style)
 
 
 @router.get("/{template_id}")
@@ -115,11 +201,21 @@ def update_template(template_id: int, body: UpdateTemplateBody, db: DB, _: Curre
     if body.is_default is not None:
         t.is_default = body.is_default
         if body.is_default:
-            # only one default per fanpage scope
+            cat_filter = (
+                DesignTemplate.category.is_(None)
+                if t.category is None
+                else (DesignTemplate.category == t.category)
+            )
+            fp_filter = (
+                DesignTemplate.fanpage_id.is_(None)
+                if t.fanpage_id is None
+                else (DesignTemplate.fanpage_id == t.fanpage_id)
+            )
             db.query(DesignTemplate).filter(
                 DesignTemplate.id != t.id,
-                DesignTemplate.fanpage_id == t.fanpage_id,
-            ).update({DesignTemplate.is_default: False})
+                fp_filter,
+                cat_filter,
+            ).update({DesignTemplate.is_default: False}, synchronize_session=False)
 
     db.commit()
     db.refresh(t)

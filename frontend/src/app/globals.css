@@ -6,7 +6,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 /* Design-editor fonts — MUST match the TTFs vendored in renderer/fonts so the
    live editor preview equals the headless render (WYSIWYG). */
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;900&family=Montserrat:wght@400;600;700;800&family=Roboto:wght@400;700;900&family=Oswald:wght@400;600;700&family=Playfair+Display:wght@400;700;900&family=Bebas+Neue&family=Anton&family=Pacifico&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800;900&family=Montserrat:wght@400;600;700;800;900&family=Roboto:wght@400;700;900&family=Oswald:wght@400;600;700&family=Playfair+Display:wght@400;700;900&family=Bebas+Neue&family=Anton&family=Pacifico&display=swap');
 /* Self-hosted (not on Google Fonts) — same file vendored in renderer/fonts/
    for the headless render. font-weight is a range so any numeric/keyword
    weight a template sets resolves to this one static file. */

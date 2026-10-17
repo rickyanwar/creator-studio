@@ -57,6 +57,8 @@ def test_design_renderer_untouched(mock_resolve, mock_select, mock_session, mock
     payload = mock_post.call_args[1]["json"]
     # Mode 2 renderer: no accent mutation
     assert payload["template_json"]["objects"][0]["titleAccentColor"] == "#OLD"
+    assert "look" in payload
+    assert payload.get("look") is None
 
 
 # ── Mode 3 plain path — template_json must NOT be mutated ─────────────────────
@@ -118,6 +120,8 @@ def test_live_mode3_payload_unchanged(mock_resolve, mock_source, mock_session, m
     payload = mock_post.call_args[1]["json"]
     # Plain Mode 3: no accent mutation
     assert payload["template_json"]["objects"][0]["titleAccentColor"] == "#OLD"
+    assert "look" in payload
+    assert payload.get("look") is None
 
 
 # ── Radar path (with decision) — fanpage template, NO colour mutation ──────────
@@ -180,6 +184,8 @@ def test_radar_mode3_uses_fanpage_template_no_mutation(
     payload = mock_post.call_args[1]["json"]
     # Radar path: fanpage template colour PRESERVED — no override_template_accents
     assert payload["template_json"]["objects"][0]["titleAccentColor"] == "#FANPAGE_COLOR"
+    assert "look" in payload
+    assert payload.get("look") is None
 
 
 # ── _build_quote_attribution ──────────────────────────────────────────────────

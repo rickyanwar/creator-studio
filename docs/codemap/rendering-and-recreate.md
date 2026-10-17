@@ -36,9 +36,9 @@ Architectural analysis of card generation across Mode 2 (News), Mode 3 (IG Recre
          ├─► Browser Spawn: chromium.launch() per job (server.js:40, no keep-warm)
          ├─► Page Context: render-page.html + Fabric.js + renderer/inject.js (server.js:46-48)
          └─► Canvas Execution: window.renderTemplate(args) (inject.js:178)
-               ├─► Font Preload: Montserrat (700, 800, 900) (inject.js:289-298)
-               ├─► Accent Adaptation: Color recalculation & streak tint (inject.js:117, 269)
-               ├─► Layout Engine: Auto-fit loops, line-cap floors, upward anchoring (inject.js:307-887)
+                ├─► Font Preload: Montserrat (700, 800, 900) (inject.js:289-298)
+                ├─► Brand Look & Accent Adaptation: normalizeLook + adaptTemplateForAccent (inject.js:120, 136)
+                ├─► Layout Engine: Auto-fit loops, line-cap floors, upward anchoring (inject.js:307-887)
                ├─► Image Slots: Cover-fit, face focus points, slot clipping (inject.js:891-981)
                ├─► Watermark Injection: Logo / Text with auto-fit <= 2 lines (inject.js:184-231)
                └─► Export: canvas.toDataURL at multiplier (default scale 2) (inject.js:234)
@@ -76,6 +76,30 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
 - **Facebook Photo Tasks** (`design_renderer.py:1114-1118`): Tries detected category (`"quote"` or `"discussion"`); if missing, falls back to `"news"`.
 - **Pinterest Tasks** (`design_renderer.py:826-834`): Classifies idea text/face into `"quote"` or `"news"`. If template missing, fails job to `pending_design` with configuration error.
 
+### Template Styles & Brand Look Engine
+
+- **Template Styles Architecture** (`backend/app/services/template_styles.py`):
+  - Curated styles: `gp` ("GP Racing"), `highlight` ("Highlight"), `classic` ("Classic") (`STYLES`).
+  - Standard categories: `news`, `quote`, `discussion` (`CATEGORIES`).
+  - Active set: 9 style templates (3 styles × 3 categories); 15 legacy templates marked `is_hidden = True` (backed up to `design_templates_bak_c27`; Release 2 will delete them).
+  - Schema additions: `design_templates.style`, `design_templates.is_hidden`; `target_fanpages.template_style` (nullable: `gp` | `highlight` | `classic`), `brand_override`, `accent_color` (override primary), `accent_secondary_color`, `badge_color`, `badge_text_color`, `quote_mark_color`, `quote_streak`.
+  - Default colors: stored directly in `template_json.brandDefaults`. Migrations: `c80000000026` (columns), `c80000000027` (9 style templates + 15 hidden), `c80000000028` (projects moved to styles, queued jobs remapped, backup tables `brand_move_bak_c28_*`).
+  - Helpers: `upgrade_kept_template(tj, style, category)`, `make_discussion_template(news_tj, style)`, `plan_brand_move(fanpages, templates, jobs)`, `style_template_ids(db, style)`, `style_defaults(db, style)`.
+  - Templates API (`backend/app/api/templates.py`): `GET /templates/styles`, `PUT /templates/styles/{style}/defaults`. Serializer adds `style`, `is_hidden`, `brand_defaults`, `replacement_style`. Star default is per category. Updating a fanpage's `template_style` (`PUT /fanpages/{id}`) automatically assigns default template IDs for all 3 categories via `style_template_ids` unless explicitly sent.
+
+- **Brand Look Resolution** (`backend/app/services/brand_look.py:brand_look(fanpage, template)`):
+  - Returns resolved dictionary `{primary, secondary, badge, badgeText, quoteMarks, streak}`:
+    - If `fanpage.brand_override == True` and valid `fanpage.accent_color`: uses fanpage custom overrides (`accent_color`, `accent_secondary_color`, `badge_color`, `badge_text_color`, `quote_mark_color`, `quote_streak`).
+    - Else: extracts `template.template_json.brandDefaults` (falling back to `STYLE_DEFAULTS` or `#E8362B`).
+    - Cascade fallbacks: `secondary` and `badge` fall back to `primary`; `badgeText` falls back to `auto_ink` (WCAG relative luminance > 0.5 -> `#0B0B0B` dark ink, else `#FFFFFF` light ink); `quoteMarks` falls back to `badge`; `streak` defaults to `True`.
+  - Dispatched as `"look"` alongside legacy `"accent"` across all 6 renderer payloads:
+    1. `tasks/design_renderer.py:render_design` (Mode 2)
+    2. `tasks/design_renderer.py:render_discussion` (Mode 4)
+    3. `tasks/design_renderer.py:render_pinterest` (Mode 5)
+    4. `tasks/design_renderer.py:render_facebook_photo` (Mode 6)
+    5. `tasks/ig_recreate.py:render_ig_recreate` (Mode 3)
+    6. `services/redesign_pipeline.py:redesign_card` (Mode 3 AI)
+
 ### Fabric.js Placeholder Roles (`renderer/inject.js`)
 
 | Placeholder Role | Target Element | Layout & Geometry Behaviour | Auto-Fit & Typography Rules |
@@ -91,10 +115,13 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
 | `image`, `image_2`, `image_N` (`:895`) | Visual photo slots | Cover-fit scale: `scale = max(slotW / img.width, slotH / img.height) * zoom` (`:939`). `zoom = paramZoom * slotZoom`. Positioned via `focus_points` (`:946`) and clamped to slot bounds | Clipped to `fabric.Circle` if slot is circle/ellipse (`:963`); clipped to `fabric.Rect` otherwise (`:972`). Original placeholder slot removed from canvas. |
 
 ### Visual Effects Engine (`renderer/inject.js`)
-- **Accent Adaptation** (`inject.js:117`): If `accent` hex provided and `template_json.accentFollowsFanpage` is true:
-  - Computes luminance: `relativeLuminance(rgb)` (`:24`). If `isLight > 0.5`, sets dark text color `#0B0B0B` on label and quote path.
-  - Updates title & caption: `titleAccentColor = accentHex`.
-  - Recolor Streak (`:79`): Recolor quoteIcon PNG image pixel-by-pixel using luma weighting `(0.299*r + 0.587*g + 0.114*b)/255.0 * targetRGB`.
+- **Brand Look & Accent Adaptation** (`inject.js:120, 136`):
+  - `normalizeLook(lookOrHex)` accepts hex string or look object `{primary, secondary, badge, badgeText, quoteMarks, streak}`.
+  - `adaptTemplateForAccent(templateJson, lookOrHex)`:
+    - If `template_json.accentFollowsFanpage` is true, updates title & caption `titleAccentColor = look.secondary`.
+    - Updates label and quote icon inks: badge background to `look.badge`, text to `look.badgeText`.
+    - Quote marks: set to `look.quoteMarks` (supports group/path and textbox icon fills).
+    - Quote streak (`look.streak`): if `streak === false`, hides streak children; otherwise recolors streak PNG via `recolorStreakDataUri` (`inject.js:79`) using luma weighting `(0.299*r + 0.587*g + 0.114*b)/255.0 * targetRGB`. Verified in `renderer/test/look.test.js`.
 - **Highlight Glow** (`inject.js:441`): When `titleHighlightGlow` / `captionHighlightGlow` is configured and `**marked**` ranges exist:
   - Base layer sets highlighted text fill to `rgba(0,0,0,0)`.
   - Duplicate `fabric.Textbox` created with glowing `fabric.Shadow` (`blur=14`, `color=accentGlowColor`), transparent base text, and accent fill on ranges, stacked immediately above base layer.
@@ -119,12 +146,13 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
   }
   ```
 - **Lifecycle**: Chromium spun up per request and closed in `finally` block (`server.js:40, 74`). Timeout: `60_000ms` (`RENDER_TIMEOUT_MS`).
+- **Accent/Look Parsing** (`server.js:68`): Passes `body.look || body.accent` (`accent: (body.look && typeof body.look === "object" && !Array.isArray(body.look)) ? body.look : (body.accent || null)`).
 
 ### Payload Schema (`renderer:3001/render`)
 
 ```json
 {
-  "template_json": { "objects": [...], "accentFollowsFanpage": true },
+  "template_json": { "objects": [...], "accentFollowsFanpage": true, "brandDefaults": { "primary": "#E8362B" } },
   "width": 1080,
   "height": 1350,
   "title": "CLEAN HEADLINE WITHOUT EXTRA SPACES",
@@ -138,7 +166,15 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
   "focus_points": [[0.5, 0.38], [0.5, 0.45]],
   "image_zooms": [1.0, 1.15],
   "scale": 2,
-  "accent": "#E10600"
+  "accent": "#E10600",
+  "look": {
+    "primary": "#E8362B",
+    "secondary": "#E8362B",
+    "badge": "#E8362B",
+    "badgeText": "#0B0B0B",
+    "quoteMarks": "#E8362B",
+    "streak": true
+  }
 }
 ```
 

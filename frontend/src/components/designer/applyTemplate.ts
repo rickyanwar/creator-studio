@@ -58,7 +58,8 @@ export async function applyTemplateContent(args: ApplyArgs): Promise<void> {
     const mode = titleObj.titleTextTransform || (titleObj.titleUppercase ? "uppercase" : null);
     const parsed = parseMarks(String(title));
     const text = applyCase(parsed.text, mode);
-    const maxHeight = titleObj.height;
+    // Same fit area as the renderer (inject.js): the loaded textbox height is only the placeholder's one line.
+    const maxHeight = typeof titleObj.titleGrowMaxHeight === "number" ? titleObj.titleGrowMaxHeight : titleObj.height;
     const fixedW = titleObj.width;
     titleObj.set({ text, styles: {} });
     titleObj.set("width", fixedW);

@@ -69,6 +69,13 @@ class TargetFanpage(Base):
     default_news_template_id = Column(Integer, nullable=True)   # FK to design_templates
     default_discussion_template_id = Column(Integer, nullable=True)  # FK to design_templates (Mode 4)
     accent_color = Column(String(9), nullable=True)
+    template_style = Column(String(16), nullable=True)  # gp | highlight | classic
+    brand_override = Column(Boolean, default=False, nullable=False, server_default="false")
+    accent_secondary_color = Column(String(9), nullable=True)
+    badge_color = Column(String(9), nullable=True)
+    badge_text_color = Column(String(9), nullable=True)
+    quote_mark_color = Column(String(9), nullable=True)
+    quote_streak = Column(Boolean, nullable=True)  # None = on
 
     # ── Mode 2 caption criteria (separate set from Mode 1) ──
     mode2_caption_tone = Column(String(64), default="informative", nullable=False, server_default="informative")

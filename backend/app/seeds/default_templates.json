@@ -3,7 +3,7 @@
     "name": "MotoGP News (two-tone headline)",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -272,13 +272,14 @@
       "image_slot_index": 0,
       "title_layer_index": 4
     },
-    "category": "news"
+    "category": "news",
+    "is_hidden": true
   },
   {
     "name": "Quote Card (word-highlight)",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -435,7 +436,13 @@
           }
         }
       ],
-      "version": "5.3.0"
+      "version": "5.3.0",
+      "accentFollowsFanpage": true,
+      "brandDefaults": {
+        "primary": "#C7F754",
+        "secondary": "#C7F754",
+        "quoteMarks": "#FEFEFC"
+      }
     },
     "placeholder_config": {
       "has_title": true,
@@ -443,13 +450,15 @@
       "image_slot_index": 0,
       "title_layer_index": 3
     },
-    "category": "quote"
+    "category": "quote",
+    "accentFollowsFanpage": true,
+    "style": "highlight"
   },
   {
     "name": "News Highlight \u2014 Green \u00b7 Center (Quote overlay)",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -529,13 +538,13 @@
         {
           "type": "rect",
           "placeholderRole": "labelBadge",
-          "left": 360,
+          "left": 373,
           "top": 510,
-          "width": 220,
-          "height": 52,
+          "width": 334,
+          "height": 73,
           "fill": "#c7f754",
-          "rx": 26,
-          "ry": 26,
+          "rx": 36.5,
+          "ry": 36.5,
           "angle": 0,
           "scaleX": 1,
           "scaleY": 1,
@@ -549,7 +558,8 @@
           "selectable": true,
           "discussionFill": "#c7f754",
           "hotFill": "#c7f754",
-          "labelRadius": "pill"
+          "labelRadius": "pill",
+          "labelFixedHeight": 73
         },
         {
           "type": "textbox",
@@ -557,9 +567,9 @@
           "left": 380,
           "top": 522,
           "width": 700,
-          "height": 36,
-          "text": "NEWS",
-          "fontSize": 28,
+          "height": 50,
+          "text": "BREAKING",
+          "fontSize": 44,
           "fontFamily": "Poppins",
           "fontWeight": 800,
           "textAlign": "center",
@@ -582,8 +592,8 @@
           "discussionColor": "#111111",
           "hotColor": "#111111",
           "labelGap": 40,
-          "labelPadX": 20,
-          "labelPadY": 10,
+          "labelPadX": 42,
+          "labelPadY": 12,
           "shadow": {
             "color": "rgba(255,255,255,0.45)",
             "blur": 8,
@@ -654,7 +664,13 @@
           }
         }
       ],
-      "version": "5.3.0"
+      "version": "5.3.0",
+      "accentFollowsFanpage": true,
+      "brandDefaults": {
+        "primary": "#C7F754",
+        "secondary": "#C7F754",
+        "quoteMarks": "#FEFEFC"
+      }
     },
     "placeholder_config": {
       "has_title": true,
@@ -662,13 +678,15 @@
       "image_slot_index": 0,
       "title_layer_index": 2
     },
-    "category": "news"
+    "category": "news",
+    "accentFollowsFanpage": true,
+    "style": "highlight"
   },
   {
     "name": "Quote Card (name badge)",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -864,7 +882,12 @@
         }
       ],
       "version": "5.3.0",
-      "background": "#111111"
+      "background": "#111111",
+      "accentFollowsFanpage": true,
+      "brandDefaults": {
+        "primary": "#EC3324",
+        "secondary": "#EC3324"
+      }
     },
     "placeholder_config": {
       "has_title": true,
@@ -872,13 +895,15 @@
       "image_slot_index": 0,
       "title_layer_index": 3
     },
-    "category": "quote"
+    "category": "quote",
+    "accentFollowsFanpage": true,
+    "style": "classic"
   },
   {
     "name": "Quote Card (word-highlight, name badge)",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -1056,13 +1081,14 @@
       "image_slot_index": 0,
       "title_layer_index": 3
     },
-    "category": "quote"
+    "category": "quote",
+    "is_hidden": true
   },
   {
     "name": "News Highlight \u2014 Red \u00b7 Left",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -1263,13 +1289,14 @@
       "image_slot_index": 0,
       "title_layer_index": 2
     },
-    "category": "news"
+    "category": "news",
+    "is_hidden": true
   },
   {
     "name": "News Highlight \u2014 Red \u00b7 Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -1337,13 +1364,13 @@
         {
           "type": "rect",
           "placeholderRole": "labelBadge",
-          "left": 360,
+          "left": 373,
           "top": 510,
-          "width": 220,
-          "height": 52,
+          "width": 334,
+          "height": 73,
           "fill": "#ec3324",
-          "rx": 26,
-          "ry": 26,
+          "rx": 36.5,
+          "ry": 36.5,
           "angle": 0,
           "scaleX": 1,
           "scaleY": 1,
@@ -1357,7 +1384,8 @@
           "selectable": true,
           "discussionFill": "#ec3324",
           "hotFill": "#ec3324",
-          "labelRadius": "pill"
+          "labelRadius": "pill",
+          "labelFixedHeight": 73
         },
         {
           "type": "textbox",
@@ -1365,9 +1393,9 @@
           "left": 380,
           "top": 522,
           "width": 700,
-          "height": 36,
-          "text": "NEWS",
-          "fontSize": 28,
+          "height": 50,
+          "text": "BREAKING",
+          "fontSize": 44,
           "fontFamily": "Poppins",
           "fontWeight": 800,
           "textAlign": "center",
@@ -1390,8 +1418,8 @@
           "discussionColor": "#ffffff",
           "hotColor": "#ffffff",
           "labelGap": 40,
-          "labelPadX": 20,
-          "labelPadY": 10,
+          "labelPadX": 42,
+          "labelPadY": 12,
           "shadow": {
             "color": "rgba(255,255,255,0.45)",
             "blur": 8,
@@ -1462,7 +1490,12 @@
           }
         }
       ],
-      "version": "5.3.0"
+      "version": "5.3.0",
+      "accentFollowsFanpage": true,
+      "brandDefaults": {
+        "primary": "#EC3324",
+        "secondary": "#EC3324"
+      }
     },
     "placeholder_config": {
       "has_title": true,
@@ -1470,13 +1503,15 @@
       "image_slot_index": 0,
       "title_layer_index": 2
     },
-    "category": "news"
+    "category": "news",
+    "accentFollowsFanpage": true,
+    "style": "classic"
   },
   {
     "name": "News Highlight \u2014 Yellow \u00b7 Left",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -1677,13 +1712,14 @@
       "image_slot_index": 0,
       "title_layer_index": 2
     },
-    "category": "news"
+    "category": "news",
+    "is_hidden": true
   },
   {
     "name": "News Highlight \u2014 Green \u00b7 Left",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -1884,13 +1920,14 @@
       "image_slot_index": 0,
       "title_layer_index": 2
     },
-    "category": "news"
+    "category": "news",
+    "is_hidden": true
   },
   {
     "name": "News Highlight \u2014 Yellow \u00b7 Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -2091,13 +2128,14 @@
       "image_slot_index": 0,
       "title_layer_index": 2
     },
-    "category": "news"
+    "category": "news",
+    "is_hidden": true
   },
   {
     "name": "News Highlight \u2014 Green \u00b7 Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -2298,13 +2336,14 @@
       "image_slot_index": 0,
       "title_layer_index": 2
     },
-    "category": "news"
+    "category": "news",
+    "is_hidden": true
   },
   {
     "name": "Discussion Card \u2014 Red \u00b7 Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -2482,13 +2521,14 @@
       "has_label": true,
       "label_layer_index": 3
     },
-    "category": "discussion"
+    "category": "discussion",
+    "is_hidden": true
   },
   {
     "name": "Discussion Card \u2014 Yellow \u00b7 Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -2666,13 +2706,14 @@
       "has_label": true,
       "label_layer_index": 3
     },
-    "category": "discussion"
+    "category": "discussion",
+    "is_hidden": true
   },
   {
     "name": "Discussion Card \u2014 Green \u00b7 Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -2850,13 +2891,14 @@
       "has_label": true,
       "label_layer_index": 3
     },
-    "category": "discussion"
+    "category": "discussion",
+    "is_hidden": true
   },
   {
     "name": "Discussion Card \u2014 Green \u00b7 Center (Quote overlay)",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -3046,13 +3088,14 @@
       "has_label": true,
       "label_layer_index": 3
     },
-    "category": "discussion"
+    "category": "discussion",
+    "is_hidden": true
   },
   {
     "name": "Quote Card \u2014 Green \u00b7 Center",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "template_json": {
       "objects": [
         {
@@ -3221,13 +3264,14 @@
       "image_slot_index": 0,
       "title_layer_index": 3
     },
-    "category": "quote"
+    "category": "quote",
+    "is_hidden": true
   },
   {
     "name": "Designer \u2014 Quote",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "category": "quote",
     "placeholder_config": {
       "has_title": true,
@@ -3358,13 +3402,14 @@
           }
         }
       ]
-    }
+    },
+    "is_hidden": true
   },
   {
     "name": "Designer \u2014 News",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "category": "news",
     "placeholder_config": {
       "has_title": true,
@@ -3485,13 +3530,14 @@
           }
         }
       ]
-    }
+    },
+    "is_hidden": true
   },
   {
     "name": "Designer \u2014 Update",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": true,
+    "is_default": false,
     "category": "news",
     "placeholder_config": {
       "has_title": true,
@@ -3652,13 +3698,14 @@
           }
         }
       ]
-    }
+    },
+    "is_hidden": true
   },
   {
     "name": "GP News \u2014 Breaking",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": false,
+    "is_default": true,
     "category": "news",
     "accentFollowsFanpage": true,
     "placeholder_config": {
@@ -3821,14 +3868,19 @@
             "color": "rgba(232,54,43,0.40)"
           }
         }
-      ]
-    }
+      ],
+      "brandDefaults": {
+        "primary": "#E8362B",
+        "secondary": "#E8362B"
+      }
+    },
+    "style": "gp"
   },
   {
     "name": "GP Quote",
     "canvas_width": 1080,
     "canvas_height": 1350,
-    "is_default": false,
+    "is_default": true,
     "category": "quote",
     "accentFollowsFanpage": true,
     "placeholder_config": {
@@ -4167,7 +4219,583 @@
             "color": "rgba(232,54,43,0.40)"
           }
         }
-      ]
+      ],
+      "brandDefaults": {
+        "primary": "#E8362B",
+        "secondary": "#E8362B"
+      }
+    },
+    "style": "gp"
+  },
+  {
+    "name": "GP Discussion",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": true,
+    "category": "discussion",
+    "style": "gp",
+    "accentFollowsFanpage": true,
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 4,
+      "has_label": true
+    },
+    "template_json": {
+      "version": "5.3.0",
+      "accentFollowsFanpage": true,
+      "background": "#05070C",
+      "objects": [
+        {
+          "type": "rect",
+          "placeholderRole": "image",
+          "left": 0,
+          "top": 0,
+          "width": 1080,
+          "height": 1350,
+          "fill": "#ffffff",
+          "imageZoom": 1,
+          "strokeWidth": 0
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "scrim",
+          "left": 0,
+          "top": 740,
+          "width": 1080,
+          "height": 610,
+          "scrimPad": 200,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "y1": 0,
+              "x2": 0,
+              "y2": 610
+            },
+            "colorStops": [
+              {
+                "offset": 0,
+                "color": "rgba(3,4,7,0)"
+              },
+              {
+                "offset": 0.3,
+                "color": "rgba(3,4,7,0.78)"
+              },
+              {
+                "offset": 0.62,
+                "color": "rgba(3,4,7,0.96)"
+              },
+              {
+                "offset": 1,
+                "color": "#030407"
+              }
+            ]
+          }
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "labelBadge",
+          "left": 378,
+          "top": 847,
+          "width": 324,
+          "height": 73,
+          "rx": 16,
+          "ry": 16,
+          "labelRadius": 16,
+          "labelKeepFill": true,
+          "labelFixedWidth": 324,
+          "labelFixedHeight": 73,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "y1": 0,
+              "x2": 0,
+              "y2": 73
+            },
+            "colorStops": [
+              {
+                "offset": 0,
+                "color": "#F2523F"
+              },
+              {
+                "offset": 1,
+                "color": "#D72C23"
+              }
+            ]
+          },
+          "stroke": "rgba(255,170,150,0.55)",
+          "strokeWidth": 2,
+          "shadow": {
+            "blur": 20,
+            "color": "rgba(0,0,0,0.5)",
+            "offsetX": 0,
+            "offsetY": 6
+          }
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "label",
+          "left": 70,
+          "top": 859,
+          "width": 940,
+          "height": 50,
+          "text": "DISCUSSION",
+          "fontSize": 44,
+          "fontFamily": "Montserrat",
+          "fontWeight": 700,
+          "textAlign": "center",
+          "fill": "#FFFFFF",
+          "lineHeight": 1,
+          "charSpacing": 11,
+          "shadow": {
+            "color": "rgba(255,255,255,0.45)",
+            "blur": 8,
+            "offsetX": 0,
+            "offsetY": 0
+          },
+          "titleTextTransform": "uppercase",
+          "labelGap": 33,
+          "labelPadX": 42
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "title",
+          "left": 70,
+          "top": 946,
+          "width": 940,
+          "height": 358,
+          "text": "Headline",
+          "fontSize": 76,
+          "fontFamily": "Montserrat",
+          "fontWeight": 900,
+          "textAlign": "center",
+          "lineHeight": 0.91,
+          "fill": "#FFFFFF",
+          "shadow": {
+            "color": "rgba(255,255,255,0.20)",
+            "blur": 8,
+            "offsetX": 0,
+            "offsetY": 0
+          },
+          "titleAnchorBottom": 1310,
+          "titleGrowMaxHeight": 358,
+          "titleMinReadableFontSize": 50,
+          "titleFitChars": 64,
+          "titleAccentColor": "#E8362B",
+          "titleTextTransform": "uppercase",
+          "titleChromaShift": {
+            "px": 2,
+            "left": "rgba(255,40,40,0.55)",
+            "right": "rgba(60,255,255,0.55)"
+          },
+          "titleHighlightGlow": {
+            "blur": 10,
+            "color": "rgba(232,54,43,0.40)"
+          }
+        }
+      ],
+      "brandDefaults": {
+        "primary": "#E8362B",
+        "secondary": "#E8362B"
+      }
+    }
+  },
+  {
+    "name": "Highlight Discussion",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": false,
+    "category": "discussion",
+    "style": "highlight",
+    "accentFollowsFanpage": true,
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 2,
+      "has_label": true
+    },
+    "template_json": {
+      "objects": [
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 0,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
+        },
+        {
+          "top": 450,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "x2": 0,
+              "y1": 0,
+              "y2": 900
+            },
+            "colorStops": [
+              {
+                "color": "rgba(49,52,67,0)",
+                "offset": 0
+              },
+              {
+                "color": "rgba(49,52,67,0.08)",
+                "offset": 0.28
+              },
+              {
+                "color": "rgba(49,52,67,0.22)",
+                "offset": 0.42
+              },
+              {
+                "color": "rgba(49,52,67,0.5)",
+                "offset": 0.55
+              },
+              {
+                "color": "rgba(49,52,67,0.85)",
+                "offset": 0.66
+              },
+              {
+                "color": "rgba(49,52,67,0.98)",
+                "offset": 0.75
+              },
+              {
+                "color": "rgba(49,52,67,1)",
+                "offset": 0.85
+              },
+              {
+                "color": "rgba(49,52,67,1)",
+                "offset": 1
+              }
+            ],
+            "gradientUnits": "pixels"
+          },
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 900,
+          "scrimPad": 230,
+          "selectable": false,
+          "placeholderRole": "scrim"
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "labelBadge",
+          "left": 373,
+          "top": 510,
+          "width": 334,
+          "height": 73,
+          "fill": "#c7f754",
+          "rx": 36.5,
+          "ry": 36.5,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "discussionFill": "#c7f754",
+          "hotFill": "#c7f754",
+          "labelRadius": "pill",
+          "labelFixedHeight": 73
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "label",
+          "left": 380,
+          "top": 522,
+          "width": 700,
+          "height": 50,
+          "text": "DISCUSSION",
+          "fontSize": 44,
+          "fontFamily": "Poppins",
+          "fontWeight": 800,
+          "textAlign": "center",
+          "fill": "#111111",
+          "lineHeight": 1.0,
+          "charSpacing": 0,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "styles": {},
+          "titleTextTransform": "uppercase",
+          "discussionColor": "#111111",
+          "hotColor": "#111111",
+          "labelGap": 40,
+          "labelPadX": 42,
+          "labelPadY": 12,
+          "shadow": {
+            "color": "rgba(255,255,255,0.45)",
+            "blur": 8,
+            "offsetX": 0,
+            "offsetY": 0
+          }
+        },
+        {
+          "top": 600,
+          "fill": "#fefefc",
+          "left": 56,
+          "text": "Headline",
+          "type": "textbox",
+          "width": 980,
+          "height": 580,
+          "fontSize": 57,
+          "textAlign": "center",
+          "fontFamily": "Tusker Grotesk",
+          "fontWeight": 600,
+          "lineHeight": 0.95,
+          "charSpacing": -15,
+          "placeholderRole": "title",
+          "titleAccentColor": "#c7f754",
+          "titleAnchorBottom": 1270,
+          "titleTextTransform": "uppercase",
+          "titleGrowMaxHeight": 249,
+          "titleMinReadableFontSize": 48,
+          "titleFitChars": 76,
+          "shadow": {
+            "color": "rgba(255,255,255,0.20)",
+            "blur": 8,
+            "offsetX": 0,
+            "offsetY": 0
+          },
+          "titleChromaShift": {
+            "px": 2,
+            "left": "rgba(255,40,40,0.55)",
+            "right": "rgba(60,255,255,0.55)"
+          },
+          "titleHighlightGlow": {
+            "blur": 10,
+            "color": "rgba(199,247,84,0.40)"
+          }
+        }
+      ],
+      "version": "5.3.0",
+      "accentFollowsFanpage": true,
+      "brandDefaults": {
+        "primary": "#C7F754",
+        "secondary": "#C7F754",
+        "quoteMarks": "#FEFEFC"
+      }
+    }
+  },
+  {
+    "name": "Classic Discussion",
+    "canvas_width": 1080,
+    "canvas_height": 1350,
+    "is_default": false,
+    "category": "discussion",
+    "style": "classic",
+    "accentFollowsFanpage": true,
+    "placeholder_config": {
+      "has_title": true,
+      "has_image_slot": true,
+      "image_slot_index": 0,
+      "title_layer_index": 2,
+      "has_label": true
+    },
+    "template_json": {
+      "objects": [
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 0,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image"
+        },
+        {
+          "top": 0,
+          "fill": "#111111",
+          "left": 540,
+          "type": "rect",
+          "width": 540,
+          "height": 1350,
+          "selectable": false,
+          "placeholderRole": "image_2"
+        },
+        {
+          "top": 800,
+          "fill": {
+            "type": "linear",
+            "coords": {
+              "x1": 0,
+              "x2": 0,
+              "y1": 0,
+              "y2": 550
+            },
+            "colorStops": [
+              {
+                "color": "rgba(0,0,0,0)",
+                "offset": 0
+              },
+              {
+                "color": "rgba(0,0,0,0.65)",
+                "offset": 0.13
+              },
+              {
+                "color": "rgba(0,0,0,0.9)",
+                "offset": 0.32
+              },
+              {
+                "color": "rgba(0,0,0,0.99)",
+                "offset": 0.55
+              },
+              {
+                "color": "rgba(0,0,0,1)",
+                "offset": 1
+              }
+            ],
+            "gradientUnits": "pixels"
+          },
+          "left": 0,
+          "type": "rect",
+          "width": 1080,
+          "height": 550,
+          "scrimPad": 230,
+          "selectable": false,
+          "placeholderRole": "scrim"
+        },
+        {
+          "type": "rect",
+          "placeholderRole": "labelBadge",
+          "left": 373,
+          "top": 510,
+          "width": 334,
+          "height": 73,
+          "fill": "#ec3324",
+          "rx": 36.5,
+          "ry": 36.5,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "discussionFill": "#ec3324",
+          "hotFill": "#ec3324",
+          "labelRadius": "pill",
+          "labelFixedHeight": 73
+        },
+        {
+          "type": "textbox",
+          "placeholderRole": "label",
+          "left": 380,
+          "top": 522,
+          "width": 700,
+          "height": 50,
+          "text": "DISCUSSION",
+          "fontSize": 44,
+          "fontFamily": "Poppins",
+          "fontWeight": 800,
+          "textAlign": "center",
+          "fill": "#ffffff",
+          "lineHeight": 1.0,
+          "charSpacing": 0,
+          "angle": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "flipX": false,
+          "flipY": false,
+          "opacity": 1,
+          "originX": "left",
+          "originY": "top",
+          "stroke": null,
+          "strokeWidth": 0,
+          "selectable": true,
+          "styles": {},
+          "titleTextTransform": "uppercase",
+          "discussionColor": "#ffffff",
+          "hotColor": "#ffffff",
+          "labelGap": 40,
+          "labelPadX": 42,
+          "labelPadY": 12,
+          "shadow": {
+            "color": "rgba(255,255,255,0.45)",
+            "blur": 8,
+            "offsetX": 0,
+            "offsetY": 0
+          }
+        },
+        {
+          "top": 600,
+          "fill": "#ffffff",
+          "left": 56,
+          "text": "Headline",
+          "type": "textbox",
+          "width": 980,
+          "height": 580,
+          "fontSize": 59,
+          "textAlign": "center",
+          "fontFamily": "Poppins",
+          "fontWeight": 900,
+          "lineHeight": 0.9,
+          "charSpacing": -26,
+          "placeholderRole": "title",
+          "titleAccentColor": "#ec3324",
+          "titleAnchorBottom": 1270,
+          "titleTextTransform": "uppercase",
+          "titleGrowMaxHeight": 249,
+          "titleMinReadableFontSize": 48,
+          "titleFitChars": 60,
+          "shadow": {
+            "color": "rgba(255,255,255,0.20)",
+            "blur": 8,
+            "offsetX": 0,
+            "offsetY": 0
+          },
+          "titleChromaShift": {
+            "px": 2,
+            "left": "rgba(255,40,40,0.55)",
+            "right": "rgba(60,255,255,0.55)"
+          },
+          "titleHighlightGlow": {
+            "blur": 10,
+            "color": "rgba(236,51,36,0.40)"
+          }
+        }
+      ],
+      "version": "5.3.0",
+      "accentFollowsFanpage": true,
+      "brandDefaults": {
+        "primary": "#EC3324",
+        "secondary": "#EC3324"
+      }
     }
   }
 ]
