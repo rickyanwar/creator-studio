@@ -44,9 +44,10 @@ def test_deploy_workflow_bash_syntax(workflow_script):
 
 
 def test_deploy_workflow_migration_order_and_isolation(workflow_script):
-    # Builds must happen before migration
-    build_idx = workflow_script.find("docker compose -p studio -f docker-compose.server.yml build")
-    assert build_idx != -1, "Docker compose build command missing"
+    # Images are built in GitHub Actions; the VPS pulls them (and checks their revision) before migrating
+    build_idx = workflow_script.find("timeout 15m docker pull")
+    assert build_idx != -1, "GHCR image pull missing"
+    assert "docker compose -p studio -f docker-compose.server.yml build" not in workflow_script, "The VPS must not build images"
 
     # Migration must run in isolated one-off container with --no-deps before restart
     migration_idx = workflow_script.find("run --rm --no-deps api alembic upgrade head")
@@ -57,7 +58,7 @@ def test_deploy_workflow_migration_order_and_isolation(workflow_script):
     up_idx = workflow_script.find("docker compose -p studio -f docker-compose.server.yml up -d --remove-orphans")
     assert up_idx != -1, "Docker compose up command missing"
 
-    assert build_idx < migration_idx, "Build must complete before running migration"
+    assert build_idx < migration_idx, "Image pull must complete before running migration"
     assert migration_idx < up_idx, "Migration must run before starting/restarting containers"
 
     # Alembic current head verification must follow upgrade and precede up
@@ -144,7 +145,7 @@ def test_phone_runner_docs_contract():
 
 def extract_deploy_lifecycle_script(workflow_script: str) -> str:
     tag_start = workflow_script.find('echo "── Recording rollback image tags')
-    tag_end = workflow_script.find('echo "── Rebuilding images')
+    tag_end = workflow_script.find('echo "── Pulling images')
     assert tag_start != -1 and tag_end != -1, "Tag recording section not found"
     tag_section = workflow_script[tag_start:tag_end].strip()
 
@@ -385,3 +386,37 @@ def test_simulated_raw_digest_old_config_does_not_break_canonical_tags(tmp_path,
     assert any("studio-backend:latest" in l for l in tag_lines)
     assert any("studio-renderer" in l for l in tag_lines)
     assert any("studio-frontend" in l for l in tag_lines)
+
+
+def test_build_job_pushes_sha_tagged_images_to_ghcr(workflow_doc):
+    doc, _ = workflow_doc
+    build = doc["jobs"]["build"]
+    names = {item["name"] for item in build["strategy"]["matrix"]["include"]}
+    assert names == {"backend", "renderer", "frontend"}
+    push_step = next(s for s in build["steps"] if str(s.get("uses", "")).startswith("docker/build-push-action"))
+    w = push_step["with"]
+    assert w["push"] is True
+    assert "sha-${{ github.sha }}" in w["tags"]
+    assert "org.opencontainers.image.revision=${{ github.sha }}" in w["labels"]
+    assert doc["permissions"]["packages"] == "write"
+    assert doc["env"]["IMAGE_PREFIX"].startswith("ghcr.io/")
+
+
+def test_deploy_job_waits_for_build_and_uses_short_lived_token(workflow_doc, workflow_script):
+    doc, _ = workflow_doc
+    deploy = doc["jobs"]["deploy"]
+    assert deploy["needs"] == "build"
+    ssh_step = next(s for s in deploy["steps"] if str(s.get("uses", "")).startswith("appleboy/ssh-action"))
+    assert ssh_step["env"]["GHCR_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
+    assert "GHCR_TOKEN" in ssh_step["with"]["envs"]
+    assert "--password-stdin" in workflow_script
+    assert "docker logout ghcr.io" in workflow_script
+
+
+def test_deploy_verifies_image_and_container_revisions(workflow_script):
+    assert 'org.opencontainers.image.revision' in workflow_script
+    pull_idx = workflow_script.find("timeout 15m docker pull")
+    tag_idx = workflow_script.find('docker tag "${IMAGE_PREFIX}/backend:sha-${DEPLOY_SHA}" studio-backend:latest')
+    assert -1 < pull_idx < tag_idx, "Pulled image must be verified before it becomes studio-backend:latest"
+    assert "Verifying running containers are revision" in workflow_script
+    assert "--no-build" in workflow_script

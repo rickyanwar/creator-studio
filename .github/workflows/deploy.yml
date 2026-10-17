@@ -4,32 +4,104 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Private images in GHCR (visibility follows the private repo). The VPS only pulls.
+  IMAGE_PREFIX: ghcr.io/rickyanwar/creator-studio
+
 jobs:
-  deploy:
-    name: SSH Deploy
+  build:
+    name: Build ${{ matrix.name }} image
     runs-on: ubuntu-latest
-    # Frontend + backend rebuilds on the VPS can exceed 10 min (and 15 min for
-    # the job) — two deploys were cut off mid-way on 2026-09-25/26.
-    # 2026-10-13: backend image built once (was 6×); builds run one at a time with per-build caps (api 25m, others 8m) so a hung build fails fast.
-    timeout-minutes: 50
+    # Builds moved off the small VPS (2026-10-18): no build cache on the server any more.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+            file: ./backend/Dockerfile
+            build_args: ""
+          - name: renderer
+            context: ./renderer
+            file: ./renderer/Dockerfile
+            build_args: ""
+          - name: frontend
+            context: ./frontend
+            file: ./frontend/Dockerfile.prod
+            build_args: |
+              NEXT_PUBLIC_API_URL=https://autostudio.pro/api
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free runner disk (the backend image is ~6 GB unpacked)
+        if: matrix.name == 'backend'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          provenance: false
+          build-args: ${{ matrix.build_args }}
+          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:buildcache,mode=max
+
+  deploy:
+    name: SSH Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          # Short-lived job token: the VPS logs in to pull and logs out again; nothing is stored there.
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_SHA: ${{ github.sha }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          command_timeout: 45m
+          command_timeout: 35m
+          envs: GHCR_USER,GHCR_TOKEN,DEPLOY_SHA,IMAGE_PREFIX
           script: |
             set -euo pipefail
 
@@ -43,6 +115,10 @@ jobs:
             echo "── Pulling latest code ──"
             OLD_HEAD=$(git rev-parse HEAD)
             git pull origin main
+            if ! git merge-base --is-ancestor "$DEPLOY_SHA" HEAD; then
+              echo "✗ Server checkout does not contain $DEPLOY_SHA. Aborting." >&2
+              exit 1
+            fi
 
             DEPLOY_ID=$(date +%Y%m%d_%H%M%S)
 
@@ -86,15 +162,32 @@ jobs:
               fi
             fi
 
-            echo "── Rebuilding images (one at a time; api max 25 min, others 8 min) ──"
-            for svc in api renderer frontend; do
-              case "$svc" in api) cap=25m ;; *) cap=8m ;; esac
-              echo "· building $svc (max $cap)"
-              if ! timeout "$cap" docker compose -p studio -f docker-compose.server.yml build "$svc"; then
-                echo "✗ build of $svc failed or took longer than $cap — nothing was restarted" >&2
+            echo "── Pulling images built by GitHub Actions (sha $DEPLOY_SHA, max 15 min each) ──"
+            if [ -z "${DEPLOY_SHA:-}" ] || [ -z "${IMAGE_PREFIX:-}" ]; then
+              echo "✗ DEPLOY_SHA / IMAGE_PREFIX not set — nothing was restarted" >&2
+              exit 1
+            fi
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null
+            for img in backend renderer frontend; do
+              ref="${IMAGE_PREFIX}/${img}:sha-${DEPLOY_SHA}"
+              echo "· pulling $ref"
+              if ! timeout 15m docker pull -q "$ref"; then
+                docker logout ghcr.io >/dev/null 2>&1 || true
+                echo "✗ pull of $img failed or took longer than 15 min — nothing was restarted" >&2
+                exit 1
+              fi
+              rev=$(docker image inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$ref")
+              if [ "$rev" != "$DEPLOY_SHA" ]; then
+                docker logout ghcr.io >/dev/null 2>&1 || true
+                echo "✗ $img image is revision '$rev', expected $DEPLOY_SHA — nothing was restarted" >&2
                 exit 1
               fi
             done
+            docker logout ghcr.io >/dev/null 2>&1 || true
+            # The compose services run these local names (api/workers/beat: studio-backend:latest).
+            docker tag "${IMAGE_PREFIX}/backend:sha-${DEPLOY_SHA}" studio-backend:latest
+            docker tag "${IMAGE_PREFIX}/renderer:sha-${DEPLOY_SHA}" studio-renderer:latest
+            docker tag "${IMAGE_PREFIX}/frontend:sha-${DEPLOY_SHA}" studio-frontend:latest
 
             echo "── Pre-migration database backup ──"
             BACKUP_DIR="/var/backups/studio-social/${DEPLOY_ID}"
@@ -126,7 +219,7 @@ jobs:
 
             echo "── Restarting services ──"
             STARTUP_FAILED=false
-            if ! docker compose -p studio -f docker-compose.server.yml up -d --remove-orphans; then
+            if ! docker compose -p studio -f docker-compose.server.yml up -d --remove-orphans --no-build; then
               echo "✗ Normal service startup failed." >&2
               STARTUP_FAILED=true
             fi
@@ -161,7 +254,7 @@ jobs:
               [ -n "$PREV_FRONTEND_IMG" ] && docker tag "$PREV_FRONTEND_TAG" "$PREV_FRONTEND_TARGET"
 
               APP_SERVICES="api worker worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx"
-              if ! docker compose -p studio -f docker-compose.server.yml up -d --no-deps --force-recreate $APP_SERVICES; then
+              if ! docker compose -p studio -f docker-compose.server.yml up -d --no-deps --force-recreate --no-build $APP_SERVICES; then
                 echo "✗ Rollback service recreation failed." >&2
                 exit 1
               fi
@@ -203,6 +296,17 @@ jobs:
               echo "gflow_worker unchanged — no restart"
             fi
 
+            echo "── Verifying running containers are revision $DEPLOY_SHA ──"
+            for svc in api worker worker-visual worker-delivery beat renderer frontend; do
+              cid=$(docker compose -p studio -f docker-compose.server.yml ps -q "$svc" | head -n1)
+              rev=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$cid" 2>/dev/null || true)
+              if [ "$rev" != "$DEPLOY_SHA" ]; then
+                echo "✗ $svc runs revision '$rev', expected $DEPLOY_SHA" >&2
+                exit 1
+              fi
+            done
+            echo "✓ All app containers run $DEPLOY_SHA"
+
             echo "── Keeping the 3 newest rollback deploys + 10 newest pre-deploy dumps ──"
             KEEP_IDS=$(docker images --format '{{.Tag}}' | grep '^rollback-' | sed 's/^rollback-//' | sort -u | tail -n 3 | paste -sd'|' -)
             if [ -n "$KEEP_IDS" ]; then
@@ -210,10 +314,11 @@ jobs:
             fi
             ls -1d /var/backups/studio-social/*/ 2>/dev/null | sort | head -n -10 | xargs -r rm -rf
 
-            # Age filter, never a size cap: --max-used-space evicted the newest backend
-            # cache and made every deploy a cold 13-25 min build (2026-10-14).
-            echo "── Pruning dangling images + build cache unused for 2 days ──"
+            # Pulled sha tags of older deploys: their images stay reachable via the rollback tags above.
+            docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${IMAGE_PREFIX}/" | grep -v ":sha-${DEPLOY_SHA}$" | xargs -r docker rmi >/dev/null 2>&1 || true
+
+            echo "── Pruning dangling images + all build cache (images are built in GitHub Actions) ──"
             docker image prune -f
-            docker builder prune -f --filter until=48h
+            docker builder prune -af
 
             echo "✓ Deploy complete"
