@@ -10,7 +10,7 @@ Monitor the health of the visual engines (`gpt-image-2.5` via 9Router and `gflow
 ## Detection — every 30 minutes
 
 Run `docker exec studio-api-1 python -m app.scripts.visual_engine_health`.
-Success prints sanitized JSON containing `{generated_at, window, total, failed, fallback, consecutive_failures, last_error, unhealthy}` and exits 0.
+Success prints sanitized JSON containing `{generated_at, window, total, failed, fallback, consecutive_failures, last_error, unhealthy, by_engine, gptcli_errors, refusals, cloudflare, identity_rejects, codex_usage}` and exits 0.
 
 ### ChatGPT Image Engine (9Router cx) Thresholds
 The engine is considered `unhealthy` if within the last 6 hours (`window`), at least one of these is true:
@@ -19,6 +19,42 @@ The engine is considered `unhealthy` if within the last 6 hours (`window`), at l
 - Daily cap (`visual_engine_daily_max`) reached.
 
 Upon hitting these thresholds, the engine falls back to plain render. Alert **once** (deduped), not per post.
+
+### gpt-cli engine (ChatGPT web via gpt serve)
+
+Read the new keys (`by_engine`, `gptcli_errors`, `refusals`, `cloudflare`, `identity_rejects`, `codex_usage`, `consecutive_failures`) from the same health command.
+
+Messages to the owner are in Indonesian (Telegram is strictly for incidents and approvals; no daily summary).
+
+#### Incidents to alert
+
+1. **Refusal** (`refusals` contains an `id` not reported before):
+   - Deduplicate by event `id`. Send each new event (combine multiple new refusals in one message if several occur).
+   - Content: fanpage (`fanpage_id`), layout if known, refusal text (`snippet`), chat link (`chat_url`), and note: "post tetap jalan lewat Codex/template".
+   > `Penolakan ChatGPT terdeteksi:`
+   > `- Fanpage <fanpage_id> (layout <layout>): "<snippet>". Chat: <chat_url>`
+   > `Post tetap jalan lewat Codex/template.`
+
+2. **Cloudflare Challenge** (`cloudflare` has events or `gptcli:cloudflare_challenge` in `gptcli_errors`):
+   - Deduplicate **once per 6 hours**.
+   - Ask owner to check VNC on host running `gpt serve`.
+   > `gpt serve dicegat Cloudflare challenge sejak <at>. Mohon pemilik memeriksa VNC host gpt serve untuk menyelesaikan challenge.`
+
+3. **≥ 3 consecutive total failures** (`consecutive_failures >= 3`):
+   - Deduplicate **once per 6 hours**.
+   > `Engine visual gagal total ≥ 3 kali beruntun (<consecutive_failures> gagal). Error terakhir: <last_error>. Mohon tinjau manual.`
+
+4. **Face check rejected ≥ 5 in 6 h** (`identity_rejects >= 5`):
+   - Deduplicate **once per 6 hours** (indicates prompt or reference photo problem).
+   > `Cek wajah ditolak ≥ 5 kali dalam 6 jam terakhir (<identity_rejects> penolakan). Kemungkinan prompt atau foto referensi bermasalah.`
+
+5. **Codex resting** (`codex_usage.window_pct >= 95`):
+   - Deduplicate **once per Codex window**.
+   > `Codex sedang istirahat: pemakaian jendela mencapai <window_pct>%. Reset pada: <resets_at>. Pekerjaan visual dialihkan.`
+
+#### Excluded from this runbook
+- `quota`, `soft_cap`, `sleeping`, `logged_out`, and proxy issues on `gpt serve`: already covered by `gpt-cli`'s own Hermes scripts (`gpt-health`/`gpt-heal`). Do NOT duplicate alerts here.
+- No daily summary (owner rule: Telegram = incidents + approvals only).
 
 ### flow-bridge / gflow Monitoring
 Check logs for specific `gflow` failures:
