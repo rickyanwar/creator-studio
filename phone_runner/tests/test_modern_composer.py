@@ -37,6 +37,7 @@ class _NoopImeContext:
 @pytest.fixture(autouse=True)
 def _no_real_portal_ime(monkeypatch):
     monkeypatch.setattr("phone_runner.modern_composer.PortalImeContext", _NoopImeContext)
+    monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_feed", lambda s: None)
 
 
 TEST_SERIAL = "100.64.96.50:5555"
@@ -663,6 +664,7 @@ def test_find_matching_post_more_options_empty_caption():
 
 def test_resolve_latest_post_link_matches_on_third_attempt(monkeypatch):
     monkeypatch.setattr("phone_runner.modern_composer.PROFILE_POST_SEARCH_SWIPES", 1)  # one swipe per attempt in this scenario
+    monkeypatch.setattr("phone_runner.modern_composer.FEED_POST_SEARCH_SWIPES", 0)  # feed: one look, no scroll
     # 5f: first 2 attempts no match, 3rd attempt match -> returns the id parsed from the mocked clipboard
     # "https://www.facebook.com/agung/posts/pfbid0abcDEF123"; assert More options was tapped exactly once.
     no_match_xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
@@ -737,6 +739,7 @@ def test_resolve_latest_post_link_matches_on_third_attempt(monkeypatch):
 
 def test_resolve_latest_post_link_never_matches(monkeypatch):
     monkeypatch.setattr("phone_runner.modern_composer.PROFILE_POST_SEARCH_SWIPES", 1)  # one swipe per attempt in this scenario
+    monkeypatch.setattr("phone_runner.modern_composer.FEED_POST_SEARCH_SWIPES", 0)  # feed: one look, no scroll
     # 5g: never matches -> (None, None, detail containing "not found on own profile after 4 attempts");
     # assert no tap other than swipes happened.
     no_match_xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
@@ -1077,3 +1080,34 @@ def test_resolve_stops_at_the_deadline_without_extra_attempts(monkeypatch):
     assert pid is None and permalink is None
     assert clock["t"] <= 1060.0 + 20.0  # never runs far past the deadline
     assert "time budget" in detail or "not found" in detail
+
+
+def test_resolve_finds_a_new_reel_in_the_home_feed_when_the_profile_lacks_it(monkeypatch):
+    nothing = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.TextView" text="Personal details" bounds="[36,300][800,360]" /></node></hierarchy>"""
+    feed = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" content-desc="More options for Agung's post" bounds="[954,620][1080,745]" />
+    <node class="android.view.ViewGroup" text="In 2020, onboard footage caught a driver pulling the whole steering wheel" bounds="[36,780][1044,1300]" />
+    </node></hierarchy>"""
+    menu = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" text="Copy link" bounds="[36,1953][1044,2085]" /></node></hierarchy>"""
+    monkeypatch.setattr("phone_runner.modern_composer.PROFILE_POST_SEARCH_SWIPES", 2)
+    dumps = iter([AdbResult(0, nothing, "")] * 3 + [AdbResult(0, feed, ""), AdbResult(0, menu, "")])
+    taps, feed_opened = [], []
+    monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_feed", lambda s: feed_opened.append(s))
+    monkeypatch.setattr("phone_runner.modern_composer.clear_and_verify_clipboard", lambda s: (True, "sentinel_1"))
+    monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.query_ui_hierarchy", lambda s: next(dumps))
+    monkeypatch.setattr("phone_runner.modern_composer.human_tap", lambda serial, bounds, rng=None: taps.append(bounds))
+    monkeypatch.setattr("phone_runner.modern_composer.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+    monkeypatch.setattr(
+        "phone_runner.modern_composer.read_device_clipboard",
+        lambda s: AdbResult(0, "https://www.facebook.com/story.php?story_fbid=4728300000000000&id=100009439229483", ""),
+    )
+
+    pid, _, _ = resolve_latest_post_link(TEST_SERIAL, "In 2020, onboard footage caught a driver pulling the whole steering wheel")
+
+    assert pid == "4728300000000000"
+    assert feed_opened == [TEST_SERIAL]
+    assert (954, 620, 1080, 745) in taps

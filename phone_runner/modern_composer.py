@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from phone_runner.adb import (
     AdbResult,
+    launch_facebook_feed,
     launch_facebook_own_profile,
     query_ui_hierarchy,
     read_device_clipboard,
@@ -64,6 +65,7 @@ CAPTION_MATCH_PREFIX_CHARS = 30
 RESOLVE_ATTEMPTS = 4
 RESOLVE_RETRY_WAIT_SECONDS = 10.0
 PROFILE_POST_SEARCH_SWIPES = 6
+FEED_POST_SEARCH_SWIPES = 2
 
 
 def normalize_feed_text(value: str | None) -> str:
@@ -738,6 +740,22 @@ def _resolve_latest_post_link(
             ui_res2 = query_ui_hierarchy(serial)
             stdout2 = ui_res2.stdout if ui_res2.returncode == 0 and ui_res2.stdout else ""
             more_bounds, detail = find_matching_post_more_options(stdout2, caption)
+
+        if not more_bounds and not (deadline is not None and time.monotonic() > deadline):
+            # New reels often show in the home Feed (own post on top) before they are listed under the
+            # profile's "All" tab (deliveries 161/162, 2026-10-17). The unique caption match keeps it ours.
+            launch_facebook_feed(serial)
+            time.sleep(4.0)
+            feed_swipes = 0
+            while True:
+                ui_feed = query_ui_hierarchy(serial)
+                feed_xml = ui_feed.stdout if ui_feed.returncode == 0 and ui_feed.stdout else ""
+                more_bounds, detail = find_matching_post_more_options(feed_xml, caption)
+                if more_bounds or feed_swipes >= FEED_POST_SEARCH_SWIPES or (deadline is not None and time.monotonic() > deadline):
+                    break
+                run_adb(["shell", "input", "swipe", "540", "1600", "540", "800", "300"], serial=serial)
+                feed_swipes += 1
+                time.sleep(2.0)
 
         if not more_bounds:
             last_detail = detail
