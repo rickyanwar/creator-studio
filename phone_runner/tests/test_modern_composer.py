@@ -35,9 +35,11 @@ class _NoopImeContext:
 
 
 @pytest.fixture(autouse=True)
-def _no_real_portal_ime(monkeypatch):
+def _no_real_portal_ime(monkeypatch, request):
     monkeypatch.setattr("phone_runner.modern_composer.PortalImeContext", _NoopImeContext)
     monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_feed", lambda s: None)
+    if request.node.name != "test_profile_reload_selects_all_tab_scrolls_top_and_pulls_to_refresh":
+        monkeypatch.setattr("phone_runner.modern_composer._show_profile_all_tab_reloaded", lambda s: None)
 
 
 TEST_SERIAL = "100.64.96.50:5555"
@@ -1111,3 +1113,24 @@ def test_resolve_finds_a_new_reel_in_the_home_feed_when_the_profile_lacks_it(mon
     assert pid == "4728300000000000"
     assert feed_opened == [TEST_SERIAL]
     assert (954, 620, 1080, 745) in taps
+
+
+def test_profile_reload_selects_all_tab_scrolls_top_and_pulls_to_refresh(monkeypatch):
+    from phone_runner import modern_composer as mc
+
+    reels_tab = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.FrameLayout" content-desc="All, 1 of 4" bounds="[36,108][160,216]" />
+    <node class="android.widget.FrameLayout" content-desc="Reels, 2 of 4" bounds="[184,108][366,216]" />
+    </node></hierarchy>"""
+    taps, cmds = [], []
+    monkeypatch.setattr(mc, "query_ui_hierarchy", lambda s: AdbResult(0, reels_tab, ""))
+    monkeypatch.setattr(mc, "human_tap", lambda serial, bounds, rng=None: taps.append(bounds))
+    monkeypatch.setattr(mc, "run_adb", lambda args, serial=None: cmds.append(list(args)) or AdbResult(0, "", ""))
+    monkeypatch.setattr(mc.time, "sleep", lambda s: None)
+
+    mc._show_profile_all_tab_reloaded(TEST_SERIAL)
+
+    assert taps == [(36, 108, 160, 216)]  # the All tab, never the Reels tab
+    swipes = [c for c in cmds if "swipe" in c]
+    assert len(swipes) == mc.PROFILE_TOP_SWIPES + 1
+    assert all(int(c[4]) < int(c[6]) for c in swipes)  # every swipe goes DOWN (to the top / pull to refresh)

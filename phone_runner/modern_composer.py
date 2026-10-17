@@ -666,6 +666,35 @@ def extract_post_id_from_url(url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+PROFILE_TOP_SWIPES = 4
+
+
+def _show_profile_all_tab_reloaded(serial: str) -> None:
+    """Owner procedure (2026-10-17): on the own profile select the "All" tab (Facebook remembers the last
+    tab; the Reels grid has no captions), scroll to the very top, then pull down to reload. The profile
+    list is cached, so a just-uploaded post or reel only appears after the reload, at the top."""
+    ui_res = query_ui_hierarchy(serial)
+    if ui_res.returncode == 0 and ui_res.stdout:
+        try:
+            tree = ET.fromstring(ui_res.stdout.strip())
+        except Exception:
+            tree = None
+        if tree is not None:
+            for node in tree.iter("node"):
+                if (node.attrib.get("content-desc") or "").strip().startswith("All, 1 of"):
+                    bounds = parse_bounds(node.attrib.get("bounds", ""))
+                    if bounds:
+                        human_tap(serial, bounds)
+                        time.sleep(2.5)
+                    break
+    for _ in range(PROFILE_TOP_SWIPES):
+        run_adb(["shell", "input", "swipe", "540", "600", "540", "1800", "250"], serial=serial)
+        time.sleep(0.8)
+    # Pull to refresh from the top, then give the reload time to land.
+    run_adb(["shell", "input", "swipe", "540", "500", "540", "1700", "400"], serial=serial)
+    time.sleep(4.0)
+
+
 def _find_copy_link(serial: str) -> tuple[int, int, int, int] | None:
     ui_res = query_ui_hierarchy(serial)
     if ui_res.returncode != 0 or not ui_res.stdout:
@@ -725,6 +754,7 @@ def _resolve_latest_post_link(
             break
         launch_facebook_own_profile(serial)
         time.sleep(4.0)
+        _show_profile_all_tab_reloaded(serial)
 
         ui_res = query_ui_hierarchy(serial)
         stdout1 = ui_res.stdout if ui_res.returncode == 0 and ui_res.stdout else ""
