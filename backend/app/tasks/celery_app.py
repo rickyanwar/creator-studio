@@ -75,6 +75,11 @@ celery_app.conf.update(
         "app.tasks.yt_clip.analyze_video": {"queue": "video"},
         "app.tasks.yt_clip_render.render_youtube_clip": {"queue": "video"},
         "app.tasks.ai_video_finalize.finalize_ai_video": {"queue": "video"},
+        # Phone posting holds a slot for 5-10 min (one real post) and phone recovery up to ~5 min
+        # (one-shot Hermes repair). On the 2-slot default queue they starved renders and, worse,
+        # two slow renders stopped every phone post (2026-10-17 test). Own single-slot worker.
+        "app.tasks.social_delivery.dispatch_social_deliveries": {"queue": "delivery"},
+        "app.tasks.phone_watchdog.check_phone_devices": {"queue": "delivery"},
     },
 )
 

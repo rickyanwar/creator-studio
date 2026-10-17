@@ -32,3 +32,11 @@ def test_import_status_returns_result():
     result = MagicMock(state="SUCCESS", ready=lambda: True, failed=lambda: False, result={"results": []})
     with patch("celery.result.AsyncResult", return_value=result):
         assert get_import_links_status("task-1", MagicMock()) == {"state": "SUCCESS", "results": []}
+
+
+def test_phone_delivery_tasks_have_their_own_queue():
+    from app.tasks.celery_app import celery_app
+
+    routes = celery_app.conf.task_routes
+    assert routes["app.tasks.social_delivery.dispatch_social_deliveries"] == {"queue": "delivery"}
+    assert routes["app.tasks.phone_watchdog.check_phone_devices"] == {"queue": "delivery"}

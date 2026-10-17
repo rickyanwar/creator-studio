@@ -160,7 +160,7 @@ jobs:
               [ -n "$PREV_RENDERER_IMG" ] && docker tag "$PREV_RENDERER_TAG" "$PREV_RENDERER_TARGET"
               [ -n "$PREV_FRONTEND_IMG" ] && docker tag "$PREV_FRONTEND_TAG" "$PREV_FRONTEND_TARGET"
 
-              APP_SERVICES="api worker worker-gallery worker-visual worker-video beat frontend renderer nginx"
+              APP_SERVICES="api worker worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx"
               if ! docker compose -p studio -f docker-compose.server.yml up -d --no-deps --force-recreate $APP_SERVICES; then
                 echo "✗ Rollback service recreation failed." >&2
                 exit 1

@@ -85,6 +85,7 @@ Breaking these has caused real incidents.
   - `gallery` queue: gallery downloads and labels
   - `video` queue: ffmpeg work
   - `visual` queue: AI image redesign
+  - `delivery` queue: social delivery dispatch (phone posting) + phone watchdog, own single-slot `worker-delivery`
 
 **VPS**
 - Small box, about 1.4 GB free RAM. Never enable `hq_upscale` (it OOMs). Keep `worker-video` memory caps.

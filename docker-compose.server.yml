@@ -83,6 +83,23 @@ services:
       redis:
         condition: service_healthy
 
+  # ── Celery Worker (social delivery dispatch: phone posting + phone watchdog) ──
+  # One slot: there is one phone, and a single post takes 5-10 min (see celery_app task_routes).
+  worker-delivery:
+    init: true
+    image: studio-backend:latest
+    pull_policy: never
+    restart: always
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1 --queues=delivery --max-tasks-per-child=100
+    env_file: .env
+    volumes:
+      - media_data:/opt/studio/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   worker-visual:
     init: true  # reap orphaned child processes (headless Chrome zombies)
     image: studio-backend:latest
