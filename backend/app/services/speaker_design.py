@@ -9,7 +9,7 @@ import threading
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -145,6 +145,16 @@ def _rows(db, names: list[str]) -> list[GalleryImage]:
 
 def _read_photo(row: GalleryImage) -> bytes:
     return Path(row.local_path).read_bytes()
+
+
+def _as_naive_utc(value) -> datetime:
+    """Gallery rows mix date (captured_at) and naive/aware datetimes; compare them as naive UTC datetimes.
+    None or unknown types sort as the oldest possible value."""
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+    if isinstance(value, date):
+        return datetime.combine(value, time.min)
+    return datetime.min
 
 
 HEAD_AND_SHOULDERS_FRAMING = "Tight head-and-shoulders, top of the head about 8-12 percent from the top edge, face about 40-45 percent of the card width, eyes in the upper third; shoulders and chest continue down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
@@ -337,7 +347,7 @@ def pick_speaker_photos(db, name: str, mood: str = "any") -> list[GalleryImage]:
     def _sort_key(r):
         expr_rank = _expression_rank(r, mood)
         half_body = 1 if _is_half_body_source(r) else 0
-        when = getattr(r, "downloaded_at", None) or getattr(r, "captured_at", None) or datetime.min.replace(tzinfo=timezone.utc)
+        when = _as_naive_utc(getattr(r, "downloaded_at", None) or getattr(r, "captured_at", None))
         return (expr_rank, half_body, when)
 
     return sorted(candidates, key=_sort_key, reverse=True)[:2]
@@ -346,14 +356,14 @@ def pick_speaker_photos(db, name: str, mood: str = "any") -> list[GalleryImage]:
 def pick_moment_photos(db, names: list[str], around: datetime, *, article_text: str = "", speaker: str | None = None) -> list[GalleryImage]:
     speaker_variants = set(get_name_variants(speaker)) if speaker else set()
     all_names = list(dict.fromkeys([*names, *speaker_variants]))
-    cutoff = around.replace(tzinfo=None) - timedelta(hours=72)
+    cutoff = _as_naive_utc(around) - timedelta(hours=72)
     s_event = story_event(article_text)
     words = set(re.findall(r"[a-z0-9]+", (article_text or "").lower()))
 
     candidates = []
     for row in _rows(db, all_names)[:15]:
         when = row.captured_at or row.downloaded_at
-        if when and getattr(when, "replace", lambda **_: when)(tzinfo=None) < cutoff:
+        if when and _as_naive_utc(when) < cutoff:
             continue
         attrs = row.attributes or {}
         shot = attrs.get("shot_type") if isinstance(attrs, dict) else None
@@ -365,7 +375,7 @@ def pick_moment_photos(db, names: list[str], around: datetime, *, article_text: 
             continue
         caption = str(attrs.get("caption", "") if isinstance(attrs, dict) else "") + " " + str(attrs.get("getty_slug", "") if isinstance(attrs, dict) else "")
         overlap = len(words.intersection(set(re.findall(r"[a-z0-9]+", caption.lower()))))
-        when_val = getattr(row, "downloaded_at", None) or getattr(row, "captured_at", None) or datetime.min.replace(tzinfo=timezone.utc)
+        when_val = _as_naive_utc(getattr(row, "downloaded_at", None) or getattr(row, "captured_at", None))
         candidates.append((p_event, overlap, when_val, row))
 
     if s_event == "crash":
