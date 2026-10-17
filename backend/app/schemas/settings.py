@@ -54,6 +54,29 @@ class SettingsUpdate(BaseModel):
     gallery_labeling_enabled: Optional[bool] = None
     gallery_labeling_daily_cap: Optional[int] = Field(None, ge=0, le=5000)
 
+    # ── Visual Engine ──
+    visual_engine_daily_max: Optional[int] = Field(None, ge=0, le=1000)
+
+    # ── gpt-cli Engine ──
+    gptcli_enabled: Optional[bool] = None
+    gptcli_base_url: Optional[str] = None
+    gptcli_token: Optional[str] = None   # plain — encrypted before saving; "" clears
+    gptcli_fanpage_ids: Optional[list[int]] = None
+    gptcli_thread: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    gptcli_size: Optional[str] = Field(None, pattern=r"^\d{3,4}x\d{3,4}$")
+    ai_day_start: Optional[str] = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    codex_share_percent: Optional[int] = Field(None, ge=0, le=100)
+    codex_share_window_jobs: Optional[int] = Field(None, ge=1, le=1000)
+    codex_overflow_queue_len: Optional[int] = Field(None, ge=0, le=100)
+    codex_share_max_pct: Optional[int] = Field(None, ge=0, le=100)
+    codex_fallback_max_pct: Optional[int] = Field(None, ge=0, le=100)
+    codex_night_max_pct: Optional[int] = Field(None, ge=0, le=100)
+    codex_rest_pct: Optional[int] = Field(None, ge=0, le=100)
+    codex_window_capacity_est: Optional[int] = Field(None, ge=1, le=10000)
+    codex_night_min_gap_s: Optional[int] = Field(None, ge=0, le=3600)
+    codex_night_gap_jitter_s: Optional[int] = Field(None, ge=0, le=3600)
+    codex_usage_url: Optional[str] = None
+
 
 class SettingsOut(BaseModel):
     crawl_interval_minutes: int
@@ -121,6 +144,29 @@ class SettingsOut(BaseModel):
     gallery_labels_total: Optional[int] = None
     gallery_labels_pending: Optional[int] = None
     gallery_labels_failed: Optional[int] = None
+
+    # ── Visual Engine ──
+    visual_engine_daily_max: int = 60
+
+    # ── gpt-cli Engine ──
+    gptcli_enabled: bool = False
+    gptcli_base_url: str = "http://172.17.0.1:8099"
+    has_gptcli_token: bool = False
+    gptcli_fanpage_ids: list[int] = []
+    gptcli_thread: str = "studio"
+    gptcli_size: str = "1080x1350"
+    ai_day_start: str = "05:30"
+    codex_share_percent: int = 35
+    codex_share_window_jobs: int = 40
+    codex_overflow_queue_len: int = 3
+    codex_share_max_pct: int = 60
+    codex_fallback_max_pct: int = 85
+    codex_night_max_pct: int = 70
+    codex_rest_pct: int = 95
+    codex_window_capacity_est: int = 60
+    codex_night_min_gap_s: int = 240
+    codex_night_gap_jitter_s: int = 60
+    codex_usage_url: Optional[str] = None
 
     model_config = {"from_attributes": False}
 

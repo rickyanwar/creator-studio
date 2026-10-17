@@ -133,6 +133,25 @@ def get_settings(db: DB, _: CurrentUser):
         gallery_labels_total=labels_total,
         gallery_labels_pending=labels_pending,
         gallery_labels_failed=labels_failed,
+        visual_engine_daily_max=getattr(row, "visual_engine_daily_max", 60) if getattr(row, "visual_engine_daily_max", None) is not None else 60,
+        gptcli_enabled=getattr(row, "gptcli_enabled", False) if getattr(row, "gptcli_enabled", None) is not None else False,
+        gptcli_base_url=getattr(row, "gptcli_base_url", "http://172.17.0.1:8099") or "http://172.17.0.1:8099",
+        has_gptcli_token=bool(getattr(row, "gptcli_token_encrypted", None)),
+        gptcli_fanpage_ids=list(getattr(row, "gptcli_fanpage_ids", None) or []),
+        gptcli_thread=getattr(row, "gptcli_thread", "studio") or "studio",
+        gptcli_size=getattr(row, "gptcli_size", "1080x1350") or "1080x1350",
+        ai_day_start=getattr(row, "ai_day_start", "05:30") or "05:30",
+        codex_share_percent=getattr(row, "codex_share_percent", 35) if getattr(row, "codex_share_percent", None) is not None else 35,
+        codex_share_window_jobs=getattr(row, "codex_share_window_jobs", 40) if getattr(row, "codex_share_window_jobs", None) is not None else 40,
+        codex_overflow_queue_len=getattr(row, "codex_overflow_queue_len", 3) if getattr(row, "codex_overflow_queue_len", None) is not None else 3,
+        codex_share_max_pct=getattr(row, "codex_share_max_pct", 60) if getattr(row, "codex_share_max_pct", None) is not None else 60,
+        codex_fallback_max_pct=getattr(row, "codex_fallback_max_pct", 85) if getattr(row, "codex_fallback_max_pct", None) is not None else 85,
+        codex_night_max_pct=getattr(row, "codex_night_max_pct", 70) if getattr(row, "codex_night_max_pct", None) is not None else 70,
+        codex_rest_pct=getattr(row, "codex_rest_pct", 95) if getattr(row, "codex_rest_pct", None) is not None else 95,
+        codex_window_capacity_est=getattr(row, "codex_window_capacity_est", 60) if getattr(row, "codex_window_capacity_est", None) is not None else 60,
+        codex_night_min_gap_s=getattr(row, "codex_night_min_gap_s", 240) if getattr(row, "codex_night_min_gap_s", None) is not None else 240,
+        codex_night_gap_jitter_s=getattr(row, "codex_night_gap_jitter_s", 60) if getattr(row, "codex_night_gap_jitter_s", None) is not None else 60,
+        codex_usage_url=getattr(row, "codex_usage_url", None),
     )
 
 
@@ -157,6 +176,9 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         row.telegram_bot_token_encrypted = encrypt(data.pop("telegram_bot_token"))
     if "nine_router_api_key" in data:
         row.nine_router_api_key_encrypted = encrypt(data.pop("nine_router_api_key"))
+    if "gptcli_token" in data:
+        token = (data.pop("gptcli_token") or "").strip()
+        row.gptcli_token_encrypted = encrypt(token) if token else None
     if "youtube_cookies" in data:
         from app.services.yt_downloader import validate_cookies_txt
 
@@ -190,6 +212,25 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
     if data.get("gallery_labeling_enabled") and not row.gallery_labeling_enabled:
         from datetime import datetime, timezone
         row.gallery_labeling_since = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    if "gptcli_base_url" in data:
+        base_url = (data["gptcli_base_url"] or "").strip()
+        if not (base_url.startswith("http://") or base_url.startswith("https://")):
+            raise HTTPException(status_code=400, detail="gptcli_base_url must start with http:// or https://")
+        data["gptcli_base_url"] = base_url.rstrip("/")
+
+    if "codex_usage_url" in data:
+        usage_url = (data["codex_usage_url"] or "").strip()
+        if not usage_url:
+            data["codex_usage_url"] = None
+        else:
+            if not (usage_url.startswith("http://") or usage_url.startswith("https://")):
+                raise HTTPException(status_code=400, detail="codex_usage_url must start with http:// or https://")
+            data["codex_usage_url"] = usage_url
+
+    if "gptcli_fanpage_ids" in data:
+        raw_ids = data["gptcli_fanpage_ids"] or []
+        data["gptcli_fanpage_ids"] = sorted(set(int(i) for i in raw_ids))
 
     for field, value in data.items():
         setattr(row, field, value)
@@ -339,3 +380,147 @@ def clear_youtube_block(db: DB, _: CurrentUser):
 
     clear_block(db)
     return {"ok": True}
+
+
+@router.get("/ai-engine-status")
+def ai_engine_status(db: DB, _: CurrentUser):
+    from datetime import datetime, timezone
+    from app.models.ai_copy_events import AICopyEvent
+    from app.models.settings import Settings
+    from app.services.codex_budget import get_codex_usage
+    from app.services.engine_router import codex_share, visual_queue_len, WIB
+    from app.services import gptcli_client
+    from app.services.gptcli_client import (
+        get_gptcli_config,
+        gptcli_unavailable_until,
+        UNAVAILABLE_REASON_KEY,
+    )
+
+    day_start_wib = None
+    utc_start_naive = datetime.min
+    now = datetime.now(timezone.utc)
+    try:
+        now_wib = now.astimezone(WIB)
+        wib_midnight = datetime(now_wib.year, now_wib.month, now_wib.day, 0, 0, 0, tzinfo=WIB)
+        utc_start_naive = wib_midnight.astimezone(timezone.utc).replace(tzinfo=None)
+        day_start_wib = wib_midnight.isoformat()
+    except Exception as exc:
+        logger.warning("ai_engine_status: error computing day_start_wib: %s", exc)
+
+    today = None
+    try:
+        counts = {
+            "gptcli": {"success": 0, "recovered": 0, "failed": 0},
+            "9router": {"success": 0, "recovered": 0, "failed": 0},
+            "none": {"failed": 0},
+            "deferred": 0,
+        }
+        events = (
+            db.query(AICopyEvent.final_provider, AICopyEvent.outcome)
+            .filter(
+                AICopyEvent.context == "image_gen",
+                AICopyEvent.created_at >= utc_start_naive,
+            )
+            .all()
+        )
+        for provider, outcome in events:
+            if outcome == "deferred":
+                counts["deferred"] += 1
+                continue
+            prov_key = provider or "none"
+            if prov_key in counts and isinstance(counts[prov_key], dict):
+                if outcome in counts[prov_key]:
+                    counts[prov_key][outcome] += 1
+                else:
+                    counts[prov_key][outcome] = 1
+            else:
+                counts.setdefault(prov_key, {})[outcome] = counts.setdefault(prov_key, {}).get(outcome, 0) + 1
+        today = counts
+    except Exception as exc:
+        logger.warning("ai_engine_status: error in today stats: %s", exc)
+        today = None
+
+    identity_rejects_today = None
+    try:
+        identity_rejects_today = (
+            db.query(AICopyEvent)
+            .filter(
+                AICopyEvent.context == "image_identity",
+                AICopyEvent.outcome == "failed",
+                AICopyEvent.created_at >= utc_start_naive,
+            )
+            .count()
+        )
+    except Exception as exc:
+        logger.warning("ai_engine_status: error in identity_rejects: %s", exc)
+        identity_rejects_today = None
+
+    codex_day_share = None
+    try:
+        settings_row = db.query(Settings).first() if db is not None else None
+        window_jobs = getattr(settings_row, "codex_share_window_jobs", 40) or 40
+        codex_day_share = round(codex_share(db, window_jobs) * 100, 1)
+    except Exception as exc:
+        logger.warning("ai_engine_status: error in codex_day_share: %s", exc)
+        codex_day_share = None
+
+    codex_usage = None
+    try:
+        usage = get_codex_usage(db, now)
+        codex_usage = {
+            "window_pct": usage.window_pct,
+            "weekly_pct": usage.weekly_pct,
+            "resets_at": usage.resets_at.isoformat() if usage.resets_at is not None else None,
+            "source": usage.source,
+        }
+    except Exception as exc:
+        logger.warning("ai_engine_status: error in codex_usage: %s", exc)
+        codex_usage = None
+
+    gptcli_unavail_until = None
+    gptcli_unavail_reason = None
+    try:
+        unavail = gptcli_unavailable_until(now)
+        if unavail is not None:
+            gptcli_unavail_until = unavail.isoformat() if hasattr(unavail, "isoformat") else str(unavail)
+            try:
+                r = gptcli_client._redis()
+                gptcli_unavail_reason = r.get(UNAVAILABLE_REASON_KEY)
+            except Exception as exc:
+                logger.warning("ai_engine_status: error reading UNAVAILABLE_REASON_KEY: %s", exc)
+                gptcli_unavail_reason = None
+    except Exception as exc:
+        logger.warning("ai_engine_status: error in gptcli_unavailable_until: %s", exc)
+        gptcli_unavail_until = None
+        gptcli_unavail_reason = None
+
+    v_queue_len = None
+    try:
+        v_queue_len = visual_queue_len()
+    except Exception as exc:
+        logger.warning("ai_engine_status: error in visual_queue_len: %s", exc)
+        v_queue_len = None
+
+    gptcli_enabled = None
+    gptcli_fanpage_ids = None
+    try:
+        cfg = get_gptcli_config(db)
+        gptcli_enabled = cfg.enabled
+        gptcli_fanpage_ids = list(cfg.fanpage_ids)
+    except Exception as exc:
+        logger.warning("ai_engine_status: error in get_gptcli_config: %s", exc)
+        gptcli_enabled = None
+        gptcli_fanpage_ids = None
+
+    return {
+        "day_start_wib": day_start_wib,
+        "today": today,
+        "identity_rejects_today": identity_rejects_today,
+        "codex_day_share": codex_day_share,
+        "codex_usage": codex_usage,
+        "gptcli_unavailable_until": gptcli_unavail_until,
+        "gptcli_unavailable_reason": gptcli_unavail_reason,
+        "visual_queue_len": v_queue_len,
+        "gptcli_enabled": gptcli_enabled,
+        "gptcli_fanpage_ids": gptcli_fanpage_ids,
+    }

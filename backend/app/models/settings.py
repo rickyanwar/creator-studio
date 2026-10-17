@@ -118,6 +118,28 @@ class Settings(Base):
     # ── Visual Engine ─────────────────────────────────────────────────────────
     visual_engine_daily_max = Column(Integer, default=60, nullable=False, server_default="60")
 
+    # gpt-cli engine (owner plan 2026-10-17): ChatGPT web via gpt serve is the primary image engine,
+    # Codex (9Router cx/*) shares the load and is the fallback. Switch off = old behaviour exactly.
+    gptcli_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    gptcli_base_url = Column(String(256), default="http://172.17.0.1:8099", nullable=False, server_default="http://172.17.0.1:8099")
+    gptcli_token_encrypted = Column(String(512), nullable=True)
+    # Empty list = every fanpage; otherwise only these fanpage ids. JSON (not ARRAY) so SQLite tests work.
+    gptcli_fanpage_ids = Column(JSON, default=list, nullable=False, server_default="[]")
+    gptcli_thread = Column(String(64), default="studio", nullable=False, server_default="studio")
+    gptcli_size = Column(String(16), default="1080x1350", nullable=False, server_default="1080x1350")
+    ai_day_start = Column(String(5), default="05:30", nullable=False, server_default="05:30")  # WIB; = gpt serve sleep end
+    codex_share_percent = Column(Integer, default=35, nullable=False, server_default="35")
+    codex_share_window_jobs = Column(Integer, default=40, nullable=False, server_default="40")
+    codex_overflow_queue_len = Column(Integer, default=3, nullable=False, server_default="3")
+    codex_share_max_pct = Column(Integer, default=60, nullable=False, server_default="60")
+    codex_fallback_max_pct = Column(Integer, default=85, nullable=False, server_default="85")
+    codex_night_max_pct = Column(Integer, default=70, nullable=False, server_default="70")
+    codex_rest_pct = Column(Integer, default=95, nullable=False, server_default="95")
+    codex_window_capacity_est = Column(Integer, default=60, nullable=False, server_default="60")
+    codex_night_min_gap_s = Column(Integer, default=240, nullable=False, server_default="240")
+    codex_night_gap_jitter_s = Column(Integer, default=60, nullable=False, server_default="60")
+    codex_usage_url = Column(String(512), nullable=True)
+
     # ── Gallery Labeling ──────────────────────────────────────────────────────
     gallery_labeling_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     gallery_labeling_daily_cap = Column(Integer, default=1000, nullable=False, server_default="1000")

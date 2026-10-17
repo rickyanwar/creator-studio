@@ -58,6 +58,8 @@ class PublishJob(Base):
     design_image_path = Column(String(512), nullable=True)  # rendered PNG (Phase 2D)
     design_image_url = Column(String(512), nullable=True)
     design_template_id = Column(Integer, nullable=True)     # FK to design_templates (Phase 2D)
+    # Night deferral (gpt-cli plan B10): render_pending_designs / recover_stuck_renders skip the job until then.
+    design_not_before = Column(DateTime, nullable=True)
     # AI's own call (from the same news-copy generation, see news_copywriter.py
     # build_news_copy_prompt TASK 1) on whether this is significant enough
     # breaking news to skip the normal per-fanpage publish pacing/daily-cap
