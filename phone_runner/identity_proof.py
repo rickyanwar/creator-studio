@@ -34,6 +34,7 @@ from phone_runner.resolver import (
     extract_numeric_fb_id,
     is_allowed_facebook_url,
     resolve_facebook_actor_url,
+    share_url_matches_expected_id,
 )
 
 logger = logging.getLogger("phone_runner")
@@ -1725,6 +1726,10 @@ def collect_own_url_proof_chain(
                     return make_fail("Failed to copy root profile link", "root_url")
 
                 resolved_root = resolve_facebook_actor_url(copied_root_url)
+                if not resolved_root and expected_root_id and share_url_matches_expected_id(copied_root_url, str(expected_root_id)):
+                    # The profile now has a username: the share link redirects to facebook.com/<vanity>, not
+                    # profile.php?id=. Same proof strength: profile.php?id=<expected> redirects to that same vanity.
+                    resolved_root = f"https://www.facebook.com/profile.php?id={str(expected_root_id).strip()}"
                 if not resolved_root:
                     return make_fail("Failed to resolve root URL", "root_url")
 

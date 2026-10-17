@@ -394,6 +394,66 @@ def extract_numeric_fb_id(url_or_header: str) -> str | None:
     return None
 
 
+_VANITY_RE = re.compile(r"^/([A-Za-z0-9.]{3,80})/?$")
+_RESERVED_PATHS = {"profile.php", "share", "pages", "people", "groups", "watch", "story.php", "permalink.php", "login", "login.php"}
+
+
+def _redirect_vanity(url: str, timeout: float, opener: urllib.request.OpenerDirector) -> str | None:
+    """One HEAD request; returns the lowercase vanity slug of a facebook.com/<slug> redirect, else None."""
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}, method="HEAD")
+    resp = None
+    try:
+        try:
+            resp = opener.open(req, timeout=timeout)
+            status = getattr(resp, "status", getattr(resp, "code", None))
+            headers = resp.headers
+        except urllib.error.HTTPError as err:
+            resp, status, headers = err, err.code, err.headers
+        if status not in (301, 302, 303, 307, 308):
+            return None
+        loc = (headers.get("Location") or "").strip()
+    except Exception:
+        return None
+    finally:
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
+    if not loc or len(loc) > MAX_URL_LENGTH:
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(loc)
+    except Exception:
+        return None
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS or parsed.netloc != parsed.hostname:
+        return None
+    m = _VANITY_RE.match(parsed.path)
+    if not m or m.group(1).lower() in _RESERVED_PATHS:
+        return None
+    return m.group(1).lower()
+
+
+def share_url_matches_expected_id(
+    raw_url: str,
+    expected_id: str,
+    timeout: float = 5.0,
+    opener: urllib.request.OpenerDirector | None = None,
+) -> bool:
+    """Proves a copied profile share link belongs to `expected_id` when Facebook redirects it to a
+    username (vanity) instead of profile.php?id=. Seen 2026-10-17: Agung's link started redirecting to
+    facebook.com/<username>. Both the copied link and profile.php?id=<expected_id> must redirect to the
+    SAME vanity; anything else (network error, login wall, different slug) returns False."""
+    if not is_share_url(raw_url) or not re.fullmatch(r"\d{4,32}", str(expected_id or "").strip()):
+        return False
+    opener = opener or build_safe_opener()
+    copied = _redirect_vanity(raw_url, timeout, opener)
+    if not copied:
+        return False
+    expected = _redirect_vanity(f"https://www.facebook.com/profile.php?id={str(expected_id).strip()}", timeout, opener)
+    return bool(expected) and copied == expected
+
+
 def resolve_facebook_actor_url(
     raw_url: str,
     timeout: float = 5.0,
