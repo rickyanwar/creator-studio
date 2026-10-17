@@ -221,7 +221,7 @@ def test_endpoint_returns_counts(db_session: Session):
             }
         ]
         with TestClient(app) as client:
-            resp = client.post("/api/f1-drivers/sync")
+            resp = client.post("/f1-drivers/sync")
             assert resp.status_code == 200
             data = resp.json()
             assert "inserted" in data

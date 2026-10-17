@@ -11,7 +11,7 @@ from app.services.ig_viewer_health import TIERS, get_health
 from app.services.ig_viewer_sanitize import sanitize_error
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/scraper-health", tags=["scraper-health"])
+router = APIRouter(prefix="/scraper-health", tags=["scraper-health"])
 
 
 @router.get("")

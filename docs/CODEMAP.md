@@ -113,17 +113,17 @@ Frontend: `frontend/src/app/(dashboard)/*` pages. The pages are `dashboard`, `fa
 ## 7. Known issues found 2026-10-16
 
 1. FIXED 2026-10-17 (5c6cdfc): Radar UI 404. `api/radar.py` now uses `prefix="/radar"`; live `/api/radar/*` endpoints return 200 with a login token.
-2. ✔ `scraper_health` (`/api/scraper-health`) and `f1_drivers` (`prefix="/api/f1-drivers"` in `main.py`) only work because the frontend also calls them with an extra `/api`. This is inconsistent; fix together with #1.
+2. FIXED 2026-10-18: scraper_health and f1_drivers switched to bare prefixes (/scraper-health, /f1-drivers) on backend and frontend.
 3. FIXED 2026-10-17 (5c6cdfc): the radar mocks are replaced by `services/radar_llm.RadarLlm` (9Router text fallbacks, Redis cache 7 days, per-run budget 15 calls / 60 s because `evaluate_radar` holds a 180 s lock; on no answer it keeps the old safe defaults: separate story, "news" shelf). Verified live on 4 sample captions.
-4. ✔ The `visual` queue is not in `task_routes`. Only explicit `apply_async(queue="visual")` lands there, and a plain `.delay()` would run on `celery`.
-5. ✔ `backend/app/tasks/design_renderer.py.patch` is tracked in git (leftover).
+4. FIXED 2026-10-18: added visual queue task_route for run_preview_redesign as safety net.
+5. FIXED 2026-10-18: deleted leftover design_renderer.py.patch.
 6. ✔ `docker-compose.server.yml:45` mounts `/var/run/docker.sock` into `api` (host-root surface).
-7. ✔ `ai_caption.py` lists `ag/gemini-3-flash` twice (lines 211, 213). Harmless.
+7. FIXED 2026-10-18: already resolved (duplicate ag/gemini-3-flash gone since FlashFast change).
 8. Phone publishing on the modern FB app works since 2026-10-17 (photo + video/Reel). See `docs/codemap/publishing.md` §11.
 9. A deploy rollback keeps new migrations, so migrations must stay additive.
 10. FIXED 2026-10-17 (fc175ec): the gallery download gate fails closed (unparseable reply, missing `usable`, vision error and caller errors all skip the photo; it is not stored, so a later run retries the URL).
 11. FIXED 2026-10-17 (fc175ec): `Settings.ai_video_vision_qc_enabled` defaults to true (migration c80000000024 changes only the server default). Prod already had it on. Note: a vision-QC failure does not reject the video; `finalize_ai_video` creates the publish job as `pending_review` (held for the owner) instead of `pending_publish`.
-12. ✔ `frontend/src/lib/api.ts:69` `listBurners`/`createBurner` call `/burners`, which has no router (live 404). They are unused by any page, so this is dead code.
+12. FIXED 2026-10-18: deleted dead burner functions (listBurners, createBurner, updateBurner, deleteBurner) from api.ts.
 
 ## 8. Other docs
 

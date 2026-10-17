@@ -36,7 +36,7 @@ export const login = (username: string, password: string) =>
 // ── Dashboard ────────────────────────────────────────────────────────────────
 export const getDashboardStats = () => api.get("/dashboard/stats");
 export const getCrawlerHealth = () => api.get("/dashboard/health");
-export const getScraperHealth = () => api.get<ScraperHealth>("/api/scraper-health");
+export const getScraperHealth = () => api.get<ScraperHealth>("/scraper-health");
 
 // ── Fanpages ─────────────────────────────────────────────────────────────────
 export const listFanpages = () => api.get("/fanpages");
@@ -66,12 +66,6 @@ export const previewCaption = (
   });
 
 // ── Burners ──────────────────────────────────────────────────────────────────
-export const listBurners = () => api.get("/burners");
-export const createBurner = (data: { ig_username: string; password: string; proxy_url?: string }) =>
-  api.post("/burners", data);
-export const updateBurner = (id: number, data: Record<string, unknown>) =>
-  api.put(`/burners/${id}`, data);
-export const deleteBurner = (id: number) => api.delete(`/burners/${id}`);
 export const submitOTP = (id: number, otpCode: string) =>
   api.post(`/burners/${id}/challenge`, { otp_code: otpCode });
 export const testBurnerSession = (id: number) => api.post(`/burners/${id}/test-session`);
@@ -484,24 +478,24 @@ export const listGflowWorkers = () => api.get("/ai-video/workers");
 import { F1Driver } from "./types";
 
 export const listF1Drivers = (season?: number) =>
-  api.get<F1Driver[]>("/api/f1-drivers", { params: { season } });
+  api.get<F1Driver[]>("/f1-drivers", { params: { season } });
 
 export const syncF1Drivers = () =>
-  api.post<{ inserted: number; updated: number; unchanged: number }>("/api/f1-drivers/sync");
+  api.post<{ inserted: number; updated: number; unchanged: number }>("/f1-drivers/sync");
 
 export const createF1Driver = (data: Record<string, unknown>) =>
-  api.post<F1Driver>("/api/f1-drivers", data);
+  api.post<F1Driver>("/f1-drivers", data);
 
 export const updateF1Driver = (id: number, data: Record<string, unknown>) =>
-  api.patch<F1Driver>(`/api/f1-drivers/${id}`, data);
+  api.patch<F1Driver>(`/f1-drivers/${id}`, data);
 
 export const deleteF1Driver = (id: number) =>
-  api.delete(`/api/f1-drivers/${id}`);
+  api.delete(`/f1-drivers/${id}`);
 
 export const uploadF1DriverLogo = (id: number, file: File) => {
   const formData = new FormData();
   formData.append("file", file);
-  return api.post<F1Driver>(`/api/f1-drivers/${id}/logo`, formData, {
+  return api.post<F1Driver>(`/f1-drivers/${id}/logo`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
 };

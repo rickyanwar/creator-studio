@@ -65,5 +65,5 @@ def test_scraper_health_unavailable(monkeypatch, caplog):
 
 
 def test_scraper_health_requires_auth():
-    response = TestClient(app).get("/api/scraper-health")
+    response = TestClient(app).get("/scraper-health")
     assert response.status_code in (401, 403)

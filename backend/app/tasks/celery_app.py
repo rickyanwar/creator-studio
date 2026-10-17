@@ -80,6 +80,8 @@ celery_app.conf.update(
         # two slow renders stopped every phone post (2026-10-17 test). Own single-slot worker.
         "app.tasks.social_delivery.dispatch_social_deliveries": {"queue": "delivery"},
         "app.tasks.phone_watchdog.check_phone_devices": {"queue": "delivery"},
+        # Always an AI redesign; explicit apply_async(queue="visual") everywhere, this is the safety net.
+        "app.tasks.ig_recreate.run_preview_redesign": {"queue": "visual"},
     },
 )
 

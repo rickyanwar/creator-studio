@@ -114,7 +114,7 @@ def test_upload_driver_logo_path_traversal(client, db_session, monkeypatch):
     monkeypatch.setattr("app.api.f1_drivers.get_settings", lambda: type("Settings", (), {"storage_base_path": "/tmp"})())
     
     try:
-        res = client.post(f"/api/f1-drivers/{driver.id}/logo", files=files, headers=headers)
+        res = client.post(f"/f1-drivers/{driver.id}/logo", files=files, headers=headers)
     except Exception as e:
         assert "ResponseValidationError" in str(type(e))
         return

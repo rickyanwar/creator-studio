@@ -68,7 +68,7 @@ def test_api_list_drivers(client, fake_db):
     fake_db.query_data = [
         F1Driver(id=1, season=2026, surname="VERSTAPPEN", number=1, team_name="Red Bull", team_colour="#000000", verified=False)
     ]
-    resp = client.get("/api/f1-drivers?season=2026")
+    resp = client.get("/f1-drivers?season=2026")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
     assert resp.json()[0]["surname"] == "VERSTAPPEN"
@@ -81,7 +81,7 @@ def test_api_create_driver(client, fake_db):
         "team_name": "Test Team",
         "team_colour": "#AABBCC"
     }
-    resp = client.post("/api/f1-drivers", json=payload)
+    resp = client.post("/f1-drivers", json=payload)
     assert resp.status_code == 200
     assert resp.json()["surname"] == "SMITH"
     assert len(fake_db.added) == 1
@@ -100,7 +100,7 @@ def test_api_create_driver_conflict(client):
         "team_name": "Test Team",
         "team_colour": "#AABBCC"
     }
-    resp = client.post("/api/f1-drivers", json=payload)
+    resp = client.post("/f1-drivers", json=payload)
     assert resp.status_code == 409
     
     app.dependency_overrides = {}
@@ -113,7 +113,7 @@ def test_api_create_driver_validation(client, fake_db):
         "team_name": "Test Team",
         "team_colour": "red" # Invalid color
     }
-    resp = client.post("/api/f1-drivers", json=payload)
+    resp = client.post("/f1-drivers", json=payload)
     assert resp.status_code == 422
 
 def test_api_upload_logo(client, fake_db, tmp_path):
@@ -138,7 +138,7 @@ def test_api_upload_logo(client, fake_db, tmp_path):
 
     # test invalid file type
     resp = client.post(
-        "/api/f1-drivers/1/logo",
+        "/f1-drivers/1/logo",
         files={"file": ("test.txt", b"not a png")}
     )
     assert resp.status_code == 400
@@ -147,7 +147,7 @@ def test_api_upload_logo(client, fake_db, tmp_path):
     # test valid png
     magic_png = b'\x89PNG\r\n\x1a\n' + b'rest of content'
     resp = client.post(
-        "/api/f1-drivers/1/logo",
+        "/f1-drivers/1/logo",
         files={"file": ("test.png", magic_png)}
     )
     assert resp.status_code == 200
