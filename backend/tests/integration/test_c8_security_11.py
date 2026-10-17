@@ -53,7 +53,7 @@ def test_preview_enqueue_only(client, db_session):
     with patch("app.tasks.ig_recreate.run_preview_redesign.apply_async") as mock_apply, \
          patch("app.services.visual_engine.generate") as mock_generate:
          
-        res = client.post(f"/api/radar/decisions/{decision.id}/preview", headers=headers)
+        res = client.post(f"/radar/decisions/{decision.id}/preview", headers=headers)
         assert res.status_code == 202
         
         mock_apply.assert_called_once()

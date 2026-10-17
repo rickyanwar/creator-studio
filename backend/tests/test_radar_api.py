@@ -66,30 +66,30 @@ def test_radar_accounts_auth_required():
     # clear overrides
     app.dependency_overrides.clear()
     client = TestClient(app)
-    res = client.get("/api/radar/accounts")
+    res = client.get("/radar/accounts")
     assert res.status_code in (401, 403)
 
 def test_radar_accounts_crud(client):
     # GET
     fake_db = FakeDB()
     app.dependency_overrides[get_db] = lambda: fake_db
-    res = client.get("/api/radar/accounts")
+    res = client.get("/radar/accounts")
     assert res.status_code == 200
     assert res.json() == []
 
     # POST (validation error: bad username)
-    res = client.post("/api/radar/accounts", json={"niche": "f1", "ig_username": "invalid username!"})
+    res = client.post("/radar/accounts", json={"niche": "f1", "ig_username": "invalid username!"})
     assert res.status_code == 422
     
     # POST (success)
-    res = client.post("/api/radar/accounts", json={"niche": "f1", "ig_username": "@Valid.Name"})
+    res = client.post("/radar/accounts", json={"niche": "f1", "ig_username": "@Valid.Name"})
     assert res.status_code == 201
     assert res.json()["ig_username"] == "valid.name"
     
     # POST (conflict duplicate)
     fake_db = FakeDB(query_data=[{"id": 1}]) # simulate existing
     app.dependency_overrides[get_db] = lambda: fake_db
-    res = client.post("/api/radar/accounts", json={"niche": "f1", "ig_username": "valid.name"})
+    res = client.post("/radar/accounts", json={"niche": "f1", "ig_username": "valid.name"})
     assert res.status_code == 409
     
     # PATCH
@@ -106,13 +106,13 @@ def test_radar_accounts_crud(client):
     
     fake_db = FakeDB(query_data=[FakeAcc()])
     app.dependency_overrides[get_db] = lambda: fake_db
-    res = client.patch("/api/radar/accounts/1", json={"is_active": False})
+    res = client.patch("/radar/accounts/1", json={"is_active": False})
     # Will hit conflict check query because we mock it all. Wait, if body.niche is None, it won't check conflict.
     assert res.status_code == 200
     assert fake_db.committed is True
     
     # DELETE
-    res = client.delete("/api/radar/accounts/1")
+    res = client.delete("/radar/accounts/1")
     assert res.status_code == 204
     assert fake_db.deleted
 
@@ -121,7 +121,7 @@ def test_radar_accounts_crud(client):
             pass
         fake_db = FakeDB(query_data=[(["f1", "ufc"],)])
         app.dependency_overrides[get_db] = lambda: fake_db
-        res = client.get("/api/radar/niches")
+        res = client.get("/radar/niches")
         assert res.status_code == 200
 
 def test_fanpage_trigger(client):
@@ -284,7 +284,7 @@ def test_radar_stories(client):
     fake_db = FakeDB(query_data=[s])
     app.dependency_overrides[get_db] = lambda: fake_db
     
-    res = client.get("/api/radar/stories?limit=10")
+    res = client.get("/radar/stories?limit=10")
     assert res.status_code == 200
     data = res.json()
     assert len(data) == 1
@@ -298,25 +298,25 @@ def test_radar_stories_bounds(client):
     app.dependency_overrides.clear()
     client = TestClient(app)
     # Auth missing
-    assert client.get("/api/radar/stories").status_code in (401, 403)
+    assert client.get("/radar/stories").status_code in (401, 403)
     
     # Overrides back
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_db] = lambda: FakeDB()
     
     # limits
-    assert client.get("/api/radar/stories?limit=0").status_code == 422
-    assert client.get("/api/radar/stories?limit=201").status_code == 422
-    assert client.get("/api/radar/stories?limit=100").status_code == 200
+    assert client.get("/radar/stories?limit=0").status_code == 422
+    assert client.get("/radar/stories?limit=201").status_code == 422
+    assert client.get("/radar/stories?limit=100").status_code == 200
 
 def test_shadow_report(client):
     app.dependency_overrides[get_db] = lambda: FakeDB()
     # bounds
-    assert client.get("/api/radar/shadow-report?days=0").status_code == 422
-    assert client.get("/api/radar/shadow-report?days=31").status_code == 422
+    assert client.get("/radar/shadow-report?days=0").status_code == 422
+    assert client.get("/radar/shadow-report?days=31").status_code == 422
     
     # proper call
-    res = client.get("/api/radar/shadow-report?days=7")
+    res = client.get("/radar/shadow-report?days=7")
     assert res.status_code == 200
     data = res.json()
     assert "overall" in data

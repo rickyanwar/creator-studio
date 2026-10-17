@@ -14,16 +14,10 @@ from app.services.radar_repository import (
 from app.services.radar_engine import (
     cluster_posts, evaluate_all, nightly_plan
 )
+from app.services.radar_llm import RadarLlm
 from app.tasks.radar_locks import _RELEASE_LUA
 
 logger = logging.getLogger(__name__)
-
-# Mock LLM helpers - in real system, would import and use 9Router wrapper
-def mock_judge_same_story(a: str, b: str) -> bool:
-    return False
-
-def mock_classify_shelf(text: str) -> str:
-    return "news"
 
 def _redis():
     return redis.from_url(get_settings().redis_url, decode_responses=True)
@@ -39,6 +33,7 @@ def evaluate_radar():
 
     db = SessionLocal()
     try:
+        llm = RadarLlm(r)
         now = utcnow_naive()
         # Cluster unassigned posts
         recent_since = now - timedelta(hours=48)
@@ -46,7 +41,7 @@ def evaluate_radar():
         if new_posts:
             recent_stories = load_recent_stories(db, since=recent_since)
             
-            c_plan = cluster_posts(new_posts, recent_stories, judge=mock_judge_same_story, now=now)
+            c_plan = cluster_posts(new_posts, recent_stories, judge=llm.judge_same_story, now=now)
             apply_cluster_plan(db, c_plan)
             db.commit()
             
@@ -81,7 +76,7 @@ def evaluate_radar():
                     cfgs,
                     now,
                     existing_decisions,
-                    classify_shelf=mock_classify_shelf
+                    classify_shelf=llm.classify_shelf
                 )
                 
                 apply_evaluation_plan(db, eval_plan)

@@ -26,7 +26,7 @@ def client(db_session):
 
 def test_preview_endpoint(client, db_session):
     # Auth test
-    res = client.post("/api/radar/decisions/1/preview")
+    res = client.post("/radar/decisions/1/preview")
     assert res.status_code in (401, 403)
 
     from app.main import app
@@ -69,7 +69,7 @@ def test_preview_endpoint(client, db_session):
     from unittest.mock import patch
 
     with patch("app.tasks.ig_recreate.run_preview_redesign.apply_async") as mock_apply:
-        res = client.post(f"/api/radar/decisions/{decision.id}/preview", headers=headers)
+        res = client.post(f"/radar/decisions/{decision.id}/preview", headers=headers)
         assert res.status_code == 202
         data = res.json()
         assert data["status"] == "queued"
@@ -79,12 +79,12 @@ def test_preview_endpoint(client, db_session):
         mock_apply.assert_called_once_with((decision.id,), queue='visual')
 
         # Test duplicate request
-        res = client.post(f"/api/radar/decisions/{decision.id}/preview", headers=headers)
+        res = client.post(f"/radar/decisions/{decision.id}/preview", headers=headers)
         assert res.status_code == 409
 
         # Test regenerate
         decision.preview_status = None
         db_session.commit()
-        res = client.post(f"/api/radar/decisions/{decision.id}/regenerate", headers=headers)
+        res = client.post(f"/radar/decisions/{decision.id}/regenerate", headers=headers)
         assert res.status_code == 202
         assert mock_apply.call_count == 2

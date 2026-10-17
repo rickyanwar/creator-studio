@@ -9,7 +9,7 @@ from app.models.radar import RadarAccount, RadarStory, RadarStoryDecision
 from app.models.target_fanpages import TargetFanpage
 from app.schemas.radar import RadarAccountCreate, RadarAccountUpdate, RadarAccountOut, RadarStoryOut
 
-router = APIRouter(prefix="/api/radar", tags=["radar"])
+router = APIRouter(prefix="/radar", tags=["radar"])
 
 @router.get("/accounts", response_model=list[RadarAccountOut])
 def list_accounts(db: DB, _: CurrentUser, niche: Optional[str] = None):
