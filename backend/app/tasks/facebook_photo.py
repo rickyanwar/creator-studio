@@ -206,7 +206,13 @@ def _consume_one(db, fanpage) -> bool:
 
     if fanpage.facebook_photo_publish_mode == PublishMode.auto:
         from app.tasks.design_renderer import render_facebook_photo
-        render_facebook_photo.apply_async(args=[job.id], countdown=random.randint(5, 90))
+        from app.services.engine_router import render_queue_for
+        countdown = random.randint(5, 90)
+        q = render_queue_for(db, fanpage, "facebook")
+        if q:
+            render_facebook_photo.apply_async(args=[job.id], countdown=countdown, queue=q)
+        else:
+            render_facebook_photo.apply_async(args=[job.id], countdown=countdown)
 
     return True
 

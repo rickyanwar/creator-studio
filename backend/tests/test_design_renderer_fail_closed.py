@@ -10,6 +10,7 @@ from app.models.target_fanpages import TargetFanpage
 from app.models.posts import Post
 from app.models.radar import RadarStoryDecision
 from app.models.design_templates import DesignTemplate
+from app.services.visual_engine import GenerationResult
 
 def test_clean_title_for_render_keeps_markdown():
     assert clean_title_for_render("  **ALONSO'S FUTURE:** BEN SULAYEM  ") == "**ALONSO'S FUTURE:** BEN SULAYEM"
@@ -96,8 +97,8 @@ def test_redesign_card_empty_title_fails(mock_post):
         mock_analysis.unique_moment = False
         mock_analyze.return_value = mock_analysis
         
-        with patch("app.services.redesign_pipeline.generate") as mock_generate:
-            mock_generate.return_value = b"fake_image_bytes"
+        with patch("app.services.redesign_pipeline.generate_ex") as mock_generate:
+            mock_generate.return_value = GenerationResult(b"fake_image_bytes", "9router", {}, None)
             with patch("app.services.redesign_pipeline.check_generated") as mock_check:
                 mock_qa = MagicMock()
                 mock_qa.passed = True

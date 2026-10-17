@@ -364,8 +364,14 @@ def run_preview_redesign(self, decision_id: int):
             db.commit()
             return
 
+        from app.services.visual_engine import VisualEngineDeferred
         try:
             res = redesign_card(db, post=post, fanpage=fanpage, job=None, decision=decision)
+        except VisualEngineDeferred as exc:
+            decision.preview_status = "failed"
+            decision.preview_error = f"AI image engines resting until {exc.until.isoformat()} — try again later"[:300]
+            db.commit()
+            return
         except Exception as e:
             from app.services.redesign_pipeline import RedesignResult
             logger.exception("redesign_card crashed in preview")
@@ -426,6 +432,7 @@ def render_ig_recreate(self, job_id: int):
             return
 
         job = db.query(PublishJob).filter_by(id=job_id).first()
+        job.design_not_before = None
 
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
         post = db.query(Post).filter_by(id=job.post_id).first()
@@ -481,8 +488,13 @@ def render_ig_recreate(self, job_id: int):
                 logger.info("Treating gflow as chatgpt for redesign_card")
                 
             from app.services.redesign_pipeline import redesign_card
+            from app.services.visual_engine import VisualEngineDeferred
             try:
                 res = redesign_card(db, post=post, fanpage=fanpage, job=job, decision=decision, pre_analysis=pre_analysis)
+            except VisualEngineDeferred as exc:
+                from app.tasks.design_renderer import _defer_job
+                _defer_job(db, job, exc)
+                return
             except Exception as e:
                 from app.services.redesign_pipeline import RedesignResult
                 logger.exception("redesign_card crashed")

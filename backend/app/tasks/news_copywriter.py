@@ -162,8 +162,13 @@ def copywrite_article(self, article_id: int):
             from app.models.target_fanpages import PublishMode
             if fp.mode2_publish_mode == PublishMode.auto:
                 from app.tasks.design_renderer import render_design
+                from app.services.engine_router import render_queue_for
                 stagger = _fanpage_stagger(slot, breaking=copy.is_breaking)
-                render_design.apply_async(args=[job.id], countdown=stagger)
+                q = render_queue_for(db, fp, "news")
+                if q:
+                    render_design.apply_async(args=[job.id], countdown=stagger, queue=q)
+                else:
+                    render_design.apply_async(args=[job.id], countdown=stagger)
                 slot += 1
 
         if not failed:

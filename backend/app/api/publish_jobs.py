@@ -314,7 +314,15 @@ def render_now(job_id: int, db: DB, _: CurrentUser):
     if job.status != PublishJobStatus.pending_design:
         raise HTTPException(status_code=400, detail=f"Cannot render job in status: {job.status.value}")
 
-    render_design.delay(job_id)
+    from app.models.target_fanpages import TargetFanpage
+    from app.services.engine_router import render_queue_for
+
+    fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+    q = render_queue_for(db, fanpage, "news") if fanpage else None
+    if q:
+        render_design.apply_async(args=[job_id], queue=q)
+    else:
+        render_design.delay(job_id)
     db.refresh(job)
     return _enrich_job(job, db)
 
@@ -449,7 +457,15 @@ def reedit_job(job_id: int, db: DB, _: CurrentUser):
     db.commit()
     db.refresh(job)
 
+    from app.models.target_fanpages import TargetFanpage
+    from app.services.engine_router import render_queue_for
     from app.tasks.design_renderer import render_design
-    render_design.delay(job.id)
+
+    fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+    q = render_queue_for(db, fanpage, "news") if fanpage else None
+    if q:
+        render_design.apply_async(args=[job.id], queue=q)
+    else:
+        render_design.delay(job.id)
 
     return _enrich_job(job, db)

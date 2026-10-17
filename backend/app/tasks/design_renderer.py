@@ -156,6 +156,7 @@ def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str) -> by
             around=around,
             story_photo_path=story_photo_path,
             story_photo_desc=story_photo_desc,
+            content_kind=mode,
         )
         return res
     finally:
@@ -317,6 +318,7 @@ def render_design(self, job_id: int):
             return
 
         job = db.query(PublishJob).filter_by(id=job_id).first()
+        job.design_not_before = None
 
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
         article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
@@ -367,7 +369,12 @@ def render_design(self, job_id: int):
         # on manual review instead of looping forever.
         image_src = gallery_image = image_marker = None
         speaker_gallery_images = []
-        speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="news")
+        from app.services.visual_engine import VisualEngineDeferred
+        try:
+            speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="news")
+        except VisualEngineDeferred as exc:
+            _defer_job(db, job, exc)
+            return
         if speaker_design:
             speaker_gallery_images = getattr(speaker_design, "used_gallery_images", [])
             image_src = f"data:image/png;base64,{base64.b64encode(speaker_design).decode()}"
@@ -1092,6 +1099,7 @@ def render_facebook_photo(self, job_id: int):
             return
 
         job = db.query(PublishJob).filter_by(id=job_id).first()
+        job.design_not_before = None
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
         if not fanpage:
             job.status = PublishJobStatus.pending_design
@@ -1125,7 +1133,12 @@ def render_facebook_photo(self, job_id: int):
 
         niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
         speaker_gallery_images = []
-        speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="facebook")
+        from app.services.visual_engine import VisualEngineDeferred
+        try:
+            speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="facebook")
+        except VisualEngineDeferred as exc:
+            _defer_job(db, job, exc)
+            return
         if speaker_design:
             speaker_gallery_images = getattr(speaker_design, "used_gallery_images", [])
             image_src, gallery_image, image_marker = (
@@ -1270,6 +1283,16 @@ def render_facebook_photo(self, job_id: int):
 _NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_HOURS = 6
 
 
+def _defer_job(db, job, exc) -> None:
+    """Night deferral (gpt-cli plan B10): no image engine may run until exc.until. Back to pending_design;
+    render_pending_designs dispatches it again after design_not_before. Does not use a Celery retry."""
+    from app.models.publish_jobs import PublishJobStatus
+    job.status = PublishJobStatus.pending_design
+    job.design_not_before = exc.until.astimezone(timezone.utc).replace(tzinfo=None)
+    job.last_error = f"AI image deferred until {exc.until.isoformat()} ({exc.reason})"
+    db.commit()
+
+
 @celery_app.task(name="app.tasks.design_renderer.render_pending_designs")
 def render_pending_designs():
     """Sweep: auto-render pending_design jobs for fanpages in auto mode."""
@@ -1282,8 +1305,13 @@ def render_pending_designs():
         from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
         from app.models.target_fanpages import TargetFanpage, PublishMode
 
-        retry_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        retry_cutoff = now_naive - timedelta(
             hours=_NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_HOURS
+        )
+        not_deferred = or_(
+            PublishJob.design_not_before.is_(None),
+            PublishJob.design_not_before <= now_naive,
         )
         # A job stuck on "needs manual image" only re-qualifies once its
         # last attempt is older than the cooldown; anything else (a job
@@ -1303,12 +1331,21 @@ def render_pending_designs():
                 PublishJob.content_type == ContentType.news_content,
                 TargetFanpage.mode2_publish_mode == PublishMode.auto,
                 not_stuck_on_missing_image,
+                not_deferred,
             )
             .limit(10)
             .all()
         )
+        from app.services.engine_router import render_queue_for
+
         for (job_id,) in jobs:
-            render_design.delay(job_id)
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first() if job else None
+            q = render_queue_for(db, fanpage, "news") if fanpage else None
+            if q:
+                render_design.apply_async(args=[job_id], queue=q)
+            else:
+                render_design.delay(job_id)
 
         # Mode 4 discussion cards: always auto-render regardless of publish
         # mode — unlike news_content, discussion has no manual Designer-canvas
@@ -1359,17 +1396,39 @@ def render_pending_designs():
                 PublishJob.status == PublishJobStatus.pending_design,
                 PublishJob.content_type == ContentType.facebook_recreate,
                 not_stuck_on_missing_image,
+                not_deferred,
             )
             .limit(10)
             .all()
         )
         for (job_id,) in fjobs:
-            render_facebook_photo.delay(job_id)
+            job = db.query(PublishJob).filter_by(id=job_id).first()
+            fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first() if job else None
+            q = render_queue_for(db, fanpage, "facebook") if fanpage else None
+            if q:
+                render_facebook_photo.apply_async(args=[job_id], queue=q)
+            else:
+                render_facebook_photo.delay(job_id)
 
-        if jobs or djobs or pjobs or fjobs:
+        ijobs = (
+            db.query(PublishJob.id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.ig_recreate,
+                PublishJob.design_not_before.isnot(None),
+                PublishJob.design_not_before <= now_naive,
+            )
+            .limit(10)
+            .all()
+        )
+        for (job_id,) in ijobs:
+            from app.tasks.ig_recreate import render_ig_recreate
+            render_ig_recreate.apply_async((job_id,), queue="visual")
+
+        if jobs or djobs or pjobs or fjobs or ijobs:
             logger.info(
-                "Design sweep: dispatched %d news + %d discussion + %d pinterest + %d facebook-photo renders",
-                len(jobs), len(djobs), len(pjobs), len(fjobs),
+                "Design sweep: dispatched %d news + %d discussion + %d pinterest + %d facebook-photo + %d ig-recreate renders",
+                len(jobs), len(djobs), len(pjobs), len(fjobs), len(ijobs),
             )
     finally:
         db.close()
