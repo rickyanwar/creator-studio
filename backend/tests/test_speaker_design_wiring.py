@@ -115,7 +115,7 @@ def test_unknown_speaker_has_no_compose_or_generate_call():
 
     with patch("app.services.speaker_design.pick_speaker_photos", return_value=[]), \
          patch("app.services.speaker_design.compose_speaker_design") as compose, \
-         patch("app.services.visual_engine.generate") as generate:
+         patch("app.services.visual_engine.generate_ex") as generate:
         assert _maybe_compose_speaker_design(MagicMock(), fanpage, job, _article(), mode="news") is None
 
     compose.assert_not_called()

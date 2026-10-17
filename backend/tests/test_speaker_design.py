@@ -9,6 +9,14 @@ import pytest
 from PIL import Image
 
 from app.services import speaker_design
+from app.services.visual_engine import GenerationResult
+
+
+def _as_result(fn):
+    def wrapper(db, req, **kwargs):
+        kwargs.pop("exclude", None)
+        return GenerationResult(fn(db, req, **kwargs), "9router", {}, None)
+    return wrapper
 
 
 def image_bytes(size=(200, 300), color=(40, 80, 120)):
@@ -48,7 +56,7 @@ def test_compose_crops_top_then_resizes_without_stretch(monkeypatch):
         calls.append((args, kwargs))
         return source
 
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", generate)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(generate))
     result = speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=["Pecco Bagnaia"],
         article_text="Marc wins after a battle", sport="MotoGP",
@@ -304,7 +312,7 @@ def test_compose_passes_mood_and_calls_generate_once(monkeypatch):
     def fake_generate(db, req, **kwargs):
         generate_calls.append(req)
         return source
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", fake_generate)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(fake_generate))
 
     result = speaker_design.compose_speaker_design(
         object(), object(), speaker="Enea Bastianini", subjects=["Pecco Bagnaia"],
@@ -334,7 +342,7 @@ def test_compose_speaker_design_story_photo_single(monkeypatch):
     monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.9)
 
     generate_requests = []
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", lambda db, req, **k: generate_requests.append(req) or source)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(lambda db, req, **k: generate_requests.append(req) or source))
 
     result = speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=["Pecco Bagnaia"],
@@ -371,7 +379,7 @@ def test_compose_speaker_design_story_photo_with_matching_moment(monkeypatch):
     monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.9)
 
     generate_requests = []
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", lambda db, req, **k: generate_requests.append(req) or source)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(lambda db, req, **k: generate_requests.append(req) or source))
 
     result = speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=["Pecco Bagnaia"],
@@ -402,7 +410,7 @@ def test_compose_speaker_design_story_photo_none_unchanged(monkeypatch):
     monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.9)
 
     generate_requests = []
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", lambda db, req, **k: generate_requests.append(req) or source)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(lambda db, req, **k: generate_requests.append(req) or source))
 
     result = speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=["Marc Marquez"],
@@ -433,7 +441,7 @@ def test_compose_speaker_design_exposes_used_gallery_images(monkeypatch):
     monkeypatch.setattr(speaker_design, "_read_photo", lambda r: source)
     monkeypatch.setattr(speaker_design, "speaker_side", lambda _: "left")
     monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.9)
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", lambda db, req, **k: source)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(lambda db, req, **k: source))
 
     res = speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=["Pecco Bagnaia"],
@@ -726,7 +734,7 @@ def test_identity_failure_returns_none_and_generate_once(monkeypatch):
     monkeypatch.setattr(speaker_design, "speaker_side", lambda _: "left")
     monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.1)
     generated = []
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", lambda *a, **k: generated.append(1) or source)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(lambda *a, **k: generated.append(1) or source))
 
     assert speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=[], article_text="win",
@@ -749,7 +757,7 @@ def test_prompt_copies_reference_wording(monkeypatch):
         captured["request"] = request
         return source
 
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", generate)
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(generate))
     speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=[], article_text="podium",
         sport="MotoGP", around=datetime.now(timezone.utc),
@@ -768,7 +776,7 @@ def test_generation_failure_returns_none(monkeypatch):
     monkeypatch.setattr(speaker_design, "pick_moment_photos", lambda *args, **kwargs: [SimpleNamespace(local_path="moment")])
     monkeypatch.setattr(speaker_design, "pick_bike_photos", lambda *args: [])
     monkeypatch.setattr(speaker_design, "_read_photo", lambda row: source)
-    monkeypatch.setattr(speaker_design.visual_engine, "generate", lambda *a, **k: (_ for _ in ()).throw(VisualEngineError("quota", "cap")))
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", _as_result(lambda *a, **k: (_ for _ in ()).throw(VisualEngineError("quota", "cap"))))
 
     assert speaker_design.compose_speaker_design(
         object(), object(), speaker="Marc Marquez", subjects=[], article_text="win",

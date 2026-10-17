@@ -8,7 +8,7 @@ from app.models.target_fanpages import TargetFanpage
 from app.models.posts import Post
 from app.models.radar import RadarStoryDecision
 from app.models.design_templates import DesignTemplate
-from app.services.visual_engine import VisualEngineError
+from app.services.visual_engine import VisualEngineError, GenerationResult
 from app.tasks.ig_recreate import render_ig_recreate
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def dummy_deps():
 @patch("app.services.redesign_pipeline.choose_layout")
 @patch("app.services.redesign_pipeline.plan_photos")
 @patch("app.services.redesign_pipeline.get_driver")
-@patch("app.services.redesign_pipeline.generate")
+@patch("app.services.redesign_pipeline.generate_ex")
 @patch("app.services.redesign_pipeline.check_generated")
 @patch("builtins.open")
 def test_redesign_card_returns_false_on_qa_fail(
@@ -48,7 +48,7 @@ def test_redesign_card_returns_false_on_qa_fail(
     mock_driver.return_value = driver
     
     # generate succeeds but QA fails
-    mock_generate.return_value = b"gen"
+    mock_generate.return_value = GenerationResult(b"gen", "9router", {}, None)
     mock_check.return_value = MagicMock(passed=False, problems=["Bad1"])
     
     db = MagicMock()
@@ -66,7 +66,7 @@ def test_redesign_card_returns_false_on_qa_fail(
 @patch("app.services.redesign_pipeline.choose_layout")
 @patch("app.services.redesign_pipeline.plan_photos")
 @patch("app.services.redesign_pipeline.get_driver")
-@patch("app.services.redesign_pipeline.generate")
+@patch("app.services.redesign_pipeline.generate_ex")
 @patch("builtins.open")
 def test_redesign_card_returns_false_on_visual_engine_error(
     mock_open, mock_generate, mock_driver, mock_plan, mock_layout, mock_analyze, dummy_deps

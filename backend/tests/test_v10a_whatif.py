@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 from app.services.ig_content_classifier import _parse_analysis
 from app.tasks.ig_recreate import _build_quote_attribution
 from app.services.redesign_pipeline import redesign_card
+from app.services.visual_engine import GenerationResult
 
 def test_parse_analysis_with_topic():
     raw = json.dumps({
@@ -35,13 +36,13 @@ def test_build_quote_attribution():
     assert attr2 == "VERSTAPPEN ON SOME OTHER THING"
 
 @patch("app.services.redesign_pipeline.plan_photos")
-@patch("app.services.redesign_pipeline.generate")
+@patch("app.services.redesign_pipeline.generate_ex")
 @patch("app.services.redesign_pipeline.check_generated")
 @patch("app.services.redesign_pipeline.build_whatif_inset_prompt")
 def test_redesign_routing_whatif(mock_build, mock_check, mock_generate, mock_plan):
     mock_plan.return_value = MagicMock(hero=MagicMock(path="hero.jpg"), inset=MagicMock(path="inset.jpg"), extra=[], notes=[], inset_is_distinct=True)
     mock_check.return_value = MagicMock(passed=True)
-    mock_generate.return_value = b"fake"
+    mock_generate.return_value = GenerationResult(b"fake", "9router", {}, None)
     mock_build.return_value = ("what-if prompt", ["hero.jpg"])
     
     analysis = _parse_analysis(json.dumps({

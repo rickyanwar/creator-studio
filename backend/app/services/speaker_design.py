@@ -486,6 +486,7 @@ def compose_speaker_design(
     db, fanpage, *, speaker: str, subjects: list[str], article_text: str,
     sport: str, around: datetime, story_photo_path: str | None = None,
     story_photo_desc: str | None = None,
+    content_kind: str = "news",
 ) -> bytes | None:
     try:
         mood = story_mood(article_text)
@@ -523,13 +524,23 @@ def compose_speaker_design(
         speaker_bytes = _read_photo(speakers[0])
         framing = speaker_framing(speaker_bytes, row=speakers[0])
         request = GenerationRequest(layout="inset" if layout == "inset" else "action", refs=tuple(paths), prompt=_build_prompt(layout, speaker, speaker_side(speaker_bytes), sport, moments, bikes, framing=framing, speaker_photo=speakers[0], mood=mood), size="1024x1536", quality="high")
-        generated = visual_engine.generate(db, request, fanpage_id=getattr(fanpage, "id", None))
-        if identity_score(speaker_bytes, generated) < IDENTITY_THRESHOLD:
+        fanpage_id = getattr(fanpage, "id", None)
+        res = visual_engine.generate_ex(db, request, fanpage_id=fanpage_id)
+        if res.engine == "gptcli":
+            from app.services.identity_check import check_identity
+            idr = check_identity(speaker_bytes, res.image, subject=speaker, context=content_kind, fanpage_id=fanpage_id)
+            if not idr.passed:
+                logger.info("speaker design: gpt-cli image rejected by face check (%s); trying Codex", idr.reason)
+                res = visual_engine.generate_ex(db, request, fanpage_id=fanpage_id, exclude=frozenset({"gptcli"}))
+        generated = res.image
+        if res.engine == "9router" and identity_score(speaker_bytes, generated) < IDENTITY_THRESHOLD:
             logger.warning("speaker design rejected: identity score below threshold")
             return None
         finished_bytes = _finish(generated)
         used_gallery = [r for r in refs if isinstance(r, GalleryImage)]
         return SpeakerDesignResult(image_bytes=finished_bytes, used_gallery_images=used_gallery)
+    except visual_engine.VisualEngineDeferred:
+        raise
     except Exception as exc:
         logger.warning("speaker design failed: %s", exc)
         return None

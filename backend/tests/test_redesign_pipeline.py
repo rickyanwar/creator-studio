@@ -2,6 +2,7 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 from app.services.redesign_pipeline import redesign_card
+from app.services.visual_engine import GenerationResult
 from app.models.publish_jobs import PublishJob
 from app.models.target_fanpages import TargetFanpage
 from app.models.posts import Post
@@ -17,7 +18,7 @@ def dummy_deps():
 @patch("app.services.redesign_pipeline.choose_layout")
 @patch("app.services.redesign_pipeline.plan_photos")
 @patch("app.services.redesign_pipeline.get_driver")
-@patch("app.services.redesign_pipeline.generate")
+@patch("app.services.redesign_pipeline.generate_ex")
 @patch("app.services.redesign_pipeline.check_generated")
 @patch("app.services.redesign_pipeline.upscale_image_bytes")
 @patch("builtins.open")
@@ -42,7 +43,7 @@ def test_redesign_team_radio(
     driver = MagicMock(name="Max Verstappen", number="1", colour_hex="#000", team="RBR")
     mock_driver.return_value = driver
     
-    mock_generate.return_value = b"gen"
+    mock_generate.return_value = GenerationResult(b"gen", "9router", {}, None)
     mock_check.return_value = MagicMock(passed=True, problems=[])
     mock_upscale.return_value = b"upscaled"
     
@@ -70,7 +71,7 @@ def test_redesign_team_radio(
 @patch("app.services.redesign_pipeline.choose_layout")
 @patch("app.services.redesign_pipeline.plan_photos")
 @patch("app.services.redesign_pipeline.get_driver")
-@patch("app.services.redesign_pipeline.generate")
+@patch("app.services.redesign_pipeline.generate_ex")
 @patch("app.services.redesign_pipeline.check_generated")
 @patch("app.services.redesign_pipeline.upscale_image_bytes")
 @patch("builtins.open")
@@ -95,7 +96,7 @@ def test_redesign_qa_fail_single_call(
     driver = MagicMock(name="Max", number="1", colour_hex="#000", team="RBR")
     mock_driver.return_value = driver
     
-    mock_generate.return_value = b"gen"
+    mock_generate.return_value = GenerationResult(b"gen", "9router", {}, None)
     mock_upscale.return_value = b"upscaled"
     
     # QA fails and the single-call pipeline returns without retrying.

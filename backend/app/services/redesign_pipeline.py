@@ -18,11 +18,30 @@ from app.services.f1_drivers import get_driver
 from app.services.visual_sourcing import plan_photos, decision_photo_keys
 from app.services.layout_chooser import choose_layout
 from app.services.visual_engine import (
-    GenerationRequest, generate, VisualEngineError,
+    GenerationRequest, generate_ex, GenerationResult, VisualEngineError,
     build_inset_prompt, build_solo_prompt, build_action_prompt, build_team_radio_prompt, build_whatif_inset_prompt
 )
-from app.services.visual_qa import check_generated
+from app.services.visual_qa import check_generated, radio_text_matches
+from app.services.identity_check import check_identity, IdentityResult
+from app.services.design_images import _vision_chat, _vision_datauri
 from app.services.upscaler import upscale_image_bytes
+
+
+def _radio_ocr_ok(image_bytes: bytes, expected_header: tuple, expected_lines: tuple) -> tuple[bool, str]:
+    """Same OCR prompt as visual_qa.check_generated; OCR error = fail (fail closed)."""
+    try:
+        ocr_content = [
+            {"type": "text", "text": "Transcribe ALL text visible in this image exactly as written. Pay attention to quotes, punctuation, and capitalisation."},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+        ]
+        ocr_text = _vision_chat(ocr_content, max_tokens=800, temperature=0, context="visual_qa_ocr")
+        mismatch = radio_text_matches(ocr_text, expected_header, expected_lines)
+        if mismatch is None:
+            return (True, "")
+        return (False, mismatch)
+    except Exception as exc:
+        return (False, f"ocr error: {type(exc).__name__}")
+
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +274,13 @@ def redesign_card(
                 treatment=treatment
             )
 
+        # 5. QA prep (expected lines/header computed before generate)
+        expected_lines = ()
+        expected_header = ()
+        if layout == 'team_radio' and driver:
+            expected_lines = tuple(t for who, t in analysis.radio_lines)
+            expected_header = (driver.name.upper(), f"#{driver.number}")
+
         req = GenerationRequest(
             layout=layout,
             refs=tuple(refs),
@@ -262,50 +288,75 @@ def redesign_card(
         )
 
         try:
-            gen_bytes = generate(db, req, timeout=300, fanpage_id=fanpage.id)
+            res = generate_ex(db, req, timeout=300, fanpage_id=fanpage.id)
         except VisualEngineError as e:
             problems.append(f"VisualEngineError: {str(e)}")
             return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
+        # VisualEngineDeferred is NOT caught here on purpose: render_ig_recreate defers the job (night).
+
+        gen_bytes = res.image
+        skip_full_qa = False
+        if res.engine == "gptcli":
+            hero_ref_bytes = None
+            if refs:
+                try:
+                    with open(refs[0], "rb") as fh:
+                        hero_ref_bytes = fh.read()
+                except Exception:
+                    hero_ref_bytes = None
+            if hero_ref_bytes is not None:
+                idr = check_identity(hero_ref_bytes, res.image, subject=analysis.main_subject, context="ig", fanpage_id=fanpage.id)
+            else:
+                idr = IdentityResult(passed=False, sface=None, gemini="skipped", reason="failed reading hero ref")
+            radio_ok, radio_note = (True, "") if layout != "team_radio" else _radio_ocr_ok(res.image, expected_header, expected_lines)
+            if idr.passed and radio_ok:
+                notes.append(f"engine=gptcli; identity ok ({idr.reason})")
+                skip_full_qa = True
+            else:
+                notes.append(f"engine=gptcli rejected: {idr.reason}; {radio_note}".strip("; "))
+                try:
+                    res = generate_ex(db, req, timeout=300, fanpage_id=fanpage.id, exclude=frozenset({"gptcli"}))
+                except VisualEngineError as e:
+                    problems.append(f"VisualEngineError: {str(e)}")
+                    return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
+                gen_bytes = res.image
+        if res.engine == "9router":
+            notes.append("engine=9router")
 
         # 5. QA
-        expected_lines = ()
-        expected_header = ()
-        if layout == 'team_radio' and driver:
-            expected_lines = tuple(t for who, t in analysis.radio_lines)
-            expected_header = (driver.name.upper(), f"#{driver.number}")
+        if not skip_full_qa:
+            whatif_target_team = getattr(analysis, 'target_team', None) if getattr(analysis, 'scenario', 'none') != 'none' else None
+            
+            source_branding = (f"@{post.ig_source.ig_username}",) if post.ig_source else ()
+            
+            inset_ref_paths = []
+            inset_modes = []
+            if layout in ('inset', 'inset2'):
+                if whatif_target_team:
+                    pass
+                else:
+                    for inst in getattr(plan, 'insets', []):
+                        if inst.mode in ('real', 'asset', 'imagined'):
+                            if inst.pick and inst.pick.path:
+                                inset_ref_paths.append(inst.pick.path)
+                            inset_modes.append(inst.mode)
+                            
+            qa_res = check_generated(
+                gen_bytes,
+                layout=layout,
+                hero_ref_path=refs[0],
+                inset_ref_paths=tuple(inset_ref_paths),
+                inset_modes=tuple(inset_modes),
+                expected_lines=expected_lines,
+                expected_header=expected_header,
+                whatif_target_team=whatif_target_team,
+                source_branding=source_branding
+            )
 
-        whatif_target_team = getattr(analysis, 'target_team', None) if getattr(analysis, 'scenario', 'none') != 'none' else None
-        
-        source_branding = (f"@{post.ig_source.ig_username}",) if post.ig_source else ()
-        
-        inset_ref_paths = []
-        inset_modes = []
-        if layout in ('inset', 'inset2'):
-            if whatif_target_team:
-                pass
-            else:
-                for inst in getattr(plan, 'insets', []):
-                    if inst.mode in ('real', 'asset', 'imagined'):
-                        if inst.pick and inst.pick.path:
-                            inset_ref_paths.append(inst.pick.path)
-                        inset_modes.append(inst.mode)
-                        
-        qa_res = check_generated(
-            gen_bytes,
-            layout=layout,
-            hero_ref_path=refs[0],
-            inset_ref_paths=tuple(inset_ref_paths),
-            inset_modes=tuple(inset_modes),
-            expected_lines=expected_lines,
-            expected_header=expected_header,
-            whatif_target_team=whatif_target_team,
-            source_branding=source_branding
-        )
-
-        if not qa_res.passed:
-            notes.append("QA failed; no retry (single-call mode)")
-            problems.extend(qa_res.problems)
-            return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
+            if not qa_res.passed:
+                notes.append("QA failed; no retry (single-call mode)")
+                problems.extend(qa_res.problems)
+                return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
 
         # 6. Non-radio: render through the fanpage's own template (same as other posts).
         # template_name is NOT hardcoded — use the job's pre-resolved template_id, or
