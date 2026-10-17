@@ -414,3 +414,51 @@ def test_exactly_one_event_per_call(
         generate_ex(mock_db, req)
     assert mock_db.add.call_count == 1
     assert mock_db.commit.call_count == 1
+
+
+@patch("app.services.visual_engine.codex_budget.mark_codex_used")
+@patch("app.services.visual_engine.get_nine_router_config")
+@patch("app.services.visual_engine.gptcli_client.generate_image")
+@patch("app.services.visual_engine.gptcli_client.request_id_for", return_value="req-1")
+@patch("app.services.visual_engine.gptcli_client.get_gptcli_config")
+@patch("app.services.visual_engine._image_to_b64", return_value="data:image/jpeg;base64,mock")
+@patch("app.services.visual_engine._call_nine_router")
+@patch("app.services.visual_engine.engine_router.plan_engines")
+def test_generate_ex_meta_labels(
+    mock_plan,
+    mock_nine_router,
+    mock_b64,
+    mock_get_cfg,
+    mock_req_id,
+    mock_gen_img,
+    mock_nine_cfg,
+    mock_codex_used,
+    mock_db,
+    req,
+):
+    mock_nine_cfg.return_value = NineRouterConfig("http://router", "key", "model", "model")
+    mock_nine_router.return_value = b"codex_bytes"
+
+    # 1. gpt-cli quota error then Codex wins -> meta == {"fallback_from": "gptcli", "reason": "quota"}
+    mock_plan.return_value = EnginePlan(order=("gptcli", "9router"), reason="gptcli_first")
+    mock_gen_img.side_effect = GptcliError("quota", "out of credits")
+    res_fallback = generate_ex(mock_db, req)
+    assert res_fallback.engine == "9router"
+    assert res_fallback.meta == {"fallback_from": "gptcli", "reason": "quota"}
+
+    # 2. plain Codex win -> meta == {}
+    mock_plan.return_value = EnginePlan(order=("9router",), reason="codex_only")
+    mock_gen_img.side_effect = None
+    res_plain = generate_ex(mock_db, req)
+    assert res_plain.engine == "9router"
+    assert res_plain.meta == {}
+
+    # 3. gpt-cli win -> meta is the gptcli block
+    mock_plan.return_value = EnginePlan(order=("gptcli", "9router"), reason="gptcli_first")
+    mock_gen_img.return_value = GptcliResult(
+        png=b"gpt_png",
+        meta={"chat_url": "https://chatgpt.com/c/123", "attempts": 1, "queue_wait_s": 0.5},
+    )
+    res_gptcli = generate_ex(mock_db, req)
+    assert res_gptcli.engine == "gptcli"
+    assert res_gptcli.meta == {"chat_url": "https://chatgpt.com/c/123", "attempts": 1, "queue_wait_s": 0.5}

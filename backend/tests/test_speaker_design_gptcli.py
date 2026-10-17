@@ -195,3 +195,69 @@ def test_content_kind_reaches_check_identity(speaker_setup, monkeypatch):
         article_text="win", sport="MotoGP", around=datetime.now(timezone.utc),
     )
     assert mock_id.call_args.kwargs["context"] == "news"
+
+
+def test_compose_speaker_design_engine_labels(speaker_setup, monkeypatch):
+    source = speaker_setup
+    db = MagicMock()
+    fanpage = SimpleNamespace(id=10)
+
+    # 1. gpt-cli result kept -> "chatgpt", note ""
+    gen_ex = MagicMock(return_value=GenerationResult(source, "gptcli", {}, 1))
+    monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", gen_ex)
+    mock_id = MagicMock(return_value=IdentityResult(passed=True, sface=0.8, gemini="yes", reason="ok"))
+    monkeypatch.setattr("app.services.identity_check.check_identity", mock_id)
+    monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.8)
+
+    res_gptcli = speaker_design.compose_speaker_design(
+        db, fanpage, speaker="Marc Marquez", subjects=[],
+        article_text="win", sport="MotoGP", around=datetime.now(timezone.utc),
+    )
+    assert res_gptcli is not None
+    assert res_gptcli.engine == "chatgpt"
+    assert res_gptcli.engine_note == ""
+    assert isinstance(res_gptcli, bytes)
+    assert bytes(res_gptcli) == res_gptcli.image_bytes
+
+    # 2. gpt-cli rejected by check_identity then Codex -> "codex_fallback", note f"ChatGPT rejected by face check ({idr.reason})"
+    gen_ex.side_effect = [
+        GenerationResult(source, "gptcli", {}, 1),
+        GenerationResult(source, "9router", {}, 2),
+    ]
+    mock_id.return_value = IdentityResult(passed=False, sface=0.1, gemini="no", reason="sface 0.1 < 0.25")
+    res_rejected = speaker_design.compose_speaker_design(
+        db, fanpage, speaker="Marc Marquez", subjects=[],
+        article_text="win", sport="MotoGP", around=datetime.now(timezone.utc),
+    )
+    assert res_rejected is not None
+    assert res_rejected.engine == "codex_fallback"
+    assert res_rejected.engine_note == "ChatGPT rejected by face check (sface 0.1 < 0.25)"
+    assert bytes(res_rejected) == res_rejected.image_bytes
+
+    # 3. Codex win with res.meta.get("fallback_from") == "gptcli" -> "codex_fallback", note f"ChatGPT {reason} → Codex"
+    gen_ex.side_effect = None
+    gen_ex.return_value = GenerationResult(
+        source,
+        "9router",
+        {"fallback_from": "gptcli", "reason": "quota"},
+        3,
+    )
+    res_fallback = speaker_design.compose_speaker_design(
+        db, fanpage, speaker="Marc Marquez", subjects=[],
+        article_text="win", sport="MotoGP", around=datetime.now(timezone.utc),
+    )
+    assert res_fallback is not None
+    assert res_fallback.engine == "codex_fallback"
+    assert res_fallback.engine_note == "ChatGPT quota → Codex"
+    assert bytes(res_fallback) == res_fallback.image_bytes
+
+    # 4. plain Codex -> "codex", note ""
+    gen_ex.return_value = GenerationResult(source, "9router", {}, 4)
+    res_plain = speaker_design.compose_speaker_design(
+        db, fanpage, speaker="Marc Marquez", subjects=[],
+        article_text="win", sport="MotoGP", around=datetime.now(timezone.utc),
+    )
+    assert res_plain is not None
+    assert res_plain.engine == "codex"
+    assert res_plain.engine_note == ""
+    assert bytes(res_plain) == res_plain.image_bytes

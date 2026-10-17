@@ -56,6 +56,8 @@ class RedesignResult:
     problems: list[str]
     content_type: str | None
     mood: str = 'neutral'   # from PostAnalysis.mood; used in run.json / SUMMARY
+    engine: str | None = None       # "chatgpt" | "codex" | "codex_fallback"; None when no AI image was used
+    engine_note: str = ""           # short reason shown as a tooltip, e.g. "ChatGPT rejected by face check (sface 0.19 < 0.25)"
 
 _VISUAL_REFS_DIR = Path(__file__).resolve().parent.parent / "assets" / "visual_refs"
 
@@ -296,6 +298,8 @@ def redesign_card(
 
         gen_bytes = res.image
         skip_full_qa = False
+        gptcli_rejected = False
+        gptcli_reject_note = ""
         if res.engine == "gptcli":
             hero_ref_bytes = None
             if refs:
@@ -313,6 +317,8 @@ def redesign_card(
                 notes.append(f"engine=gptcli; identity ok ({idr.reason})")
                 skip_full_qa = True
             else:
+                gptcli_rejected = True
+                gptcli_reject_note = (f"ChatGPT rejected: {idr.reason}" + (f"; {radio_note}" if radio_note else ""))[:200]
                 notes.append(f"engine=gptcli rejected: {idr.reason}; {radio_note}".strip("; "))
                 try:
                     res = generate_ex(db, req, timeout=300, fanpage_id=fanpage.id, exclude=frozenset({"gptcli"}))
@@ -322,6 +328,22 @@ def redesign_card(
                 gen_bytes = res.image
         if res.engine == "9router":
             notes.append("engine=9router")
+
+        if res.engine == "gptcli":
+            engine_label = "chatgpt"
+            engine_note = ""
+        elif res.engine == "9router" and gptcli_rejected:
+            engine_label = "codex_fallback"
+            engine_note = gptcli_reject_note
+        elif res.engine == "9router" and res.meta.get("fallback_from") == "gptcli":
+            engine_label = "codex_fallback"
+            engine_note = f"ChatGPT {res.meta.get('reason')} → Codex"
+        elif res.engine == "9router":
+            engine_label = "codex"
+            engine_note = ""
+        else:
+            engine_label = None
+            engine_note = ""
 
         # 5. QA
         if not skip_full_qa:
@@ -482,7 +504,19 @@ def redesign_card(
                 existing = [k for k in (decision.used_photo_key or '').split('|') if k]
                 decision.used_photo_key = '|'.join(dict.fromkeys(existing + keys))
 
-        return RedesignResult(ok=True, layout=layout, image_path=save_path, image_url=url, final_text_rendered_by=final_text_rendered_by, notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
+        return RedesignResult(
+            ok=True,
+            layout=layout,
+            image_path=save_path,
+            image_url=url,
+            final_text_rendered_by=final_text_rendered_by,
+            notes=notes,
+            problems=problems,
+            content_type=analysis.type,
+            mood=analysis.mood,
+            engine=engine_label,
+            engine_note=engine_note,
+        )
 
     finally:
         if plan:

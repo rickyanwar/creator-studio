@@ -262,3 +262,72 @@ def test_visual_engine_deferred_propagates(
 
     with pytest.raises(VisualEngineDeferred):
         redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
+
+
+@patch("app.services.redesign_pipeline.analyze_ig_post")
+@patch("app.services.redesign_pipeline.choose_layout")
+@patch("app.services.redesign_pipeline.plan_photos")
+@patch("app.services.redesign_pipeline.get_driver")
+@patch("app.services.redesign_pipeline.generate_ex")
+@patch("app.services.redesign_pipeline.check_identity")
+@patch("app.services.redesign_pipeline._radio_ocr_ok")
+@patch("app.services.redesign_pipeline.check_generated")
+@patch("app.services.redesign_pipeline.upscale_image_bytes", return_value=b"upscaled")
+@patch("builtins.open")
+@patch("os.makedirs")
+def test_redesign_card_engine_labels(
+    mock_makedirs, mock_open, mock_upscale, mock_check, mock_ocr, mock_id, mock_gen, mock_driver, mock_plan, mock_layout, mock_analyze, dummy_deps
+):
+    post, fanpage = dummy_deps
+    _setup_pipeline_mocks(mock_analyze, mock_layout, mock_plan, mock_driver, "team_radio")
+    mock_open.return_value.__enter__.return_value.read.return_value = b"hero_ref_bytes"
+    mock_check.return_value = QAResult(passed=True, problems=())
+
+    # 1. gpt-cli kept -> engine == "chatgpt", engine_note == ""
+    mock_gen.return_value = GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=1)
+    mock_id.return_value = IdentityResult(passed=True, sface=0.85, gemini="yes", reason="face match")
+    mock_ocr.return_value = (True, "")
+    res1 = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
+    assert res1.ok is True
+    assert res1.engine == "chatgpt"
+    assert res1.engine_note == ""
+
+    # 2. face-check reject -> "codex_fallback" with "rejected" in the note
+    mock_gen.side_effect = [
+        GenerationResult(image=b"gptcli_bad", engine="gptcli", meta={}, event_id=1),
+        GenerationResult(image=b"codex_image", engine="9router", meta={}, event_id=2),
+    ]
+    mock_id.return_value = IdentityResult(passed=False, sface=0.10, gemini="no", reason="sface 0.10 < 0.25")
+    mock_ocr.return_value = (True, "")
+    res2 = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
+    assert res2.ok is True
+    assert res2.engine == "codex_fallback"
+    assert "rejected" in res2.engine_note
+    assert "sface 0.10 < 0.25" in res2.engine_note
+
+    # 3. Codex after gpt-cli error (meta fallback_from) -> "codex_fallback"
+    mock_gen.side_effect = None
+    mock_gen.return_value = GenerationResult(
+        image=b"codex_image",
+        engine="9router",
+        meta={"fallback_from": "gptcli", "reason": "quota"},
+        event_id=3,
+    )
+    res3 = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
+    assert res3.ok is True
+    assert res3.engine == "codex_fallback"
+    assert res3.engine_note == "ChatGPT quota → Codex"
+
+    # 4. plain Codex -> "codex"
+    mock_gen.return_value = GenerationResult(image=b"codex_image", engine="9router", meta={}, event_id=4)
+    res4 = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
+    assert res4.ok is True
+    assert res4.engine == "codex"
+    assert res4.engine_note == ""
+
+    # 5. failure result -> engine is None
+    mock_gen.side_effect = VisualEngineError("transport", "network fail")
+    res5 = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
+    assert res5.ok is False
+    assert res5.engine is None
+    assert res5.engine_note == ""

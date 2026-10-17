@@ -35,10 +35,20 @@ _FACE_CACHE_MAX = 32
 
 class SpeakerDesignResult(bytes):
     used_gallery_images: list[GalleryImage]
+    engine: str | None
+    engine_note: str
 
-    def __new__(cls, image_bytes: bytes, used_gallery_images: list[GalleryImage] | None = None):
+    def __new__(
+        cls,
+        image_bytes: bytes,
+        used_gallery_images: list[GalleryImage] | None = None,
+        engine: str | None = None,
+        engine_note: str = "",
+    ):
         obj = super().__new__(cls, image_bytes)
         obj.used_gallery_images = list(used_gallery_images or [])
+        obj.engine = engine
+        obj.engine_note = engine_note
         return obj
 
     @property
@@ -526,11 +536,15 @@ def compose_speaker_design(
         request = GenerationRequest(layout="inset" if layout == "inset" else "action", refs=tuple(paths), prompt=_build_prompt(layout, speaker, speaker_side(speaker_bytes), sport, moments, bikes, framing=framing, speaker_photo=speakers[0], mood=mood), size="1024x1536", quality="high")
         fanpage_id = getattr(fanpage, "id", None)
         res = visual_engine.generate_ex(db, request, fanpage_id=fanpage_id)
+        gptcli_rejected = False
+        gptcli_reject_reason = ""
         if res.engine == "gptcli":
             from app.services.identity_check import check_identity
             idr = check_identity(speaker_bytes, res.image, subject=speaker, context=content_kind, fanpage_id=fanpage_id)
             if not idr.passed:
                 logger.info("speaker design: gpt-cli image rejected by face check (%s); trying Codex", idr.reason)
+                gptcli_rejected = True
+                gptcli_reject_reason = f"ChatGPT rejected by face check ({idr.reason})"
                 res = visual_engine.generate_ex(db, request, fanpage_id=fanpage_id, exclude=frozenset({"gptcli"}))
         generated = res.image
         if res.engine == "9router" and identity_score(speaker_bytes, generated) < IDENTITY_THRESHOLD:
@@ -538,7 +552,30 @@ def compose_speaker_design(
             return None
         finished_bytes = _finish(generated)
         used_gallery = [r for r in refs if isinstance(r, GalleryImage)]
-        return SpeakerDesignResult(image_bytes=finished_bytes, used_gallery_images=used_gallery)
+
+        if res.engine == "gptcli":
+            engine_label = "chatgpt"
+            engine_note = ""
+        elif res.engine == "9router" and gptcli_rejected:
+            engine_label = "codex_fallback"
+            engine_note = gptcli_reject_reason
+        elif res.engine == "9router" and res.meta.get("fallback_from") == "gptcli":
+            engine_label = "codex_fallback"
+            reason = res.meta.get("reason")
+            engine_note = f"ChatGPT {reason} → Codex"
+        elif res.engine == "9router":
+            engine_label = "codex"
+            engine_note = ""
+        else:
+            engine_label = None
+            engine_note = ""
+
+        return SpeakerDesignResult(
+            image_bytes=finished_bytes,
+            used_gallery_images=used_gallery,
+            engine=engine_label,
+            engine_note=engine_note,
+        )
     except visual_engine.VisualEngineDeferred:
         raise
     except Exception as exc:

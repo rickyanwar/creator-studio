@@ -444,6 +444,7 @@ def generate_ex(
     start_time = datetime.now(timezone.utc)
     tried: list[str] = []
     parts: list[str] = []
+    first_gptcli_error_type: str | None = None
     last_kind: Literal["quota", "auth", "timeout", "bad_response", "transport"] = "transport"
     winner_engine: Literal["gptcli", "9router"] | None = None
     winner_image: bytes | None = None
@@ -466,6 +467,8 @@ def generate_ex(
                 winner_meta = res.meta
                 break
             except gptcli_client.GptcliError as e:
+                if first_gptcli_error_type is None:
+                    first_gptcli_error_type = e.type
                 msg_snip = e.message[:1500] if e.type == "refused" else e.message[:300]
                 parts.append(f"gptcli:{e.type}: {msg_snip}")
                 extra = getattr(e, "extra", {}) or {}
@@ -474,6 +477,8 @@ def generate_ex(
                 last_kind = _GPTCLI_KIND.get(e.type, "transport")
                 continue
             except Exception as exc:
+                if first_gptcli_error_type is None:
+                    first_gptcli_error_type = "error"
                 parts.append(f"gptcli: unexpected {type(exc).__name__}")
                 last_kind = "transport"
                 continue
@@ -488,7 +493,10 @@ def generate_ex(
                 codex_budget.mark_codex_used(datetime.now(timezone.utc))
                 winner_engine = "9router"
                 winner_image = img
-                winner_meta = {}
+                if "gptcli" in tried:
+                    winner_meta = {"fallback_from": "gptcli", "reason": first_gptcli_error_type or "error"}
+                else:
+                    winner_meta = {}
                 break
             except VisualEngineError as e:
                 tried.append(req.model)
