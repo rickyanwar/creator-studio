@@ -199,7 +199,8 @@ def test_video_happy_path(monkeypatch):
 
     resolve_calls = []
 
-    def mock_resolve(serial, caption, attempts=4, wait=10.0):
+    def mock_resolve(serial, caption, attempts=4, wait=10.0, deadline=None):
+        assert deadline is not None  # the resolver must always get the time budget
         resolve_calls.append({"attempts": attempts, "wait": wait})
         return "reel_post_123", "https://facebook.com/reel/123", "resolved reel"
 
@@ -492,7 +493,8 @@ def test_photo_happy_path_still_unchanged(monkeypatch):
 
     resolve_calls = []
 
-    def mock_resolve(serial, caption, attempts=4, wait=10.0):
+    def mock_resolve(serial, caption, attempts=4, wait=10.0, deadline=None):
+        assert deadline is not None  # the resolver must always get the time budget
         resolve_calls.append({"attempts": attempts, "wait": wait})
         return "photo_post_123", "https://facebook.com/posts/photo_123", "resolved photo"
 

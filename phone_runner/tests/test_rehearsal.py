@@ -470,7 +470,7 @@ def test_time_budget_post_share_skips_posted_gate(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a, **kw: (True, "opened", SHARE_INTENT_COMPOSER_XML))
     monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
 
-    def fake_resolve(serial, caption):
+    def fake_resolve(serial, caption, **kw):
         # Advance time to exceed PUBLISH_BUDGET_SECONDS - 20 (e.g. +235s)
         clock[0] += (PUBLISH_BUDGET_SECONDS - 20) + 5.0
         return "post_budget_123", "https://fb.com/post_budget_123", "resolved"
@@ -532,7 +532,7 @@ def test_time_budget_post_share_unresolved_uncertain(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a, **kw: (True, "opened", SHARE_INTENT_COMPOSER_XML))
     monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
 
-    def fake_resolve_unresolved(serial, caption):
+    def fake_resolve_unresolved(serial, caption, **kw):
         clock[0] += (PUBLISH_BUDGET_SECONDS - 20) + 5.0
         return None, None, "feed post link unresolved"
 

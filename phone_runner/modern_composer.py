@@ -687,12 +687,14 @@ def resolve_latest_post_link(
     caption: str | None = None,
     attempts: int = RESOLVE_ATTEMPTS,
     wait: float = RESOLVE_RETRY_WAIT_SECONDS,
+    deadline: float | None = None,
 ) -> tuple[str | None, str | None, str]:
     """Copies the matching post's link. Portal clipboard reads need the Portal keyboard selected,
-    but captions are pasted with the normal keyboard, so select Portal only for this step."""
+    but captions are pasted with the normal keyboard, so select Portal only for this step.
+    `deadline` (time.monotonic) stops the search in time for the backend's HTTP budget."""
     try:
         with PortalImeContext(serial):
-            return _resolve_latest_post_link(serial, caption, attempts=attempts, wait=wait)
+            return _resolve_latest_post_link(serial, caption, attempts=attempts, wait=wait, deadline=deadline)
     except RuntimeError as exc:
         return None, None, f"portal keyboard unavailable for clipboard read: {exc}"
 
@@ -702,6 +704,7 @@ def _resolve_latest_post_link(
     caption: str | None = None,
     attempts: int = RESOLVE_ATTEMPTS,
     wait: float = RESOLVE_RETRY_WAIT_SECONDS,
+    deadline: float | None = None,
 ) -> tuple[str | None, str | None, str]:
     """Navigates to own profile, copies matching post link, reads clipboard, resolves post ID and permalink.
 
@@ -715,6 +718,9 @@ def _resolve_latest_post_link(
 
     last_detail = "no post with matching caption visible"
     for attempt in range(1, attempts + 1):
+        if deadline is not None and time.monotonic() > deadline:
+            last_detail = f"stopped at the time budget after {attempt - 1} attempts: {last_detail}"
+            break
         launch_facebook_own_profile(serial)
         time.sleep(4.0)
 
@@ -725,7 +731,7 @@ def _resolve_latest_post_link(
         # A fresh Facebook process opens fb://profile at the TOP (details, badges, friends); the newest
         # post is several screens down, so keep scrolling (swipes only) until the matching post shows up.
         swipes = 0
-        while not more_bounds and swipes < PROFILE_POST_SEARCH_SWIPES:
+        while not more_bounds and swipes < PROFILE_POST_SEARCH_SWIPES and not (deadline is not None and time.monotonic() > deadline):
             run_adb(["shell", "input", "swipe", "540", "1600", "540", "800", "300"], serial=serial)
             swipes += 1
             time.sleep(2.0)
@@ -735,7 +741,7 @@ def _resolve_latest_post_link(
 
         if not more_bounds:
             last_detail = detail
-            if attempt < attempts:
+            if attempt < attempts and not (deadline is not None and time.monotonic() + wait > deadline):
                 time.sleep(wait)
             continue
 

@@ -383,6 +383,15 @@ def _enter_caption(serial: str, caption: str) -> tuple[MobilerunResult, str]:
     return typed, "type"
 
 
+RESOLVE_RESERVE_SECONDS = 45.0
+
+
+def _resolve_deadline(started: float) -> float:
+    """Stop searching for the post link early enough to finish (posted vision gate + response) inside
+    PUBLISH_BUDGET_SECONDS; the backend gives up at 600 s and then marks the delivery uncertain."""
+    return started + PUBLISH_BUDGET_SECONDS - RESOLVE_RESERVE_SECONDS
+
+
 def _post_link_stage(post_id: str | None, permalink: str | None, resolve_detail: str) -> dict[str, Any]:
     """Records the copied post link as a stage. The backend stores stages for every outcome
     (evidence is not stored), so the post id survives even when the delivery ends up uncertain."""
@@ -1540,10 +1549,10 @@ def execute_publish(
             human_pause(6.0, 8.0)
             if is_video:
                 post_id, permalink, resolve_detail = resolve_latest_post_link(
-                    serial, caption_str, attempts=8, wait=15.0
+                    serial, caption_str, attempts=8, wait=15.0, deadline=_resolve_deadline(started)
                 )
             else:
-                post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str)
+                post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str, deadline=_resolve_deadline(started))
             stages.append(_post_link_stage(post_id, permalink, resolve_detail))
 
             if time.monotonic() - started > PUBLISH_BUDGET_SECONDS - 20:
@@ -1856,7 +1865,7 @@ def execute_publish(
             evidence["publish_may_have_started"] = True
 
             time.sleep(6.0)
-            post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str)
+            post_id, permalink, resolve_detail = resolve_latest_post_link(serial, caption_str, deadline=_resolve_deadline(started))
             stages.append(_post_link_stage(post_id, permalink, resolve_detail))
             if post_id and permalink:
                 stages.append({

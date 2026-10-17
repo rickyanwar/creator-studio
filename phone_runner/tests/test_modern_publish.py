@@ -765,7 +765,7 @@ def test_modern_share_intent_happy_path_published(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.verify_gate", mock_verify_gate)
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+        lambda s, c, **kw: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
     )
 
     res = execute_publish(
@@ -937,7 +937,7 @@ def test_modern_share_intent_posted_gate_fails_uncertain(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.verify_gate", mock_verify_gate)
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: ("post_uncertain_999", "https://facebook.com/posts/post_uncertain_999", "resolved"),
+        lambda s, c, **kw: ("post_uncertain_999", "https://facebook.com/posts/post_uncertain_999", "resolved"),
     )
 
     res = execute_publish(
@@ -1070,7 +1070,7 @@ def test_modern_text_only_uses_old_path(monkeypatch):
     monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: ("post_text_only", "https://facebook.com/posts/post_text_only", "resolved"),
+        lambda s, c, **kw: ("post_text_only", "https://facebook.com/posts/post_text_only", "resolved"),
     )
 
     res = execute_publish(
@@ -1118,7 +1118,7 @@ def _patch_modern_happy_flow(monkeypatch, proof, taps):
     )
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+        lambda s, c, **kw: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
     )
 
 
@@ -1217,7 +1217,7 @@ def test_long_caption_photo_revealed_after_one_swipe(monkeypatch):
     )
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+        lambda s, c, **kw: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
     )
 
     res = execute_publish(
@@ -1417,7 +1417,7 @@ def _patch_long_caption_flow(monkeypatch, ui_seq, adb_handler, taps):
     )
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+        lambda s, c, **kw: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
     )
 
 

@@ -356,7 +356,7 @@ def test_execute_publish_modern_text_only_published(monkeypatch):
     resolved_permalink = f"https://www.facebook.com/{TEST_ROOT_ID}/posts/{resolved_post_id}"
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: (resolved_post_id, resolved_permalink, "verified via top post"),
+        lambda s, c, **kw: (resolved_post_id, resolved_permalink, "verified via top post"),
     )
 
     res = execute_publish(
@@ -406,7 +406,7 @@ def test_execute_publish_modern_text_only_uncertain_when_resolve_fails(monkeypat
     # Resolve fails
     monkeypatch.setattr(
         "phone_runner.publish.resolve_latest_post_link",
-        lambda s, c: (None, None, "More options button not found"),
+        lambda s, c, **kw: (None, None, "More options button not found"),
     )
 
     res = execute_publish(
@@ -1059,3 +1059,21 @@ def test_resolve_scrolls_down_a_fresh_profile_until_the_post_appears(monkeypatch
     assert pid == "4728190000000000"
     assert len([c for c in cmds if "swipe" in c]) == 3
     assert (954, 1901, 1080, 2026) in taps
+
+
+def test_resolve_stops_at_the_deadline_without_extra_attempts(monkeypatch):
+    top = """<hierarchy rotation="0"><node package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.TextView" text="Personal details" bounds="[36,300][800,360]" /></node></hierarchy>"""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr("phone_runner.modern_composer.time.monotonic", lambda: clock["t"])
+    monkeypatch.setattr("phone_runner.modern_composer.time.sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    monkeypatch.setattr("phone_runner.modern_composer.clear_and_verify_clipboard", lambda s: (True, "sentinel_1"))
+    monkeypatch.setattr("phone_runner.modern_composer.launch_facebook_own_profile", lambda s: None)
+    monkeypatch.setattr("phone_runner.modern_composer.query_ui_hierarchy", lambda s: AdbResult(0, top, ""))
+    monkeypatch.setattr("phone_runner.modern_composer.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+
+    pid, permalink, detail = resolve_latest_post_link(TEST_SERIAL, "some caption text here", attempts=8, wait=15.0, deadline=1060.0)
+
+    assert pid is None and permalink is None
+    assert clock["t"] <= 1060.0 + 20.0  # never runs far past the deadline
+    assert "time budget" in detail or "not found" in detail
