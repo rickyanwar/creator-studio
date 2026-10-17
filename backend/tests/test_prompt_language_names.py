@@ -90,3 +90,25 @@ def test_facebook_photo_source_mode6_contains_language_name():
         prompt = mock_ai.call_args[0][0]
         assert "French" in prompt
         assert "Translate this quote to French" in prompt
+
+
+def test_generate_caption_never_calls_the_same_model_twice(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import ai_caption
+
+    calls = []
+    monkeypatch.setattr(ai_caption, "_router_enabled", lambda: True)
+    monkeypatch.setattr("app.services.nine_router.get_nine_router_config", lambda *a, **k: SimpleNamespace(model="FlashFast", enabled=True))
+    monkeypatch.setattr("app.services.model_health.is_dead", lambda m: False)
+    monkeypatch.setattr(ai_caption, "ROUTER_MODEL_FALLBACKS", ["FlashFast", "ag/gemini-3.8-flash-medium"])
+
+    def fake_call(prompt, model=None, **kw):
+        calls.append(model or "FlashFast")
+        if len(calls) < 2:
+            raise TimeoutError("slow")
+        return "ok"
+
+    monkeypatch.setattr(ai_caption, "_call_router", fake_call)
+    text, provider = ai_caption.generate_caption("hello")
+    assert text == "ok" and provider == "router"
+    assert calls == ["FlashFast", "ag/gemini-3.8-flash-medium"]  # FlashFast only once

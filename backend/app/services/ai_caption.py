@@ -372,6 +372,17 @@ def generate_caption(
         ]
         if not models_to_try:
             models_to_try = [m for m in original_models_to_try if not (m and m.startswith("cx/"))]
+        # Never call the same model/combo twice in one chain: the configured default (None) is
+        # FlashFast now, which is also the first fallback — a timeout used to be paid twice.
+        seen_models: set[str] = set()
+        unique_models = []
+        for model in models_to_try:
+            effective = default_model if model is None else model
+            if effective in seen_models:
+                continue
+            seen_models.add(effective)
+            unique_models.append(model)
+        models_to_try = unique_models
         for model in models_to_try:
             if model and model.startswith("cx/"):
                 continue
