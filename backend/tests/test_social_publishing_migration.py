@@ -119,7 +119,10 @@ def test_alembic_revision_head():
     """Verify migration revision lineage and head."""
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["c80000000023"]
+    assert script.get_heads() == ["c80000000024"]
+
+    rev24 = script.get_revision("c80000000024")
+    assert rev24.down_revision == "c80000000023"
 
     rev23 = script.get_revision("c80000000023")
     assert rev23.down_revision == "c80000000022"

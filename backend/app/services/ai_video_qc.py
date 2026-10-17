@@ -158,7 +158,11 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
         prompt += (
             "Fail if any official league, series or governing-body logo or wordmark is visible anywhere "
             "(F1, Formula 1, FIA, MotoGP, FIM, Dorna, NBA, UFC, NFL, FIFA, UEFA, Premier League or similar), "
-            "including a small corner watermark. Check watermark/logo/URL overlays, garbled text, "
+            "including a small corner watermark. "
+            # Owner rule 2026-10-17: sponsor liveries are fine; only official series/niche marks are not.
+            "Sponsor, team, car-maker and other commercial brand logos on cars, bikes, kit or trackside "
+            "(e.g. Shell, DHL, Pirelli, Ferrari, BWT, Red Bull) are ALLOWED: never report them as issues. "
+            "Check added watermark or URL overlays that are not part of the scene, garbled text, "
             "severe AI artifacts, vehicle design or colour changes between frames, and NSFW. "
             'Return JSON only: {"pass": bool, "issues": [string]} with short issue strings.'
         )
