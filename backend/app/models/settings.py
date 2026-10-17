@@ -91,7 +91,7 @@ class Settings(Base):
     metrics_last_error = Column(Text, nullable=True)
 
     ai_video_worker_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
-    ai_video_vision_qc_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    ai_video_vision_qc_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     ai_video_credit_reserve = Column(Integer, default=0, nullable=False, server_default="0")
     # Who researches Mode 8 ideas: "muse" (research desk API) or "hermes". Muse only gets work
     # when it is the researcher; "pilot" mode holds its ideas for review instead of producing them.

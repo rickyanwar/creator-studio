@@ -449,8 +449,8 @@ def _fetch_and_store(
         # design_images.classify_and_gate_image). Rejects the obvious junk a
         # keyword search drags in: crowd/stage/logo-only shots, screenshots,
         # graphics with text overlays, tiny/blurry/mostly-obstructed subjects.
-        # Fails open (usable=True) on any vision error — never let a flaky
-        # call block a download outright.
+        # Fails closed (owner rule: accuracy over availability): on any vision error the photo is skipped; it is not stored, so a later
+        # run retries the same URL.
         if allow_low_quality:
             try:
                 from app.services.design_images import classify_and_gate_image
@@ -458,13 +458,13 @@ def _fetch_and_store(
                     final_bytes, subject=subject, allow_low_quality=True,
                 )
             except Exception:
-                label, usable = None, True
+                label, usable = None, False
         else:
             try:
                 from app.services.design_images import classify_and_gate_image
                 label, usable = classify_and_gate_image(final_bytes, subject=subject)
             except Exception:
-                label, usable = None, True
+                label, usable = None, False
 
         if not usable:
             logger.info("Gallery: rejecting %s — vision quality gate says not usable for design", url)

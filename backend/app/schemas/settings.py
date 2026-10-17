@@ -89,7 +89,7 @@ class SettingsOut(BaseModel):
     metrics_plan_checked_at: Optional[datetime] = None
     metrics_last_error: Optional[str] = None
     ai_video_worker_enabled: bool = True
-    ai_video_vision_qc_enabled: bool = False
+    ai_video_vision_qc_enabled: bool = True
     ai_video_credit_reserve: int = Field(0, ge=0, le=10000)
     ai_video_researcher: str = "muse"
     muse_research_mode: str = "pilot"

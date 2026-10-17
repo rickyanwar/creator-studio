@@ -69,7 +69,7 @@ export function AiVideoSettingsCard({
         <input
           type="checkbox"
           className="w-4 h-4 mt-0.5 accent-primary-main"
-          checked={settings?.ai_video_vision_qc_enabled ?? false}
+          checked={settings?.ai_video_vision_qc_enabled ?? true}
           onChange={(e) => update("ai_video_vision_qc_enabled", e.target.checked)}
         />
         <span>

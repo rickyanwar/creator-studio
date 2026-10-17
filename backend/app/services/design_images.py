@@ -1891,9 +1891,9 @@ def classify_and_gate_image(
     "Usable" rejects the obvious junk that slips through a keyword search —
     generic crowd/stage/logo shots, screenshots, graphics/text overlays, or
     photos where the subject is tiny/blurry/mostly obstructed — not a strict
-    editorial judgment call. Fails OPEN (label="other", usable=True) on any
-    error: a flaky vision call should reduce to today's behavior (unlabeled,
-    unfiltered), never block a download outright.
+    editorial judgment call. Fails CLOSED (label="other", usable=False) on any
+    error (owner rule: accuracy over availability): a wrong photo is worse
+    than no photo.
 
     2026-09-01: added an explicit "dominant blurry foreground PERSON"
     trigger, calibrated against a real bad photo the original prompt missed
@@ -1959,20 +1959,22 @@ def classify_and_gate_image(
         raw = _vision_chat(content, max_tokens=1500, context="vision_download_gate")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
-            return "other", not allow_low_quality
+            logger.warning("classify_and_gate_image: unparseable reply, failing closed")
+            return "other", False
         import json as _json
         try:
             d = _json.loads(m.group(0))
         except _json.JSONDecodeError:
-            return "other", not allow_low_quality
+            logger.warning("classify_and_gate_image: unparseable reply, failing closed")
+            return "other", False
         label = str(d.get("label") or "OTHER").strip().upper()
         if label not in ("FACE", "ACTION", "OTHER"):
             label = "OTHER"
-        usable = d.get("content_acceptable") is True if allow_low_quality else bool(d.get("usable", True))
+        usable = d.get("content_acceptable") is True if allow_low_quality else (d.get("usable") is True)
         return label.lower(), usable
     except Exception as exc:
-        logger.warning("classify_and_gate_image failed: %s", exc)
-        return "other", True
+        logger.warning("classify_and_gate_image failed, failing closed: %s", exc)
+        return "other", False
 
 
 def classify_closeup_match(image_bytes: bytes, criteria: str) -> dict:
