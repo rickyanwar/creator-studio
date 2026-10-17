@@ -43,6 +43,8 @@ PublishJob (status: pending_publish)
    │             └─► _maybe_mark_post_done(db, post)
 ```
 
+Hermes always runs via `systemd-run` (transient unit outside the phone-runner sandbox, `HERMES_OUTSIDE_SANDBOX=1`) because it must write `/root/.hermes` while the runner keeps `ProtectHome=read-only` (2026-10-17, 432cbd0).
+
 ---
 
 ## 2. PublishDelivery State Machine
@@ -216,14 +218,15 @@ Recovery Trigger (device offline, asleep, portal unready, lease expired)
           ├─► If owner_decision != 'approved':
           │      ├─► If no auto_approve_after:
           │      │      ├─► auto_approve_after = now + 15 minutes
-          │      │      ├─► hermes send --to telegram "[REPAIR NOTICE] Device requires larger repair..."
+          │      │      ├─► hermes send -t telegram "[REPAIR NOTICE] Device requires larger repair..."
           │      │      └─► state='awaiting_approval'
           │      └─► If now < auto_approve_after -> remain in 'awaiting_approval'
           ├─► If owner_decision == 'approved' OR now >= auto_approve_after:
-          │      ├─► hermes heal --serial <serial> --reason <reason>
+          │      ├─► hermes -z "<strict device-only repair prompt>"  (one-shot agent; `hermes heal` does not exist)
           │      ├─► Re-run Tier 1 Deterministic Recovery
           │      ├─► If re-check passes -> state='resolved'
-          │      └─► If heal fails -> hermes send --to telegram "[ALERT] Recovery exhausted..."
+          │      ├─► If heal fails -> wait RECOVERY_SETTLE_SEC (8 s), re-check once; healthy -> state='resolved'
+          │      └─► Still broken -> hermes send -t telegram "[ALERT] Recovery exhausted..."
           │             └─► state='needs_human'
 ```
 
