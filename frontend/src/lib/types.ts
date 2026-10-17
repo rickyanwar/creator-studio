@@ -399,6 +399,8 @@ export interface PublishJob {
   source_article_id: number | null;
   design_title: string | null;
   design_image_url: string | null;
+  design_engine?: "chatgpt" | "codex" | "codex_fallback" | "template" | null;
+  design_engine_note?: string | null;
   design_template_id: number | null;
   design_subtitle?: string | null;
   // Mode 7 (youtube_clip)

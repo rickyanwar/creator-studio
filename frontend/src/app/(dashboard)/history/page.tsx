@@ -43,6 +43,13 @@ const STATUS_CONFIG: Record<string, { badge: string; icon: string; iconClass: st
   skipped:   { badge: "badge-gray",  icon: "solar:skip-next-bold-duotone",      iconClass: "text-text-disabled" },
 };
 
+const ENGINE_BADGE: Record<string, { label: string; badge: string; icon: string }> = {
+  chatgpt:        { label: "ChatGPT",           badge: "badge-green",  icon: "simple-icons:openai" },
+  codex:          { label: "Codex",             badge: "badge-blue",   icon: "solar:code-square-bold-duotone" },
+  codex_fallback: { label: "Codex · fallback",  badge: "badge-yellow", icon: "solar:refresh-circle-bold-duotone" },
+  template:       { label: "Template",          badge: "badge-gray",   icon: "solar:gallery-wide-bold-duotone" },
+};
+
 const AVATAR_COLORS = [
   "#00A76F", "#8E33FF", "#FFAB00", "#FF5630",
   "#00B8D9", "#5119B7", "#B76E00", "#B71D18",
@@ -527,6 +534,16 @@ function HistoryCard({
             </p>
           )}
         </div>
+
+        {job.design_engine && ENGINE_BADGE[job.design_engine] && (
+          <span
+            className={`${ENGINE_BADGE[job.design_engine].badge} flex-shrink-0 flex items-center gap-1`}
+            title={job.design_engine_note || `Image: ${ENGINE_BADGE[job.design_engine].label}`}
+          >
+            <Icon icon={ENGINE_BADGE[job.design_engine].icon} width={11} />
+            {ENGINE_BADGE[job.design_engine].label}
+          </span>
+        )}
 
         {/* Status badge — one at a time: "Scheduled" while still pending the
             real Facebook go-live time, else the actual job status */}
