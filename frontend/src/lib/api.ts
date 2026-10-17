@@ -359,6 +359,7 @@ export const proxyImageUrl = async (url: string): Promise<string> => {
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get("/settings");
+export const getAiEngineStatus = () => api.get("/settings/ai-engine-status");
 export const updateSettings = (data: Record<string, unknown>) => api.put("/settings", data);
 export const testYouTubeAccess = () => api.post("/settings/youtube/test");
 export const clearYouTubeBlock = () => api.post("/settings/youtube/clear-block");

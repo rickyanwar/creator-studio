@@ -7,6 +7,7 @@ import { YouTubeSettingsCard } from "@/components/settings/YouTubeSettingsCard";
 import { HermesTokensCard } from "@/components/settings/HermesTokensCard";
 import { AiVideoSettingsCard } from "@/components/settings/AiVideoSettingsCard";
 import { GalleryLabelsSettingsCard } from "@/components/settings/GalleryLabelsSettingsCard";
+import { AiImageEngineSettingsCard } from "@/components/settings/AiImageEngineSettingsCard";
 import { F1DriversSettings } from "@/components/settings/F1DriversSettings";
 import { DevicesSettingsCard } from "@/components/settings/DevicesSettingsCard";
 import type { AppSettings } from "@/lib/types";
@@ -436,6 +437,8 @@ export default function SettingsPage() {
           <p className="text-xs text-text-secondary mt-1">Copy from the 9Router dashboard.</p>
         </div>
       </section>
+
+      <AiImageEngineSettingsCard settings={settings} onChanged={() => mutate()} />
 
       {/* Radar Settings */}
       <section className="card space-y-4">

@@ -562,6 +562,49 @@ export interface AppSettings {
   gallery_labels_total?: number;
   gallery_labels_pending?: number;
   gallery_labels_failed?: number;
+  // ── AI Image Engine (ChatGPT / Codex) ──
+  visual_engine_daily_max?: number;
+  gptcli_enabled?: boolean;
+  gptcli_base_url?: string;
+  has_gptcli_token?: boolean;
+  gptcli_token?: string;
+  gptcli_fanpage_ids?: number[];
+  gptcli_thread?: string;
+  gptcli_size?: string;
+  ai_day_start?: string;
+  codex_share_percent?: number;
+  codex_share_window_jobs?: number;
+  codex_overflow_queue_len?: number;
+  codex_share_max_pct?: number;
+  codex_fallback_max_pct?: number;
+  codex_night_max_pct?: number;
+  codex_rest_pct?: number;
+  codex_window_capacity_est?: number;
+  codex_night_min_gap_s?: number;
+  codex_night_gap_jitter_s?: number;
+  codex_usage_url?: string | null;
+}
+
+export interface AiEngineStatus {
+  today?: {
+    gptcli?: { success?: number; recovered?: number; failed?: number };
+    "9router"?: { success?: number; recovered?: number; failed?: number };
+    none?: { failed?: number };
+    deferred?: number;
+  };
+  identity_rejects_today?: number;
+  codex_day_share?: number | null;
+  codex_usage?: {
+    window_pct?: number;
+    weekly_pct?: number | null;
+    resets_at?: string | null;
+    source?: "9router" | "estimate" | string;
+  } | null;
+  gptcli_unavailable_until?: string | null;
+  gptcli_unavailable_reason?: string | null;
+  visual_queue_len?: number;
+  gptcli_enabled?: boolean;
+  gptcli_fanpage_ids?: number[];
 }
 
 export type AiVideoIdeaStatus = "pilot" | "proposed" | "approved" | "rejected" | "queued" | "done" | "failed";
