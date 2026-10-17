@@ -1,9 +1,8 @@
-from typing import List, Tuple
+from typing import List, Tuple, Literal
 import base64
 import io
 from dataclasses import dataclass
-from typing import Literal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 from PIL import Image
@@ -13,6 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.models.settings import Settings
 from app.models.ai_copy_events import AICopyEvent
+from app.services import codex_budget
+from app.services import engine_router
+from app.services import gptcli_client
 from app.services.nine_router import get_nine_router_config
 from app.services.visual_style import treatment_clause
 
@@ -190,7 +192,7 @@ def _is_quota_error(msg: str, code: int) -> bool:
     return any(w in msg_low for w in ['quota', 'limit', 'exhausted', 'entitled'])
 
 
-def generate(db: Session, req: GenerationRequest, *, timeout: float = 600, fanpage_id: int | None = None) -> bytes:
+def _generate_legacy(db: Session, req: GenerationRequest, *, timeout: float = 600, fanpage_id: int | None = None) -> bytes:
     cfg = get_nine_router_config(db)
     
     settings = db.query(Settings).first()
@@ -300,3 +302,248 @@ def generate(db: Session, req: GenerationRequest, *, timeout: float = 600, fanpa
                 raise VisualEngineError('transport', f"Unexpected error: {str(e)}")
 
     raise VisualEngineError('transport', 'Max retries exceeded')
+
+
+def _call_nine_router(cfg, req: GenerationRequest, *, timeout: float) -> bytes:
+    images = [_image_to_b64(ref) for ref in req.refs]
+    
+    body = {
+        "model": req.model,
+        "prompt": req.prompt,
+        "images": images,
+        "size": req.size,
+        "quality": req.quality
+    }
+
+    url = f"{cfg.base_url}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {cfg.api_key}",
+        "Content-Type": "application/json"
+    }
+
+    def sanitize_err(err_text: str) -> str:
+        res_err = err_text
+        if cfg.api_key:
+            res_err = res_err.replace(cfg.api_key, "***")
+        import re
+        return re.sub(r'([?&](?:key|token|api-key)=)[^&\s"\']+', r'\1***', res_err, flags=re.IGNORECASE)
+
+    for attempt in range(2):
+        try:
+            with httpx.stream("POST", url, json=body, headers=headers, timeout=timeout) as resp:
+                resp.read()
+                
+                if resp.status_code == 401 or resp.status_code == 403:
+                    safe_msg = sanitize_err(resp.text)
+                    raise VisualEngineError('auth', f"Auth error: {safe_msg}")
+                
+                if not resp.is_success:
+                    if resp.status_code == 429 or _is_quota_error(resp.text, resp.status_code):
+                        safe_msg = sanitize_err(resp.text)
+                        raise VisualEngineError('quota', f"Quota error: {safe_msg}")
+                        
+                    if attempt == 1:
+                        safe_msg = sanitize_err(resp.text)
+                        raise VisualEngineError('transport', f"HTTP {resp.status_code}: {safe_msg}")
+                    continue
+                    
+                data = resp.json()
+                if 'data' not in data or not data['data'] or 'b64_json' not in data['data'][0]:
+                    raise VisualEngineError('bad_response', 'missing b64 in response')
+                
+                b64 = data['data'][0]['b64_json']
+                return base64.b64decode(b64)
+                
+        except httpx.TimeoutException as e:
+            if attempt == 1:
+                raise VisualEngineError('timeout', f"Timeout: {e}")
+        except httpx.RequestError as e:
+            if attempt == 1:
+                raise VisualEngineError('transport', f"Transport error: {e}")
+        except VisualEngineError:
+            raise
+        except Exception as e:
+            if attempt == 1:
+                raise VisualEngineError('transport', f"Unexpected error: {str(e)}")
+
+    raise VisualEngineError('transport', 'Max retries exceeded')
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    image: bytes
+    engine: Literal["gptcli", "9router"]
+    meta: dict            # gptcli: the gptcli block; 9router: {}
+    event_id: int | None
+
+
+class VisualEngineDeferred(Exception):
+    def __init__(self, until: datetime, reason: str):
+        super().__init__(f"deferred until {until.isoformat()} ({reason})")
+        self.until = until
+        self.reason = reason
+
+
+_GPTCLI_KIND = {
+    "quota": "quota",
+    "soft_cap": "quota",
+    "unauthorized": "auth",
+    "timeout": "timeout",
+    "bad_response": "bad_response",
+    "no_image": "bad_response",
+}   # anything else → "transport"
+
+
+def generate_ex(
+    db: Session,
+    req: GenerationRequest,
+    *,
+    timeout: float = 600,
+    fanpage_id: int | None = None,
+    exclude: frozenset = frozenset(),
+) -> GenerationResult:
+    now = datetime.now(timezone.utc)
+    plan = engine_router.plan_engines(db, fanpage_id, now, exclude=exclude)
+
+    if plan.reason == "gptcli_off":
+        return GenerationResult(
+            _generate_legacy(db, req, timeout=timeout, fanpage_id=fanpage_id),
+            "9router",
+            {},
+            None,
+        )
+
+    if plan.defer_until:
+        ev = AICopyEvent(
+            context="image_gen",
+            fanpage_id=fanpage_id,
+            outcome="deferred",
+            models_tried="",
+            final_provider=None,
+            error_message=f"plan={plan.reason}; until={plan.defer_until.isoformat()}",
+            latency_ms=0,
+        )
+        db.add(ev)
+        db.commit()
+        raise VisualEngineDeferred(plan.defer_until, plan.reason)
+
+    if not plan.order:
+        ev = AICopyEvent(
+            context="image_gen",
+            fanpage_id=fanpage_id,
+            outcome="failed",
+            models_tried="",
+            final_provider=None,
+            error_message=f"plan={plan.reason}; no engine available",
+            latency_ms=0,
+        )
+        db.add(ev)
+        db.commit()
+        raise VisualEngineError("quota", "no engine available")
+
+    start_time = datetime.now(timezone.utc)
+    tried: list[str] = []
+    parts: list[str] = []
+    last_kind: Literal["quota", "auth", "timeout", "bad_response", "transport"] = "transport"
+    winner_engine: Literal["gptcli", "9router"] | None = None
+    winner_image: bytes | None = None
+    winner_meta: dict = {}
+
+    for engine in plan.order:
+        if engine == "gptcli":
+            tried.append("gptcli")
+            try:
+                cfg = gptcli_client.get_gptcli_config(db)
+                images = [_image_to_b64(p) for p in req.refs]
+                res = gptcli_client.generate_image(
+                    cfg,
+                    req.prompt,
+                    images,
+                    request_id=gptcli_client.request_id_for(req.prompt, images),
+                )
+                winner_engine = "gptcli"
+                winner_image = res.png
+                winner_meta = res.meta
+                break
+            except gptcli_client.GptcliError as e:
+                msg_snip = e.message[:1500] if e.type == "refused" else e.message[:300]
+                parts.append(f"gptcli:{e.type}: {msg_snip}")
+                extra = getattr(e, "extra", {}) or {}
+                if extra.get("chat_url"):
+                    parts.append(f"chat_url={extra['chat_url']}")
+                last_kind = _GPTCLI_KIND.get(e.type, "transport")
+                continue
+            except Exception as exc:
+                parts.append(f"gptcli: unexpected {type(exc).__name__}")
+                last_kind = "transport"
+                continue
+
+        elif engine == "9router":
+            try:
+                if plan.reason == "night":
+                    codex_budget.wait_night_gap(db, datetime.now(timezone.utc))
+                cfg9 = get_nine_router_config(db)
+                img = _call_nine_router(cfg9, req, timeout=timeout)
+                tried.append(req.model)
+                codex_budget.mark_codex_used(datetime.now(timezone.utc))
+                winner_engine = "9router"
+                winner_image = img
+                winner_meta = {}
+                break
+            except VisualEngineError as e:
+                tried.append(req.model)
+                parts.append(f"9router: {str(e)[:300]}")
+                last_kind = e.kind
+                if e.kind == "quota":
+                    usage = codex_budget.get_codex_usage(db, now)
+                    codex_budget.mark_codex_rest(usage.resets_at or (now + timedelta(hours=1)))
+                continue
+            except Exception as exc:
+                tried.append(req.model)
+                parts.append(f"9router: unexpected {type(exc).__name__}")
+                last_kind = "transport"
+                continue
+        else:
+            parts.append(f"{engine}: unexpected engine")
+            continue
+
+    if winner_engine is not None:
+        outcome = "success" if winner_engine == plan.order[0] else "recovered"
+        final_provider = winner_engine
+    else:
+        outcome = "failed"
+        final_provider = None
+
+    success_parts: list[str] = []
+    if winner_engine == "gptcli":
+        success_parts = [
+            f"chat_url={winner_meta.get('chat_url')}",
+            f"attempts={winner_meta.get('attempts')}",
+            f"queue_wait_s={winner_meta.get('queue_wait_s')}",
+        ]
+
+    event_text = "; ".join([f"plan={plan.reason}", *parts, *success_parts])
+    total_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+
+    ev = AICopyEvent(
+        context="image_gen",
+        fanpage_id=fanpage_id,
+        outcome=outcome,
+        models_tried=">".join(tried)[:256],
+        final_provider=final_provider,
+        error_message=event_text,
+        latency_ms=total_ms,
+    )
+    db.add(ev)
+    db.commit()
+    event_id = getattr(ev, "id", None)
+
+    if winner_engine is not None and winner_image is not None:
+        return GenerationResult(winner_image, winner_engine, winner_meta or {}, event_id)
+
+    raise VisualEngineError(last_kind, "; ".join(parts)[:1000] or "all engines failed")
+
+
+def generate(db: Session, req: GenerationRequest, *, timeout: float = 600, fanpage_id: int | None = None) -> bytes:
+    return generate_ex(db, req, timeout=timeout, fanpage_id=fanpage_id).image
+
