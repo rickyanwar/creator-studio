@@ -203,8 +203,17 @@ jobs:
               echo "gflow_worker unchanged — no restart"
             fi
 
-            echo "── Pruning dangling images + build cache unused for 7 days ──"
+            echo "── Keeping the 3 newest rollback deploys + 10 newest pre-deploy dumps ──"
+            KEEP_IDS=$(docker images --format '{{.Tag}}' | grep '^rollback-' | sed 's/^rollback-//' | sort -u | tail -n 3 | paste -sd'|' -)
+            if [ -n "$KEEP_IDS" ]; then
+              docker images --format '{{.Repository}}:{{.Tag}}' | grep ':rollback-' | grep -vE "rollback-(${KEEP_IDS})$" | xargs -r docker rmi >/dev/null 2>&1 || true
+            fi
+            ls -1d /var/backups/studio-social/*/ 2>/dev/null | sort | head -n -10 | xargs -r rm -rf
+
+            # Age filter, never a size cap: --max-used-space evicted the newest backend
+            # cache and made every deploy a cold 13-25 min build (2026-10-14).
+            echo "── Pruning dangling images + build cache unused for 2 days ──"
             docker image prune -f
-            docker builder prune -f --filter until=168h
+            docker builder prune -f --filter until=48h
 
             echo "✓ Deploy complete"
