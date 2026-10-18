@@ -134,13 +134,13 @@ export function PhoneSettingsBlock({
   return (
     <section className="card p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
-          <Icon icon="solar:smartphone-bold" className="text-blue-400" width={16} />
+        <h3 className="text-sm font-bold text-text flex items-center gap-2">
+          <Icon icon="solar:smartphone-bold" className="text-info" width={16} />
           Phone Settings &amp; Verification
         </h3>
         <Link
-          href="/social-media/accounts"
-          className="text-xs font-semibold text-primary-main hover:text-primary-dark transition"
+          href="/brands/accounts"
+          className="text-xs font-semibold text-pri hover:opacity-90 transition"
         >
           Manage profiles and phones →
         </Link>
@@ -181,8 +181,8 @@ export function PhoneSettingsBlock({
         <div>
           <label className="label">Assigned Phone Device</label>
           {primaryAssignedDevice ? (
-            <div className="h-[42px] px-3 rounded-md bg-bg-paper-hover border border-grey-700 flex items-center justify-between text-xs">
-              <span className="flex items-center gap-2 font-medium text-text-primary">
+            <div className="h-[42px] px-3 rounded-md bg-surface2 border border-line flex items-center justify-between text-xs">
+              <span className="flex items-center gap-2 font-medium text-text">
                 <span
                   className={`w-2 h-2 rounded-full ${
                     isPhoneOnline ? "bg-emerald-500" : "bg-rose-500"
@@ -193,7 +193,7 @@ export function PhoneSettingsBlock({
               <button
                 type="button"
                 onClick={() => handleUnassignDevice(primaryAssignedDevice.id)}
-                className="text-text-disabled hover:text-rose-400 transition"
+                className="text-text2 hover:text-bad transition"
                 title="Remove assignment"
               >
                 <Icon icon="solar:trash-bin-trash-bold" width={14} />
@@ -227,8 +227,8 @@ export function PhoneSettingsBlock({
       </div>
 
       {/* Checklist */}
-      <div className="p-4 rounded-xl bg-bg-default border border-divider-soft space-y-3">
-        <span className="text-xs font-semibold text-text-primary">
+      <div className="p-4 rounded-xl bg-surface2 border border-line space-y-3">
+        <span className="text-xs font-semibold text-text">
           Before the phone may post:
         </span>
         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
@@ -236,13 +236,13 @@ export function PhoneSettingsBlock({
             <span
               className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
                 profileIdentityVerified
-                  ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                  : "bg-slate-800 text-slate-500 border border-slate-700"
+                  ? "bg-pri-soft text-pri-text border border-pri/30"
+                  : "bg-surface text-text2 border border-line"
               }`}
             >
               {profileIdentityVerified ? "✓" : "○"}
             </span>
-            <span className={profileIdentityVerified ? "text-text-primary" : "text-text-disabled"}>
+            <span className={profileIdentityVerified ? "text-text" : "text-text2"}>
               Profile identity verified on phone
             </span>
           </li>
@@ -251,13 +251,13 @@ export function PhoneSettingsBlock({
             <span
               className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
                 pageIdentityVerified
-                  ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                  : "bg-slate-800 text-slate-500 border border-slate-700"
+                  ? "bg-pri-soft text-pri-text border border-pri/30"
+                  : "bg-surface text-text2 border border-line"
               }`}
             >
               {pageIdentityVerified ? "✓" : "○"}
             </span>
-            <span className={pageIdentityVerified ? "text-text-primary" : "text-text-disabled"}>
+            <span className={pageIdentityVerified ? "text-text" : "text-text2"}>
               Page identity verified (switch works)
             </span>
           </li>
@@ -266,13 +266,13 @@ export function PhoneSettingsBlock({
             <span
               className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
                 appCardPassed
-                  ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                  : "bg-slate-800 text-slate-500 border border-slate-700"
+                  ? "bg-pri-soft text-pri-text border border-pri/30"
+                  : "bg-surface text-text2 border border-line"
               }`}
             >
               {appCardPassed ? "✓" : "○"}
             </span>
-            <span className={appCardPassed ? "text-text-primary" : "text-text-disabled"}>
+            <span className={appCardPassed ? "text-text" : "text-text2"}>
               App Card dry-run passed
             </span>
           </li>
@@ -281,13 +281,13 @@ export function PhoneSettingsBlock({
             <span
               className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
                 isPhoneOnline
-                  ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                  : "bg-slate-800 text-slate-500 border border-slate-700"
+                  ? "bg-pri-soft text-pri-text border border-pri/30"
+                  : "bg-surface text-text2 border border-line"
               }`}
             >
               {isPhoneOnline ? "✓" : "○"}
             </span>
-            <span className={isPhoneOnline ? "text-text-primary" : "text-text-disabled"}>
+            <span className={isPhoneOnline ? "text-text" : "text-text2"}>
               Phone online over Tailscale
             </span>
           </li>
@@ -311,7 +311,7 @@ export function PhoneSettingsBlock({
           {dryRunMessage && (
             <span
               className={`text-xs font-medium ${
-                dryRunMessage.type === "success" ? "text-emerald-400" : "text-rose-400"
+                dryRunMessage.type === "success" ? "text-pri" : "text-bad"
               }`}
             >
               {dryRunMessage.text}

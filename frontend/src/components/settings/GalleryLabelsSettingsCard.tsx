@@ -40,39 +40,39 @@ export function GalleryLabelsSettingsCard({
   }
 
   return (
-    <section className="card space-y-4">
+    <section className="bg-surface border border-line rounded-[14px] p-5 space-y-4">
       <div>
-        <h2 className="text-base font-semibold text-text-primary">
+        <h2 className="text-base font-semibold text-text">
           Gallery labels (third-party API)
         </h2>
-        <p className="text-xs text-text-secondary mt-1">
+        <p className="text-xs text-text2 mt-1">
           Rich labeling for new gallery downloads.
         </p>
       </div>
 
       {error && (
-        <p className="text-xs text-error-main bg-red-50 rounded p-2">
+        <p className="text-xs text-bad bg-bad-soft rounded-lg p-2.5">
           {error}
         </p>
       )}
 
-      <label className="flex items-center gap-3 text-sm text-text-primary cursor-pointer">
+      <label className="flex items-center gap-3 text-sm text-text cursor-pointer">
         <input
           type="checkbox"
-          className="w-4 h-4 accent-primary-main"
+          className="w-4 h-4 accent-pri rounded"
           checked={settings?.gallery_labeling_enabled ?? false}
           onChange={(e) => update("gallery_labeling_enabled", e.target.checked)}
         />
-        Enable rich labeling
+        <span>Enable rich labeling</span>
       </label>
 
       <div>
-        <label className="label">Daily cap (0–5000)</label>
+        <label className="block text-xs font-semibold text-text mb-1">Daily cap (0–5000)</label>
         <input
           type="number"
           min={0}
           max={5000}
-          className="input-rect"
+          className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-44"
           value={dailyCap}
           onChange={(e) => setDailyCap(e.target.value)}
           onBlur={commitCap}
@@ -85,26 +85,26 @@ export function GalleryLabelsSettingsCard({
       </div>
 
       {/* Stats display */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-border-default text-xs">
-        <div className="bg-bg-subtle p-2 rounded">
-          <span className="text-text-secondary block">Labeled today</span>
-          <span className="font-semibold text-text-primary">{settings?.gallery_labels_today ?? 0}</span>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 border-t border-line text-xs">
+        <div className="bg-surface2 p-2.5 rounded-lg">
+          <span className="text-text2 block text-[11px]">Labeled today</span>
+          <span className="font-semibold text-text text-base">{settings?.gallery_labels_today ?? 0}</span>
         </div>
-        <div className="bg-bg-subtle p-2 rounded">
-          <span className="text-text-secondary block">Labeled total</span>
-          <span className="font-semibold text-text-primary">{settings?.gallery_labels_total ?? 0}</span>
+        <div className="bg-surface2 p-2.5 rounded-lg">
+          <span className="text-text2 block text-[11px]">Labeled total</span>
+          <span className="font-semibold text-text text-base">{settings?.gallery_labels_total ?? 0}</span>
         </div>
-        <div className="bg-bg-subtle p-2 rounded">
-          <span className="text-text-secondary block">Pending</span>
-          <span className="font-semibold text-text-primary">{settings?.gallery_labels_pending ?? 0}</span>
+        <div className="bg-surface2 p-2.5 rounded-lg">
+          <span className="text-text2 block text-[11px]">Pending</span>
+          <span className="font-semibold text-text text-base">{settings?.gallery_labels_pending ?? 0}</span>
         </div>
-        <div className="bg-bg-subtle p-2 rounded">
-          <span className="text-text-secondary block">Failed (&ge;3 attempts)</span>
-          <span className="font-semibold text-text-primary">{settings?.gallery_labels_failed ?? 0}</span>
+        <div className="bg-surface2 p-2.5 rounded-lg">
+          <span className="text-text2 block text-[11px]">Failed (&ge;3 attempts)</span>
+          <span className="font-semibold text-text text-base">{settings?.gallery_labels_failed ?? 0}</span>
         </div>
       </div>
 
-      <p className="text-[11px] text-text-secondary italic">
+      <p className="text-[11px] text-text2 italic">
         New downloads are labeled with 9Router; older photos will be labeled later
       </p>
     </section>

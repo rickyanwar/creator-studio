@@ -45,6 +45,7 @@ class TargetFanpage(Base):
     # rolls to the following day instead of continuing nonstop. A page that
     # never stops posting is itself a bot signal, independent of spacing.
     publish_daily_limit = Column(Integer, default=45, nullable=False, server_default="45")
+    publish_hour_weights = Column(JSON, nullable=True)
 
     # ── Content modes (Feature 2) ─────────────────
     mode1_ig_repost_enabled = Column(Boolean, default=True, nullable=False, server_default="true")

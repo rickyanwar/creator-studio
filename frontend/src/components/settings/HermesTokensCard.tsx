@@ -40,16 +40,16 @@ export function HermesTokensCard() {
   };
 
   return (
-    <section className="card space-y-4">
-      <h2 className="text-base font-semibold text-text-primary">Hermes API tokens</h2>
+    <section className="bg-surface border border-line rounded-[14px] p-5 space-y-4">
+      <h2 className="text-base font-semibold text-text">Hermes API tokens</h2>
       
       {createdToken && (
-        <div className="p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
-          <p className="text-sm font-semibold text-orange-800 dark:text-orange-200 mb-2">
+        <div className="p-4 bg-warn-soft border border-warn/30 rounded-xl space-y-2">
+          <p className="text-sm font-semibold text-warn">
             Copy it now — it will not be shown again
           </p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 p-2 bg-white dark:bg-black/40 rounded border border-orange-200 dark:border-orange-800 text-sm select-all">
+            <code className="flex-1 p-2 bg-surface rounded-lg border border-line text-xs font-mono select-all text-text">
               {createdToken}
             </code>
             <button
@@ -57,7 +57,7 @@ export function HermesTokensCard() {
                 navigator.clipboard.writeText(createdToken);
                 alert("Copied!");
               }}
-              className="btn btn-secondary"
+              className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text text-xs hover:bg-surface2 font-medium"
             >
               Copy
             </button>
@@ -65,29 +65,30 @@ export function HermesTokensCard() {
         </div>
       )}
 
-      <div className="space-y-3 bg-surface-secondary p-3 rounded-lg border border-hairline">
-        <h3 className="text-sm font-medium">Create Token</h3>
-        <div className="grid grid-cols-2 gap-3">
+      <div className="space-y-3 bg-surface2 p-3.5 rounded-xl border border-line">
+        <h3 className="text-sm font-semibold text-text">Create Token</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="label">Name</label>
+            <label className="block text-xs font-semibold text-text mb-1">Name</label>
             <input
-              className="input-rect"
+              className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. VPS Hermes Worker"
             />
           </div>
           <div>
-            <label className="label">Scopes</label>
+            <label className="block text-xs font-semibold text-text mb-1">Scopes</label>
             <div className="flex flex-wrap gap-2 mt-1">
               {availableScopes.map((s) => (
-                <label key={s} className="flex items-center gap-1 text-xs cursor-pointer">
+                <label key={s} className="flex items-center gap-1.5 text-xs text-text cursor-pointer">
                   <input
                     type="checkbox"
+                    className="w-3.5 h-3.5 rounded accent-pri border-line"
                     checked={scopes.includes(s)}
                     onChange={() => handleToggleScope(s)}
                   />
-                  {s}
+                  <span>{s}</span>
                 </label>
               ))}
             </div>
@@ -96,7 +97,7 @@ export function HermesTokensCard() {
         <button
           onClick={handleCreate}
           disabled={loading || !name.trim() || scopes.length === 0}
-          className="btn btn-secondary text-xs"
+          className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
         >
           {loading ? "Creating..." : "Create Token"}
         </button>
@@ -104,33 +105,34 @@ export function HermesTokensCard() {
 
       <div className="space-y-2">
         {tokens?.map((t) => (
-          <div key={t.id} className="flex items-center justify-between p-3 border border-hairline rounded-lg">
+          <div key={t.id} className="flex items-center justify-between p-3 border border-line rounded-xl bg-surface">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-text-primary">{t.name}</span>
+                <span className="text-sm font-semibold text-text">{t.name}</span>
                 {t.revoked_at ? (
-                  <span className="text-[10px] uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded">Revoked</span>
+                  <span className="text-[10px] uppercase font-bold bg-bad-soft text-bad px-2 py-0.5 rounded-full">Revoked</span>
                 ) : (
-                  <span className="text-[10px] uppercase bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">Active</span>
+                  <span className="text-[10px] uppercase font-bold bg-pri-soft text-pri-text px-2 py-0.5 rounded-full">Active</span>
                 )}
               </div>
-              <div className="flex gap-1 mt-1">
-                {t.scopes.map(s => <span key={s} className="text-[10px] bg-divider-soft px-1 rounded">{s}</span>)}
+              <div className="flex flex-wrap gap-1 mt-1">
+                {t.scopes.map((s) => (
+                  <span key={s} className="text-[10px] bg-surface2 border border-line px-1.5 py-0.5 rounded text-text2">
+                    {s}
+                  </span>
+                ))}
               </div>
-              <p className="text-xs text-text-secondary mt-1">
-                Created: {new Date(t.created_at + "Z").toLocaleString()}
-                <br />
-                Last used: {t.last_used_at ? new Date(t.last_used_at + "Z").toLocaleString() : "Never"}
-              </p>
             </div>
             {!t.revoked_at && (
-              <button onClick={() => handleRevoke(t.id)} className="btn-ghost text-red-500 text-xs">
+              <button
+                onClick={() => handleRevoke(t.id)}
+                className="text-xs text-bad hover:underline font-medium"
+              >
                 Revoke
               </button>
             )}
           </div>
         ))}
-        {tokens?.length === 0 && <p className="text-xs text-text-secondary">No tokens found.</p>}
       </div>
     </section>
   );

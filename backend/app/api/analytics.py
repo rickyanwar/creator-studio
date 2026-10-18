@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Query, HTTPException
 from sqlalchemy import func
@@ -6,7 +7,14 @@ from app.api.deps import CurrentUser, DB
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
 from app.models.post_metric_snapshots import PostMetricSnapshot
-from app.services.analytics import load_jobs_for_fanpages, aggregate_fanpage_overview, aggregate_fanpage_detail
+from app.services.analytics import (
+    load_jobs_for_fanpages,
+    aggregate_fanpage_overview,
+    aggregate_fanpage_detail,
+    compute_by_hour,
+    compute_by_weekday,
+    get_local_tz,
+)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -49,11 +57,27 @@ def get_overview(db: DB, _: CurrentUser, days: int = Query(28, ge=7, le=180)):
     fanpage_stats = []
     for f in fanpages:
         fanpage_stats.append(aggregate_fanpage_overview(f, jobs, now, since, until))
-        
+
+    window_jobs = [j for j in jobs if since <= j.scheduled_for <= until]
+    fanpage_tz = {f.id: get_local_tz(f.timezone) for f in fanpages}
+    normalized_jobs = []
+    for j in window_jobs:
+        tz = fanpage_tz.get(j.fanpage_id, timezone.utc)
+        dt = j.scheduled_for if j.scheduled_for.tzinfo is not None else j.scheduled_for.replace(tzinfo=timezone.utc)
+        local_dt = dt.astimezone(tz)
+        normalized_jobs.append(
+            dataclasses.replace(j, scheduled_for=local_dt.replace(tzinfo=timezone.utc))
+        )
+
+    by_hour = compute_by_hour(normalized_jobs, timezone.utc)
+    by_weekday = compute_by_weekday(normalized_jobs, timezone.utc)
+
     return {
         "days": days,
         "metrics": metrics_block,
-        "fanpages": fanpage_stats
+        "fanpages": fanpage_stats,
+        "by_hour": by_hour,
+        "by_weekday": by_weekday,
     }
 
 @router.get("/fanpages/{fanpage_id}")

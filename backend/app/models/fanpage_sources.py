@@ -16,6 +16,8 @@ class FanpageSource(Base):
     # Let's a fanpage recreate/redesign some sources' posts while reposting
     # others plain (caption-only) — see app/tasks/fan_out.py.
     ig_recreate_enabled = Column(Boolean, nullable=True)
+    # Per-source override of recreate engine: 'template' | 'chatgpt' | NULL
+    visual_engine_override = Column(String(16), nullable=True)
     trigger = Column(String(16), default="every_post", nullable=False, server_default="every_post")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 

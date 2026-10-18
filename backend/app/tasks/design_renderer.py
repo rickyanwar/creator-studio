@@ -31,6 +31,43 @@ settings = get_settings()
 
 import copy
 
+
+def _redis():
+    import redis
+    return redis.from_url(get_settings().redis_url, decode_responses=True)
+
+
+_RENDER_QUEUE_LOCK_TTL = 1800
+
+
+def _acquire_queued_lock(job_id: int) -> bool:
+    """Take a per-job Redis lock before enqueueing render tasks (news, discussion, fb photo, ig recreate).
+    SET render_design:queued:<job_id> 1 NX EX 1800.
+    Returns True if lock acquired or Redis is unreachable (fall back to enqueue).
+    Returns False if key already exists (skip this sweep).
+    """
+    key = f"render_design:queued:{job_id}"
+    try:
+        r = _redis()
+        acquired = r.set(key, "1", nx=True, ex=_RENDER_QUEUE_LOCK_TTL)
+        return bool(acquired)
+    except Exception as exc:
+        logger.warning("Redis unreachable while acquiring queue lock for job %s: %s", job_id, exc)
+        return True
+
+
+def _release_queued_lock(job_id: int | None) -> None:
+    """Delete the per-job Redis queue lock when render finishes."""
+    if not job_id:
+        return
+    key = f"render_design:queued:{job_id}"
+    try:
+        r = _redis()
+        r.delete(key)
+    except Exception as exc:
+        logger.warning("Redis unreachable while releasing queue lock for job %s: %s", job_id, exc)
+
+
 def clean_title_for_render(title: str) -> str:
     if not title:
         return ""
@@ -581,6 +618,7 @@ def render_design(self, job_id: int):
             db.rollback()
         raise self.retry(exc=exc, countdown=180)
     finally:
+        _release_queued_lock(job_id)
         db.close()
 
 
@@ -784,6 +822,7 @@ def render_discussion(self, job_id: int):
             db.rollback()
         raise self.retry(exc=exc, countdown=180)
     finally:
+        _release_queued_lock(job_id)
         db.close()
 
 
@@ -1298,6 +1337,7 @@ def render_facebook_photo(self, job_id: int):
             db.rollback()
         raise self.retry(exc=exc, countdown=180)
     finally:
+        _release_queued_lock(job_id)
         db.close()
 
 
@@ -1372,11 +1412,13 @@ def render_pending_designs():
         from app.services.engine_router import render_queue_for
 
         for (job_id,) in jobs:
+            if not _acquire_queued_lock(job_id):
+                continue
             job = db.query(PublishJob).filter_by(id=job_id).first()
             fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first() if job else None
             q = render_queue_for(db, fanpage, "news") if fanpage else None
             if q:
-                render_design.apply_async(args=[job_id], queue=q)
+                render_design.apply_async(args=[job_id], queue=q, expires=1800)
             else:
                 render_design.delay(job_id)
 
@@ -1399,6 +1441,8 @@ def render_pending_designs():
             .all()
         )
         for (job_id,) in djobs:
+            if not _acquire_queued_lock(job_id):
+                continue
             render_discussion.delay(job_id)
 
         # Mode 5 Pinterest cards: same "always auto-render" reasoning as
@@ -1435,11 +1479,13 @@ def render_pending_designs():
             .all()
         )
         for (job_id,) in fjobs:
+            if not _acquire_queued_lock(job_id):
+                continue
             job = db.query(PublishJob).filter_by(id=job_id).first()
             fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first() if job else None
             q = render_queue_for(db, fanpage, "facebook") if fanpage else None
             if q:
-                render_facebook_photo.apply_async(args=[job_id], queue=q)
+                render_facebook_photo.apply_async(args=[job_id], queue=q, expires=1800)
             else:
                 render_facebook_photo.delay(job_id)
 
@@ -1455,8 +1501,10 @@ def render_pending_designs():
             .all()
         )
         for (job_id,) in ijobs:
+            if not _acquire_queued_lock(job_id):
+                continue
             from app.tasks.ig_recreate import render_ig_recreate
-            render_ig_recreate.apply_async((job_id,), queue="visual")
+            render_ig_recreate.apply_async((job_id,), queue="visual", expires=1800)
 
         if jobs or djobs or pjobs or fjobs or ijobs:
             logger.info(

@@ -911,3 +911,132 @@ OUTPUT: only a raw JSON object {{"hashtags": "#tag1 #tag2 ..."}} — no markdown
         context="pinterest_hashtags", fanpage_id=fanpage.id,
     )
     return tags
+
+
+def draft_discussion_ideas(
+    fanpage,
+    *,
+    count: int = 5,
+    topic_hint: str | None = None,
+    force_provider: AIProviderName | None = None,
+) -> list[DiscussionCopy]:
+    """Generate multiple Mode 4 discussion card drafts at once (1..10 ideas).
+    Uses the same prompt principles as the automatic flow (fanpage niche,
+    brand language/tone, caption criteria, label mode, and topic mode or explicit hint).
+    """
+    cs = caption_settings(fanpage)
+    language = language_name(fanpage_language(fanpage))
+    niche = (getattr(fanpage, "mode2_gallery_niches", None) or [None])[0] or fanpage.name
+
+    label_point = _discussion_label_point(
+        fanpage,
+        discussion_example="an open question ending in '?' (e.g. 'Is Senna the GOAT?').",
+        hot_take_example="a bold, arguable claim stated as fact (e.g. 'Verstappen is already better than Hamilton.').",
+        both_line='1. "label" — either "DISCUSSION" (an open question ending in "?") or "HOT TAKE" (a bold, arguable claim stated as fact). Pick whichever is more provocative for that debate.',
+    )
+
+    topic_mode = (getattr(fanpage, "discussion_topic_mode", None) or "both").lower()
+    if topic_hint and topic_hint.strip():
+        source_guidance = f"\nTOPIC / THEME HINT (steer ideas toward this theme or topic): {topic_hint.strip()}"
+    elif topic_mode == "evergreen":
+        source_guidance = "\nTOPIC SOURCE: Focus on timeless, evergreen debates (greatness, GOAT debates, historic controversies, rankings) rather than breaking news."
+    elif topic_mode == "news":
+        source_guidance = "\nTOPIC SOURCE: Focus on timely, current-season developments and active storylines in this niche."
+    else:
+        source_guidance = "\nTOPIC SOURCE: Mix timely storylines and timeless evergreen debates in this niche."
+
+    avoid_block = ""
+    if cs.must_avoid:
+        avoid_block = f"\nBANNED WORDS/CONCEPTS (do not use in question or caption): {', '.join(cs.must_avoid)}"
+    include_block = ""
+    if cs.must_include:
+        include_block = f"\nPREFERRED CONCEPTS: {', '.join(cs.must_include)}"
+
+    prompt = f"""Act as a top-tier sports social media editor for the Facebook Fanpage "{fanpage.name}" (niche: {niche}).
+Invent {count} ORIGINAL, engaging DISCUSSION debate posts that will spark arguments and discussions in the comments.{source_guidance}{avoid_block}{include_block}
+
+For EACH idea:
+{label_point}
+2. "question" — the single big debate line printed on the image card.
+   - If label is "DISCUSSION": an opinion question ending in "?".
+   - If label is "HOT TAKE": a punchy declarative opinion/claim (no question mark).
+   - Language: {language}. Max {_DISCUSSION_MAX_QUESTION_CHARS} characters. No hashtags, no emoji.
+3. "subject" — the ONE person/figure/athlete the card photo should feature (full name, max 40 chars).
+{_discussion_caption_block(fanpage, None)}
+
+CRITICAL: Every one of the {count} ideas MUST feature a DIFFERENT subject and debate angle — do not repeat the same person or same question structure.
+
+OUTPUT: a raw JSON array containing exactly {count} objects:
+[
+  {{"label": "DISCUSSION|HOT TAKE", "question": "...", "subject": "...", "caption": "..."}},
+  ...
+]
+No markdown fences, no explanation."""
+
+    def _parse_drafts(raw: str) -> list[tuple[str, str, str, str]]:
+        cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+        data = None
+        array_match = re.search(r"\[.*\]", cleaned, flags=re.DOTALL)
+        if array_match:
+            try:
+                data = json.loads(array_match.group(0))
+            except Exception:
+                pass
+        if data is None:
+            obj_match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+            if obj_match:
+                try:
+                    obj = json.loads(obj_match.group(0))
+                    if isinstance(obj, list):
+                        data = obj
+                    elif isinstance(obj, dict):
+                        for k in ("ideas", "items", "results", "cards"):
+                            if isinstance(obj.get(k), list):
+                                data = obj[k]
+                                break
+                        if data is None:
+                            data = [obj]
+                except Exception:
+                    pass
+        if not isinstance(data, list) or not data:
+            raise ValueError(f"no valid JSON list of discussion ideas in AI output: {raw[:200]!r}")
+
+        out = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "DISCUSSION").strip().upper()
+            if label not in _DISCUSSION_LABELS:
+                label = "HOT TAKE" if "HOT" in label else "DISCUSSION"
+            question = str(item.get("question") or "").strip()
+            subject = str(item.get("subject") or "").strip()
+            caption = str(item.get("caption") or "").strip()
+            if not question or not caption:
+                continue
+            if len(question) > _DISCUSSION_MAX_QUESTION_CHARS:
+                question = question[: _DISCUSSION_MAX_QUESTION_CHARS - 1].rstrip() + "…"
+            out.append((label, question, subject, caption))
+
+        if not out:
+            raise ValueError(f"no complete discussion ideas parsed from AI output: {raw[:200]!r}")
+        return out
+
+    results, provider = _generate_with_fallback(
+        prompt,
+        _parse_drafts,
+        force_provider,
+        context="discussion_draft",
+        fanpage_id=getattr(fanpage, "id", None),
+    )
+
+    return [
+        DiscussionCopy(
+            label=l,
+            question=q,
+            subject_name=s,
+            caption=c,
+            provider=provider,
+        )
+        for l, q, s, c in results[:count]
+    ]
+

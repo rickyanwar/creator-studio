@@ -398,6 +398,114 @@ def recover_stale_deliveries_and_leases(
     return recovered_count
 
 
+PLATFORM_CAPTION_LIMITS: dict[str, int] = {
+    "threads": 500,
+    "x": 280,
+    "instagram": 2200,
+}
+
+PLATFORM_MAX_HASHTAGS: dict[str, int] = {
+    "instagram": 30,
+}
+
+PLATFORM_ACCEPTED_MEDIA: dict[str, set[str]] = {
+    "youtube": {"video"},
+    "x": {"image", "album", "video"},
+    "instagram": {"image", "album", "video"},
+    "threads": {"image", "album", "video"},
+    "facebook_page": {"image", "album", "video"},
+    "facebook_profile": {"image", "album", "video"},
+}
+
+_HASHTAG_RE = re.compile(r"#\w+")
+
+
+def truncate_caption_for_platform(
+    caption: str, platform: str
+) -> tuple[str, bool, str | None]:
+    """Apply platform caption and hashtag length limits.
+
+    Rule: first drop hashtags from the end until it fits.
+    If the text without hashtags is still too long, return (caption, False, error).
+    Quotes are never shortened or paraphrased.
+    """
+    text = (caption or "").strip()
+    if not text:
+        return text, True, None
+
+    # 1. Instagram hashtag count limit: max 30 hashtags
+    if platform == "instagram":
+        matches = list(_HASHTAG_RE.finditer(text))
+        while len(matches) > 30:
+            m = matches[-1]
+            start, end = m.span()
+            text = (text[:start].rstrip() + text[end:]).strip()
+            matches = list(_HASHTAG_RE.finditer(text))
+
+    # 2. Character limit: drop hashtags from end until it fits
+    limit = PLATFORM_CAPTION_LIMITS.get(platform)
+    if limit is not None:
+        matches = list(_HASHTAG_RE.finditer(text))
+        while len(text) > limit and matches:
+            m = matches[-1]
+            start, end = m.span()
+            text = (text[:start].rstrip() + text[end:]).strip()
+            matches = list(_HASHTAG_RE.finditer(text))
+
+        if len(text) > limit:
+            return text, False, f"Caption longer than the {platform} limit ({limit})"
+
+    return text, True, None
+
+
+def build_youtube_title(
+    candidate: str, brand_name: str = "", date_str: str = ""
+) -> str:
+    """Build YouTube title <= 100 characters.
+
+    YouTube adds title (design_title or caption first line, <=100 chars,
+    no cut inside a quote — if the title would cut a quote use the brand name + date instead).
+    """
+    title = (candidate or "").strip()
+    if not title:
+        fallback = f"{brand_name} {date_str}".strip()
+        return fallback[:100]
+
+    if len(title) <= 100:
+        return title
+
+    quote_pairs = [('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’")]
+    cuts_inside_quote = False
+
+    for open_q, close_q in quote_pairs:
+        pos = 0
+        while pos < len(title):
+            start = title.find(open_q, pos)
+            if start == -1:
+                break
+            end = title.find(close_q, start + 1)
+            if end == -1:
+                if start < 100:
+                    cuts_inside_quote = True
+                break
+            else:
+                if start < 100 <= end:
+                    cuts_inside_quote = True
+                    break
+                pos = end + 1
+        if cuts_inside_quote:
+            break
+
+    if cuts_inside_quote:
+        fallback = f"{brand_name} {date_str}".strip()
+        return fallback[:100]
+
+    truncated = title[:100]
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0]
+    return truncated.strip()
+
+
 def dispatch_repliz_delivery(
     db: Session,
     delivery: PublishDelivery,
@@ -443,12 +551,55 @@ def dispatch_repliz_delivery(
         db.commit()
         return delivery
 
-    client = repliz_client or get_repliz_client_from_db(db)
     media_kind = delivery.media_kind
     media_refs = list(delivery.media_snapshot or [])
     caption = delivery.caption_snapshot or ""
     sched_dt = delivery.scheduled_for or naive_now
     schedule_at_str = format_schedule_at(sched_dt)
+
+    platform = destination.kind or "facebook_page"
+    accepted_media = PLATFORM_ACCEPTED_MEDIA.get(platform, {"image", "album", "video"})
+    if media_kind not in accepted_media:
+        delivery.state = "skipped"
+        delivery.last_error = f"Media not accepted by {platform}"
+        db.add(
+            DeliveryEvent(
+                delivery_id=delivery.id,
+                event_type="skipped",
+                details={"reason": "media_not_accepted", "platform": platform, "media_kind": media_kind},
+                created_at=naive_now,
+            )
+        )
+        db.commit()
+        return delivery
+
+    caption, ok, err = truncate_caption_for_platform(caption, platform)
+    if not ok:
+        delivery.state = "skipped"
+        delivery.last_error = err
+        db.add(
+            DeliveryEvent(
+                delivery_id=delivery.id,
+                event_type="skipped",
+                details={"reason": "caption_too_long", "platform": platform, "error": err},
+                created_at=naive_now,
+            )
+        )
+        db.commit()
+        return delivery
+
+    title = delivery.title_snapshot or ""
+    if platform == "youtube":
+        brand_name = ""
+        if destination.content_project:
+            brand_name = destination.content_project.name
+        elif destination.name:
+            brand_name = destination.name
+        candidate = title or (caption.splitlines()[0] if caption else "")
+        date_str = sched_dt.strftime("%Y-%m-%d")
+        title = build_youtube_title(candidate, brand_name, date_str)
+
+    client = repliz_client or get_repliz_client_from_db(db)
 
     try:
         # Increment attempts only on a real external call attempt
@@ -460,7 +611,7 @@ def dispatch_repliz_delivery(
                 description=caption,
                 video_url=media_refs[0] if media_refs else "",
                 thumbnail_url="",
-                title=delivery.title_snapshot or "",
+                title=title,
                 schedule_at=schedule_at_str,
             )
         elif media_kind == "album" and len(media_refs) >= 2:
@@ -1272,6 +1423,20 @@ def dispatch_phone_delivery(
     naive_now = now.replace(tzinfo=None)
     destination = delivery.destination or db.query(SocialDestination).filter_by(id=delivery.destination_id).first()
 
+    if destination and destination.kind in ("instagram", "youtube", "threads", "x"):
+        delivery.state = "failed"
+        delivery.last_error = f"{destination.kind} does not support phone publishing"
+        db.add(
+            DeliveryEvent(
+                delivery_id=delivery.id,
+                event_type="failed",
+                details={"reason": "phone_publishing_unsupported", "kind": destination.kind},
+                created_at=naive_now,
+            )
+        )
+        db.commit()
+        return delivery
+
     device, err_reason = select_and_lease_phone_device(db, delivery, now_utc=now)
     if not device:
         delivery.state = "waiting_for_device"
@@ -1598,6 +1763,7 @@ def replan_recovering_phone_deliveries(
             fanpage = db.query(TargetFanpage).filter_by(id=dest.content_project_id).first()
         sleep_start = fanpage.publish_sleep_start_hour if fanpage else None
         sleep_end = fanpage.publish_sleep_end_hour if fanpage else None
+        dest_hour_weights = getattr(fanpage, "publish_hour_weights", None) if fanpage else None
 
         supported_waiting: list[PublishDelivery] = []
         for deliv in waiting:
@@ -1628,6 +1794,7 @@ def replan_recovering_phone_deliveries(
                 sleep_start_hour=sleep_start,
                 sleep_end_hour=sleep_end,
                 namespace=f"dest-{dest.id}",
+                hour_weights=dest_hour_weights,
             )
             existing_slots_utc.append(next_slot)
             naive_slot = next_slot.astimezone(timezone.utc).replace(tzinfo=None)
@@ -1719,6 +1886,7 @@ def replan_stale_scheduled_deliveries(
             fanpage = db.query(TargetFanpage).filter_by(id=destination.content_project_id).first()
         sleep_start = fanpage.publish_sleep_start_hour if fanpage else None
         sleep_end = fanpage.publish_sleep_end_hour if fanpage else None
+        dest_hour_weights = getattr(fanpage, "publish_hour_weights", None) if fanpage else None
 
         # Re-fetch candidate deliveries with row lock and populate_existing
         locked_delivs = (
@@ -1768,6 +1936,7 @@ def replan_stale_scheduled_deliveries(
                 sleep_start_hour=sleep_start,
                 sleep_end_hour=sleep_end,
                 namespace=f"dest-{destination.id}",
+                hour_weights=dest_hour_weights,
             )
             existing_slots_utc.append(next_slot)
             naive_slot = next_slot.astimezone(timezone.utc).replace(tzinfo=None)

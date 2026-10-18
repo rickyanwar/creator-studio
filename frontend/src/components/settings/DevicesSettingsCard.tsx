@@ -228,7 +228,7 @@ export function DevicesSettingsCard() {
             {showRegisterForm ? "Cancel" : "Register Phone"}
           </button>
           <Link
-            href="/social-media"
+            href="/brands/accounts"
             className="btn-ghost text-xs py-1.5 px-3 flex items-center gap-1.5"
           >
             <Icon icon="solar:link-bold-duotone" width={16} />
@@ -526,8 +526,8 @@ export function DevicesSettingsCard() {
                       </div>
                       <p className="text-xs text-text-secondary mt-0.5">
                         Shared automation runner ·{" "}
-                        <Link href="/social-media" className="text-primary-main hover:underline">
-                          Assign accounts in Social Media &rarr;
+                        <Link href="/brands/accounts" className="text-primary-main hover:underline">
+                          Assign accounts in Accounts &amp; phones &rarr;
                         </Link>
                       </p>
                     </div>

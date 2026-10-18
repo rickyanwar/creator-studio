@@ -1,12 +1,36 @@
+/*
+ * Token Mapping Table (Step S1 Foundations):
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Existing App Variable | Light Theme Token / Value | Dark Theme Token / Value
+ * ─────────────────────────────────────────────────────────────────────────────
+ * --bg-default          | var(--bg)       (#F4F6F8) | var(--bg)       (#0B1017)
+ * --bg-paper            | var(--surface)  (#FFFFFF) | var(--surface)  (#131A23)
+ * --bg-paper-hover      | var(--surface2) (#F1F3F6) | var(--surface2) (#1A222D)
+ * --text-primary        | var(--text)     (#121821) | var(--text)     (#EEF2F6)
+ * --text-secondary      | var(--text2)    (#566270) | var(--text2)    (#A0ACBA)
+ * --text-disabled       | #8C97A5                   | #637381
+ * --divider-soft        | var(--line)     (#E2E6EB) | var(--line)     (#25303D)
+ * --sidebar-bg          | var(--nav)      (#FFFFFF) | var(--nav)      (#0F151D)
+ * --primary-lighter     | var(--pri-soft) (#E3F6EE) | var(--pri-soft) (rgba(0,167,111,.16))
+ * --primary-light       | #5BE49B                   | #5BE49B
+ * --primary-main        | var(--pri)      (#007A55) | var(--pri)      (#00A76F)
+ * --primary-dark        | #006B4B                   | #007867
+ * --primary-darker      | #004832                   | #004B50
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ── Inter Variable font ───────────────────────────── */
+/* ── Geist & Inter fonts ───────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
 /* Design-editor fonts — MUST match the TTFs vendored in renderer/fonts so the
    live editor preview equals the headless render (WYSIWYG). */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800;900&family=Montserrat:wght@400;600;700;800;900&family=Roboto:wght@400;700;900&family=Oswald:wght@400;600;700&family=Playfair+Display:wght@400;700;900&family=Bebas+Neue&family=Anton&family=Pacifico&display=swap');
+
 /* Self-hosted (not on Google Fonts) — same file vendored in renderer/fonts/
    for the headless render. font-weight is a range so any numeric/keyword
    weight a template sets resolves to this one static file. */
@@ -31,36 +55,84 @@
   font-style: normal;
   font-display: swap;
 }
+
 @layer base {
   /* ── Light mode (default) ──────────────────────── */
   :root {
-    --bg-default:     #ffffff;
-    --bg-paper:       #FFFFFF;
-    --bg-paper-hover: #F0F2F5;
-    --text-primary:   #1C252E;
-    --text-secondary: #637381;
-    --text-disabled:  #919EAB;
-    --divider-soft:   rgba(145, 158, 171, 0.24);
+    --bg:             #F4F6F8;
+    --surface:        #FFFFFF;
+    --surface2:       #F1F3F6;
+    --line:           #E2E6EB;
+    --text:           #121821;
+    --text2:          #566270;
+    --pri:            #007A55;
+    --pri-fg:         #FFFFFF;
+    --pri-soft:       #E3F6EE;
+    --pri-text:       #006B4B;
+    --info:           #0B63C5;
+    --info-soft:      #E6F0FB;
+    --warn:           #8A5300;
+    --warn-soft:      #FFF3D6;
+    --bad:            #B42318;
+    --bad-soft:       #FDECEA;
+    --nav:            #FFFFFF;
+
+    /* Existing app variables mapped to new design tokens */
+    --bg-default:     var(--bg);
+    --bg-paper:       var(--surface);
+    --bg-paper-hover: var(--surface2);
+    --text-primary:   var(--text);
+    --text-secondary: var(--text2);
+    --text-disabled:  #8C97A5;
+    --divider-soft:   var(--line);
+    --sidebar-bg:     var(--nav);
     color-scheme: light;
 
-    /* ── Primary (default green) ──────────────────── */
-    --primary-lighter: #C8FAD6;
+    /* ── Primary palette ─────────────────────────── */
+    --primary-lighter: var(--pri-soft);
     --primary-light:   #5BE49B;
-    --primary-main:    #00A76F;
-    --primary-dark:    #007867;
-    --primary-darker:  #004B50;
+    --primary-main:    var(--pri);
+    --primary-dark:    #006B4B;
+    --primary-darker:  #004832;
   }
 
   /* ── Dark mode ─────────────────────────────────── */
   .dark {
-    --bg-default:     #0C111B;
-    --bg-paper:       #1C252E;
-    --bg-paper-hover: #28323D;
-    --text-primary:   #FFFFFF;
-    --text-secondary: #919EAB;
+    --bg:             #0B1017;
+    --surface:        #131A23;
+    --surface2:       #1A222D;
+    --line:           #25303D;
+    --text:           #EEF2F6;
+    --text2:          #A0ACBA;
+    --pri:            #00A76F;
+    --pri-fg:         #04140D;
+    --pri-soft:       rgba(0, 167, 111, 0.16);
+    --pri-text:       #5BE49B;
+    --info:           #7DBBFF;
+    --info-soft:      rgba(108, 178, 255, 0.14);
+    --warn:           #FFC36B;
+    --warn-soft:      rgba(255, 171, 0, 0.14);
+    --bad:            #FF8F7A;
+    --bad-soft:       rgba(255, 86, 48, 0.15);
+    --nav:            #0F151D;
+
+    /* Existing app variables mapped to new design tokens */
+    --bg-default:     var(--bg);
+    --bg-paper:       var(--surface);
+    --bg-paper-hover: var(--surface2);
+    --text-primary:   var(--text);
+    --text-secondary: var(--text2);
     --text-disabled:  #637381;
-    --divider-soft:   rgba(145, 158, 171, 0.12);
+    --divider-soft:   var(--line);
+    --sidebar-bg:     var(--nav);
     color-scheme: dark;
+
+    /* ── Primary palette ─────────────────────────── */
+    --primary-lighter: var(--pri-soft);
+    --primary-light:   #5BE49B;
+    --primary-main:    var(--pri);
+    --primary-dark:    #007867;
+    --primary-darker:  #004B50;
   }
 
   /* ── Presets ───────────────────────────────────── */
@@ -70,6 +142,9 @@
     --primary-main:    #00B8D9;
     --primary-dark:    #006C9C;
     --primary-darker:  #003768;
+    --pri:             #00B8D9;
+    --pri-soft:        #CAFDF5;
+    --pri-text:        #006C9C;
   }
   [data-preset="purple"] {
     --primary-lighter: #EBD6FD;
@@ -77,6 +152,9 @@
     --primary-main:    #7635DC;
     --primary-dark:    #431A9E;
     --primary-darker:  #200A69;
+    --pri:             #7635DC;
+    --pri-soft:        #EBD6FD;
+    --pri-text:        #431A9E;
   }
   [data-preset="blue"] {
     --primary-lighter: #D1E9FF;
@@ -84,6 +162,9 @@
     --primary-main:    #1877F2;
     --primary-dark:    #0C52CC;
     --primary-darker:  #061B64;
+    --pri:             #1877F2;
+    --pri-soft:        #D1E9FF;
+    --pri-text:        #0C52CC;
   }
   [data-preset="orange"] {
     --primary-lighter: #FFF5CC;
@@ -91,6 +172,9 @@
     --primary-main:    #FFAB00;
     --primary-dark:    #B76E00;
     --primary-darker:  #7A4100;
+    --pri:             #FFAB00;
+    --pri-soft:        #FFF5CC;
+    --pri-text:        #B76E00;
   }
   [data-preset="red"] {
     --primary-lighter: #FFE9D5;
@@ -98,14 +182,17 @@
     --primary-main:    #FF5630;
     --primary-dark:    #B71D18;
     --primary-darker:  #7A0916;
+    --pri:             #FF5630;
+    --pri-soft:        #FFE9D5;
+    --pri-text:        #B71D18;
   }
 
-  /* ── Nav color — default first, apparent overrides after ── */
+  /* ── Nav color ─────────────────────────────────── */
   :root, .dark {
-    --sidebar-bg: var(--bg-default);
+    --sidebar-bg: var(--nav);
   }
   [data-nav-color="apparent"] {
-    --sidebar-bg: var(--bg-paper);
+    --sidebar-bg: var(--surface);
   }
 
   /* ── Compact density ───────────────────────────── */
@@ -113,7 +200,7 @@
   .compact .card-sm { padding: 0.75rem; }
 
   html {
-    font-family: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: "Geist", "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     background: var(--bg-default);
@@ -141,57 +228,56 @@
 @layer components {
   /* ── Buttons ─────────────────────────────────────── */
   .btn-primary {
-    @apply inline-flex items-center gap-2 px-5 py-2.5
-           bg-primary-main text-white text-sm font-semibold rounded-md
+    @apply inline-flex items-center justify-center gap-2 px-4 h-10
+           bg-pri text-pri-fg text-sm font-semibold rounded-md
+           border-0
            transition-all duration-150
-           hover:bg-primary-dark
-           active:scale-[0.97]
-           disabled:opacity-48 disabled:cursor-not-allowed
-           shadow-primary-btn;
+           hover:opacity-90
+           focus:outline-none focus:ring-2 focus:ring-pri
+           active:scale-[0.98]
+           disabled:opacity-48 disabled:cursor-not-allowed;
   }
 
   .btn-secondary {
-    @apply inline-flex items-center gap-2 px-5 py-2.5
-           bg-transparent text-primary-main text-sm font-semibold rounded-md
-           border border-primary-main
+    @apply inline-flex items-center justify-center gap-2 px-3.5 h-10
+           bg-surface text-text text-sm font-medium rounded-md
+           border border-line
            transition-all duration-150
-           hover:bg-[rgba(0,167,111,0.08)]
-           active:scale-[0.97]
-           disabled:opacity-48;
+           hover:bg-surface2
+           focus:outline-none focus:ring-2 focus:ring-pri
+           active:scale-[0.98]
+           disabled:opacity-48 disabled:cursor-not-allowed;
   }
 
   .btn-ghost {
-    @apply inline-flex items-center gap-2 px-4 py-2.5
-           bg-bg-paper-hover text-text-secondary text-sm font-medium rounded-md
+    @apply inline-flex items-center justify-center gap-2 px-3.5 h-10
+           bg-transparent text-text2 text-sm font-medium rounded-md
+           border-0
            transition-all duration-150
-           hover:bg-grey-700 hover:text-text-primary
-           active:scale-[0.97];
+           hover:bg-surface2 hover:text-text
+           focus:outline-none focus:ring-2 focus:ring-pri
+           active:scale-[0.98]
+           disabled:opacity-48 disabled:cursor-not-allowed;
   }
 
   .btn-error {
-    @apply inline-flex items-center gap-2 px-5 py-2.5
-           bg-error-main text-white text-sm font-semibold rounded-md
+    @apply inline-flex items-center justify-center gap-2 px-3.5 h-10
+           bg-transparent text-bad text-sm font-semibold rounded-md
+           border border-bad
            transition-all duration-150
-           hover:bg-error-dark
-           active:scale-[0.97]
-           shadow-error-btn;
+           hover:bg-bad-soft
+           focus:outline-none focus:ring-2 focus:ring-bad
+           active:scale-[0.98]
+           disabled:opacity-48 disabled:cursor-not-allowed;
   }
 
   /* ── Cards ───────────────────────────────────────── */
   .card {
-    @apply bg-bg-paper rounded-lg p-6 dark:shadow-card;
-    /* light mode: subtle grey-500 @ 12% hairline (dark uses shadow instead) */
-    border: solid 1px rgba(145, 158, 171, 0.12);
+    @apply bg-surface rounded-[14px] p-5 lg:p-[22px] border border-line;
   }
 
   .card-sm {
-    @apply bg-bg-paper rounded-lg p-4 dark:shadow-card;
-    border: solid 1px rgba(145, 158, 171, 0.12);
-  }
-
-  .dark .card,
-  .dark .card-sm {
-    border-color: transparent;
+    @apply bg-surface rounded-[12px] p-4 border border-line;
   }
 
   /* ── Tinted KPI cards ────────────────────────────── */
@@ -223,37 +309,37 @@
 
   /* ── Inputs ──────────────────────────────────────── */
   .input {
-    @apply w-full px-4 py-3 text-sm text-text-primary bg-bg-paper
-           border border-transparent rounded-md
-           focus:outline-none focus:border-primary-main focus:ring-2 focus:ring-[rgba(0,167,111,0.20)]
-           placeholder:text-text-disabled transition;
+    @apply w-full min-h-10 px-3 py-2 text-sm text-text bg-surface
+           border border-line rounded-md
+           focus:outline-none focus:border-pri focus:ring-2 focus:ring-pri
+           placeholder:text-text2 transition;
   }
 
   .input-rect {
-    @apply w-full px-4 py-3 text-sm text-text-primary bg-bg-paper-hover
-           border border-grey-700 rounded-md
-           focus:outline-none focus:border-primary-main focus:ring-2 focus:ring-[rgba(0,167,111,0.20)]
-           placeholder:text-text-disabled transition;
+    @apply w-full min-h-10 px-3 py-2 text-sm text-text bg-surface2
+           border border-line rounded-md
+           focus:outline-none focus:border-pri focus:ring-2 focus:ring-pri
+           placeholder:text-text2 transition;
   }
 
   .label {
-    @apply block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide;
+    @apply block text-[13px] font-semibold text-text mb-1.5;
   }
 
   /* ── Status badges ───────────────────────────────── */
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold;
+    @apply inline-flex items-center gap-1.5 px-2.5 py-[3px] rounded-full text-xs font-semibold;
   }
 
-  .badge-green  { @apply badge bg-primary-lighter  text-primary-darker; }
-  .badge-yellow { @apply badge bg-warning-lighter  text-warning-darker; }
-  .badge-red    { @apply badge bg-error-lighter    text-error-darker; }
-  .badge-blue   { @apply badge bg-info-lighter     text-info-darker; }
-  .badge-gray   { @apply badge bg-bg-paper-hover   text-text-secondary; }
+  .badge-green  { @apply badge bg-pri-soft text-pri-text; }
+  .badge-yellow { @apply badge bg-warn-soft text-warn; }
+  .badge-red    { @apply badge bg-bad-soft text-bad; }
+  .badge-blue   { @apply badge bg-info-soft text-info; }
+  .badge-gray   { @apply badge bg-surface2 text-text2 border border-line; }
 
   /* ── Nav divider ─────────────────────────────────── */
   .divider {
-    @apply border-t border-divider-soft my-2;
+    @apply border-t border-line my-2;
   }
 
   /* ── Page section wrapper ────────────────────────── */
@@ -263,7 +349,7 @@
 
   /* ── Table ───────────────────────────────────────── */
   .table-row-hover {
-    @apply transition-colors hover:bg-bg-paper-hover;
+    @apply transition-colors hover:bg-surface2;
   }
 }
 

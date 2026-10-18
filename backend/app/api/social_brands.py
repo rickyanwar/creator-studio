@@ -716,7 +716,7 @@ def get_repliz_accounts(db: DB, _: CurrentUser):
 
     try:
         with client:
-            raw_docs = client.list_facebook_accounts()
+            raw_docs = client.list_accounts() if hasattr(client, "list_accounts") else client.list_facebook_accounts()
     except Exception as exc:
         logger.warning("Could not reach Repliz: %s", type(exc).__name__)
         return ReplizAccountsOut(
@@ -746,13 +746,16 @@ def get_repliz_accounts(db: DB, _: CurrentUser):
             username = doc.get("username") if isinstance(doc.get("username"), str) else None
             picture = next((v for v in (doc.get("picture"), doc.get("avatar")) if isinstance(v, str) and v), None)
 
+            raw_type = str(doc.get("type") or "facebook").lower()
+            acc_type = "x" if raw_type in ("twitter", "x") else raw_type
+
             accounts.append(
                 ReplizAccountOut(
                     id=acc_id,
                     name=name,
                     username=username,
                     picture=picture,
-                    type="facebook",
+                    type=acc_type,
                     used_by_destination_id=used_dest.id if used_dest else None,
                     used_by_destination_name=used_dest.name if used_dest else None,
                 )

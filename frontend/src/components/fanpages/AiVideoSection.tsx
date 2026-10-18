@@ -1,16 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import type { FanpageDetail, AiVideoTemplate } from "@/lib/types";
 import { previewAiVideoOverlay } from "@/lib/api";
-import { useState } from "react";
 
 type Props = {
   form: Partial<FanpageDetail>;
   set: (key: string, value: unknown) => void;
   templates?: AiVideoTemplate[];
+  onNavigateTab?: (tab: string) => void;
 };
 
-export function AiVideoSection({ form, set, templates = [] }: Props) {
+export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Props) {
   const enabled = !!form.ai_video_enabled;
   const selectedTemplates: string[] = form.ai_video_templates ?? (form.ai_video_template ? [form.ai_video_template] : []);
   const firstKey = selectedTemplates[0] ?? form.ai_video_template;
@@ -38,20 +39,6 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
-  const toggleTemplate = (key: string) => {
-    let next: string[];
-    if (selectedTemplates.includes(key)) {
-      if (enabled && selectedTemplates.length <= 1) {
-        return;
-      }
-      next = selectedTemplates.filter((k) => k !== key);
-    } else {
-      next = [...selectedTemplates, key];
-    }
-    set("ai_video_templates", next);
-    set("ai_video_template", next[0] || null);
-  };
-
   const preview = async () => {
     if (!form.id) return;
     setPreviewing(true);
@@ -68,16 +55,32 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
       });
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(URL.createObjectURL(response.data));
+    } catch {
+      alert("Preview overlay failed.");
     } finally {
       setPreviewing(false);
     }
+  };
+
+  const toggleTemplate = (key: string) => {
+    let next: string[];
+    if (selectedTemplates.includes(key)) {
+      if (enabled && selectedTemplates.length <= 1) {
+        return;
+      }
+      next = selectedTemplates.filter((k) => k !== key);
+    } else {
+      next = [...selectedTemplates, key];
+    }
+    set("ai_video_templates", next);
+    set("ai_video_template", next[0] || null);
   };
 
   return (
     <section className="card space-y-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-base font-semibold text-text-primary">Mode 8: AI Video (GFlow)</h2>
+          <h2 className="text-base font-semibold text-text-primary">AI video</h2>
           <p className="text-xs text-text-secondary mt-0.5">
             Generate original short videos with Google Flow and publish them as Reels.
           </p>
@@ -93,8 +96,8 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
               set("ai_video_template", defaultKey);
             }
           }}
-          className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${enabled ? "bg-primary-main" : "bg-hairline"}`}
-          aria-label="Toggle Mode 8"
+          className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${enabled ? "bg-pri" : "bg-line"}`}
+          aria-label="Toggle AI video"
         >
           <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${enabled ? "translate-x-5" : ""}`} />
         </button>
@@ -114,7 +117,7 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
             <div className="sm:col-span-2">
               <label className="label">Allowed Video Templates</label>
               <p className="text-[11px] text-text-secondary mb-2">
-                Select which templates are allowed for this fanpage. At least 1 must be checked when Mode 8 is enabled.
+                Select which templates are allowed for this fanpage. At least 1 must be checked when AI video is enabled.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-hairline bg-surface-raised">
                 {templates.map((item) => {
@@ -128,7 +131,7 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
                         type="checkbox"
                         checked={isChecked}
                         onChange={() => toggleTemplate(item.key)}
-                        className="accent-primary-main mt-0.5"
+                        className="accent-pri mt-0.5"
                       />
                       <div className="text-xs">
                         <div className="font-medium text-text-primary">{item.name}</div>
@@ -254,43 +257,115 @@ export function AiVideoSection({ form, set, templates = [] }: Props) {
                 <h3 className="text-sm font-semibold text-text-primary">Logo & captions</h3>
                 <p className="text-xs text-text-secondary">Brand every generated video before it enters the publish queue.</p>
               </div>
-              <button type="button" className="btn-secondary" onClick={preview} disabled={previewing}>
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                onClick={preview}
+                disabled={previewing}
+              >
                 {previewing ? "Rendering…" : "Preview"}
               </button>
             </div>
+            {onNavigateTab && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab("design")}
+                  className="text-xs text-pri hover:underline text-left inline-flex items-center gap-1"
+                >
+                  Logo: configure in Design › Brand logo →
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="flex items-center gap-2 text-sm text-text-primary">
-                <input type="checkbox" checked={form.ai_video_logo_enabled ?? true} onChange={(e) => set("ai_video_logo_enabled", e.target.checked)} /> Logo
+                <input
+                  type="checkbox"
+                  checked={form.ai_video_logo_enabled ?? true}
+                  onChange={(e) => set("ai_video_logo_enabled", e.target.checked)}
+                  className="rounded border-hairline accent-pri"
+                /> Logo overlay
               </label>
               <label className="flex items-center gap-3 text-sm text-text-primary">Size
-                <input type="range" min={5} max={30} value={form.ai_video_logo_size_pct ?? 14} onChange={(e) => set("ai_video_logo_size_pct", Number(e.target.value))} />
-                <span>{form.ai_video_logo_size_pct ?? 14}%</span>
+                <input
+                  type="range"
+                  min={5}
+                  max={30}
+                  value={form.ai_video_logo_size_pct ?? 14}
+                  onChange={(e) => set("ai_video_logo_size_pct", Number(e.target.value))}
+                  className="accent-pri"
+                />
+                <span className="tabular-nums text-xs text-text-secondary">{form.ai_video_logo_size_pct ?? 14}%</span>
               </label>
               <label className="text-sm text-text-primary">Position
-                <select className="input w-full mt-1" value={form.ai_video_logo_position ?? "top_right"} onChange={(e) => set("ai_video_logo_position", e.target.value)}>
-                  <option value="top_right">Top right</option><option value="top_left">Top left</option><option value="bottom_right">Bottom right</option><option value="bottom_left">Bottom left</option>
+                <select
+                  className="input w-full mt-1"
+                  value={form.ai_video_logo_position ?? "top_right"}
+                  onChange={(e) => set("ai_video_logo_position", e.target.value)}
+                >
+                  <option value="top_right">Top right</option>
+                  <option value="top_left">Top left</option>
+                  <option value="bottom_right">Bottom right</option>
+                  <option value="bottom_left">Bottom left</option>
                 </select>
               </label>
               <label className="flex items-center gap-3 text-sm text-text-primary">Margin
-                <input type="range" min={0} max={10} value={form.ai_video_logo_margin_pct ?? 3} onChange={(e) => set("ai_video_logo_margin_pct", Number(e.target.value))} />
-                <span>{form.ai_video_logo_margin_pct ?? 3}%</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={10}
+                  value={form.ai_video_logo_margin_pct ?? 3}
+                  onChange={(e) => set("ai_video_logo_margin_pct", Number(e.target.value))}
+                  className="accent-pri"
+                />
+                <span className="tabular-nums text-xs text-text-secondary">{form.ai_video_logo_margin_pct ?? 3}%</span>
               </label>
               <label className="flex items-center gap-2 text-sm text-text-primary">
-                <input type="checkbox" checked={form.ai_video_captions_enabled ?? true} onChange={(e) => set("ai_video_captions_enabled", e.target.checked)} /> Captions
+                <input
+                  type="checkbox"
+                  checked={form.ai_video_captions_enabled ?? true}
+                  onChange={(e) => set("ai_video_captions_enabled", e.target.checked)}
+                  className="rounded border-hairline accent-pri"
+                /> Burn spoken captions into the video
               </label>
               <label className="flex items-center gap-3 text-sm text-text-primary">Caption size
-                <input type="range" min={40} max={140} value={form.ai_video_caption_size ?? 76} onChange={(e) => set("ai_video_caption_size", Number(e.target.value))} />
-                <span>{form.ai_video_caption_size ?? 76}px</span>
+                <input
+                  type="range"
+                  min={40}
+                  max={140}
+                  value={form.ai_video_caption_size ?? 76}
+                  onChange={(e) => set("ai_video_caption_size", Number(e.target.value))}
+                  className="accent-pri"
+                />
+                <span className="tabular-nums text-xs text-text-secondary">{form.ai_video_caption_size ?? 76}px</span>
               </label>
               <label className="flex items-center gap-3 text-sm text-text-primary">Vertical position
-                <input type="range" min={5} max={70} value={form.ai_video_caption_bottom_pct ?? 29} onChange={(e) => set("ai_video_caption_bottom_pct", Number(e.target.value))} />
-                <span>{form.ai_video_caption_bottom_pct ?? 29}%</span>
+                <input
+                  type="range"
+                  min={5}
+                  max={70}
+                  value={form.ai_video_caption_bottom_pct ?? 29}
+                  onChange={(e) => set("ai_video_caption_bottom_pct", Number(e.target.value))}
+                  className="accent-pri"
+                />
+                <span className="tabular-nums text-xs text-text-secondary">{form.ai_video_caption_bottom_pct ?? 29}%</span>
               </label>
               <label className="text-sm text-text-primary">Highlight colour
-                <input type="color" className="block mt-1 h-9 w-16" value={form.ai_video_caption_highlight ?? "#FFE500"} onChange={(e) => set("ai_video_caption_highlight", e.target.value)} />
+                <input
+                  type="color"
+                  className="block mt-1 h-9 w-16"
+                  value={form.ai_video_caption_highlight ?? "#FFE500"}
+                  onChange={(e) => set("ai_video_caption_highlight", e.target.value)}
+                />
               </label>
             </div>
-            {previewUrl && <img src={previewUrl} alt="AI video overlay preview" className="w-[270px] h-[480px] object-cover rounded-lg border border-hairline" />}
+            {previewUrl && (
+              <img
+                src={previewUrl}
+                alt="AI video overlay preview"
+                className="w-[240px] h-[426px] object-cover rounded-lg border border-hairline"
+              />
+            )}
           </div>
         </div>
       )}

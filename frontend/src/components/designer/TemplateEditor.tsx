@@ -68,6 +68,8 @@ const ROLE_PROP = "placeholderRole";
 
 export type EditorApi = {
   toTemplateJson: () => { json: Record<string, unknown>; placeholderConfig: Record<string, unknown> };
+  getDraft: () => object;
+  loadDraft: (draft: object) => Promise<void> | void;
   exportPng: () => Promise<Blob>;
   injectTitle: (title: string) => void;
   injectSubtitle: (subtitle: string) => void;
@@ -380,6 +382,33 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
           },
         };
       },
+      getDraft: () => {
+        return canvas.toJSON([
+          ROLE_PROP,
+          "titleAccentColor",
+          "titleUppercase",
+          "titleTextTransform",
+          "titleAnchorBottom",
+          "scrimPad",
+          "slotBounds",
+          "iconGap",
+          "badgePadX",
+        ]);
+      },
+      loadDraft: (draft: object) =>
+        new Promise<void>((resolve) => {
+          canvas.loadFromJSON(draft, () => {
+            (canvas.getObjects() as Array<FabricObjectWithRole & { styles?: unknown }>).forEach((o) => {
+              if ("text" in o && o.styles === undefined) o.styles = {};
+            });
+            const bg = canvas.backgroundColor;
+            if (typeof bg === "string" && bg) setBgColor(bg);
+            canvas.discardActiveObject();
+            canvas.renderAll();
+            bump();
+            resolve();
+          });
+        }),
       exportPng: () =>
         new Promise<Blob>((resolve, reject) => {
           canvas.discardActiveObject();
@@ -639,8 +668,8 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
   const isText = selected instanceof fabric.Textbox || selected instanceof fabric.Text;
   const selectedRole = selected?.[ROLE_PROP];
 
-  const btn = "px-2.5 py-1.5 rounded-lg border border-hairline text-xs font-medium text-ink-80 hover:border-primary-main hover:text-primary-main transition-colors flex items-center gap-1.5";
-  const panelBtn = "w-full px-2.5 py-2 rounded-lg border border-hairline text-xs font-medium text-ink-80 hover:border-primary-main hover:text-primary-main transition-colors flex items-center gap-2";
+  const btn = "px-2.5 py-1.5 rounded-lg border border-line bg-surface text-xs font-medium text-text hover:border-pri hover:text-pri transition-colors flex items-center gap-1.5";
+  const panelBtn = "w-full px-2.5 py-2 rounded-lg border border-line bg-surface text-xs font-medium text-text hover:border-pri hover:text-pri transition-colors flex items-center gap-2";
   const TOOLS = [
     { id: "design", label: "Design", icon: "solar:widget-2-bold-duotone" },
     { id: "text", label: "Text", icon: "solar:text-bold-duotone" },
@@ -650,15 +679,15 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
   ] as const;
 
   return (
-    <div className="flex gap-3 items-start">
+    <div className="flex gap-3 items-start flex-wrap lg:flex-nowrap">
       {/* Left icon rail (Canva-style tools) */}
-      <div className="shrink-0 flex flex-col gap-1 rounded-xl border border-hairline p-1.5 bg-bg-paper">
+      <div className="shrink-0 flex flex-col gap-1 rounded-xl border border-line p-1.5 bg-surface">
         {TOOLS.map((t) => (
           <button
             key={t.id}
             onClick={() => setActiveTool(t.id)}
             className={`flex flex-col items-center gap-0.5 w-16 py-2 rounded-lg text-[10px] font-medium transition-colors ${
-              activeTool === t.id ? "bg-primary-main/10 text-primary-main" : "text-ink-48 hover:bg-parchment"
+              activeTool === t.id ? "bg-pri-soft text-pri font-semibold" : "text-text2 hover:bg-surface2 hover:text-text"
             }`}
           >
             <Icon icon={t.icon} width={20} />
@@ -668,10 +697,10 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
       </div>
 
       {/* Tool panel — content follows the active tool */}
-      <div className="shrink-0 w-52 rounded-xl border border-hairline p-3 space-y-2 bg-bg-paper">
+      <div className="shrink-0 w-52 rounded-xl border border-line p-3 space-y-2 bg-surface">
         {activeTool === "design" && (
           <>
-            <p className="text-[11px] font-bold text-ink-80 mb-1">Placeholders</p>
+            <p className="text-[11px] font-bold text-text uppercase tracking-wide mb-1">Placeholders</p>
             <button className={panelBtn} onClick={() => addImageSlot("image")} title="Main photo slot">
               <Icon icon="solar:gallery-bold-duotone" width={14} /> Image Slot
             </button>
@@ -682,14 +711,14 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
               <Icon icon="solar:text-bold-duotone" width={14} /> Headline
             </button>
             <div className="pt-2 flex items-center justify-between">
-              <label className="text-[11px] font-semibold text-ink-80">Background</label>
-              <input type="color" value={bgColor} onChange={(e) => setBackground(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-hairline" />
+              <label className="text-[11px] font-semibold text-text2">Background</label>
+              <input type="color" value={bgColor} onChange={(e) => setBackground(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-line bg-surface" />
             </div>
           </>
         )}
         {activeTool === "text" && (
           <>
-            <p className="text-[11px] font-bold text-ink-80 mb-1">Add text</p>
+            <p className="text-[11px] font-bold text-text uppercase tracking-wide mb-1">Add text</p>
             <button className={panelBtn} onClick={addHeadline}>
               <Icon icon="solar:text-bold-duotone" width={14} /> Headline (AI title)
             </button>
@@ -700,7 +729,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
         )}
         {activeTool === "shapes" && (
           <>
-            <p className="text-[11px] font-bold text-ink-80 mb-1">Shapes</p>
+            <p className="text-[11px] font-bold text-text uppercase tracking-wide mb-1">Shapes</p>
             <div className="grid grid-cols-2 gap-2">
               <button className={panelBtn} onClick={addRect}><Icon icon="solar:stop-bold" width={14} /> Box</button>
               <button className={panelBtn} onClick={addCircle}><Icon icon="solar:record-circle-bold" width={14} /> Circle</button>
@@ -711,7 +740,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
         )}
         {activeTool === "image" && (
           <>
-            <p className="text-[11px] font-bold text-ink-80 mb-1">Image</p>
+            <p className="text-[11px] font-bold text-text uppercase tracking-wide mb-1">Image</p>
             <button className={panelBtn} onClick={() => fileInputRef.current?.click()}>
               <Icon icon="solar:upload-bold-duotone" width={14} /> Upload image / logo
             </button>
@@ -725,22 +754,22 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
         )}
         {activeTool === "draw" && (
           <>
-            <p className="text-[11px] font-bold text-ink-80 mb-1">Freehand draw</p>
-            <p className="text-[10px] text-ink-48">Draw directly on the canvas. Switch to another tool to stop.</p>
+            <p className="text-[11px] font-bold text-text uppercase tracking-wide mb-1">Freehand draw</p>
+            <p className="text-[10px] text-text2">Draw directly on the canvas. Switch to another tool to stop.</p>
             <div className="flex items-center justify-between pt-1">
-              <label className="text-[11px] font-semibold text-ink-80">Brush color</label>
-              <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-hairline" />
+              <label className="text-[11px] font-semibold text-text2">Brush color</label>
+              <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} className="w-8 h-8 rounded cursor-pointer border border-line bg-surface" />
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-ink-80 mb-0.5">Brush size: {brushWidth}px</label>
-              <input type="range" min={1} max={40} value={brushWidth} onChange={(e) => setBrushWidth(parseInt(e.target.value))} className="w-full" />
+              <label className="block text-[11px] font-semibold text-text2 mb-0.5">Brush size: {brushWidth}px</label>
+              <input type="range" min={1} max={40} value={brushWidth} onChange={(e) => setBrushWidth(parseInt(e.target.value))} className="w-full accent-pri" />
             </div>
           </>
         )}
       </div>
 
       {/* Canvas */}
-      <div className="shrink-0 border border-hairline rounded-lg overflow-hidden shadow-sm" style={{ width: width * zoom, height: height * zoom }}>
+      <div className="shrink-0 border border-line rounded-lg overflow-hidden shadow-sm bg-surface2" style={{ width: width * zoom, height: height * zoom }}>
         <canvas ref={canvasElRef} />
       </div>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
@@ -748,29 +777,29 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
       {/* Properties (contextual) */}
       <div className="flex-1 min-w-[200px] space-y-4">
         {selected && (
-          <div className="rounded-lg border border-hairline p-3 space-y-3">
+          <div className="rounded-xl border border-line p-3 space-y-3 bg-surface">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-ink">
+              <p className="text-xs font-bold text-text">
                 {selectedRole === "title" ? "📰 Headline placeholder" : selectedRole === "image" ? "🖼 Image slot" : selectedRole === "image_2" ? "🖼 Image slot 2" : selected.type}
               </p>
               <div className="flex gap-0.5">
-                <button className="p-1 rounded hover:bg-parchment" title="Bring to front" onClick={() => moveLayer("front")}>
-                  <Icon icon="solar:double-alt-arrow-up-bold-duotone" width={15} className="text-ink-48" />
+                <button className="p-1 rounded hover:bg-surface2 text-text2 hover:text-text transition-colors" title="Bring to front" onClick={() => moveLayer("front")}>
+                  <Icon icon="solar:double-alt-arrow-up-bold-duotone" width={15} />
                 </button>
-                <button className="p-1 rounded hover:bg-parchment" title="Bring forward" onClick={() => moveLayer("forward")}>
-                  <Icon icon="solar:alt-arrow-up-bold" width={14} className="text-ink-48" />
+                <button className="p-1 rounded hover:bg-surface2 text-text2 hover:text-text transition-colors" title="Bring forward" onClick={() => moveLayer("forward")}>
+                  <Icon icon="solar:alt-arrow-up-bold" width={14} />
                 </button>
-                <button className="p-1 rounded hover:bg-parchment" title="Send backward" onClick={() => moveLayer("backward")}>
-                  <Icon icon="solar:alt-arrow-down-bold" width={14} className="text-ink-48" />
+                <button className="p-1 rounded hover:bg-surface2 text-text2 hover:text-text transition-colors" title="Send backward" onClick={() => moveLayer("backward")}>
+                  <Icon icon="solar:alt-arrow-down-bold" width={14} />
                 </button>
-                <button className="p-1 rounded hover:bg-parchment" title="Send to back" onClick={() => moveLayer("back")}>
-                  <Icon icon="solar:double-alt-arrow-down-bold-duotone" width={15} className="text-ink-48" />
+                <button className="p-1 rounded hover:bg-surface2 text-text2 hover:text-text transition-colors" title="Send to back" onClick={() => moveLayer("back")}>
+                  <Icon icon="solar:double-alt-arrow-down-bold-duotone" width={15} />
                 </button>
-                <button className="p-1 rounded hover:bg-parchment" title="Duplicate" onClick={duplicateSelected}>
-                  <Icon icon="solar:copy-bold-duotone" width={14} className="text-ink-48" />
+                <button className="p-1 rounded hover:bg-surface2 text-text2 hover:text-text transition-colors" title="Duplicate" onClick={duplicateSelected}>
+                  <Icon icon="solar:copy-bold-duotone" width={14} />
                 </button>
-                <button className="p-1 rounded hover:bg-red-50" title="Delete" onClick={deleteSelected}>
-                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} className="text-red-500" />
+                <button className="p-1 rounded hover:bg-bad-soft text-bad transition-colors" title="Delete" onClick={deleteSelected}>
+                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
                 </button>
               </div>
             </div>
@@ -779,28 +808,28 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
               <>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Font size</label>
+                    <label className="block text-[10px] font-semibold text-text2 mb-0.5">Font size</label>
                     <input
                       type="number"
-                      className="input-rect py-1 text-xs"
+                      className="w-full h-8 px-2 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
                       value={Math.round(((selected as fabric.Textbox).fontSize as number) ?? 32)}
                       onChange={(e) => updateSelected({ fontSize: parseInt(e.target.value) || 32 })}
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Color</label>
+                    <label className="block text-[10px] font-semibold text-text2 mb-0.5">Color</label>
                     <input
                       type="color"
-                      className="w-full h-7 rounded cursor-pointer border border-hairline"
+                      className="w-full h-8 rounded cursor-pointer border border-line bg-surface"
                       value={String((selected as fabric.Textbox).fill ?? "#ffffff")}
                       onChange={(e) => updateSelected({ fill: e.target.value })}
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Font</label>
+                  <label className="block text-[10px] font-semibold text-text2 mb-0.5">Font</label>
                   <select
-                    className="input-rect py-1 text-xs"
+                    className="w-full h-8 px-2 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
                     value={String((selected as fabric.Textbox).fontFamily ?? DEFAULT_FONT)}
                     onChange={(e) => {
                       const family = e.target.value;
@@ -826,13 +855,13 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
                 {selectedRole === "title" && (
                   <>
                     <div>
-                      <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">
+                      <label className="block text-[10px] font-semibold text-text2 mb-0.5">
                         2-tone accent (colors the bottom lines)
                       </label>
                       <div className="flex items-center gap-1.5">
                         <input
                           type="color"
-                          className="w-full h-7 rounded cursor-pointer border border-hairline"
+                          className="w-full h-8 rounded cursor-pointer border border-line bg-surface"
                           value={(selected as TitleBox).titleAccentColor ?? "#3CD52F"}
                           onChange={(e) => setTitleAccent(e.target.value)}
                         />
@@ -842,11 +871,11 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">
+                      <label className="block text-[10px] font-semibold text-text2 mb-0.5">
                         Headline case (applied to the injected news title)
                       </label>
                       <select
-                        className="input-rect py-1 text-xs"
+                        className="w-full h-8 px-2 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
                         value={(selected as TitleBox).titleTextTransform ?? ((selected as TitleBox).titleUppercase ? "uppercase" : "none")}
                         onChange={(e) =>
                           withCanvas((c) => {
@@ -873,23 +902,23 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
                 )}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Letter spacing</label>
+                    <label className="block text-[10px] font-semibold text-text2 mb-0.5">Letter spacing</label>
                     <input
                       type="number"
                       step={10}
-                      className="input-rect py-1 text-xs"
+                      className="w-full h-8 px-2 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
                       value={Math.round(((selected as fabric.Textbox).charSpacing as number) ?? 0)}
                       onChange={(e) => updateSelected({ charSpacing: parseInt(e.target.value) || 0 })}
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Line height</label>
+                    <label className="block text-[10px] font-semibold text-text2 mb-0.5">Line height</label>
                     <input
                       type="number"
                       step={0.05}
                       min={0.5}
                       max={3}
-                      className="input-rect py-1 text-xs"
+                      className="w-full h-8 px-2 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
                       value={Number(((selected as fabric.Textbox).lineHeight as number) ?? 1.16).toFixed(2)}
                       onChange={(e) => updateSelected({ lineHeight: parseFloat(e.target.value) || 1.16 })}
                     />
@@ -898,28 +927,28 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     title="Bold"
-                    className={`${btn} font-bold ${((selected as fabric.Textbox).fontWeight === "bold") ? "border-primary-main text-primary-main" : ""}`}
+                    className={`${btn} font-bold ${((selected as fabric.Textbox).fontWeight === "bold") ? "border-pri text-pri bg-pri-soft" : ""}`}
                     onClick={() => toggleTextStyle("fontWeight")}
                   >
                     B
                   </button>
                   <button
                     title="Italic"
-                    className={`${btn} italic ${((selected as fabric.Textbox).fontStyle === "italic") ? "border-primary-main text-primary-main" : ""}`}
+                    className={`${btn} italic ${((selected as fabric.Textbox).fontStyle === "italic") ? "border-pri text-pri bg-pri-soft" : ""}`}
                     onClick={() => toggleTextStyle("fontStyle")}
                   >
                     I
                   </button>
                   <button
                     title="Underline"
-                    className={`${btn} underline ${((selected as fabric.Textbox).underline ? "border-primary-main text-primary-main" : "")}`}
+                    className={`${btn} underline ${((selected as fabric.Textbox).underline ? "border-pri text-pri bg-pri-soft" : "")}`}
                     onClick={() => toggleTextStyle("underline")}
                   >
                     U
                   </button>
                   <button
                     title="Strikethrough"
-                    className={`${btn} line-through ${((selected as fabric.Textbox).linethrough ? "border-primary-main text-primary-main" : "")}`}
+                    className={`${btn} line-through ${((selected as fabric.Textbox).linethrough ? "border-pri text-pri bg-pri-soft" : "")}`}
                     onClick={() => toggleTextStyle("linethrough")}
                   >
                     S
@@ -928,7 +957,7 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
                     <button
                       key={a}
                       title={`Align ${a}`}
-                      className={`${btn} ${((selected as fabric.Textbox).textAlign === a) ? "border-primary-main text-primary-main" : ""}`}
+                      className={`${btn} ${((selected as fabric.Textbox).textAlign === a) ? "border-pri text-pri bg-pri-soft" : ""}`}
                       onClick={() => updateSelected({ textAlign: a })}
                     >
                       <Icon icon={`solar:align-${a === "center" ? "horizontal-center" : a}-bold`} width={12} />
@@ -941,10 +970,10 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
               <>
                 {(selected.type === "rect" || selected.type === "circle" || selected.type === "triangle") && (
                   <div>
-                    <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Fill</label>
+                    <label className="block text-[10px] font-semibold text-text2 mb-0.5">Fill</label>
                     <input
                       type="color"
-                      className="w-full h-7 rounded cursor-pointer border border-hairline"
+                      className="w-full h-8 rounded cursor-pointer border border-line bg-surface"
                       value={String(selected.fill ?? "#dc2626")}
                       onChange={(e) => updateSelected({ fill: e.target.value })}
                     />
@@ -953,30 +982,30 @@ export default function TemplateEditor({ width, height, initialJson, onReady, sa
                 {selected.type === "line" && (
                   <>
                     <div>
-                      <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Line color</label>
+                      <label className="block text-[10px] font-semibold text-text2 mb-0.5">Line color</label>
                       <input
                         type="color"
-                        className="w-full h-7 rounded cursor-pointer border border-hairline"
+                        className="w-full h-8 rounded cursor-pointer border border-line bg-surface"
                         value={String(selected.stroke ?? "#ffffff")}
                         onChange={(e) => updateSelected({ stroke: e.target.value })}
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Thickness: {Math.round((selected.strokeWidth as number) ?? 6)}px</label>
-                      <input type="range" min={1} max={40} value={Math.round((selected.strokeWidth as number) ?? 6)} onChange={(e) => updateSelected({ strokeWidth: parseInt(e.target.value) })} className="w-full" />
+                      <label className="block text-[10px] font-semibold text-text2 mb-0.5">Thickness: {Math.round((selected.strokeWidth as number) ?? 6)}px</label>
+                      <input type="range" min={1} max={40} value={Math.round((selected.strokeWidth as number) ?? 6)} onChange={(e) => updateSelected({ strokeWidth: parseInt(e.target.value) })} className="w-full accent-pri" />
                     </div>
                   </>
                 )}
                 <div>
-                  <label className="block text-[10px] font-semibold text-ink-48 mb-0.5">Opacity: {Math.round(((selected.opacity as number) ?? 1) * 100)}%</label>
-                  <input type="range" min={0} max={100} value={Math.round(((selected.opacity as number) ?? 1) * 100)} onChange={(e) => updateSelected({ opacity: parseInt(e.target.value) / 100 })} className="w-full" />
+                  <label className="block text-[10px] font-semibold text-text2 mb-0.5">Opacity: {Math.round(((selected.opacity as number) ?? 1) * 100)}%</label>
+                  <input type="range" min={0} max={100} value={Math.round(((selected.opacity as number) ?? 1) * 100)} onChange={(e) => updateSelected({ opacity: parseInt(e.target.value) / 100 })} className="w-full accent-pri" />
                 </div>
               </>
             )}
           </div>
         )}
 
-        <p className="text-[11px] text-ink-48 leading-relaxed">
+        <p className="text-[11px] text-text2 leading-relaxed">
           A template needs one <strong>Image Slot</strong> (news photo) and one <strong>Headline</strong> (AI title).
           Everything else — logo, boxes, extra text — is drawn exactly as designed.
         </p>

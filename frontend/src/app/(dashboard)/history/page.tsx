@@ -1,58 +1,75 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
-import { listJobs, listFanpages, deletePublishJob, reeditJob, getJobStats } from "@/lib/api";
+import {
+  listJobs,
+  listFanpages,
+  deletePublishJob,
+  reeditJob,
+  getJobStats,
+} from "@/lib/api";
 import type { PublishJob, PublishJobStatus } from "@/lib/types";
 import { format } from "date-fns";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Toast, { type ToastData } from "@/components/ui/Toast";
 import ClipPlayer from "@/components/ClipPlayer";
 import { getThumbUrl } from "@/lib/thumb";
+import { Icon } from "@iconify/react";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ModeChip } from "@/components/ui/ModeChip";
+import {
+  getDeliveriesByJobIds,
+  markDeliveryPosted,
+  markDeliveryNotPosted,
+  retryDelivery,
+  type DeliveryCopy,
+} from "@/lib/deliveriesApi";
+import { useBrandFilter } from "@/contexts/BrandFilterContext";
 
 const parseUtc = (s: string) =>
   new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
-import { Icon } from "@iconify/react";
 
 type FanpageLite = { id: number; name: string };
 
-// A job is marked `published` as soon as we hand it to Repliz, but the fanpage's
-// sleep-window / daily-cap pacing (see publisher._next_schedule_at) can push the
-// real Facebook go-live time (scheduled_for) well after that. Surface both so
-// "published" in the UI doesn't read as "already live on Facebook".
 function jobTimes(job: PublishJob) {
-  const queuedRaw = job.published_at ?? (job as unknown as Record<string, string>).updated_at;
+  const queuedRaw =
+    job.published_at ?? (job as unknown as Record<string, string>).updated_at;
   const queuedDate = queuedRaw ? parseUtc(queuedRaw) : null;
   const scheduledDate = job.scheduled_for ? parseUtc(job.scheduled_for) : null;
-  const isPendingLive = !!scheduledDate && scheduledDate.getTime() > Date.now() + 60_000;
+  const isPendingLive =
+    !!scheduledDate && scheduledDate.getTime() > Date.now() + 60_000;
   const differs =
-    !!scheduledDate && !!queuedDate && Math.abs(scheduledDate.getTime() - queuedDate.getTime()) > 120_000;
+    !!scheduledDate &&
+    !!queuedDate &&
+    Math.abs(scheduledDate.getTime() - queuedDate.getTime()) > 120_000;
   return { queuedDate, scheduledDate, isPendingLive, differs };
 }
 
-const STATUSES: { value: PublishJobStatus; label: string; icon: string }[] = [
-  { value: "published", label: "Published", icon: "solar:verified-check-bold-duotone" },
-  { value: "failed",    label: "Failed",    icon: "solar:close-circle-bold-duotone" },
-  { value: "skipped",   label: "Skipped",   icon: "solar:skip-next-bold-duotone" },
+const STATUS_TABS: { value: PublishJobStatus; label: string }[] = [
+  { value: "published", label: "Published" },
+  { value: "failed", label: "Failed" },
+  { value: "skipped", label: "Skipped" },
 ];
 
-const STATUS_CONFIG: Record<string, { badge: string; icon: string; iconClass: string }> = {
-  published: { badge: "badge-green", icon: "solar:verified-check-bold-duotone", iconClass: "text-primary-main" },
-  failed:    { badge: "badge-red",   icon: "solar:close-circle-bold-duotone",   iconClass: "text-error-main" },
-  skipped:   { badge: "badge-gray",  icon: "solar:skip-next-bold-duotone",      iconClass: "text-text-disabled" },
-};
-
-const ENGINE_BADGE: Record<string, { label: string; badge: string; icon: string }> = {
-  chatgpt:        { label: "ChatGPT",           badge: "badge-green",  icon: "simple-icons:openai" },
-  codex:          { label: "Codex",             badge: "badge-blue",   icon: "solar:code-square-bold-duotone" },
-  codex_fallback: { label: "Codex · fallback",  badge: "badge-yellow", icon: "solar:refresh-circle-bold-duotone" },
-  template:       { label: "Template",          badge: "badge-gray",   icon: "solar:gallery-wide-bold-duotone" },
+const ENGINE_LABELS: Record<string, string> = {
+  chatgpt: "ChatGPT",
+  codex: "Codex",
+  codex_fallback: "Codex · fallback",
+  template: "Template",
+  google_flow: "Google Flow",
 };
 
 const AVATAR_COLORS = [
-  "#00A76F", "#8E33FF", "#FFAB00", "#FF5630",
-  "#00B8D9", "#5119B7", "#B76E00", "#B71D18",
+  "#00A76F",
+  "#8E33FF",
+  "#FFAB00",
+  "#FF5630",
+  "#00B8D9",
+  "#5119B7",
+  "#B76E00",
+  "#B71D18",
 ];
 function avatarColor(name: string) {
   let n = 0;
@@ -64,7 +81,13 @@ function resolveUrls(job: PublishJob): string[] {
   if (job.content_type === "youtube_clip" || job.content_type === "ai_video") {
     return job.video_thumbnail_url ? [job.video_thumbnail_url] : [];
   }
-  if (job.content_type === "news_content" || job.content_type === "ig_recreate" || job.content_type === "discussion" || job.content_type === "pinterest_content" || job.content_type === "facebook_recreate") {
+  if (
+    job.content_type === "news_content" ||
+    job.content_type === "ig_recreate" ||
+    job.content_type === "discussion" ||
+    job.content_type === "pinterest_content" ||
+    job.content_type === "facebook_recreate"
+  ) {
     return job.design_image_url ? [job.design_image_url] : [];
   }
   const pub = job.image_public_urls ?? [];
@@ -73,16 +96,21 @@ function resolveUrls(job: PublishJob): string[] {
   return pub;
 }
 
-// Link back to where the content originally came from — a scraped article for
-// news_content jobs, or the original Instagram post/profile for ig_repost/ig_recreate.
 function sourceLink(job: PublishJob): { url: string; label: string; icon: string } | null {
   if (job.content_type === "youtube_clip" && job.yt_video_id) {
     const t = Math.floor(job.clip_start_s ?? 0);
-    return { url: `https://youtu.be/${job.yt_video_id}?t=${t}`, label: "Source moment on YouTube", icon: "mdi:youtube" };
+    return {
+      url: `https://youtu.be/${job.yt_video_id}?t=${t}`,
+      label: "Source on YouTube",
+      icon: "solar:play-circle-bold-duotone",
+    };
   }
-  // S9: Mode-6 (facebook_recreate) — link back to the original FB photo.
   if (job.content_type === "facebook_recreate" && job.source_photo_url) {
-    return { url: job.source_photo_url, label: "Source photo on Facebook", icon: "mdi:facebook" };
+    return {
+      url: job.source_photo_url,
+      label: "Source on Facebook",
+      icon: "solar:gallery-bold-duotone",
+    };
   }
   if (job.article_url) {
     return {
@@ -92,10 +120,14 @@ function sourceLink(job: PublishJob): { url: string; label: string; icon: string
     };
   }
   if (job.ig_post_url) {
-    return { url: job.ig_post_url, label: "Original IG post", icon: "mdi:instagram" };
+    return { url: job.ig_post_url, label: "Original IG post", icon: "solar:camera-bold-duotone" };
   }
   if (job.ig_username) {
-    return { url: `https://instagram.com/${job.ig_username}`, label: `@${job.ig_username}`, icon: "mdi:instagram" };
+    return {
+      url: `https://instagram.com/${job.ig_username}`,
+      label: `@${job.ig_username}`,
+      icon: "solar:camera-bold-duotone",
+    };
   }
   return null;
 }
@@ -104,28 +136,24 @@ const PAGE_SIZE = 30;
 
 export default function HistoryPage() {
   const [activeStatus, setActiveStatus] = useState<PublishJobStatus>("published");
-  const [fanpageFilter, setFanpageFilter] = useState<string>("");
-  // jobIndex points into the flat `jobs` list below (so Left/Right can browse
-  // every loaded post, not just images within one post's album); imgIdx is
-  // the position within THAT job's own album (multi-photo IG carousel posts).
-  const [lightbox, setLightbox] = useState<{ jobIndex: number; imgIdx: number } | null>(null);
+  const { selectedBrandId, setSelectedBrandId } = useBrandFilter();
+  const fanpageFilter = selectedBrandId !== null ? String(selectedBrandId) : "";
+  const [searchQuery, setSearchQuery] = useState("");
   const [blurred, setBlurred] = useState(false);
+  const [lightbox, setLightbox] = useState<{ jobIndex: number; imgIdx: number } | null>(null);
 
   const { data: fanpages = [] } = useSWR<FanpageLite[]>(
     "history-fanpages",
     () => listFanpages().then((r) => r.data as FanpageLite[])
   );
 
-  // Only fetched/shown once a specific fanpage is picked — "all fanpages"
-  // doesn't need a summary bar the way one fanpage's history does.
-  const { data: fanpageStats } = useSWR(
+  const { data: jobStats } = useSWR(
     fanpageFilter ? ["history-fanpage-stats", fanpageFilter] : null,
-    () => getJobStats({ fanpage_id: Number(fanpageFilter) }).then((r) => r.data),
+    () =>
+      getJobStats({ fanpage_id: Number(fanpageFilter) }).then((r) => r.data),
     { refreshInterval: 60000 }
   );
 
-  // ── Infinite scroll (offset pagination) — mirrors the Gallery page so History
-  // doesn't dump hundreds of post cards into the DOM at once ──
   const {
     data: pages,
     size,
@@ -134,7 +162,7 @@ export default function HistoryPage() {
     isValidating,
   } = useSWRInfinite<PublishJob[]>(
     (index, prev: PublishJob[] | null) => {
-      if (prev && prev.length < PAGE_SIZE) return null; // no more pages
+      if (prev && prev.length < PAGE_SIZE) return null;
       return ["history-jobs", activeStatus, fanpageFilter, index] as const;
     },
     ([, status, fanpageId, index]) =>
@@ -147,18 +175,49 @@ export default function HistoryPage() {
     { refreshInterval: 60000, revalidateFirstPage: false }
   );
 
-  const jobs = pages ? pages.flat() : [];
+  const rawJobs = useMemo(() => (pages ? pages.flat() : []), [pages]);
+  const postIds = useMemo(() => rawJobs.map((j) => j.id), [rawJobs]);
+  const postIdsKey = postIds.join(",");
+
+  const { data: deliveries = [], mutate: mutateDeliveries } = useSWR(
+    postIds.length > 0 ? ["deliveries", postIdsKey] : null,
+    () => getDeliveriesByJobIds(postIds),
+    { refreshInterval: 60000 }
+  );
+
+  const deliveriesByJob = useMemo(() => {
+    const map: Record<number, DeliveryCopy[]> = {};
+    for (const d of deliveries) {
+      if (!map[d.publish_job_id]) {
+        map[d.publish_job_id] = [];
+      }
+      map[d.publish_job_id].push(d);
+    }
+    return map;
+  }, [deliveries]);
   const lastPage = pages?.[pages.length - 1];
   const reachedEnd = !!lastPage && lastPage.length < PAGE_SIZE;
   const loadingMore = isValidating;
   const isLoading = !pages;
 
-  // Reset to first page whenever the status/fanpage filter changes
   useEffect(() => {
     setSize(1);
   }, [activeStatus, fanpageFilter, setSize]);
 
-  // Load next page when the sentinel scrolls into view
+  // Client-side search filtering on loaded posts
+  const jobs = useMemo(() => {
+    if (!searchQuery.trim()) return rawJobs;
+    const q = searchQuery.toLowerCase();
+    return rawJobs.filter((j) => {
+      const cap = (j.ai_generated_caption ?? "").toLowerCase();
+      const title = (j.design_title ?? "").toLowerCase();
+      const fp = (j.fanpage_name ?? "").toLowerCase();
+      const ig = (j.ig_username ?? "").toLowerCase();
+      return cap.includes(q) || title.includes(q) || fp.includes(q) || ig.includes(q);
+    });
+  }, [rawJobs, searchQuery]);
+
+  // Sentinel for infinite scrolling
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinelRef.current;
@@ -176,7 +235,6 @@ export default function HistoryPage() {
   const lightboxJobData = lightbox ? jobs[lightbox.jobIndex] ?? null : null;
   const lightboxUrls = lightboxJobData ? resolveUrls(lightboxJobData) : [];
 
-  // Left/Right browses between POSTS (like the Gallery lightbox), Escape closes.
   useEffect(() => {
     if (!lightbox) return;
     const onKey = (e: KeyboardEvent) => {
@@ -188,7 +246,7 @@ export default function HistoryPage() {
         setLightbox((l) => {
           if (!l) return l;
           if (l.jobIndex < jobs.length - 1) return { jobIndex: l.jobIndex + 1, imgIdx: 0 };
-          if (!reachedEnd) setSize((s) => s + 1); // ran off the loaded list — fetch more
+          if (!reachedEnd) setSize((s) => s + 1);
           return l;
         });
       }
@@ -201,8 +259,38 @@ export default function HistoryPage() {
   const [deletingJob, setDeletingJob] = useState(false);
   const [confirmReeditJob, setConfirmReeditJob] = useState<PublishJob | null>(null);
   const [reeditingJob, setReeditingJob] = useState(false);
+  const [confirmDeliveryAction, setConfirmDeliveryAction] = useState<{
+    delivery: DeliveryCopy;
+    action: "mark-posted" | "mark-not-posted" | "retry";
+  } | null>(null);
+  const [deliveryActionLoading, setDeliveryActionLoading] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
   const notify = (message: string, type?: ToastData["type"]) => setToast({ message, type });
+
+  async function handleDeliveryActionConfirm() {
+    if (!confirmDeliveryAction) return;
+    const { delivery, action } = confirmDeliveryAction;
+    setDeliveryActionLoading(true);
+    try {
+      if (action === "mark-posted") {
+        await markDeliveryPosted(delivery.id);
+        notify("Copy marked as published.", "success");
+      } else if (action === "mark-not-posted") {
+        await markDeliveryNotPosted(delivery.id);
+        notify("Copy marked as not posted (failed).", "success");
+      } else if (action === "retry") {
+        await retryDelivery(delivery.id);
+        notify("Copy queued for retry.", "success");
+      }
+      await Promise.all([mutateDeliveries(), mutateJobs()]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Action failed";
+      notify(msg, "error");
+    } finally {
+      setDeliveryActionLoading(false);
+      setConfirmDeliveryAction(null);
+    }
+  }
 
   async function confirmDeleteJobAction() {
     if (!confirmDeleteJob) return;
@@ -213,7 +301,12 @@ export default function HistoryPage() {
       if (repliz_deleted === true) {
         notify("Deleted from history and removed from Facebook via Repliz.", "success");
       } else if (repliz_deleted === false) {
-        notify(`Deleted from history, but Repliz could not remove the live post: ${repliz_error ?? "unknown error"}`, "error");
+        notify(
+          `Deleted from history, but Repliz could not remove the live post: ${
+            repliz_error ?? "unknown error"
+          }`,
+          "error"
+        );
       } else {
         notify("Deleted from history.", "success");
       }
@@ -244,195 +337,510 @@ export default function HistoryPage() {
   }
 
   return (
-    <>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-text-primary">Publishing Activity</h1>
-            <p className="text-sm text-text-secondary mt-0.5">
-              {isLoading
-                ? "Loading…"
-                : `${jobs.length}${reachedEnd ? "" : "+"} ${activeStatus} post${jobs.length !== 1 ? "s" : ""}`}
-            </p>
-          </div>
-
-          {/* Privacy toggle */}
-          <button
-            onClick={() => setBlurred((b) => !b)}
-            title={blurred ? "Show content" : "Hide content (demo mode)"}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all flex-shrink-0 ${
-              blurred
-                ? "bg-warning-main/15 text-warning-dark border border-warning-main/30"
-                : "bg-bg-paper-hover text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            <Icon
-              icon={blurred ? "solar:eye-closed-bold-duotone" : "solar:eye-bold-duotone"}
-              width={17}
-            />
-            <span className="hidden sm:inline">{blurred ? "Demo Mode" : "Privacy"}</span>
-          </button>
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-[26px] font-bold text-text tracking-tight">
+            Activity
+          </h1>
+          <p className="text-sm text-text2 mt-0.5">
+            Everything Studio posted, plans to post, or could not post. Every post
+            goes to each active channel at its own time, so each channel copy has its
+            own line and state.
+          </p>
         </div>
 
-        {/* Status tabs + fanpage filter */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {STATUSES.map(({ value, label, icon }) => (
+        <label className="flex items-center gap-2 text-sm text-text2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={blurred}
+            onChange={(e) => setBlurred(e.target.checked)}
+            className="w-4 h-4 rounded border-line accent-pri cursor-pointer"
+          />
+          Privacy blur (for screen sharing)
+        </label>
+      </div>
+
+      {/* Stat Cards */}
+      {fanpageFilter && jobStats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="p-3.5 rounded-xl bg-surface border border-line">
+            <div className="text-xs text-text2">Published today</div>
+            <div className="text-2xl font-bold text-text mt-0.5">
+              {jobStats.published_today}
+            </div>
+            <div className="text-[11px] text-text2 mt-0.5">channel copies today</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-surface border border-line">
+            <div className="text-xs text-text2">Scheduled / Total</div>
+            <div className="text-2xl font-bold text-text mt-0.5">
+              {jobStats.published_total}
+            </div>
+            <div className="text-[11px] text-text2 mt-0.5">total delivered</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-surface border border-line">
+            <div className="text-xs text-text2">This month</div>
+            <div className="text-2xl font-bold text-text mt-0.5">
+              {jobStats.published_this_month}
+            </div>
+            <div className="text-[11px] text-text2 mt-0.5">channel copies</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-surface border border-line">
+            <div className="text-xs text-text2">Failed total</div>
+            <div className="text-2xl font-bold text-bad mt-0.5">
+              {jobStats.failed_total}
+            </div>
+            <div className="text-[11px] text-text2 mt-0.5">failed attempts</div>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs and Filters */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          role="tablist"
+          aria-label="Activity status"
+          className="inline-flex flex-wrap gap-1 p-1 rounded-xl bg-surface2 border border-line"
+        >
+          {STATUS_TABS.map((t) => (
             <button
-              key={value}
-              onClick={() => setActiveStatus(value)}
-              className={
-                activeStatus === value
-                  ? "flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md bg-primary-main text-white shadow-primary-btn"
-                  : "flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md bg-bg-paper-hover text-text-secondary hover:text-text-primary transition-colors"
-              }
+              key={t.value}
+              type="button"
+              role="tab"
+              aria-selected={activeStatus === t.value}
+              onClick={() => setActiveStatus(t.value)}
+              className={`h-9 px-3 rounded-lg text-xs font-semibold transition-colors ${
+                activeStatus === t.value
+                  ? "bg-surface text-text shadow-sm"
+                  : "text-text2 hover:text-text bg-transparent"
+              }`}
             >
-              <Icon icon={icon} width={15} />
-              {label}
+              {t.label}
             </button>
           ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            aria-label="Search captions and sources"
+            placeholder="Search captions, sources…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-9 w-52 sm:w-60 px-3 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
+          />
 
           <select
+            aria-label="Brand"
             value={fanpageFilter}
-            onChange={(e) => setFanpageFilter(e.target.value)}
-            className="input-rect py-2 text-sm ml-auto w-48"
+            onChange={(e) =>
+              setSelectedBrandId(e.target.value ? Number(e.target.value) : null)
+            }
+            className="h-9 px-2.5 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
           >
-            <option value="">All fanpages</option>
+            <option value="">All brands</option>
             {fanpages.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
             ))}
           </select>
         </div>
-
-        {/* Per-fanpage summary — only shown once a specific fanpage is picked */}
-        {fanpageFilter && fanpageStats && (
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(0,167,111,0.08)]">
-              <Icon icon="solar:calendar-bold-duotone" width={15} className="text-primary-main" />
-              <span className="text-sm font-semibold text-primary-main">
-                {fanpageStats.published_today} published today
-              </span>
-            </div>
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(24,119,242,0.08)]">
-              <Icon icon="solar:calendar-mark-bold-duotone" width={15} className="text-[#1877F2]" />
-              <span className="text-sm font-semibold text-[#1877F2]">
-                {fanpageStats.published_this_month} this month
-              </span>
-            </div>
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(145,158,171,0.12)]">
-              <Icon icon="solar:layers-bold-duotone" width={15} className="text-text-secondary" />
-              <span className="text-sm font-semibold text-text-primary">
-                {fanpageStats.published_total} published total
-              </span>
-            </div>
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[rgba(255,86,48,0.08)]">
-              <Icon icon="solar:close-circle-bold-duotone" width={15} className="text-[#FF5630]" />
-              <span className="text-sm font-semibold text-[#FF5630]">
-                {fanpageStats.failed_total} failed total
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Skeleton */}
-        {isLoading && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="bg-bg-paper rounded-xl overflow-hidden animate-pulse">
-                <div className="p-4 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-bg-paper-hover" />
-                  <div className="flex-1 space-y-1.5">
-                    <div className="h-3.5 bg-bg-paper-hover rounded w-2/3" />
-                    <div className="h-3 bg-bg-paper-hover rounded w-1/2" />
-                  </div>
-                </div>
-                <div className="mx-4 aspect-[4/3] rounded-lg bg-bg-paper-hover" />
-                <div className="p-4 space-y-2">
-                  <div className="h-3 bg-bg-paper-hover rounded w-full" />
-                  <div className="h-3 bg-bg-paper-hover rounded w-3/4" />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Empty */}
-        {!isLoading && jobs.length === 0 && (
-          <div className="card flex flex-col items-center justify-center py-20 text-center">
-            <Icon
-              icon={STATUS_CONFIG[activeStatus]?.icon ?? "solar:history-bold-duotone"}
-              width={48}
-              className="text-text-disabled mb-4"
-            />
-            <p className="text-base font-semibold text-text-primary">No {activeStatus} posts yet</p>
-            <p className="text-sm text-text-secondary mt-1">
-              {activeStatus === "published"
-                ? "Posts you publish will appear here."
-                : activeStatus === "failed"
-                ? "Failed publishes will be listed here."
-                : "Posts you skip will appear here."}
-            </p>
-          </div>
-        )}
-
-        {/* Card grid */}
-        {!isLoading && jobs.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {jobs.map((job, jobIndex) => (
-              <HistoryCard
-                key={job.id}
-                job={job}
-                blurred={blurred}
-                onImageClick={(idx) => {
-                  // Always open — even a job with no image (e.g. still missing
-                  // a design) should be inspectable, not silently do nothing.
-                  setLightbox({ jobIndex, imgIdx: idx });
-                }}
-                onDelete={() => setConfirmDeleteJob(job)}
-                onReedit={() => setConfirmReeditJob(job)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Infinite-scroll sentinel + status */}
-        {!isLoading && jobs.length > 0 && (
-          <>
-            <div ref={sentinelRef} className="h-10" />
-            <div className="text-center py-2 text-xs text-text-secondary">
-              {loadingMore ? (
-                <span className="inline-flex items-center gap-2">
-                  <Icon icon="svg-spinners:180-ring" width={16} /> Loading more…
-                </span>
-              ) : reachedEnd ? (
-                `All ${jobs.length} post${jobs.length !== 1 ? "s" : ""} loaded`
-              ) : null}
-            </div>
-          </>
-        )}
       </div>
+
+      {/* Table Section */}
+      <section
+        aria-label="Posts"
+        className="bg-surface border border-line rounded-xl overflow-hidden"
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[800px] border-collapse text-left text-xs">
+            <thead>
+              <tr className="border-b border-line bg-surface text-text2 font-semibold text-[11px]">
+                <th scope="col" className="p-3 pl-4">
+                  Post
+                </th>
+                <th scope="col" className="p-3">
+                  Type
+                </th>
+                <th scope="col" className="p-3">
+                  Made by
+                </th>
+                <th scope="col" className="p-3">
+                  Channel copies
+                </th>
+                <th scope="col" className="p-3 pr-4 text-right">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {isLoading && (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-text2">
+                    Loading activity…
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && jobs.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-12 text-center text-text2">
+                    <Icon
+                      icon="solar:history-bold-duotone"
+                      width={36}
+                      className="mx-auto opacity-30 mb-2"
+                    />
+                    No activity found for this filter.
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading &&
+                jobs.map((job, idx) => {
+                  const urls = resolveUrls(job);
+                  const fullUrl = urls[0];
+                  const thumb = getThumbUrl(fullUrl, 240) || fullUrl;
+                  const fanpage = job.fanpage_name ?? "Unknown Brand";
+                  const caption = job.ai_generated_caption ?? "";
+                  const title =
+                    job.design_title ?? (caption ? caption.slice(0, 45) : `@${job.ig_username}`);
+                  const { queuedDate, scheduledDate, isPendingLive } = jobTimes(job);
+                  const canReedit =
+                    job.content_type === "news_content" && job.status === "published";
+                  const src = sourceLink(job);
+                  const blurClass = blurred ? "blur-sm select-none" : "";
+
+                  return (
+                    <tr key={job.id} className="hover:bg-surface2/50 transition-colors">
+                      {/* Post column */}
+                      <td className="p-3 pl-4 align-top max-w-[280px]">
+                        <div className="flex gap-3 items-center">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setLightbox({ jobIndex: idx, imgIdx: 0 })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                setLightbox({ jobIndex: idx, imgIdx: 0 });
+                              }
+                            }}
+                            className={`w-11 h-14 rounded-lg bg-surface2 border border-line flex-shrink-0 overflow-hidden cursor-zoom-in ${
+                              blurred ? "blur-sm" : ""
+                            }`}
+                          >
+                            {thumb ? (
+                              <img
+                                src={thumb}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-text2 text-[10px]">
+                                {job.content_type === "youtube_clip" ||
+                                job.content_type === "ai_video"
+                                  ? "video"
+                                  : "card"}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="min-w-0 flex flex-col gap-0.5">
+                            <span
+                              className={`font-semibold text-text truncate ${blurClass}`}
+                            >
+                              {fanpage}
+                            </span>
+                            <span
+                              className={`text-[11px] text-text2 truncate ${blurClass}`}
+                            >
+                              {title}
+                            </span>
+                            <span className="text-[10px] text-text2">
+                              {queuedDate
+                                ? format(queuedDate, "MMM d, HH:mm")
+                                : `@${job.ig_username}`}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Type column */}
+                      <td className="p-3 align-top whitespace-nowrap">
+                        <ModeChip mode={job.content_type || "repost"} size="sm" />
+                      </td>
+
+                      {/* Made by */}
+                      <td className="p-3 align-top whitespace-nowrap">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-line bg-surface text-text text-[11px] font-medium">
+                          {ENGINE_LABELS[job.design_engine ?? ""] ??
+                            (job.content_type === "youtube_clip"
+                              ? "Video clip"
+                              : job.content_type === "ai_video"
+                              ? "Google Flow"
+                              : "Template")}
+                        </span>
+                      </td>
+
+                      {/* Channel copies / status */}
+                      <td className="p-3 align-top">
+                        {(() => {
+                          const copies = deliveriesByJob[job.id] || [];
+                          if (copies.length > 0) {
+                            return (
+                              <div className="flex flex-col gap-2 min-w-[220px]">
+                                <ul className="list-none m-0 p-0 flex flex-col">
+                                  {copies.map((c, i) => (
+                                    <li
+                                      key={c.id}
+                                      className={`flex flex-col gap-1 py-1.5 ${
+                                        i > 0 ? "border-t border-line/60" : ""
+                                      }`}
+                                    >
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex flex-col min-w-0">
+                                          <span className={`font-semibold text-xs text-text ${blurClass}`}>
+                                            {c.destination_name || fanpage}
+                                          </span>
+                                          <span className="text-[11px] text-text2">
+                                            {c.method === "phone"
+                                              ? (c.device_name ? `Phone · ${c.device_name}` : "Phone")
+                                              : c.method === "repliz"
+                                              ? "Repliz"
+                                              : (c.actual_method || c.intended_method || "Direct")}
+                                            {c.published_at ? (
+                                              ` · Went live ${format(parseUtc(c.published_at), "MMM d, HH:mm")}`
+                                            ) : c.scheduled_for ? (
+                                              ` · ${
+                                                parseUtc(c.scheduled_for).getTime() > Date.now() + 60_000
+                                                  ? "Goes live"
+                                                  : "Scheduled"
+                                              } ${format(parseUtc(c.scheduled_for), "MMM d, HH:mm")}`
+                                            ) : null}
+                                          </span>
+                                        </div>
+                                        <StatusBadge status={c.state} />
+                                      </div>
+
+                                      {c.last_error && (
+                                        <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded leading-snug">
+                                          {c.last_error}
+                                        </p>
+                                      )}
+
+                                      {c.state === "uncertain" && (
+                                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                          {(c.facebook_permalink || c.facebook_post_id) && !blurred && (
+                                            <a
+                                              href={c.facebook_permalink || `https://facebook.com/${c.facebook_post_id}`}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text inline-flex items-center gap-1 transition-colors"
+                                            >
+                                              <Icon icon="solar:link-circle-bold-duotone" width={12} />
+                                              Check on Facebook
+                                            </a>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setConfirmDeliveryAction({ delivery: c, action: "mark-posted" })
+                                            }
+                                            className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text transition-colors"
+                                          >
+                                            Mark posted
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setConfirmDeliveryAction({ delivery: c, action: "mark-not-posted" })
+                                            }
+                                            className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-bad-soft text-bad transition-colors"
+                                          >
+                                            Mark not posted
+                                          </button>
+                                        </div>
+                                      )}
+
+                                      {c.state === "failed" && !c.repliz_schedule_id && !c.facebook_post_id && (
+                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setConfirmDeliveryAction({ delivery: c, action: "retry" })
+                                            }
+                                            className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-pri transition-colors inline-flex items-center gap-1"
+                                          >
+                                            <Icon icon="solar:restart-bold" width={11} />
+                                            Retry this copy
+                                          </button>
+                                        </div>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+
+                                {src && !blurred && (
+                                  <a
+                                    href={src.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
+                                  >
+                                    <Icon icon={src.icon} width={11} />
+                                    {src.label}
+                                  </a>
+                                )}
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div className="flex flex-col gap-1 min-w-[200px]">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`font-semibold text-text ${blurClass}`}>
+                                  {fanpage}
+                                </span>
+                                {job.status === "published" && isPendingLive ? (
+                                  <StatusBadge status="scheduled" />
+                                ) : (
+                                  <StatusBadge status={job.status} />
+                                )}
+                              </div>
+
+                              <div className="text-[11px] text-text2 flex items-center gap-1.5 flex-wrap">
+                                <span>
+                                  {job.repliz_schedule_id ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      Via Repliz
+                                      <span className="font-mono text-text2">
+                                        ({job.repliz_schedule_id.slice(-8)})
+                                      </span>
+                                    </span>
+                                  ) : (
+                                    "Direct"
+                                  )}
+                                </span>
+                                {scheduledDate && (
+                                  <span>
+                                    · {isPendingLive ? "Goes live" : "Went live"}{" "}
+                                    {format(scheduledDate, "MMM d, HH:mm")}
+                                  </span>
+                                )}
+                              </div>
+
+                              {job.last_error && (
+                                <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded mt-0.5 leading-snug">
+                                  {job.last_error}
+                                </p>
+                              )}
+
+                              {src && !blurred && (
+                                <a
+                                  href={src.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
+                                >
+                                  <Icon icon={src.icon} width={11} />
+                                  {src.label}
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="p-3 pr-4 align-top text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5">
+                          {canReedit && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmReeditJob(job)}
+                              className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors"
+                            >
+                              Re-edit
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteJob(job)}
+                            className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-medium transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Infinite-scroll sentinel */}
+        <div ref={sentinelRef} className="h-4" />
+
+        {/* Pagination footer */}
+        <div className="flex justify-between items-center p-3 px-4 border-t border-line text-xs text-text2 bg-surface">
+          <span>
+            Showing {jobs.length} post{jobs.length !== 1 ? "s" : ""}
+          </span>
+          {!reachedEnd && (
+            <button
+              type="button"
+              disabled={loadingMore}
+              onClick={() => setSize((s) => s + 1)}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors"
+            >
+              {loadingMore && <Icon icon="svg-spinners:180-ring" width={14} />}
+              Load 30 more
+            </button>
+          )}
+        </div>
+      </section>
 
       {/* Lightbox */}
       {lightbox && lightboxJobData && (
         <HistoryLightbox
-          state={{ job: lightboxJobData, urls: lightboxUrls, idx: lightbox.imgIdx }}
-          postPosition={{ index: lightbox.jobIndex, total: jobs.length, hasMore: !reachedEnd }}
+          state={{
+            job: lightboxJobData,
+            urls: lightboxUrls,
+            idx: lightbox.imgIdx,
+          }}
+          postPosition={{
+            index: lightbox.jobIndex,
+            total: jobs.length,
+            hasMore: !reachedEnd,
+          }}
           blurred={blurred}
           onClose={() => setLightbox(null)}
-          onPrev={() => setLightbox((l) => (l && l.imgIdx > 0 ? { ...l, imgIdx: l.imgIdx - 1 } : l))}
-          onNext={() => setLightbox((l) => (l && l.imgIdx < lightboxUrls.length - 1 ? { ...l, imgIdx: l.imgIdx + 1 } : l))}
+          onPrev={() =>
+            setLightbox((l) => (l && l.imgIdx > 0 ? { ...l, imgIdx: l.imgIdx - 1 } : l))
+          }
+          onNext={() =>
+            setLightbox((l) =>
+              l && l.imgIdx < lightboxUrls.length - 1 ? { ...l, imgIdx: l.imgIdx + 1 } : l
+            )
+          }
           onDelete={() => setConfirmDeleteJob(lightboxJobData)}
           onReedit={() => setConfirmReeditJob(lightboxJobData)}
         />
       )}
 
+      {/* Confirm Dialogs */}
       <ConfirmDialog
         open={!!confirmDeleteJob}
         title="Delete this from history?"
         message={
           confirmDeleteJob?.repliz_schedule_id
-            ? "This will also try to delete the live post from Facebook via Repliz. This cannot be undone."
-            : "This cannot be undone."
+            ? "For copies scheduled through Repliz, Studio also asks Repliz to delete the live post. This cannot be undone."
+            : "Removes it from Studio history. This cannot be undone."
         }
         confirmLabel="Delete"
         danger
@@ -440,243 +848,60 @@ export default function HistoryPage() {
         onConfirm={confirmDeleteJobAction}
         onCancel={() => setConfirmDeleteJob(null)}
       />
+
       <ConfirmDialog
         open={!!confirmReeditJob}
         title="Re-edit with a new image?"
-        message="This removes the post from Repliz (whether it's live or still waiting in its scheduled slot) and sends it back for a fresh design with a different photo. It won't go out again until it's re-published."
+        message="This removes the post from Repliz and sends it back for a fresh design with a different photo. It won't go out again until it's re-published."
         confirmLabel="Re-edit"
         loading={reeditingJob}
         onConfirm={confirmReeditJobAction}
         onCancel={() => setConfirmReeditJob(null)}
       />
+
+      <ConfirmDialog
+        open={!!confirmDeliveryAction}
+        title={
+          confirmDeliveryAction?.action === "mark-posted"
+            ? "Mark copy as posted?"
+            : confirmDeliveryAction?.action === "mark-not-posted"
+            ? "Mark copy as not posted?"
+            : "Retry this copy?"
+        }
+        message={
+          confirmDeliveryAction?.action === "mark-posted"
+            ? `Confirm that this copy has been published to ${
+                confirmDeliveryAction.delivery.destination_name || "the channel"
+              }. Studio will record it as live on Facebook and will never attempt to resend it.`
+            : confirmDeliveryAction?.action === "mark-not-posted"
+            ? `Confirm that this copy did not go live on ${
+                confirmDeliveryAction.delivery.destination_name || "the channel"
+              }. Studio will mark it as failed, allowing it to be safely retried.`
+            : `Retry sending this copy to ${
+                confirmDeliveryAction?.delivery.destination_name || "the channel"
+              }. It will re-enter the publishing pipeline respecting channel pacing, sleep windows, and device locks.`
+        }
+        confirmLabel={
+          confirmDeliveryAction?.action === "mark-posted"
+            ? "Mark posted"
+            : confirmDeliveryAction?.action === "mark-not-posted"
+            ? "Mark not posted"
+            : "Retry copy"
+        }
+        danger={confirmDeliveryAction?.action === "mark-not-posted"}
+        loading={deliveryActionLoading}
+        onConfirm={handleDeliveryActionConfirm}
+        onCancel={() => {
+          if (!deliveryActionLoading) setConfirmDeliveryAction(null);
+        }}
+      />
+
       <Toast toast={toast} onClose={() => setToast(null)} />
-    </>
-  );
-}
-
-/* ── History card ─────────────────────────────────── */
-function HistoryCard({
-  job,
-  blurred,
-  onImageClick,
-  onDelete,
-  onReedit,
-}: {
-  job: PublishJob;
-  blurred: boolean;
-  onImageClick: (idx: number) => void;
-  onDelete: () => void;
-  onReedit: () => void;
-}) {
-  const fanpage = job.fanpage_name ?? "Unknown Fanpage";
-  const color = avatarColor(fanpage);
-  const urls = resolveUrls(job);
-  const fullUrl = urls[0];
-  const thumbUrl = getThumbUrl(fullUrl, 480);
-  const [imgSrc, setImgSrc] = useState<string | null>(thumbUrl || fullUrl || null);
-  const [failedThumb, setFailedThumb] = useState(false);
-
-  useEffect(() => {
-    setImgSrc(thumbUrl || fullUrl || null);
-    setFailedThumb(false);
-  }, [thumbUrl, fullUrl]);
-
-  const handleImgError = () => {
-    if (!failedThumb && fullUrl && imgSrc !== fullUrl) {
-      setFailedThumb(true);
-      setImgSrc(fullUrl);
-    }
-  };
-
-  const thumb = imgSrc;
-  const albumCount = urls.length;
-  const caption = job.ai_generated_caption ?? "";
-  const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
-  const src = sourceLink(job);
-  const canReedit = job.content_type === "news_content" && job.status === "published";
-  const isClip = job.content_type === "youtube_clip" || job.content_type === "ai_video";
-
-  const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
-
-  const blur = "blur-sm select-none transition-all duration-200";
-  const blurImg = "blur-md transition-all duration-200";
-
-  return (
-    <div className="bg-bg-paper rounded-xl overflow-hidden flex flex-col dark:shadow-card">
-      {/* Header */}
-      <div className="flex items-center gap-3 p-4 pb-2">
-        {job.fanpage_picture_url ? (
-          <img
-            src={job.fanpage_picture_url}
-            alt={fanpage}
-            className={`w-10 h-10 rounded-full object-cover flex-shrink-0 ${blurred ? blurImg : ""}`}
-          />
-        ) : (
-          <div
-            className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 select-none ${blurred ? blurImg : ""}`}
-            style={{ background: color }}
-          >
-            {fanpage[0]?.toUpperCase() ?? "?"}
-          </div>
-        )}
-
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm font-semibold text-text-primary truncate ${blurred ? blur : ""}`}>{fanpage}</p>
-          <p className={`text-xs text-text-secondary truncate ${blurred ? blur : ""}`}>
-            {queuedDate
-              ? format(queuedDate, "MMM d, yyyy · HH:mm")
-              : `@${job.ig_username}`}
-          </p>
-          {differs && scheduledDate && (
-            <p className={`text-[11px] truncate flex items-center gap-1 mt-0.5 ${isPendingLive ? "text-warning-dark" : "text-text-disabled"} ${blurred ? blur : ""}`}>
-              <Icon icon="solar:clock-circle-bold-duotone" width={11} />
-              {isPendingLive ? "Goes live" : "Went live"} {format(scheduledDate, "MMM d, HH:mm")}
-            </p>
-          )}
-        </div>
-
-        {job.design_engine && ENGINE_BADGE[job.design_engine] && (
-          <span
-            className={`${ENGINE_BADGE[job.design_engine].badge} flex-shrink-0 flex items-center gap-1`}
-            title={job.design_engine_note || `Image: ${ENGINE_BADGE[job.design_engine].label}`}
-          >
-            <Icon icon={ENGINE_BADGE[job.design_engine].icon} width={11} />
-            {ENGINE_BADGE[job.design_engine].label}
-          </span>
-        )}
-
-        {/* Status badge — one at a time: "Scheduled" while still pending the
-            real Facebook go-live time, else the actual job status */}
-        {job.status === "published" && isPendingLive ? (
-          <span className="badge-yellow flex-shrink-0 flex items-center gap-1" title="Sent to Repliz, but Facebook hasn't published it yet">
-            <Icon icon="solar:clock-circle-bold-duotone" width={11} />
-            Scheduled
-          </span>
-        ) : (
-          <span className={`${cfg.badge} flex-shrink-0 flex items-center gap-1`}>
-            <Icon icon={cfg.icon} width={11} />
-            {job.status}
-          </span>
-        )}
-      </div>
-
-      {/* Meta */}
-      <div className="flex items-center gap-3 px-4 pb-3">
-        <span className={`flex items-center gap-1 text-xs text-text-secondary ${blurred ? blur : ""}`}>
-          <Icon icon="solar:user-bold-duotone" width={12} />
-          @{job.ig_username}
-        </span>
-        {albumCount > 1 && (
-          <span className="flex items-center gap-1 text-xs text-text-secondary">
-            <Icon icon="solar:gallery-bold-duotone" width={12} />
-            {albumCount} photos
-          </span>
-        )}
-        {src && !blurred && (
-          <a
-            href={src.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={src.url}
-            onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-1 text-xs text-primary-main hover:underline truncate max-w-[45%]"
-          >
-            <Icon icon={src.icon} width={12} className="flex-shrink-0" />
-            <span className="truncate">{src.label}</span>
-          </a>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          {job.repliz_schedule_id && (
-            <span className="flex items-center gap-1 text-xs text-text-secondary">
-              <Icon icon="solar:link-bold-duotone" width={11} />
-              {job.repliz_schedule_id.slice(-8)}
-            </span>
-          )}
-          {canReedit && (
-            <button
-              onClick={onReedit}
-              title="Re-edit with a new image"
-              className="p-1 rounded-md text-text-disabled hover:text-primary-main hover:bg-primary-main/10 transition-colors"
-            >
-              <Icon icon="solar:gallery-edit-bold-duotone" width={14} />
-            </button>
-          )}
-          <button
-            onClick={onDelete}
-            title="Delete from history"
-            className="p-1 rounded-md text-text-disabled hover:text-error-main hover:bg-error-main/10 transition-colors"
-          >
-            <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
-          </button>
-        </div>
-      </div>
-
-      {/* Thumbnail / clip player */}
-      <div
-        className={`relative mx-4 rounded-lg overflow-hidden bg-bg-paper-hover ${isClip && job.video_url ? "" : "cursor-zoom-in group"}`}
-        onClick={() => { if (!(isClip && job.video_url)) onImageClick(0); }}
-      >
-        {isClip && job.video_url ? (
-          /* MP4 is still available — show a playable ClipPlayer.
-             preload="none" avoids a network spike when many history cards
-             are mounted at once. */
-          <ClipPlayer
-            src={job.video_url}
-            poster={thumb}
-            preload="none"
-            className={`aspect-[9/16] max-h-[440px] object-contain ${blurred ? blurImg : ""}`}
-          />
-        ) : thumb ? (
-          <img src={thumb} alt="Post" loading="lazy" decoding="async" onError={handleImgError} className={`w-full aspect-[4/3] object-cover ${blurred ? blurImg : ""}`} />
-        ) : (
-          <div className="w-full aspect-[4/3] flex items-center justify-center">
-            <Icon icon="solar:gallery-bold-duotone" width={40} className="text-text-disabled" />
-          </div>
-        )}
-
-        {albumCount > 1 && (
-          <div className="pointer-events-none absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-white/90 backdrop-blur-sm text-[#1C252E] text-xs font-bold px-2.5 py-1 rounded-full">
-            <Icon icon="solar:gallery-bold-duotone" width={11} />
-            {albumCount}
-          </div>
-        )}
-
-        {/* Status overlay tint for failed */}
-        {job.status === "failed" && (
-          <div className="pointer-events-none absolute inset-0 bg-error-main/10 flex items-center justify-center">
-            <div className="bg-black/60 rounded-full p-2">
-              <Icon icon="solar:close-circle-bold-duotone" width={24} className="text-error-light" />
-            </div>
-          </div>
-        )}
-
-        {/* Hover zoom hint — only for non-clip or clips without video_url */}
-        {job.status !== "failed" && thumb && !(isClip && job.video_url) && (
-          <div className="pointer-events-none absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-            <div className="bg-black/60 rounded-full p-2">
-              <Icon icon="solar:maximize-bold-duotone" width={18} className="text-white" />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Caption */}
-      <div className="px-4 pt-3 pb-4 flex-1">
-        {job.last_error ? (
-          <p className="text-xs text-error-main bg-[rgba(255,86,48,0.08)] px-3 py-2 rounded-md leading-relaxed">
-            {job.last_error}
-          </p>
-        ) : caption ? (
-          <p className={`text-xs text-text-secondary leading-relaxed line-clamp-3 whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
-        ) : (
-          <p className="text-xs text-text-disabled italic">No caption</p>
-        )}
-      </div>
     </div>
   );
 }
 
-/* ── History lightbox (view-only, no actions) ─────── */
+/* History Lightbox */
 function HistoryLightbox({
   state,
   postPosition,
@@ -698,195 +923,163 @@ function HistoryLightbox({
 }) {
   const { job, urls, idx } = state;
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
-  const color = avatarColor(fanpage);
   const caption = job.ai_generated_caption ?? "";
   const total = urls.length;
-  const cfg = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.skipped;
-  const { queuedDate, scheduledDate, isPendingLive, differs } = jobTimes(job);
+  const { queuedDate, scheduledDate, isPendingLive } = jobTimes(job);
   const src = sourceLink(job);
-  const showScheduled = job.status === "published" && isPendingLive;
   const canReedit = job.content_type === "news_content" && job.status === "published";
   const isClip = job.content_type === "youtube_clip" || job.content_type === "ai_video";
-
-  const [expanded, setExpanded] = useState(true);
-
-  const blur = "blur-sm select-none transition-all duration-200";
-  const blurImg = "blur-xl transition-all duration-200";
+  const blurClass = blurred ? "blur-md select-none" : "";
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-4"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden shadow-dropdown bg-bg-paper"
+        className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-surface border border-line"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Media — 9:16 for clips with video_url, 4:3 for images */}
-        <div className={`relative bg-black ${isClip && job.video_url ? "aspect-[9/16]" : "aspect-[4/3]"} flex-shrink-0`}>
+        <div
+          className={`relative bg-black ${
+            isClip && job.video_url ? "aspect-[9/16]" : "aspect-[4/3]"
+          } flex-shrink-0`}
+        >
           {isClip && job.video_url ? (
-            /* MP4 available — full-height ClipPlayer; controls stay accessible */
             <ClipPlayer
               src={job.video_url}
               poster={urls[0]}
-              className={`absolute inset-0 w-full h-full object-contain ${blurred ? blurImg : ""}`}
+              className={`absolute inset-0 w-full h-full object-contain ${blurClass}`}
             />
           ) : total > 0 ? (
             <img
               src={urls[idx]}
-              alt={`Image ${idx + 1}`}
-              loading="lazy"
-              decoding="async"
-              className={`absolute inset-0 w-full h-full object-contain ${blurred ? blurImg : ""}`}
+              alt=""
+              className={`absolute inset-0 w-full h-full object-contain ${blurClass}`}
             />
           ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/40">
-              <Icon icon="solar:gallery-bold-duotone" width={40} />
-              <p className="text-xs">No image for this post</p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text2 opacity-40">
+              <Icon icon="solar:gallery-bold-duotone" width={36} />
+              <p className="text-xs">No media preview</p>
             </div>
           )}
 
-          {/* Post position — ← → browses the whole loaded history, not just this post's album */}
           <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full z-10">
-            <Icon icon="solar:alt-arrow-left-linear" width={12} className="opacity-60" />
-            {postPosition.index + 1} / {postPosition.total}{postPosition.hasMore ? "+" : ""}
-            <Icon icon="solar:alt-arrow-right-linear" width={12} className="opacity-60" />
+            {postPosition.index + 1} / {postPosition.total}
+            {postPosition.hasMore ? "+" : ""}
           </div>
 
-          {/* Close */}
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close"
             className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
           >
             <Icon icon="solar:close-bold" width={16} />
           </button>
 
-          {/* Prev / Next (this post's own photo album, e.g. an IG carousel) — not for clips */}
           {!isClip && total > 1 && idx > 0 && (
-            <button onClick={onPrev}
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10">
+            <button
+              type="button"
+              onClick={onPrev}
+              aria-label="Previous image"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
+            >
               <Icon icon="solar:alt-arrow-left-bold-duotone" width={18} />
             </button>
           )}
           {!isClip && total > 1 && idx < total - 1 && (
-            <button onClick={onNext}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10">
+            <button
+              type="button"
+              onClick={onNext}
+              aria-label="Next image"
+              className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
+            >
               <Icon icon="solar:alt-arrow-right-bold-duotone" width={18} />
             </button>
           )}
-
-          {/* Album counter + dots */}
-          {!isClip && total > 1 && (
-            <>
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full">
-                {idx + 1} / {total}
-              </div>
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
-                {urls.map((_, i) => (
-                  <div key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? "bg-white w-4" : "bg-white/40 w-1.5"}`} />
-                ))}
-              </div>
-            </>
-          )}
         </div>
 
-        {/* Info panel — below the image, not on top of it */}
-        <div className="flex flex-col min-h-0 overflow-y-auto">
-          {/* Header: always visible — who, when, status */}
-          <div className="flex items-center gap-3 px-5 pt-4 pb-3">
-            {job.fanpage_picture_url ? (
-              <img src={job.fanpage_picture_url} alt={fanpage}
-                className={`w-9 h-9 rounded-full object-cover flex-shrink-0 ${blurred ? blurImg : ""}`} />
-            ) : (
-              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${blurred ? "blur-sm" : ""}`}
-                style={{ background: color }}>
-                {fanpage[0]?.toUpperCase()}
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className={`text-sm font-semibold text-text-primary leading-tight truncate ${blurred ? blur : ""}`}>{fanpage}</p>
-              <p className={`text-xs text-text-secondary mt-0.5 truncate ${blurred ? blur : ""}`}>
+        {/* Details Panel */}
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className={`text-sm font-semibold text-text ${blurred ? "blur-sm" : ""}`}>
+                {fanpage}
+              </p>
+              <p className={`text-xs text-text2 ${blurred ? "blur-sm" : ""}`}>
                 @{job.ig_username}
                 {queuedDate ? ` · ${format(queuedDate, "MMM d, yyyy HH:mm")}` : ""}
+                {scheduledDate && (
+                  <span>
+                    {" "}· {isPendingLive ? "Goes live" : "Went live"}{" "}
+                    {format(scheduledDate, "MMM d, HH:mm")}
+                  </span>
+                )}
+                {job.repliz_schedule_id && (
+                  <span>
+                    {" "}· Repliz ID:{" "}
+                    <span className="font-mono text-text">
+                      {job.repliz_schedule_id.slice(-8)}
+                    </span>
+                  </span>
+                )}
               </p>
-              {differs && scheduledDate && (
-                <p className={`text-xs mt-0.5 flex items-center gap-1 ${isPendingLive ? "text-warning-dark" : "text-text-disabled"} ${blurred ? blur : ""}`}>
-                  <Icon icon="solar:clock-circle-bold-duotone" width={11} />
-                  {isPendingLive ? "Goes live" : "Went live"} {format(scheduledDate, "MMM d, yyyy HH:mm")}
-                </p>
-              )}
             </div>
-            {showScheduled ? (
-              <span className="badge-yellow flex items-center gap-1 flex-shrink-0">
-                <Icon icon="solar:clock-circle-bold-duotone" width={11} />
-                Scheduled
-              </span>
-            ) : (
-              <span className={`${cfg.badge} flex items-center gap-1 flex-shrink-0`}>
-                <Icon icon={cfg.icon} width={11} />
-                {job.status}
-              </span>
-            )}
+            <StatusBadge status={job.status} />
           </div>
 
-          {/* Show/hide details toggle */}
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-paper-hover border-y border-divider-soft transition-colors"
-          >
-            {expanded ? "Hide details" : "Show details"}
-            <Icon icon={expanded ? "solar:alt-arrow-up-bold" : "solar:alt-arrow-down-bold"} width={12} />
-          </button>
-
-          {/* Details: caption/error + source link + repliz id */}
-          {expanded && (
-            <div className="px-5 py-3 space-y-2.5 border-b border-divider-soft">
-              {job.last_error ? (
-                <p className="text-error-main text-xs leading-relaxed bg-error-main/8 rounded-md px-3 py-2">{job.last_error}</p>
-              ) : caption ? (
-                <p className={`text-text-secondary text-xs leading-relaxed whitespace-pre-line ${blurred ? blur : ""}`}>{caption}</p>
-              ) : (
-                <p className="text-text-disabled text-xs italic">No caption</p>
-              )}
-              {src && !blurred && (
-                <a
-                  href={src.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={src.url}
-                  className="flex items-center gap-1.5 text-xs text-primary-main hover:underline"
-                >
-                  <Icon icon={src.icon} width={13} className="flex-shrink-0" />
-                  <span className="truncate">{src.label}</span>
-                </a>
-              )}
-              {job.repliz_schedule_id && (
-                <div className="flex items-center gap-1.5 text-xs text-text-secondary">
-                  <Icon icon="solar:link-bold-duotone" width={13} />
-                  Repliz ID: <span className={`font-mono text-text-primary ${blurred ? blur : ""}`}>{job.repliz_schedule_id.slice(-12)}</span>
-                </div>
-              )}
-            </div>
+          {caption && (
+            <p
+              className={`text-xs text-text2 leading-relaxed whitespace-pre-line bg-surface2 p-3 rounded-lg border border-line ${
+                blurred ? "blur-sm select-none" : ""
+              }`}
+            >
+              {caption}
+            </p>
           )}
 
-          {/* Actions — always visible regardless of expand state */}
-          <div className="flex items-center gap-2 px-5 py-3">
-            {canReedit && (
-              <button
-                onClick={onReedit}
-                title="Re-edit with a new image"
-                className="p-1.5 rounded-md text-text-disabled hover:text-primary-main hover:bg-primary-main/10 transition-colors"
+          {job.last_error && (
+            <p className="text-xs text-bad bg-bad-soft p-3 rounded-lg leading-relaxed">
+              {job.last_error}
+            </p>
+          )}
+
+          <div className="flex items-center justify-between gap-3 pt-2 border-t border-line">
+            {src && !blurred ? (
+              <a
+                href={src.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-pri hover:underline inline-flex items-center gap-1.5"
               >
-                <Icon icon="solar:gallery-edit-bold-duotone" width={16} />
-              </button>
+                <Icon icon={src.icon} width={13} />
+                {src.label}
+              </a>
+            ) : (
+              <div />
             )}
-            <button
-              onClick={onDelete}
-              title="Delete from history"
-              className="p-1.5 rounded-md text-text-disabled hover:text-error-main hover:bg-error-main/10 transition-colors"
-            >
-              <Icon icon="solar:trash-bin-trash-bold-duotone" width={16} />
-            </button>
+
+            <div className="flex items-center gap-2">
+              {canReedit && (
+                <button
+                  type="button"
+                  onClick={onReedit}
+                  className="h-8 px-3 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-semibold"
+                >
+                  Re-edit
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onDelete}
+                className="h-8 px-3 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-semibold"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       </div>

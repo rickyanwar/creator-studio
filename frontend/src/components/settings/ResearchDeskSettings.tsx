@@ -95,18 +95,18 @@ export function ResearchDeskSettings({
   const report = settings?.research_last_report;
 
   return (
-    <div className="space-y-4 border-t border-hairline pt-4">
+    <div className="space-y-4 border-t border-line pt-4">
       <div>
-        <h3 className="text-sm font-semibold text-text-primary">Researcher</h3>
-        <p className="text-[11px] text-text-secondary mt-1">
-          Who finds and researches Mode 8 video ideas. The other one stays as a fallback.
+        <h3 className="text-sm font-semibold text-text">Researcher</h3>
+        <p className="text-[11px] text-text2 mt-0.5">
+          Who finds and researches AI video ideas. The other one stays as a fallback.
         </p>
       </div>
 
-      {error && <p className="text-xs text-error-main bg-red-50 rounded p-2">{error}</p>}
+      {error && <p className="text-xs text-bad bg-bad-soft rounded-lg p-2">{error}</p>}
 
       <select
-        className="input-rect text-sm"
+        className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full sm:w-64"
         value={researcher}
         onChange={(e) => save({ ai_video_researcher: e.target.value })}
       >
@@ -115,12 +115,12 @@ export function ResearchDeskSettings({
       </select>
 
       <div>
-        <label className="label">Idea bank (days)</label>
+        <label className="block text-xs font-semibold text-text mb-1">Idea bank (days)</label>
         <input
           type="number"
           min={1}
           max={7}
-          className="input-rect"
+          className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-36"
           value={bankDays}
           onChange={(e) => setBankDays(e.target.value)}
           onBlur={() => {
@@ -128,17 +128,17 @@ export function ResearchDeskSettings({
             save({ ai_video_idea_bank_days: Math.max(1, Math.min(7, Number.isNaN(days) ? 3 : days)) });
           }}
         />
-        <p className="text-[11px] text-text-secondary mt-1">
-          Each Mode 8 fanpage keeps videos per day × this many days of ideas waiting. The emptiest fanpage is filled first.
+        <p className="text-[11px] text-text2 mt-1">
+          Each AI video brand keeps videos per day × this many days of ideas waiting. The emptiest brand is filled first.
         </p>
       </div>
 
       {researcher === "muse" && (
         <>
           <div>
-            <label className="label">Muse mode</label>
+            <label className="block text-xs font-semibold text-text mb-1">Muse mode</label>
             <select
-              className="input-rect text-sm"
+              className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full sm:w-64"
               value={settings?.muse_research_mode ?? "pilot"}
               onChange={(e) => save({ muse_research_mode: e.target.value })}
             >
@@ -147,7 +147,7 @@ export function ResearchDeskSettings({
             </select>
           </div>
 
-          <p className="text-xs bg-indigo-50 text-indigo-800 rounded p-2">
+          <p className="text-xs bg-info-soft text-info rounded-lg p-3">
             {mode === "live" ? (
               <>
                 Mode: <b>Live</b>. Muse&apos;s ideas that pass the studio&apos;s checks are approved at once when their score reaches the fanpage&apos;s minimum score, and go straight to production. Reject one on the AI Video page to tell Muse why.
@@ -162,16 +162,16 @@ export function ResearchDeskSettings({
 
           {mode === "pilot" && (
             <div>
-              <label className="label">Pilot ideas per channel</label>
+              <label className="block text-xs font-semibold text-text mb-1">Pilot ideas per channel</label>
               <input
                 type="number"
                 min={0}
                 max={10}
-                className="input-rect"
+                className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-36"
                 value={packs}
                 onChange={(e) => setPacks(e.target.value)}
               />
-              <p className="text-[11px] text-text-secondary mt-1">
+              <p className="text-[11px] text-text2 mt-1">
                 Muse stops researching for a channel once this many of its ideas wait for your review. Approving or rejecting one frees a slot.
               </p>
             </div>
@@ -179,12 +179,12 @@ export function ResearchDeskSettings({
 
           {NICHES.map((niche) => (
             <div key={niche} className="space-y-2">
-              <p className="text-xs font-semibold text-text-primary uppercase">{niche} references</p>
+              <p className="text-xs font-semibold text-text uppercase">{niche} references</p>
               {KINDS.map((kind) => (
                 <div key={kind.key}>
-                  <label className="text-[11px] text-text-secondary">{kind.label}</label>
+                  <label className="text-[11px] text-text2">{kind.label}</label>
                   <textarea
-                    className="input-rect w-full text-xs min-h-[70px] font-mono"
+                    className="w-full text-xs min-h-[70px] font-mono p-2.5 rounded-[8px] border border-line bg-surface text-text"
                     placeholder="https://www.instagram.com/account/ | optional note (one link per line)"
                     value={drafts[`${niche}.${kind.key}`] ?? ""}
                     onChange={(e) => setDrafts({ ...drafts, [`${niche}.${kind.key}`]: e.target.value })}
@@ -194,32 +194,36 @@ export function ResearchDeskSettings({
             </div>
           ))}
           <div className="flex items-center gap-3">
-            <button type="button" className="btn-primary text-xs py-1.5" onClick={saveReferences}>
+            <button
+              type="button"
+              className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 transition-opacity"
+              onClick={saveReferences}
+            >
               Save research settings
             </button>
-            {saved && <span className="text-xs text-emerald-700">Saved</span>}
+            {saved && <span className="text-xs text-pri-text font-medium">Saved</span>}
           </div>
 
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-text-primary">
+            <p className="text-xs font-semibold text-text">
               Muse activity · last contact {when(settings?.research_last_call_at)}
             </p>
             {(activity?.notes ?? []).length > 0 && (
               <div>
-                <p className="text-[11px] text-text-secondary mb-1">Notes from Muse</p>
+                <p className="text-[11px] text-text2 mb-1">Notes from Muse</p>
                 <ul className="space-y-1">
                   {activity!.notes.map((note) => (
-                    <li key={note.id} className="text-xs bg-indigo-50 rounded p-2 whitespace-pre-wrap">
-                      <span className="text-[10px] text-text-secondary mr-1">{when(note.created_at)}</span>
+                    <li key={note.id} className="text-xs bg-surface2 rounded-lg p-2.5 whitespace-pre-wrap text-text">
+                      <span className="text-[10px] text-text2 mr-1">{when(note.created_at)}</span>
                       {note.message}
                     </li>
                   ))}
                 </ul>
               </div>
             )}
-            <ul className="text-[11px] text-text-secondary space-y-0.5 max-h-56 overflow-y-auto">
+            <ul className="text-[11px] text-text2 space-y-0.5 max-h-56 overflow-y-auto font-mono">
               {(activity?.calls ?? []).map((call) => (
-                <li key={call.id} className="font-mono break-all">
+                <li key={call.id} className="break-all">
                   {when(call.created_at)} · {call.endpoint} · {call.action}
                   {call.detail ? ` · ${JSON.stringify(call.detail).slice(0, 160)}` : ""}
                 </li>
@@ -228,8 +232,8 @@ export function ResearchDeskSettings({
             </ul>
             {report && (
               <div>
-                <p className="text-[11px] text-text-secondary mb-1">Last run report</p>
-                <pre className="text-[11px] bg-bg-paper border border-hairline rounded p-2 overflow-x-auto">
+                <p className="text-[11px] text-text2 mb-1">Last run report</p>
+                <pre className="text-[11px] bg-surface2 border border-line rounded-lg p-2.5 overflow-x-auto text-text font-mono">
                   {JSON.stringify(report, null, 2)}
                 </pre>
               </div>

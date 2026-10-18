@@ -308,6 +308,11 @@ def ensure_deliveries(
 
         existing_slots_utc = get_destination_reservations_utc(db, destination)
 
+        dest_fanpage = getattr(destination, "content_project", None)
+        if dest_fanpage is None and destination.content_project_id:
+            dest_fanpage = db.query(TargetFanpage).filter_by(id=destination.content_project_id).first()
+        dest_hour_weights = getattr(dest_fanpage, "publish_hour_weights", None) if dest_fanpage else None
+
         next_slot_utc = compute_audience_slot(
             now_utc=aware_now,
             timezone_name=destination.timezone,
@@ -317,6 +322,7 @@ def ensure_deliveries(
             sleep_start_hour=sleep_start,
             sleep_end_hour=sleep_end,
             namespace=f"dest-{destination.id}",
+            hour_weights=dest_hour_weights,
         )
         naive_scheduled_for = next_slot_utc.astimezone(timezone.utc).replace(
             tzinfo=None
@@ -337,7 +343,13 @@ def ensure_deliveries(
             repliz_daily_target=destination.repliz_daily_target,
         )
 
-        if not is_supported:
+        platform = destination.kind
+        platform_accepted = {"youtube": {"video"}, "x": {"image", "album", "video"}}.get(platform)
+        if platform_accepted and payload.media_kind not in platform_accepted:
+            state = "skipped"
+            assigned_device_id = None
+            last_error = f"Media not accepted by {destination.kind}"
+        elif not is_supported:
             state = "waiting_for_slot"
             assigned_device_id = None
             last_error = f"Unsupported media kind '{payload.media_kind}' for destination"

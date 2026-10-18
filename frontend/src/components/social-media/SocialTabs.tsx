@@ -12,44 +12,38 @@ export interface SocialTabsProps {
 export function SocialTabs({ brands, accounts }: SocialTabsProps) {
   const pathname = usePathname();
 
+  const isBrands =
+    pathname === "/brands" ||
+    pathname === "/social-media" ||
+    (pathname.startsWith("/brands/") && !pathname.startsWith("/brands/accounts")) ||
+    (pathname.startsWith("/social-media/") && !pathname.startsWith("/social-media/accounts"));
+
+  const isAccounts =
+    pathname === "/brands/accounts" ||
+    pathname.startsWith("/brands/accounts/") ||
+    pathname === "/social-media/accounts" ||
+    pathname.startsWith("/social-media/accounts/");
+
   const tabs = [
     {
       name: "Brands",
-      href: "/social-media",
-      active:
-        pathname === "/social-media" ||
-        (pathname.startsWith("/social-media/") &&
-          !pathname.startsWith("/social-media/accounts") &&
-          !pathname.startsWith("/social-media/legacy")),
+      href: "/brands",
+      active: isBrands,
       count: brands,
     },
     {
-      name: "Publishing accounts",
-      href: "/social-media/accounts",
-      active:
-        pathname === "/social-media/accounts" ||
-        pathname.startsWith("/social-media/accounts/"),
+      name: "Accounts & phones",
+      href: "/brands/accounts",
+      active: isAccounts,
       count: accounts,
-    },
-    {
-      name: "Classic view",
-      href: "/social-media/legacy",
-      active:
-        pathname === "/social-media/legacy" ||
-        pathname.startsWith("/social-media/legacy/"),
-    },
-    {
-      name: "Activity",
-      href: "/history",
-      active: pathname === "/history" || pathname.startsWith("/history/"),
     },
   ];
 
   return (
     <div
       role="tablist"
-      aria-label="Social Media sections"
-      className="flex gap-2 border-b border-divider-soft overflow-x-auto"
+      aria-label="View"
+      className="self-start flex flex-wrap gap-1 p-1 rounded-xl bg-surface2 border border-line"
     >
       {tabs.map((tab) => (
         <Link
@@ -57,19 +51,17 @@ export function SocialTabs({ brands, accounts }: SocialTabsProps) {
           href={tab.href}
           role="tab"
           aria-selected={tab.active}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${
+          className={`h-11 px-4 rounded-[9px] text-sm font-semibold transition-all inline-flex items-center gap-2 ${
             tab.active
-              ? "border-primary-main text-primary-main font-semibold"
-              : "border-transparent text-text-secondary hover:text-text-primary"
+              ? "bg-surface text-text shadow-sm"
+              : "text-text2 hover:text-text"
           }`}
         >
           <span>{tab.name}</span>
           {tab.count !== undefined && (
             <span
-              className={`text-xs px-2 py-0.5 rounded-full ${
-                tab.active
-                  ? "bg-primary-main/15 text-primary-main font-semibold"
-                  : "bg-bg-paper-hover text-text-secondary font-medium"
+              className={`text-xs font-semibold tabular-nums ${
+                tab.active ? "text-text" : "text-text2"
               }`}
             >
               {tab.count}

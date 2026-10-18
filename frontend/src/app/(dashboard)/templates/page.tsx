@@ -88,11 +88,20 @@ const SAMPLE_LABELS: Record<"news" | "quote" | "discussion", string | null> = {
   discussion: "DISCUSSION",
 };
 
-const STYLE_NUMS: Record<TemplateStyle, number> = {
-  gp: 1,
-  highlight: 2,
-  classic: 3,
-};
+const CATEGORY_USES: { name: string; uses: string[] }[] = [
+  {
+    name: "News",
+    uses: ["News cards", "Instagram recreate", "Viral Radar", "Pinterest (no face)", "FB recreate · news"],
+  },
+  {
+    name: "Quote",
+    uses: ["News quote cards (~1 in 10 articles)", "Instagram recreate", "Viral Radar", "Pinterest (face found)", "FB recreate · quote"],
+  },
+  {
+    name: "Discussion",
+    uses: ["Discussion cards", "FB recreate · discussion"],
+  },
+];
 
 function StyleSection({
   info,
@@ -171,25 +180,32 @@ function StyleSection({
   const matchingFans = fanpages.filter((f) => f.template_style === info.style);
   const usedByText =
     matchingFans.length > 0
-      ? `Used by: ${matchingFans.map((f) => f.name).join(", ")}`
-      : "Used by: No project yet";
+      ? matchingFans.map((f) => f.name).join(", ")
+      : "No brand assigned";
 
-  const num = STYLE_NUMS[info.style] || 1;
   const note = STYLE_NOTES[info.style]?.note || "";
 
   return (
-    <section className="card p-6 space-y-6">
-      <div className="flex flex-wrap justify-between items-baseline gap-2">
-        <h2 className="text-h5 font-bold text-text-primary">
-          {num} · {info.label || STYLE_LABELS[info.style]}
-        </h2>
-        <span className="text-sm text-text-secondary">{note}</span>
-      </div>
+    <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col lg:flex-row gap-5">
+      {/* ── Left Column: Controls & Defaults ── */}
+      <div className="lg:w-[320px] shrink-0 flex flex-col gap-3.5">
+        <div>
+          <h2 className="text-[17px] font-bold text-text">
+            {info.label || STYLE_LABELS[info.style]}
+          </h2>
+          <p className="text-[13px] text-text2 mt-0.5">{note}</p>
+        </div>
 
-      <div className="space-y-4 rounded-xl border border-divider-soft bg-bg-paper p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-bold text-text-primary mr-1">Default colors</span>
+        <div className="space-y-3 pt-2 border-t border-line">
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] font-semibold text-text">Default colors</span>
+            <span className="text-xs text-text2 truncate max-w-[150px]" title={usedByText}>
+              Used by {usedByText}
+            </span>
+          </div>
+
+          {/* Palette preset chips */}
+          <div className="flex flex-wrap items-center gap-1.5">
             {STYLE_PALETTES[info.style]?.map((p) => {
               const isSelected =
                 primary.toLowerCase() === p.a.toLowerCase() &&
@@ -205,13 +221,13 @@ function StyleSection({
                     setSame(p.a.toUpperCase() === p.b.toUpperCase());
                     setQuoteMarks(p.q || (info.style === "highlight" ? "#FEFEFC" : ""));
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors ${
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs transition-colors ${
                     isSelected
-                      ? "border-primary-main bg-primary-main/10 text-text-primary font-semibold"
-                      : "border-divider-soft bg-bg-paper text-text-secondary hover:text-text-primary hover:bg-bg-paper-hover"
+                      ? "border-pri bg-pri-soft text-pri-text font-semibold ring-1 ring-pri"
+                      : "border-line bg-surface text-text hover:bg-surface2"
                   }`}
                 >
-                  <span className="flex w-5 h-3 rounded overflow-hidden border border-divider-soft">
+                  <span className="flex w-4 h-3 rounded overflow-hidden border border-line shrink-0">
                     <span className="flex-1" style={{ background: p.a }} />
                     <span className="flex-1" style={{ background: p.b }} />
                   </span>
@@ -220,15 +236,12 @@ function StyleSection({
               );
             })}
           </div>
-          <span className="text-xs text-text-secondary">{usedByText}</span>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-divider-soft">
-          {/* Primary */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-text-primary">Primary</span>
-              <span className="font-mono text-xs text-text-secondary uppercase">{primary}</span>
+          {/* Primary swatch row */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-text">Primary</span>
+              <span className="font-mono text-text2 uppercase">{primary}</span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {SWATCHES.map((s) => (
@@ -237,8 +250,10 @@ function StyleSection({
                   type="button"
                   title={s.label}
                   onClick={() => setPrimary(s.hex)}
-                  className={`w-6 h-6 rounded-md border border-divider-soft transition-transform ${
-                    primary.toLowerCase() === s.hex.toLowerCase() ? "ring-2 ring-primary-main scale-110" : "hover:scale-105"
+                  className={`w-6 h-6 rounded-md border border-line transition-transform ${
+                    primary.toLowerCase() === s.hex.toLowerCase()
+                      ? "ring-2 ring-pri scale-110"
+                      : "hover:scale-105"
                   }`}
                   style={{ backgroundColor: s.hex }}
                 />
@@ -247,26 +262,26 @@ function StyleSection({
                 type="color"
                 value={primary}
                 onChange={(e) => setPrimary(e.target.value.toUpperCase())}
-                className="w-7 h-6 rounded border border-divider-soft cursor-pointer bg-transparent"
+                className="w-7 h-6 rounded border border-line cursor-pointer bg-transparent"
                 title="Custom color"
               />
             </div>
           </div>
 
-          {/* Secondary */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-text-primary">Secondary</span>
-              {!same && <span className="font-mono text-xs text-text-secondary uppercase">{secondary}</span>}
+          {/* Secondary swatch row */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-text">Secondary</span>
+              {!same && <span className="font-mono text-text2 uppercase">{secondary}</span>}
             </div>
-            <label className="flex items-center gap-2 text-xs text-text-primary cursor-pointer">
+            <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
               <input
                 type="checkbox"
                 checked={same}
                 onChange={(e) => setSame(e.target.checked)}
-                className="rounded border-divider-soft text-primary-main focus:ring-primary-main"
+                className="w-3.5 h-3.5 rounded accent-pri border-line"
               />
-              Same as primary
+              <span>Same as primary</span>
             </label>
             {!same && (
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -276,8 +291,10 @@ function StyleSection({
                     type="button"
                     title={s.label}
                     onClick={() => setSecondary(s.hex)}
-                    className={`w-6 h-6 rounded-md border border-divider-soft transition-transform ${
-                      secondary.toLowerCase() === s.hex.toLowerCase() ? "ring-2 ring-primary-main scale-110" : "hover:scale-105"
+                    className={`w-6 h-6 rounded-md border border-line transition-transform ${
+                      secondary.toLowerCase() === s.hex.toLowerCase()
+                        ? "ring-2 ring-pri scale-110"
+                        : "hover:scale-105"
                     }`}
                     style={{ backgroundColor: s.hex }}
                   />
@@ -286,7 +303,7 @@ function StyleSection({
                   type="color"
                   value={secondary}
                   onChange={(e) => setSecondary(e.target.value.toUpperCase())}
-                  className="w-7 h-6 rounded border border-divider-soft cursor-pointer bg-transparent"
+                  className="w-7 h-6 rounded border border-line cursor-pointer bg-transparent"
                   title="Custom color"
                 />
               </div>
@@ -294,10 +311,10 @@ function StyleSection({
           </div>
 
           {/* Quote marks */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-text-primary">Quote marks</span>
-              <span className="font-mono text-xs text-text-secondary uppercase">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-text">Quote marks</span>
+              <span className="font-mono text-text2 uppercase">
                 {quoteMarks ? quoteMarks : "Same as badge"}
               </span>
             </div>
@@ -307,8 +324,8 @@ function StyleSection({
                 onClick={() => setQuoteMarks("")}
                 className={`px-2 py-0.5 text-xs rounded border ${
                   !quoteMarks
-                    ? "border-primary-main bg-primary-main/10 text-primary-main font-semibold"
-                    : "border-divider-soft text-text-secondary hover:text-text-primary"
+                    ? "border-pri bg-pri-soft text-pri-text font-semibold"
+                    : "border-line text-text2 hover:text-text"
                 }`}
               >
                 Same as badge
@@ -319,11 +336,11 @@ function StyleSection({
                   onClick={() => setQuoteMarks("#FEFEFC")}
                   className={`px-2 py-0.5 text-xs rounded border ${
                     quoteMarks.toUpperCase() === "#FEFEFC"
-                      ? "border-primary-main bg-primary-main/10 text-primary-main font-semibold"
-                      : "border-divider-soft text-text-secondary hover:text-text-primary"
+                      ? "border-pri bg-pri-soft text-pri-text font-semibold"
+                      : "border-line text-text2 hover:text-text"
                   }`}
                 >
-                  White (#FEFEFC)
+                  White
                 </button>
               )}
               {SWATCHES.map((s) => (
@@ -332,8 +349,10 @@ function StyleSection({
                   type="button"
                   title={s.label}
                   onClick={() => setQuoteMarks(s.hex)}
-                  className={`w-6 h-6 rounded-md border border-divider-soft transition-transform ${
-                    quoteMarks.toLowerCase() === s.hex.toLowerCase() ? "ring-2 ring-primary-main scale-110" : "hover:scale-105"
+                  className={`w-6 h-6 rounded-md border border-line transition-transform ${
+                    quoteMarks.toLowerCase() === s.hex.toLowerCase()
+                      ? "ring-2 ring-pri scale-110"
+                      : "hover:scale-105"
                   }`}
                   style={{ backgroundColor: s.hex }}
                 />
@@ -342,63 +361,57 @@ function StyleSection({
                 type="color"
                 value={quoteMarks || primary}
                 onChange={(e) => setQuoteMarks(e.target.value.toUpperCase())}
-                className="w-7 h-6 rounded border border-divider-soft cursor-pointer bg-transparent"
+                className="w-7 h-6 rounded border border-line cursor-pointer bg-transparent"
                 title="Custom color"
               />
             </div>
           </div>
-        </div>
 
-        {/* Streak for GP */}
-        {info.style === "gp" && (
-          <div className="pt-2 border-t border-divider-soft">
-            <label className="flex items-center gap-2 text-xs text-text-primary cursor-pointer">
+          {/* Streak toggle for GP */}
+          {info.style === "gp" && (
+            <label className="flex items-center gap-2 text-xs text-text cursor-pointer pt-1">
               <input
                 type="checkbox"
                 checked={streak}
                 onChange={(e) => setStreak(e.target.checked)}
-                className="rounded border-divider-soft text-primary-main focus:ring-primary-main"
+                className="w-3.5 h-3.5 rounded accent-pri border-line"
               />
-              Splatter streak behind quote tab
+              <span>Splatter streak behind quote tab</span>
             </label>
-          </div>
-        )}
+          )}
 
-        {/* Save button and messages */}
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="btn btn-primary text-xs py-1.5 px-3"
-          >
-            {saving ? "Saving…" : "Save defaults"}
-          </button>
-          {saveMsg && (
-            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">{saveMsg}</span>
-          )}
-          {saveError && (
-            <span className="text-xs text-rose-600 dark:text-rose-400 font-medium">{saveError}</span>
-          )}
+          {/* Save defaults button */}
+          <div className="pt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text text-xs font-semibold hover:bg-surface2 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save defaults"}
+            </button>
+            {saveMsg && <span className="text-xs text-pri-text font-medium">{saveMsg}</span>}
+            {saveError && <span className="text-xs text-bad font-medium">{saveError}</span>}
+          </div>
         </div>
       </div>
 
-      {/* 3 cards: News / Quote / Discussion */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {/* ── Right Column: 3 Cards (News, Quote, Discussion) ── */}
+      <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-3">
         {(["news", "quote", "discussion"] as const).map((kind) => {
           const ref = info.templates[kind];
           const tpl = ref ? allTemplates.find((t) => t.id === ref.id) : null;
-          const tag = kind === "discussion" ? "new" : "kept";
           const title = SAMPLE_TITLES[kind];
           const label = SAMPLE_LABELS[kind];
+          const kindLabel = kind.charAt(0).toUpperCase() + kind.slice(1);
 
           return (
             <div
               key={kind}
-              className="p-4 rounded-xl border border-divider-soft bg-bg-paper flex flex-col gap-3"
+              className="flex flex-col gap-2 p-3 rounded-xl border border-line bg-surface2/50"
             >
               <div
-                className="relative w-full rounded-lg overflow-hidden border border-divider-soft bg-[#0B1220]"
+                className="relative w-full rounded-[10px] overflow-hidden border border-line bg-[#0B1220]"
                 style={{ aspectRatio: tpl ? `${tpl.canvas_width} / ${tpl.canvas_height}` : "4 / 5" }}
               >
                 {tpl?.template_json ? (
@@ -412,41 +425,34 @@ function StyleSection({
                     title={title}
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-text-disabled">
+                  <div className="w-full h-full flex items-center justify-center text-text2">
                     <Icon icon="solar:gallery-add-bold-duotone" width={32} className="opacity-40" />
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-bold text-text-primary truncate">
-                  {tpl ? templateDisplayName(tpl) : (ref?.name || `${STYLE_LABELS[info.style]} ${kind}`)}
+              <div className="flex items-center justify-between gap-1 mt-auto">
+                <span className="text-[13px] font-semibold text-text truncate">
+                  {tpl ? templateDisplayName(tpl) : kindLabel}
                 </span>
-                <span
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                    tag === "new"
-                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                      : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
-                  }`}
-                >
-                  {tag}
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-surface border border-line text-text2">
+                  {kind}
                 </span>
               </div>
 
-              <p className="text-xs text-text-secondary leading-snug">
-                {CARD_USAGE[kind]}
-              </p>
+              {CARD_USAGE[kind] && (
+                <p className="text-xs text-text2 leading-snug">
+                  {CARD_USAGE[kind]}
+                </p>
+              )}
 
               {tpl && (
-                <div className="pt-1 mt-auto">
-                  <Link
-                    href={`/templates/${tpl.id}`}
-                    className="text-xs font-semibold text-primary-main hover:underline inline-flex items-center gap-1"
-                  >
-                    <Icon icon="solar:pen-bold" width={12} />
-                    Open in designer
-                  </Link>
-                </div>
+                <Link
+                  href={`/templates/${tpl.id}`}
+                  className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs font-medium inline-flex items-center justify-center hover:bg-surface2 transition-colors mt-1"
+                >
+                  Edit template
+                </Link>
               )}
             </div>
           );
@@ -525,30 +531,68 @@ export default function TemplatesPage() {
   const userTemplates = templates.filter((t) => t.style == null && !t.is_hidden);
   const oldTemplates = templates.filter((t) => t.is_hidden === true);
 
+  const STYLE_NUMS: Record<TemplateStyle, number> = { gp: 1, highlight: 2, classic: 3 };
   const sortedStyles = [...styleList].sort(
     (a, b) => (STYLE_NUMS[a.style] || 99) - (STYLE_NUMS[b.style] || 99)
   );
 
   return (
-    <div className="space-y-10">
-      {/* 1. Header */}
-      <div>
-        <div className="text-xs text-text-secondary font-medium mb-1">
-          Settings › Design templates
+    <div className="space-y-6 max-w-[1240px] pb-24">
+      {/* ── 1. Page Header ── */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-[26px] font-bold text-text tracking-tight">Templates</h1>
+          <p className="text-sm text-text2">
+            Three styles, each with News, Quote and Discussion. Default colors here; brands may override them.
+          </p>
+          <p className="text-[13px] text-text2">
+            Edit template opens the template editor. The Designer is only for finishing a post.
+          </p>
         </div>
-        <h1
-          className="text-display-md text-text-primary"
-          style={{ fontFamily: "'SF Pro Display', system-ui, sans-serif" }}
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="h-10 px-3.5 rounded-[10px] border border-line bg-surface text-text text-sm font-semibold hover:bg-surface2 transition-colors shrink-0"
         >
-          Template library
-        </h1>
-        <p className="text-caption text-text-secondary mt-1 max-w-3xl">
-          3 styles, 9 templates: 6 kept from today and 3 new Discussion cards. All centered. Each style has default colors, set here. Every Content Project uses them unless it turns on Override in its Design Templates settings.
-        </p>
+          New custom template
+        </button>
       </div>
 
-      {/* 2. For each StyleInfo */}
-      <div className="space-y-8">
+      {/* ── 2. Where Each Category Is Used ── */}
+      <section
+        aria-labelledby="cat-use"
+        className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3"
+      >
+        <h2 id="cat-use" className="text-[15px] font-semibold text-text">
+          Where each category is used
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {CATEGORY_USES.map((cat) => (
+            <div
+              key={cat.name}
+              className="p-3 rounded-xl bg-surface2 flex flex-col gap-2"
+            >
+              <span className="font-semibold text-sm text-text">{cat.name}</span>
+              <div className="flex flex-wrap gap-1.5">
+                {cat.uses.map((u) => (
+                  <span
+                    key={u}
+                    className="px-2 py-0.5 rounded-md bg-surface border border-line text-xs text-text2"
+                  >
+                    {u}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[13px] text-text2">
+          There is no Pinterest template: a pin becomes a Quote card when a face is found, otherwise a News card. Instagram recreate picks News or Quote per post; FB recreate picks News, Quote or Discussion. Posts classified as &quot;other&quot; are skipped.
+        </p>
+      </section>
+
+      {/* ── 3. Style Sections (GP Racing, Highlight, Classic) ── */}
+      <div className="space-y-4">
         {sortedStyles.map((info) => (
           <StyleSection
             key={info.style}
@@ -560,40 +604,34 @@ export default function TemplatesPage() {
         ))}
       </div>
 
-      {/* 3. Section "Your templates" */}
-      <section className="space-y-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-h5 font-bold text-text-primary">Your templates</h2>
-            <p className="text-caption text-text-secondary mt-0.5">
-              Custom templates created for your fanpages
-            </p>
-          </div>
+      {/* ── 4. Custom Templates Section ── */}
+      <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold text-text">Custom templates</h2>
           <button
             onClick={() => setShowForm(true)}
-            className="btn btn-primary flex items-center gap-2 shrink-0"
+            className="text-xs font-semibold text-pri-text hover:underline"
           >
-            <Icon icon="solar:add-circle-bold-duotone" width={16} />
-            New Template
+            + Create template
           </button>
         </div>
 
         {showForm && (
-          <div className="card p-6 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 rounded-xl border border-line bg-surface2 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-text-primary mb-1">Name</label>
+                <label className="block text-xs font-semibold text-text mb-1">Name</label>
                 <input
-                  className="input-rect py-2"
+                  className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="MotoGP breaking news"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-text-primary mb-1">Fanpage</label>
+                <label className="block text-xs font-semibold text-text mb-1">Fanpage</label>
                 <select
-                  className="input-rect py-2"
+                  className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
                   value={fanpageId}
                   onChange={(e) => setFanpageId(e.target.value)}
                 >
@@ -606,9 +644,9 @@ export default function TemplatesPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-text-primary mb-1">Canvas Size</label>
+                <label className="block text-xs font-semibold text-text mb-1">Canvas Size</label>
                 <select
-                  className="input-rect py-2"
+                  className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
                   value={sizeIdx}
                   onChange={(e) => setSizeIdx(parseInt(e.target.value, 10))}
                 >
@@ -620,9 +658,9 @@ export default function TemplatesPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-text-primary mb-1">Category</label>
+                <label className="block text-xs font-semibold text-text mb-1">Category</label>
                 <select
-                  className="input-rect py-2"
+                  className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                 >
@@ -631,22 +669,21 @@ export default function TemplatesPage() {
                   <option value="news">News</option>
                   <option value="discussion">Discussion</option>
                 </select>
-                <p className="text-[10px] text-text-secondary mt-1">
-                  Which fanpage &quot;Default Design Template&quot; picker this shows up in.
-                </p>
               </div>
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 pt-1">
               <button
+                type="button"
                 onClick={() => setShowForm(false)}
-                className="btn btn-secondary"
+                className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text text-xs hover:bg-surface2"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleCreate}
                 disabled={saving || !name.trim()}
-                className="btn btn-primary"
+                className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 disabled:opacity-50"
               >
                 {saving ? "Creating…" : "Create & Open Editor"}
               </button>
@@ -655,16 +692,18 @@ export default function TemplatesPage() {
         )}
 
         {userTemplates.length === 0 && !showForm ? (
-          <div className="card p-10 text-center text-text-disabled">
-            <Icon icon="solar:palette-bold-duotone" width={40} className="mx-auto mb-3 opacity-40" />
-            <p className="text-sm">No custom templates yet. Create one to design your custom layout.</p>
-          </div>
+          <p className="text-xs text-text2 py-2">
+            No custom templates yet. Create one to design your custom layout.
+          </p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {userTemplates.map((t) => (
-              <div key={t.id} className="group">
+              <div
+                key={t.id}
+                className="group p-3 rounded-xl border border-line bg-surface2/50 flex flex-col gap-2"
+              >
                 <div
-                  className="relative rounded-xl overflow-hidden border border-divider-soft bg-bg-default"
+                  className="relative rounded-[10px] overflow-hidden border border-line bg-surface"
                   style={{ aspectRatio: `${t.canvas_width} / ${t.canvas_height}` }}
                 >
                   {t.has_content && t.template_json ? (
@@ -675,34 +714,34 @@ export default function TemplatesPage() {
                       className="w-full h-full object-contain"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-text-disabled">
-                      <Icon icon="solar:gallery-add-bold-duotone" width={40} className="opacity-40" />
+                    <div className="w-full h-full flex items-center justify-center text-text2">
+                      <Icon icon="solar:gallery-add-bold-duotone" width={32} className="opacity-40" />
                     </div>
                   )}
 
                   <Link
                     href={`/templates/${t.id}`}
-                    className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"
                   >
-                    <span className="inline-flex items-center gap-1.5 text-white font-semibold text-sm">
-                      <Icon icon="solar:pen-bold" width={15} /> Open in editor
+                    <span className="inline-flex items-center gap-1.5 text-white font-semibold text-xs">
+                      <Icon icon="solar:pen-bold" width={14} /> Open
                     </span>
                   </Link>
 
                   {t.is_default && (
-                    <span className="absolute top-2 left-2 inline-flex items-center rounded-full bg-primary-main text-white px-2 py-0.5 text-[10px] font-semibold shadow">
+                    <span className="absolute top-2 left-2 inline-flex items-center rounded-full bg-pri text-pri-fg px-2 py-0.5 text-[10px] font-semibold shadow">
                       default
                     </span>
                   )}
 
-                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                     {!t.is_default && (
                       <button
                         onClick={() =>
                           updateTemplate(t.id, { is_default: true }).then(() => mutateTemplates())
                         }
                         title="Make default"
-                        className="p-1.5 rounded-lg bg-white/90 text-text-primary hover:text-primary-main shadow-sm"
+                        className="p-1.5 rounded-lg bg-surface/90 text-text hover:text-pri-text shadow-sm border border-line"
                       >
                         <Icon icon="solar:star-bold-duotone" width={14} />
                       </button>
@@ -710,19 +749,19 @@ export default function TemplatesPage() {
                     <button
                       onClick={() => handleDelete(t)}
                       title="Delete"
-                      className="p-1.5 rounded-lg bg-white/90 text-text-primary hover:text-red-600 shadow-sm"
+                      className="p-1.5 rounded-lg bg-surface/90 text-text hover:text-bad shadow-sm border border-line"
                     >
                       <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
                     </button>
                   </div>
                 </div>
 
-                <div className="mt-2 px-0.5">
+                <div className="flex items-center justify-between gap-1">
                   {editingId === t.id ? (
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 w-full">
                       <input
                         autoFocus
-                        className="input-rect py-1 text-sm"
+                        className="h-7 px-2 rounded border border-line bg-surface text-text text-xs flex-1 min-w-0"
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         onKeyDown={(e) => {
@@ -732,107 +771,94 @@ export default function TemplatesPage() {
                       />
                       <button
                         onClick={() => handleRename(t)}
-                        title="Save"
-                        className="p-1 text-primary-main shrink-0"
+                        className="p-1 text-pri-text shrink-0"
                       >
-                        <Icon icon="solar:check-circle-bold" width={16} />
-                      </button>
-                      <button
-                        onClick={() => setEditingId(null)}
-                        title="Cancel"
-                        className="p-1 text-text-secondary shrink-0"
-                      >
-                        <Icon icon="solar:close-circle-bold" width={16} />
+                        <Icon icon="solar:check-circle-bold" width={14} />
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-semibold text-text-primary truncate">
-                        {t.name}
-                      </span>
-                      <button
-                        onClick={() => {
-                          setEditingId(t.id);
-                          setEditName(t.name);
-                        }}
-                        title="Rename"
-                        className="p-0.5 rounded text-text-secondary hover:text-primary-main shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Icon icon="solar:pen-bold-duotone" width={12} />
-                      </button>
-                    </div>
+                    <span className="text-[13px] font-semibold text-text truncate">{t.name}</span>
                   )}
-                  <p className="text-[11px] text-text-secondary mt-0.5">
-                    {t.canvas_width} × {t.canvas_height} px · {fanpageName(t.fanpage_id)}
-                  </p>
-                  <select
-                    value={t.category ?? ""}
-                    onChange={(e) =>
-                      updateTemplate(t.id, { category: e.target.value || null }).then(() =>
-                        mutateTemplates()
-                      )
-                    }
-                    className={`mt-1 text-[10px] font-semibold rounded-full px-2 py-0.5 border ${
-                      t.category === "quote"
-                        ? "bg-purple-50 text-purple-700 border-purple-200"
-                        : t.category === "news"
-                        ? "bg-blue-50 text-blue-700 border-blue-200"
-                        : t.category === "discussion"
-                        ? "bg-amber-50 text-amber-700 border-amber-200"
-                        : "bg-bg-default text-text-secondary border-divider-soft"
-                    }`}
-                  >
-                    <option value="">Uncategorized</option>
-                    <option value="quote">Quote</option>
-                    <option value="news">News</option>
-                    <option value="discussion">Discussion</option>
-                  </select>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button
+                      onClick={() => {
+                        setEditingId(t.id);
+                        setEditName(t.name);
+                      }}
+                      title="Rename"
+                      className="p-1 rounded text-text2 hover:text-text"
+                    >
+                      <Icon icon="solar:pen-bold" width={12} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(t)}
+                      title="Delete"
+                      className="p-1 rounded text-text2 hover:text-bad"
+                    >
+                      <Icon icon="solar:trash-bin-trash-bold" width={12} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
 
-      {/* 4. Collapsible section "Old templates that go away ({count})" */}
-      <details className="card p-6 space-y-4">
-        <summary className="cursor-pointer text-base font-bold text-text-primary flex items-center justify-between select-none">
-          <span>Old templates that go away ({oldTemplates.length})</span>
-          <span className="text-xs text-text-secondary font-normal">
-            Projects using them move to the style in brackets
-          </span>
-        </summary>
-        {oldTemplates.length === 0 ? (
-          <p className="text-xs text-text-secondary">No deprecated templates.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-3">
-            {oldTemplates.map((t) => (
-              <div
-                key={t.id}
-                className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-divider-soft bg-bg-paper text-sm"
-              >
-                <div className="flex items-baseline gap-1.5 truncate">
-                  <span className="font-medium text-text-primary truncate">{t.name}</span>
-                  {t.replacement_style && (
-                    <span className="text-xs text-text-secondary shrink-0">
-                      [{STYLE_LABELS[t.replacement_style] || t.replacement_style}]
-                    </span>
-                  )}
-                </div>
-                <Link
-                  href={`/templates/${t.id}`}
-                  className="text-xs text-primary-main hover:underline shrink-0"
+                <p className="text-[11px] text-text2">
+                  {t.canvas_width}×{t.canvas_height} · {fanpageName(t.fanpage_id)}
+                </p>
+
+                <select
+                  value={t.category ?? ""}
+                  onChange={(e) =>
+                    updateTemplate(t.id, { category: e.target.value || null }).then(() =>
+                      mutateTemplates()
+                    )
+                  }
+                  className={`mt-0.5 text-[10px] font-semibold rounded-full px-2 py-0.5 border ${
+                    t.category === "quote"
+                      ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30"
+                      : t.category === "news"
+                      ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30"
+                      : t.category === "discussion"
+                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                      : "bg-surface text-text2 border-line"
+                  }`}
                 >
-                  Open
-                </Link>
+                  <option value="">Uncategorized</option>
+                  <option value="quote">Quote</option>
+                  <option value="news">News</option>
+                  <option value="discussion">Discussion</option>
+                </select>
               </div>
             ))}
           </div>
         )}
-        <p className="text-xs text-text-secondary pt-2">
-          Hidden from pickers. Projects that used them were moved to the style in brackets. They are deleted in a later release.
-        </p>
-      </details>
+
+        {/* ── Collapsible Old Templates ── */}
+        <details className="border-t border-line pt-3">
+          <summary className="text-sm font-semibold text-text cursor-pointer select-none">
+            Old templates ({oldTemplates.length}) · hidden
+          </summary>
+          <p className="text-[13px] text-text2 mt-1">
+            Hidden from pickers. Posts that still point to one keep rendering with it.
+          </p>
+          {oldTemplates.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-3">
+              {oldTemplates.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-line bg-surface text-xs"
+                >
+                  <span className="font-medium text-text truncate">{t.name}</span>
+                  <Link
+                    href={`/templates/${t.id}`}
+                    className="text-pri-text font-semibold hover:underline shrink-0"
+                  >
+                    Open
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
+        </details>
+      </section>
     </div>
   );
 }

@@ -40,6 +40,9 @@ patchright==1.63.0
 # Fetcher (TLS-fingerprint impersonation) bypasses bot-detection on sites that
 # block plain httpx/proxy requests — see app/services/news_scraper.py
 scrapling[fetchers]==0.2.99
+# scrapling imports browserforge in fingerprints.py; camoufox>=0.5.7 dropped it
+# from dependencies, so pin explicitly to restore Fetcher imports.
+browserforge==1.2.4
 
 # ── Gallery image downloader ───────────────────
 # Image URLs are collected via 9Router web-fetch (jina-reader) — no scraping

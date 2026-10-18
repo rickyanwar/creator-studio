@@ -18,7 +18,7 @@ interface ThemeCtx {
 }
 
 const ThemeContext = createContext<ThemeCtx>({
-  theme: "dark", compact: false, navColor: "integrate", preset: "default",
+  theme: "light", compact: false, navColor: "integrate", preset: "default",
   toggle: () => {}, setCompact: () => {}, setNavColor: () => {}, setPreset: () => {},
 });
 
@@ -32,13 +32,13 @@ function applyToDOM(theme: Theme, compact: boolean, navColor: NavColor, preset: 
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme,    setTheme]    = useState<Theme>("dark");
+  const [theme,    setTheme]    = useState<Theme>("light");
   const [compact,  setCompactS] = useState(false);
   const [navColor, setNavColorS]= useState<NavColor>("integrate");
   const [preset,   setPresetS]  = useState<Preset>("default");
 
   useEffect(() => {
-    const t  = (localStorage.getItem("theme")    as Theme    | null) ?? "dark";
+    const t  = (localStorage.getItem("theme")    as Theme    | null) ?? "light";
     const c  = localStorage.getItem("compact")   === "true";
     const nc = (localStorage.getItem("navColor") as NavColor | null) ?? "integrate";
     const p  = (localStorage.getItem("preset")   as Preset   | null) ?? "default";

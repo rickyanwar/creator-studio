@@ -36,6 +36,21 @@ def _schedule_at_now_plus(seconds: int = 60) -> str:
     return format_schedule_at(datetime.now(timezone.utc) + timedelta(seconds=seconds))
 
 
+REPLIZ_DOCUMENTED_ACCOUNT_TYPES = (
+    "facebook",
+    "instagram",
+    "threads",
+    "youtube",
+)
+REPLIZ_SUPPORTED_ACCOUNT_TYPES = (
+    "facebook",
+    "instagram",
+    "threads",
+    "youtube",
+    "x",
+)
+
+
 class ReplizPlanRequired(Exception):
     pass
 
@@ -64,21 +79,79 @@ class ReplizClient:
         self.close()
 
     # ─────────────────────────────────────────────
-    # Facebook account listing
+    # Account listing
     # ─────────────────────────────────────────────
+
+    def _fetch_accounts_raw(self, params: dict[str, Any]) -> list[dict]:
+        resp = self._client.get("/public/account", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            items = data.get("docs", data.get("data", []))
+        elif isinstance(data, list):
+            items = data
+        else:
+            items = []
+        return [item for item in items if isinstance(item, dict)]
+
+    def list_accounts(
+        self,
+        types: list[str] | tuple[str, ...] | None = None,
+        page: int = 1,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return connected accounts from Repliz for given platform types.
+
+        Fetches with documented types (facebook, instagram, threads, youtube).
+        If fetching all or if twitter/x is requested, adds one extra call without
+        any types filter, client-side filtered to type in ('twitter', 'x'),
+        merging and de-duplicating by id. Maps 'twitter'/'x' -> platform 'x'.
+        """
+        include_x = False
+        if types is None:
+            documented = list(REPLIZ_DOCUMENTED_ACCOUNT_TYPES)
+            include_x = True
+        else:
+            documented = [t for t in types if t in REPLIZ_DOCUMENTED_ACCOUNT_TYPES]
+            include_x = any(t in ("twitter", "x") for t in types)
+
+        raw_accounts: list[dict] = []
+
+        if documented:
+            params: dict[str, Any] = {"page": page, "limit": limit}
+            for i, t in enumerate(documented):
+                params[f"types[{i}]"] = t
+            raw_accounts.extend(self._fetch_accounts_raw(params))
+
+        if include_x:
+            extra_params: dict[str, Any] = {"page": page, "limit": limit}
+            extra_docs = self._fetch_accounts_raw(extra_params)
+            for doc in extra_docs:
+                raw_type = str(doc.get("type") or doc.get("platform") or "").lower()
+                if raw_type in ("twitter", "x"):
+                    raw_accounts.append(doc)
+
+        seen_ids: set[str] = set()
+        merged: list[dict] = []
+        for doc in raw_accounts:
+            acc_id = str(doc.get("_id") or doc.get("id") or "").strip()
+            dedup_key = acc_id or str(id(doc))
+            if dedup_key in seen_ids:
+                continue
+            seen_ids.add(dedup_key)
+
+            raw_type = str(doc.get("type") or doc.get("platform") or "").lower()
+            if raw_type in ("twitter", "x"):
+                doc["platform"] = "x"
+            elif "platform" not in doc and raw_type:
+                doc["platform"] = raw_type
+            merged.append(doc)
+
+        return merged
 
     def list_facebook_accounts(self, page: int = 1, limit: int = 50) -> list[dict]:
         """Return all connected Facebook accounts from Repliz."""
-        resp = self._client.get(
-            "/public/account",
-            params={"page": page, "limit": limit, "types[0]": "facebook"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        # Repliz returns { docs: [...], totalDocs: N, ... }
-        if isinstance(data, dict):
-            return data.get("docs", data.get("data", []))
-        return data
+        return self.list_accounts(types=["facebook"], page=page, limit=limit)
 
     # ─────────────────────────────────────────────
     # Schedule creation

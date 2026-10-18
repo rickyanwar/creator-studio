@@ -44,10 +44,16 @@ export function PublishTab({
   onRefreshData,
   onGoPacing,
 }: Props) {
-  const isProfile = destination.kind === "facebook_profile";
+  const kindStr = destination.kind as string;
+  const isProfile = kindStr === "facebook_profile";
+  const isReplizOnly =
+    kindStr === "instagram" ||
+    kindStr === "youtube" ||
+    kindStr === "threads" ||
+    kindStr === "x";
 
   const [mode, setMode] = useState<"phone" | "repliz" | "mixed">(
-    destination.mode || (isProfile ? "phone" : "mixed")
+    destination.mode || (isProfile ? "phone" : isReplizOnly ? "repliz" : "mixed")
   );
   const [parentProfileId, setParentProfileId] = useState<number | null>(
     destination.parent_profile_id
@@ -122,7 +128,12 @@ export function PublishTab({
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
       {/* 1. Upload Method Choice */}
-      <PublishMethodSelector mode={mode} setMode={setMode} isProfile={isProfile} />
+      <PublishMethodSelector
+        mode={mode}
+        setMode={setMode}
+        isProfile={isProfile}
+        isReplizOnly={isReplizOnly}
+      />
 
       {/* 2. Phone Configuration */}
       {(mode === "phone" || mode === "mixed") && (
@@ -164,12 +175,12 @@ export function PublishTab({
 
       {/* Save Button & Feedback */}
       <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-        <span className="text-xs text-text-secondary">
+        <span className="text-xs text-text2">
           Changes apply to posts that have not been dispatched yet.
         </span>
         <div className="flex items-center gap-3">
           {saveSuccess && (
-            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+            <span className="text-xs text-pri font-semibold flex items-center gap-1">
               <Icon icon="solar:check-circle-bold" width={14} />
               Saved successfully
             </span>
@@ -185,7 +196,7 @@ export function PublishTab({
       </div>
 
       {saveError && (
-        <div className="rounded-xl border border-error-main/40 bg-error-lighter/20 p-3 text-xs text-error-dark dark:text-rose-300">
+        <div className="rounded-xl border border-bad/30 bg-bad-soft p-3 text-xs text-bad">
           {saveError}
         </div>
       )}

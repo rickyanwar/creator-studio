@@ -6,9 +6,9 @@ import { Icon } from "@iconify/react";
 import { clsx } from "clsx";
 
 const TABS = [
-  { href: "/dashboard", label: "Home",     icon: "solar:widget-bold-duotone" },
-  { href: "/social-media", label: "Social", icon: "mingcute:facebook-fill" },
-  { href: "/queue",     label: "Queue",    icon: "solar:clock-circle-bold-duotone" },
+  { href: "/dashboard", label: "Home",     icon: "solar:home-2-bold-duotone" },
+  { href: "/brands",    label: "Brands",   icon: "solar:plain-bold-duotone" },
+  { href: "/queue",     label: "Queue",    icon: "solar:inbox-line-bold-duotone" },
   { href: "/history",   label: "Activity", icon: "solar:history-bold-duotone" },
   { href: "/gallery",   label: "Gallery",  icon: "solar:gallery-wide-bold-duotone" },
   { href: "/settings",  label: "Settings", icon: "solar:settings-bold-duotone" },
@@ -18,36 +18,44 @@ export default function BottomTabBar() {
   const pathname = usePathname();
 
   function isActive(href: string) {
-    return (
-      pathname === href ||
-      pathname.startsWith(href + "/") ||
-      (href === "/social-media" && pathname.startsWith("/fanpages"))
-    );
+    if (href === "/brands") {
+      return (
+        pathname.startsWith("/brands") ||
+        pathname.startsWith("/fanpages") ||
+        pathname.startsWith("/social-media") ||
+        pathname.startsWith("/content-projects")
+      );
+    }
+    if (href === "/dashboard") {
+      return pathname === "/dashboard" || pathname === "/";
+    }
+    return pathname === href || pathname.startsWith(href + "/");
   }
 
   return (
-    <div className="fixed bottom-0 inset-x-0 z-50 bg-bg-paper border-t border-divider-soft lg:hidden">
-      <div className="flex h-[60px]">
+    <nav
+      aria-label="Mobile"
+      className="fixed bottom-0 inset-x-0 z-50 bg-surface border-t border-line lg:hidden"
+    >
+      <div className="grid grid-cols-6 h-[56px] px-1">
         {TABS.map((tab) => {
           const active = isActive(tab.href);
           return (
             <Link
               key={tab.href}
               href={tab.href}
+              aria-current={active ? "page" : undefined}
               className={clsx(
-                "flex-1 flex flex-col items-center justify-center gap-1 relative transition-colors",
-                active ? "text-primary-main" : "text-text-disabled"
+                "flex flex-col items-center justify-center gap-0.5 min-h-[48px] py-1 transition-colors text-center",
+                active ? "text-pri-text font-semibold" : "text-text2 hover:text-text font-medium"
               )}
             >
-              {active && (
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-10 h-0.5 bg-primary-main rounded-b" />
-              )}
-              <Icon icon={tab.icon} width={22} />
-              <span className="text-[10px] font-semibold leading-none">{tab.label}</span>
+              <Icon icon={tab.icon} width={22} height={22} />
+              <span className="text-[11px] leading-none truncate max-w-[56px]">{tab.label}</span>
             </Link>
           );
         })}
       </div>
-    </div>
+    </nav>
   );
 }

@@ -68,38 +68,38 @@ export function CaptionCriteriaEditor({
 
   return (
     <div className="space-y-3">
-      <p className="text-[11px] text-ink-48">
+      <p className="text-[11px] text-text-secondary">
         {hint ?? "Per-source caption criteria (global). Empty fields inherit the fanpage's criteria."}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Tone</label>
-          <input className="input w-full" placeholder="inherit fanpage"
+          <input className="input-rect w-full" placeholder="inherit fanpage"
             value={value.caption_tone} onChange={(e) => set("caption_tone", e.target.value)} />
         </div>
         <div>
           <label className="label">Max length</label>
-          <input className="input w-full" type="number" placeholder="inherit"
+          <input className="input-rect w-full" type="number" placeholder="inherit"
             value={value.caption_max_length} onChange={(e) => set("caption_max_length", e.target.value)} />
         </div>
         <div>
           <label className="label">Hashtag count</label>
-          <input className="input w-full" type="number" placeholder="inherit"
+          <input className="input-rect w-full" type="number" placeholder="inherit"
             value={value.caption_hashtag_count} onChange={(e) => set("caption_hashtag_count", e.target.value)} />
         </div>
         <div className="sm:col-span-2">
           <label className="label">Call-to-action</label>
-          <input className="input w-full" placeholder="inherit fanpage"
+          <input className="input-rect w-full" placeholder="inherit fanpage"
             value={value.caption_cta_text} onChange={(e) => set("caption_cta_text", e.target.value)} />
         </div>
         <div className="sm:col-span-2">
           <label className="label">Custom prompt / notes</label>
-          <textarea className="input w-full" rows={2} placeholder="inherit fanpage"
+          <textarea className="input-rect w-full" rows={2} placeholder="inherit fanpage"
             value={value.caption_custom_prompt} onChange={(e) => set("caption_custom_prompt", e.target.value)} />
         </div>
       </div>
       {onSave && (
-        <button onClick={onSave} disabled={saving} className="btn btn-primary flex items-center gap-2">
+        <button onClick={onSave} disabled={saving} className="btn-primary flex items-center gap-2">
           {saving ? <Icon icon="svg-spinners:ring-resize" width={14} /> : <Icon icon="solar:diskette-bold-duotone" width={14} />}
           Save caption criteria
         </button>

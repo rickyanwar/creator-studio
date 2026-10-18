@@ -68,10 +68,10 @@ export function YouTubeSettingsCard({ settings, onChanged }: Props) {
   }
 
   return (
-    <section className="card space-y-4">
+    <section className="bg-surface border border-line rounded-[14px] p-5 space-y-4">
       <div>
-        <h2 className="text-base font-semibold text-text-primary">YouTube — Mode 7 clips</h2>
-        <p className="text-xs text-text-secondary mt-0.5">
+        <h2 className="text-base font-semibold text-text">YouTube clips</h2>
+        <p className="text-xs text-text2 mt-0.5">
           The server reaches YouTube without cookies or a proxy today. If YouTube starts blocking it (&quot;sign in to
           confirm you&apos;re not a bot&quot;), all YouTube work pauses for an hour and the reason shows here. Then add
           the cookies of a <strong>spare</strong> Google account — never your personal one — and optionally one
@@ -80,7 +80,7 @@ export function YouTubeSettingsCard({ settings, onChanged }: Props) {
       </div>
 
       {isBlocked && (
-        <div className="p-3 rounded-lg bg-[rgba(255,86,48,0.08)] text-sm text-error-main space-y-1">
+        <div className="p-3 rounded-lg bg-bad-soft text-sm text-bad space-y-1 border border-bad/30">
           <p className="font-semibold">Paused until {blockedUntil?.toLocaleString()}</p>
           {settings?.youtube_last_error && <p className="text-xs break-words">{settings.youtube_last_error}</p>}
           <button
@@ -94,11 +94,11 @@ export function YouTubeSettingsCard({ settings, onChanged }: Props) {
       )}
 
       <div>
-        <label className="label">
-          Cookies (cookies.txt) {settings?.has_youtube_cookies && <span className="text-primary-main">✓ saved</span>}
+        <label className="block text-xs font-semibold text-text mb-1">
+          Cookies (cookies.txt) {settings?.has_youtube_cookies && <span className="text-pri-text">✓ saved</span>}
         </label>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="btn-secondary text-xs cursor-pointer">
+          <label className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text hover:bg-surface2 text-xs font-medium cursor-pointer inline-flex items-center gap-1.5 transition-colors">
             <Icon icon="solar:upload-bold-duotone" width={14} />
             Upload cookies.txt
             <input type="file" accept=".txt,text/plain" className="hidden" disabled={busy} onChange={(e) => uploadCookies(e.target.files?.[0])} />
@@ -107,23 +107,23 @@ export function YouTubeSettingsCard({ settings, onChanged }: Props) {
             <button
               onClick={() => run(() => updateSettings({ youtube_cookies: "" }), "Cookies removed.", "Couldn't remove the cookies.")}
               disabled={busy}
-              className="text-xs text-error-main font-semibold"
+              className="text-xs text-bad hover:underline font-semibold"
             >
               Remove
             </button>
           )}
         </div>
-        <p className="text-xs text-text-secondary mt-1">
+        <p className="text-xs text-text2 mt-1">
           Export from youtube.com while signed in to the spare account (a &quot;Get cookies.txt&quot; browser extension).
           Stored encrypted; never shown again.
         </p>
       </div>
 
       <div>
-        <label className="label">Proxy (optional)</label>
+        <label className="block text-xs font-semibold text-text mb-1">Proxy (optional)</label>
         <div className="flex gap-2">
           <input
-            className="input-rect flex-1"
+            className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm flex-1"
             value={proxy}
             onChange={(e) => setProxy(e.target.value)}
             placeholder="http://user:pass@host:port"
@@ -131,24 +131,28 @@ export function YouTubeSettingsCard({ settings, onChanged }: Props) {
           <button
             onClick={() => run(() => updateSettings({ youtube_proxy: proxy }), "Proxy saved.", "Couldn't save the proxy.")}
             disabled={busy}
-            className="btn-secondary text-xs"
+            className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text hover:bg-surface2 text-xs font-medium transition-colors"
           >
             Save
           </button>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button onClick={runTest} disabled={busy} className="btn-primary text-xs">
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <button
+          onClick={runTest}
+          disabled={busy}
+          className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5 transition-opacity disabled:opacity-50"
+        >
           <Icon icon="solar:play-circle-bold-duotone" width={14} />
           {busy ? "Working…" : "Test YouTube access"}
         </button>
         {test && (
-          <span className={`text-xs ${test.ok ? "text-primary-main" : "text-error-main"}`}>
+          <span className={`text-xs ${test.ok ? "text-pri-text font-semibold" : "text-bad"}`}>
             {test.ok ? `OK — ${test.title} (${test.ms} ms)` : `Failed: ${test.error}`}
           </span>
         )}
-        {message && <span className="text-xs text-text-secondary">{message}</span>}
+        {message && <span className="text-xs text-text2">{message}</span>}
       </div>
     </section>
   );

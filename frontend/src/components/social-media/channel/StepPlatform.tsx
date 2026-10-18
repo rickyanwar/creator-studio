@@ -4,6 +4,11 @@ import React from "react";
 import Link from "next/link";
 import { Icon } from "@iconify/react";
 import type { SocialDestination } from "@/lib/types";
+import {
+  findMatchingReplizAccount,
+  getPlatformRuleInfo,
+  type ReplizAccountLike,
+} from "@/lib/platformChannelsApi";
 
 export interface PlatformOption {
   id: string;
@@ -14,14 +19,14 @@ export interface PlatformOption {
   iconBg: string;
 }
 
-export const PLATFORMS: PlatformOption[] = [
+export const BASE_PLATFORMS: PlatformOption[] = [
   {
     id: "facebook_page",
     label: "Facebook Page",
     avail: "Phone, Repliz or both",
     enabled: true,
-    icon: "solar:facebook-bold",
-    iconBg: "bg-[#0866FF]",
+    icon: "logos:facebook",
+    iconBg: "bg-info-soft text-info",
   },
   {
     id: "facebook_profile",
@@ -29,46 +34,46 @@ export const PLATFORMS: PlatformOption[] = [
     avail: "Phone",
     enabled: true,
     icon: "solar:user-bold",
-    iconBg: "bg-slate-700",
+    iconBg: "bg-surface2 text-text border border-line",
   },
   {
     id: "instagram",
     label: "Instagram",
-    avail: "Publishing to this platform is not built yet.",
+    avail: "Connect this account in Repliz first",
     enabled: false,
-    icon: "solar:camera-bold",
-    iconBg: "bg-[#E1306C]",
+    icon: "skill-icons:instagram",
+    iconBg: "bg-rose-500/15 text-rose-500",
   },
   {
     id: "youtube",
     label: "YouTube",
-    avail: "Publishing to this platform is not built yet.",
+    avail: "Connect this account in Repliz first",
     enabled: false,
-    icon: "solar:video-library-bold",
-    iconBg: "bg-[#FF0000]",
+    icon: "logos:youtube-icon",
+    iconBg: "bg-bad-soft text-bad",
   },
   {
     id: "x",
     label: "X",
-    avail: "Publishing to this platform is not built yet.",
+    avail: "Connect this account in Repliz first",
     enabled: false,
-    icon: "solar:hashtag-bold",
-    iconBg: "bg-black",
+    icon: "ri:twitter-x-fill",
+    iconBg: "bg-surface2 text-text border border-line",
   },
   {
     id: "threads",
     label: "Threads",
-    avail: "Publishing to this platform is not built yet.",
+    avail: "Connect this account in Repliz first",
     enabled: false,
-    icon: "solar:chat-round-line-bold",
-    iconBg: "bg-black",
+    icon: "ri:threads-fill",
+    iconBg: "bg-surface2 text-text border border-line",
   },
 ];
 
 interface Props {
   isStep1Valid: boolean;
-  kind: "facebook_page" | "facebook_profile";
-  setKind: (k: "facebook_page" | "facebook_profile") => void;
+  kind: string;
+  setKind: (k: any) => void;
   channelName: string;
   setChannelName: (name: string) => void;
   facebookActorId: string;
@@ -77,6 +82,8 @@ interface Props {
   setParentProfileId: (id: number | null) => void;
   profiles: SocialDestination[];
   mode: "phone" | "repliz" | "mixed";
+  replizAccounts?: ReplizAccountLike[] | null;
+  brand?: { name?: string; username?: string | null } | null;
 }
 
 export function StepPlatform({
@@ -91,7 +98,31 @@ export function StepPlatform({
   setParentProfileId,
   profiles,
   mode,
+  replizAccounts,
+  brand,
 }: Props) {
+  const isFacebook = kind === "facebook_page" || kind === "facebook_profile";
+  const platformInfo = getPlatformRuleInfo(kind);
+
+  const platforms = BASE_PLATFORMS.map((p) => {
+    if (p.id === "facebook_page" || p.id === "facebook_profile") {
+      return p;
+    }
+    const matching = findMatchingReplizAccount(p.id, replizAccounts, brand);
+    if (matching) {
+      return {
+        ...p,
+        enabled: true,
+        avail: `Repliz · ${matching.name}`,
+      };
+    }
+    return {
+      ...p,
+      enabled: false,
+      avail: "Connect this account in Repliz first",
+    };
+  });
+
   return (
     <section
       aria-labelledby="step2-h"
@@ -99,8 +130,8 @@ export function StepPlatform({
         !isStep1Valid ? "opacity-50 pointer-events-none" : ""
       }`}
     >
-      <h2 id="step2-h" className="text-sm font-bold text-text-primary flex items-center gap-2">
-        <span className="w-5 h-5 rounded-full bg-primary-main/20 text-primary-main text-xs flex items-center justify-center font-bold">
+      <h2 id="step2-h" className="text-sm font-bold text-text flex items-center gap-2">
+        <span className="w-5 h-5 rounded-full bg-pri-soft text-pri text-xs flex items-center justify-center font-bold">
           2
         </span>
         Platform
@@ -111,7 +142,7 @@ export function StepPlatform({
         aria-label="Platform"
         className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"
       >
-        {PLATFORMS.map((p) => {
+        {platforms.map((p) => {
           const isSelected = kind === p.id;
           return (
             <button
@@ -123,24 +154,24 @@ export function StepPlatform({
               onClick={() => p.enabled && setKind(p.id as any)}
               className={`text-left p-3.5 rounded-xl border transition flex items-center gap-3 min-h-[76px] ${
                 !p.enabled
-                  ? "opacity-50 cursor-not-allowed bg-bg-default border-divider-soft"
+                  ? "opacity-50 cursor-not-allowed bg-surface2 border-line"
                   : isSelected
-                  ? "bg-[#111a2e] border-primary-main ring-1 ring-primary-main"
-                  : "bg-bg-paper border-divider-soft hover:border-text-disabled"
+                  ? "bg-surface border-pri ring-1 ring-pri"
+                  : "bg-surface border-line hover:border-text2"
               }`}
             >
               <span
-                className={`w-9 h-9 rounded-lg flex items-center justify-center text-white flex-shrink-0 ${p.iconBg}`}
+                className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${p.iconBg}`}
               >
                 <Icon icon={p.icon} width={20} />
               </span>
               <div className="flex flex-col gap-0.5 min-w-0">
-                <span className="text-xs font-bold text-text-primary truncate">
+                <span className="text-xs font-bold text-text truncate">
                   {p.label}
                 </span>
                 <span
                   className={`text-[11px] leading-tight ${
-                    p.enabled ? "text-text-secondary" : "text-amber-400"
+                    p.enabled ? "text-text2" : "text-warn"
                   }`}
                 >
                   {p.avail}
@@ -152,15 +183,28 @@ export function StepPlatform({
       </div>
 
       {kind === "facebook_profile" && (
-        <div className="p-3.5 rounded-xl bg-[#0f1d33] border border-[#1e3a5f] text-xs text-text-secondary leading-relaxed">
-          This adds a Profile’s <strong className="text-text-primary">own timeline</strong> as a channel. The Profile itself (login, phone, managed Pages) is set up once under{" "}
-          <Link href="/social-media/accounts" className="text-primary-main font-semibold hover:underline">
-            Publishing accounts
+        <div className="p-3.5 rounded-xl bg-surface2 border border-line text-xs text-text2 leading-relaxed">
+          This adds a Profile’s <strong className="text-text">own timeline</strong> as a channel. The Profile itself (login, phone, managed Pages) is set up once under{" "}
+          <Link href="/brands/accounts" className="text-pri font-semibold hover:underline">
+            Accounts &amp; phones
           </Link>.
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+      {!isFacebook && (
+        <div className="p-3.5 rounded-xl bg-surface2 border border-line text-xs text-text2 leading-relaxed space-y-1">
+          <div className="flex items-center gap-1.5 font-semibold text-text">
+            <Icon icon={platformInfo.icon} width={16} />
+            <span>{platformInfo.label} Limits</span>
+          </div>
+          <p className="text-text2">{platformInfo.limitsSummary}</p>
+          <p className="text-[11px] text-text2">
+            Publishing method is fixed to <strong className="text-text">Repliz</strong> for {platformInfo.label}. Quotes are never shortened or paraphrased.
+          </p>
+        </div>
+      )}
+
+      <div className={`grid grid-cols-1 ${isFacebook ? "sm:grid-cols-2" : ""} gap-4 pt-1`}>
         <div>
           <label htmlFor="channel-name" className="label">
             Channel Name *
@@ -171,24 +215,26 @@ export function StepPlatform({
             required
             value={channelName}
             onChange={(e) => setChannelName(e.target.value)}
-            placeholder="e.g. Formula Weekend Official"
+            placeholder={`e.g. ${brand?.name || "Formula Weekend"} ${platformInfo.label}`}
             className="input-rect"
           />
         </div>
 
-        <div>
-          <label htmlFor="facebook-actor-id" className="label">
-            {kind === "facebook_profile" ? "Profile ID as seen on phone" : "Page ID as seen on the phone"}
-          </label>
-          <input
-            id="facebook-actor-id"
-            type="text"
-            value={facebookActorId}
-            onChange={(e) => setFacebookActorId(e.target.value)}
-            placeholder="e.g. 100094901131361 (optional for Repliz-only)"
-            className="input-rect font-mono text-xs"
-          />
-        </div>
+        {isFacebook && (
+          <div>
+            <label htmlFor="facebook-actor-id" className="label">
+              {kind === "facebook_profile" ? "Profile ID as seen on phone" : "Page ID as seen on the phone"}
+            </label>
+            <input
+              id="facebook-actor-id"
+              type="text"
+              value={facebookActorId}
+              onChange={(e) => setFacebookActorId(e.target.value)}
+              placeholder="e.g. 100094901131361 (optional for Repliz-only)"
+              className="input-rect font-mono text-xs"
+            />
+          </div>
+        )}
       </div>
 
       {kind === "facebook_page" && (

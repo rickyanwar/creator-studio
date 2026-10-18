@@ -6,6 +6,7 @@ import Sidebar from "@/components/layout/Sidebar";
 import BottomTabBar from "@/components/layout/BottomTabBar";
 import TopAppBar from "@/components/layout/TopAppBar";
 import { SidebarProvider, useSidebar } from "@/contexts/SidebarContext";
+import { BrandFilterProvider } from "@/contexts/BrandFilterContext";
 
 function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -18,28 +19,27 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   return (
-    <div className="flex min-h-screen bg-bg-default">
-
-      {/* ── Fixed sidebar (desktop only) ── */}
+    <div className="flex min-h-screen bg-default text-text">
+      {/* Fixed sidebar (desktop only) */}
       <Sidebar />
 
-      {/* ── Sidebar spacer: pushes right panel past the sidebar ── */}
-      <div className={`hidden lg:block flex-shrink-0 transition-[width] duration-300 ${
-        collapsed ? "w-[88px]" : "w-[280px]"
-      }`} />
+      {/* Sidebar spacer: pushes right panel past sidebar (widths stay in sync with Sidebar.tsx) */}
+      <div
+        className={`hidden lg:block flex-shrink-0 transition-[width] duration-300 ${
+          collapsed ? "w-[80px]" : "w-[248px]"
+        }`}
+      />
 
-      {/* ── Right panel: topbar + content stacked vertically ── */}
+      {/* Right panel: topbar + main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Topbar sits at the top of the right panel — sticky so it scrolls with panel */}
         <TopAppBar />
 
-        {/* Main content */}
-        <main className="flex-1 pb-[60px] lg:pb-0 overflow-x-clip">
-          <div className="p-6 lg:p-8 max-w-7xl mx-auto">{children}</div>
+        <main className="flex-1 pb-[64px] lg:pb-0 overflow-x-clip min-w-0">
+          <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">{children}</div>
         </main>
       </div>
 
-      {/* ── Mobile bottom tab bar ── */}
+      {/* Mobile bottom tab bar */}
       <BottomTabBar />
     </div>
   );
@@ -48,7 +48,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarProvider>
-      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+      <BrandFilterProvider>
+        <DashboardLayoutInner>{children}</DashboardLayoutInner>
+      </BrandFilterProvider>
     </SidebarProvider>
   );
 }

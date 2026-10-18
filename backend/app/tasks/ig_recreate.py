@@ -147,8 +147,16 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
 
         post = db.query(Post).filter_by(id=post_id).first()
         fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
-        if not post or not fanpage or not fanpage.ig_recreate_enabled:
+        if not post or not fanpage:
             return
+
+        from app.models.fanpage_sources import FanpageSource
+        from app.services.ig_mode import resolve_effective_engine
+        link = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, ig_source_id=post.ig_source_id).first() if post.ig_source_id else None
+        recreate_enabled = link.ig_recreate_enabled if (link and link.ig_recreate_enabled is not None) else fanpage.ig_recreate_enabled
+        if not recreate_enabled:
+            return
+        effective_engine = resolve_effective_engine(fanpage, link)
         if not post.image_local_paths:
             logger.warning("IG-recreate: post %d has no images", post_id)
             return
@@ -174,7 +182,7 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
         
         if decision:
             if ctype == "other" or not analysis.text:
-                if fanpage.visual_engine in ('chatgpt', 'auto', 'gflow'):
+                if effective_engine in ('chatgpt', 'auto', 'gflow'):
                     # We can proceed to create a job for redesign
                     pass
                 else:
@@ -326,7 +334,7 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
 
         db.commit()
         logger.info("IG-recreate: post %d fp %d → %s job %d", post_id, fanpage_id, ctype, job.id)
-        if fanpage.visual_engine in ('chatgpt', 'auto', 'gflow'):
+        if effective_engine in ('chatgpt', 'auto', 'gflow'):
             render_ig_recreate.apply_async((job.id,), queue='visual')
         else:
             render_ig_recreate.delay(job.id)
@@ -484,10 +492,15 @@ def render_ig_recreate(self, job_id: int):
             except Exception:
                 pass
 
+        from app.models.fanpage_sources import FanpageSource
+        from app.services.ig_mode import resolve_effective_engine
+        link = db.query(FanpageSource).filter_by(fanpage_id=fanpage.id, ig_source_id=post.ig_source_id).first() if (fanpage and post and post.ig_source_id) else None
+        effective_engine = resolve_effective_engine(fanpage, link)
+
         ai_attempted = False
-        if fanpage.visual_engine in ('chatgpt', 'auto', 'gflow'):
+        if effective_engine in ('chatgpt', 'auto', 'gflow'):
             ai_attempted = True
-            if fanpage.visual_engine == 'gflow':
+            if effective_engine == 'gflow':
                 logger.info("Treating gflow as chatgpt for redesign_card")
                 
             from app.services.redesign_pipeline import redesign_card
@@ -696,4 +709,6 @@ def render_ig_recreate(self, job_id: int):
             db.rollback()
         raise self.retry(exc=exc, countdown=180)
     finally:
+        from app.tasks.design_renderer import _release_queued_lock
+        _release_queued_lock(job_id)
         db.close()

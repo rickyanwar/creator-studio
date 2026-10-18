@@ -42,9 +42,9 @@ export const STYLE_NOTES: Record<TemplateStyle, { note: string; quoteNote: strin
 };
 
 export const CARD_USAGE: Record<"news" | "quote" | "discussion", string> = {
-  news: "Mode 2 news, IG recreate (news), Pinterest without a face",
+  news: "News, IG recreate (news), Pinterest without a face",
   quote: "IG recreate (quote), Pinterest with a face",
-  discussion: "Mode 4 debate cards",
+  discussion: "Discussion cards",
 };
 
 const LOOK_HEX = /^#[0-9A-Fa-f]{6}$/;

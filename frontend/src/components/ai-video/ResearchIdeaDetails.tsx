@@ -51,19 +51,19 @@ export function ResearchIdeaDetails({ idea }: { idea: AiVideoIdea }) {
   return (
     <div className="space-y-2 text-xs">
       {(idea.title || idea.caption) && (
-        <div className="bg-bg-paper p-3 rounded border border-hairline space-y-1">
-          {idea.title && <p className="font-semibold text-text-primary">{idea.title}</p>}
-          {idea.caption && <p className="whitespace-pre-wrap text-text-secondary">{idea.caption}</p>}
+        <div className="bg-surface2 p-3 rounded-lg border border-line space-y-1">
+          {idea.title && <p className="font-semibold text-text">{idea.title}</p>}
+          {idea.caption && <p className="whitespace-pre-wrap text-text2">{idea.caption}</p>}
         </div>
       )}
 
       {(evidence.references ?? []).length > 0 && (
         <div>
-          <p className="font-semibold text-text-primary mb-1">References</p>
+          <p className="font-semibold text-text mb-1">References</p>
           <ul className="space-y-1">
             {(evidence.references ?? []).map((ref, i) => (
-              <li key={i} className="text-text-secondary break-all">
-                <a href={ref.url} target="_blank" rel="noreferrer" className="text-primary-main underline">
+              <li key={i} className="text-text2 break-all">
+                <a href={ref.url} target="_blank" rel="noreferrer" className="text-pri-text underline">
                   {ref.platform ?? "link"}
                 </a>{" "}
                 {[
@@ -80,26 +80,32 @@ export function ResearchIdeaDetails({ idea }: { idea: AiVideoIdea }) {
         </div>
       )}
 
-      <button type="button" onClick={() => setOpen(!open)} className="text-primary-main font-semibold">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="text-pri-text font-semibold hover:underline"
+      >
         {open ? "Hide research and feedback" : "Show research, slots and feedback"}
       </button>
 
       {open && (
-        <div className="space-y-3">
+        <div className="space-y-3 pt-1">
           {idea.research_notes && (
             <div>
-              <p className="font-semibold text-text-primary mb-1">Research notes</p>
-              <p className="whitespace-pre-wrap bg-bg-paper p-3 rounded border border-hairline">{idea.research_notes}</p>
+              <p className="font-semibold text-text mb-1">Research notes</p>
+              <p className="whitespace-pre-wrap bg-surface2 p-3 rounded-lg border border-line text-text2">
+                {idea.research_notes}
+              </p>
             </div>
           )}
           {(evidence.sources ?? []).length > 0 && (
             <div>
-              <p className="font-semibold text-text-primary mb-1">Sources</p>
+              <p className="font-semibold text-text mb-1">Sources</p>
               <ul className="space-y-1">
                 {(evidence.sources ?? []).map((src) => (
-                  <li key={src.id} className="text-text-secondary break-all">
+                  <li key={src.id} className="text-text2 break-all">
                     [{src.id}]{" "}
-                    <a href={src.url} target="_blank" rel="noreferrer" className="text-primary-main underline">
+                    <a href={src.url} target="_blank" rel="noreferrer" className="text-pri-text underline">
                       {src.publisher ?? src.url}
                     </a>
                     {src.title ? ` — ${src.title}` : ""}
@@ -111,44 +117,51 @@ export function ResearchIdeaDetails({ idea }: { idea: AiVideoIdea }) {
           )}
           {idea.variables && (
             <div>
-              <p className="font-semibold text-text-primary mb-1">Slots</p>
-              <dl className="bg-bg-paper p-3 rounded border border-hairline space-y-1">
+              <p className="font-semibold text-text mb-1">Slots</p>
+              <dl className="bg-surface2 p-3 rounded-lg border border-line space-y-1">
                 {Object.entries(idea.variables).map(([key, value]) => (
                   <div key={key}>
-                    <dt className="text-[10px] uppercase text-text-secondary">{key}</dt>
-                    <dd className="text-text-primary whitespace-pre-wrap">{String(value)}</dd>
+                    <dt className="text-[10px] uppercase font-semibold text-text2">{key}</dt>
+                    <dd className="text-text whitespace-pre-wrap">{String(value)}</dd>
                   </div>
                 ))}
               </dl>
             </div>
           )}
 
-          <div>
-            <p className="font-semibold text-text-primary mb-1">Feedback to Muse</p>
-            {thread.length === 0 && <p className="text-text-secondary">No feedback yet.</p>}
-            <ul className="space-y-1">
+          <div className="pt-1">
+            <p className="font-semibold text-text mb-1">Feedback to Muse</p>
+            {thread.length === 0 && <p className="text-text2">No feedback yet.</p>}
+            <ul className="space-y-1.5 mb-2">
               {thread.map((item) => (
                 <li
                   key={item.id}
-                  className={`p-2 rounded ${item.author === "muse" ? "bg-indigo-50" : "bg-divider-soft"}`}
+                  className={`p-2 rounded-lg border border-line ${
+                    item.author === "muse" ? "bg-info-soft" : "bg-surface2"
+                  }`}
                 >
-                  <span className="text-[10px] uppercase font-bold text-text-secondary mr-1">
+                  <span className="text-[10px] uppercase font-bold text-text2 mr-1">
                     {item.author === "muse" ? "Muse" : item.username ?? "Studio"} · {item.kind}
                   </span>
-                  <span className="whitespace-pre-wrap">{item.message}</span>
+                  <span className="whitespace-pre-wrap text-text">{item.message}</span>
                 </li>
               ))}
             </ul>
-            {error && <p className="text-error-main mt-1">{error}</p>}
-            <div className="flex gap-2 mt-2">
+            {error && <p className="text-bad text-xs mb-1.5">{error}</p>}
+            <div className="flex gap-2">
               <textarea
-                className="input-rect w-full text-xs min-h-[60px]"
+                className="w-full text-xs min-h-[60px] p-2.5 rounded-lg border border-line bg-surface text-text focus:outline-none focus:ring-1 focus:ring-pri"
                 placeholder="What should Muse fix or keep doing? Muse reads this on its next run."
                 value={message}
                 maxLength={2000}
                 onChange={(e) => setMessage(e.target.value)}
               />
-              <button type="button" disabled={sending || !message.trim()} onClick={send} className="btn-primary text-xs py-1.5 h-fit">
+              <button
+                type="button"
+                disabled={sending || !message.trim()}
+                onClick={send}
+                className="h-9 px-3 rounded-lg bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 disabled:opacity-50 self-end"
+              >
                 Send
               </button>
             </div>

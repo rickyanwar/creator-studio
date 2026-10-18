@@ -18,8 +18,8 @@ export function StepBrand({
 }: Props) {
   return (
     <section aria-labelledby="step1-h" className="card p-5 space-y-3">
-      <h2 id="step1-h" className="text-sm font-bold text-text-primary flex items-center gap-2">
-        <span className="w-5 h-5 rounded-full bg-primary-main/20 text-primary-main text-xs flex items-center justify-center font-bold">
+      <h2 id="step1-h" className="text-sm font-bold text-text flex items-center gap-2">
+        <span className="w-5 h-5 rounded-full bg-pri-soft text-pri text-xs flex items-center justify-center font-bold">
           1
         </span>
         Brand

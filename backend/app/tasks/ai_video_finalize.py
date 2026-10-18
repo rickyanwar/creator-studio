@@ -162,3 +162,181 @@ def finalize_ai_video(video_job_id: int):
         logger.exception("AI video finalization failed for job %s", video_job_id)
     finally:
         db.close()
+
+
+def find_raw_ai_video_path(publish_job, db) -> Path | None:
+    """Find existing unbranded raw video file for an ai_video PublishJob."""
+    from app.models.ai_video import VideoJob
+
+    candidate_paths = []
+    if publish_job.video_path:
+        candidate_paths.append(publish_job.video_path)
+
+    video_job = db.query(VideoJob).filter_by(publish_job_id=publish_job.id).order_by(VideoJob.id.desc()).first()
+    if video_job and video_job.video_path:
+        candidate_paths.append(video_job.video_path)
+
+    for path_str in candidate_paths:
+        p = Path(path_str)
+        if "_branded_" in p.name:
+            raw_name = f"{p.name.split('_branded_')[0]}{p.suffix}"
+            raw_p = p.with_name(raw_name)
+            if raw_p.is_file():
+                return raw_p
+        elif p.is_file():
+            return p
+
+    if video_job and video_job.video_path:
+        parent = Path(video_job.video_path).parent
+        if parent.is_dir():
+            for match in parent.glob(f"job_{video_job.id}_*.mp4"):
+                if "_branded_" not in match.name and match.is_file():
+                    return match
+
+    return None
+
+
+@celery_app.task(name="app.tasks.ai_video_finalize.rerender_ai_video_overlay", queue="video", soft_time_limit=600)
+def rerender_ai_video_overlay(publish_job_id: int):
+    from app.models.ai_video import VideoIdea, VideoJob
+    from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
+    from app.models.target_fanpages import PublishMode, TargetFanpage
+    from app.config import get_settings
+
+    db = SessionLocal()
+    try:
+        publish_job = db.query(PublishJob).filter_by(id=publish_job_id).first()
+        if not publish_job or publish_job.content_type != ContentType.ai_video:
+            return
+
+        fanpage = db.query(TargetFanpage).filter_by(id=publish_job.fanpage_id).first()
+        video_job = db.query(VideoJob).filter_by(publish_job_id=publish_job.id).order_by(VideoJob.id.desc()).first()
+        idea = db.query(VideoIdea).filter_by(id=video_job.idea_id).first() if video_job and video_job.idea_id else None
+
+        raw_path = find_raw_ai_video_path(publish_job, db)
+        if not raw_path or not raw_path.is_file():
+            publish_job.status = PublishJobStatus.failed
+            publish_job.last_error = "The original AI video file is gone; it cannot be re-rendered"
+            db.commit()
+            return
+
+        overlays_enabled = bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))
+        overlay_info = {
+            "logo": bool(fanpage and fanpage.ai_video_logo_enabled),
+            "captions": bool(fanpage and fanpage.ai_video_captions_enabled),
+            "words": 0,
+        }
+
+        old_video_path = publish_job.video_path
+        old_thumb_path = publish_job.video_thumbnail_path
+
+        if overlays_enabled:
+            from app.services.ai_video_overlay import estimate_words, render_branded, speech_windows
+            from app.services.fanpage_language import fanpage_language
+            from app.services.speech_words import caption_words
+
+            workdir = raw_path.parent / f"overlay_{publish_job.id}_{uuid.uuid4().hex[:8]}"
+            try:
+                variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
+                n_clips = len((video_job.clips if video_job else []) or [])
+                texts = [variables.get(f"narration_{i}", "") for i in range(1, n_clips + 1)] if n_clips else []
+                words = caption_words(str(raw_path), fanpage_language(fanpage) if fanpage else None, texts)
+                overlay_info["timing"] = "voice" if words else "estimate"
+                if not words and n_clips:
+                    clip_seconds = video_job.clip_seconds if video_job and video_job.clip_seconds else 4
+                    windows = speech_windows(str(raw_path), clip_seconds, len(texts))
+                    words = estimate_words(texts, windows)
+                overlay_info["words"] = len(words) if words else 0
+                branded = raw_path.with_name(f"{raw_path.stem}_branded_{uuid.uuid4().hex[:8]}{raw_path.suffix}")
+                render_branded(str(raw_path), str(branded), fanpage, words or [], workdir)
+                thumbnail = branded.with_suffix(".jpg")
+                import subprocess
+                subprocess.run(
+                    ["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(branded), "-frames:v", "1", "-q:v", "3", str(thumbnail)],
+                    check=True,
+                    timeout=60,
+                )
+                s = get_settings()
+                publish_video_path = str(branded)
+                publish_video_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), branded, s.storage_base_url)
+                publish_thumbnail_path = str(thumbnail)
+                publish_thumbnail_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), thumbnail, s.storage_base_url)
+            except Exception as exc:
+                publish_job.status = PublishJobStatus.pending_review
+                publish_job.last_error = f"overlay failed: {exc}"[:2000]
+                if video_job and isinstance(video_job.qc, dict):
+                    qc = dict(video_job.qc)
+                    overlay_info["error"] = str(exc)[:500]
+                    qc["overlay"] = overlay_info
+                    video_job.qc = qc
+                db.commit()
+                logger.exception("AI video overlay re-render failed for publish job %s", publish_job_id)
+                return
+        else:
+            s = get_settings()
+            publish_video_path = str(raw_path)
+            publish_video_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), raw_path, s.storage_base_url)
+            thumbnail = raw_path.with_suffix(".jpg")
+            if not thumbnail.is_file():
+                import subprocess
+                subprocess.run(
+                    ["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(raw_path), "-frames:v", "1", "-q:v", "3", str(thumbnail)],
+                    check=True,
+                    timeout=60,
+                )
+            publish_thumbnail_path = str(thumbnail)
+            publish_thumbnail_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), thumbnail, s.storage_base_url)
+
+        if old_video_path and old_video_path != str(raw_path) and old_video_path != publish_video_path:
+            Path(old_video_path).unlink(missing_ok=True)
+        if old_thumb_path and old_thumb_path != publish_thumbnail_path and old_thumb_path != str(raw_path.with_suffix(".jpg")):
+            Path(old_thumb_path).unlink(missing_ok=True)
+
+        publish_job.video_path = publish_video_path
+        publish_job.video_url = publish_video_url
+        publish_job.video_thumbnail_path = publish_thumbnail_path
+        publish_job.video_thumbnail_url = publish_thumbnail_url
+
+        if video_job:
+            video_job.video_path = publish_video_path
+            video_job.video_url = publish_video_url
+            video_job.thumbnail_path = publish_thumbnail_path
+            video_job.thumbnail_url = publish_thumbnail_url
+            if isinstance(video_job.qc, dict):
+                qc = dict(video_job.qc)
+                qc["overlay"] = overlay_info
+                video_job.qc = qc
+
+        qc_passed = True
+        reasons = []
+        if video_job and isinstance(video_job.qc, dict):
+            qc_passed = bool(video_job.qc.get("passed", True))
+            reasons = video_job.qc.get("reasons") or []
+
+        if not qc_passed:
+            publish_status = PublishJobStatus.pending_review
+            publish_job.last_error = ("QC: " + "; ".join(reasons)) if reasons else "QC failed"
+        else:
+            if fanpage and fanpage.ai_video_publish_mode == PublishMode.auto:
+                publish_status = PublishJobStatus.pending_publish
+            else:
+                publish_status = PublishJobStatus.pending_review
+            publish_job.last_error = None
+
+        publish_job.status = publish_status
+        db.commit()
+
+        if publish_status == PublishJobStatus.pending_publish and fanpage and fanpage.ai_video_publish_mode == PublishMode.auto:
+            from app.tasks.publisher import publish_job as publish_task
+            publish_task.delay(publish_job.id)
+    except Exception as exc:
+        db.rollback()
+        logger.exception("AI video overlay re-render crashed for publish job %s", publish_job_id)
+        pj = db.query(PublishJob).filter_by(id=publish_job_id).first()
+        if pj:
+            pj.status = PublishJobStatus.failed
+            pj.last_error = f"rerender error: {type(exc).__name__}"
+            db.commit()
+    finally:
+        db.close()
+

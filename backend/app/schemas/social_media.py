@@ -17,6 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 class ContentProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
     timezone: str = "Europe/London"
+    target_country: Optional[str] = None
+    caption_language: Optional[str] = None
+    caption_tone: Optional[str] = None
 
     @field_validator("name")
     def validate_name(cls, v: str) -> str:
@@ -33,6 +36,39 @@ class ContentProjectCreate(BaseModel):
             raise ValueError(f"Unknown IANA timezone: {v}")
         return v
 
+    @field_validator("target_country")
+    def validate_target_country(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if not s:
+            return None
+        if len(s) != 2 or not s.isalpha():
+            raise ValueError("target_country must be a 2-letter ISO code or null")
+        return s
+
+    @field_validator("caption_language")
+    def validate_caption_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip().lower()
+        if not s:
+            return None
+        if len(s) > 8:
+            raise ValueError("caption_language must be at most 8 characters")
+        return s
+
+    @field_validator("caption_tone")
+    def validate_caption_tone(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        if len(s) > 64:
+            raise ValueError("caption_tone must be at most 64 characters")
+        return s
+
 
 class ContentProjectOut(BaseModel):
     id: int
@@ -42,6 +78,8 @@ class ContentProjectOut(BaseModel):
     is_active: bool
     timezone: str
     target_country: Optional[str] = None
+    caption_language: Optional[str] = None
+    caption_tone: Optional[str] = None
     destination_count: int = 0
     created_at: datetime
     updated_at: datetime
@@ -87,8 +125,17 @@ class SocialDestinationCreate(BaseModel):
             return "facebook_profile"
         if v_clean == "page":
             return "facebook_page"
-        if v_clean not in ("facebook_profile", "facebook_page"):
-            raise ValueError(f"Unsupported platform kind: {v}. Only Facebook Profile and Page supported.")
+        if v_clean not in (
+            "facebook_profile",
+            "facebook_page",
+            "instagram",
+            "youtube",
+            "threads",
+            "x",
+        ):
+            raise ValueError(
+                f"Unsupported platform kind: {v}. Must be one of: facebook_profile, facebook_page, instagram, youtube, threads, x."
+            )
         return v_clean
 
     @field_validator("mode")
@@ -186,8 +233,17 @@ class SocialDestinationUpdate(BaseModel):
             return "facebook_profile"
         if v_clean == "page":
             return "facebook_page"
-        if v_clean not in ("facebook_profile", "facebook_page"):
-            raise ValueError(f"Unsupported platform kind: {v}. Only Facebook Profile and Page supported.")
+        if v_clean not in (
+            "facebook_profile",
+            "facebook_page",
+            "instagram",
+            "youtube",
+            "threads",
+            "x",
+        ):
+            raise ValueError(
+                f"Unsupported platform kind: {v}. Must be one of: facebook_profile, facebook_page, instagram, youtube, threads, x."
+            )
         return v_clean
 
     @field_validator("mode")

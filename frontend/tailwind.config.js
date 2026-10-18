@@ -57,6 +57,26 @@ module.exports = {
         "text-disabled":    "var(--text-disabled)",
         "divider-soft":     "var(--divider-soft)",
 
+        // ── Design tokens (Step S1) ────────────────────
+        surface:            "var(--surface)",
+        surface2:           "var(--surface2)",
+        line:               "var(--line)",
+        text: {
+          DEFAULT:          "var(--text)",
+        },
+        text2:              "var(--text2)",
+        pri:                "var(--pri)",
+        "pri-fg":           "var(--pri-fg)",
+        "pri-soft":         "var(--pri-soft)",
+        "pri-text":         "var(--pri-text)",
+        info:               "var(--info)",
+        "info-soft":        "var(--info-soft)",
+        warn:               "var(--warn)",
+        "warn-soft":        "var(--warn-soft)",
+        bad:                "var(--bad)",
+        "bad-soft":         "var(--bad-soft)",
+        nav:                "var(--nav)",
+
         // ── Legacy aliases so existing pages still compile ─
         primary:            "#00A76F",
         "primary-focus":    "#007867",
@@ -75,9 +95,10 @@ module.exports = {
       },
 
       fontFamily: {
-        sans:    ['"Inter Variable"', "Inter", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
-        display: ['"Inter Variable"', "Inter", "-apple-system", "sans-serif"],
-        body:    ['"Inter Variable"', "Inter", "-apple-system", "sans-serif"],
+        sans:    ['"Geist"', '"Inter Variable"', "Inter", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
+        mono:    ['"Geist Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
+        display: ['"Geist"', '"Inter Variable"', "Inter", "-apple-system", "sans-serif"],
+        body:    ['"Geist"', '"Inter Variable"', "Inter", "-apple-system", "sans-serif"],
       },
 
       fontSize: {

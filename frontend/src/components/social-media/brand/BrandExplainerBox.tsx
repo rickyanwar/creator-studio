@@ -20,8 +20,8 @@ export function BrandExplainerBox() {
           Page, signed in on that phone. Profiles are your publishing accounts,
           not brand channels — manage them under{" "}
           <Link
-            href="/social-media/accounts"
-            className="text-primary-main hover:underline font-medium"
+            href="/brands/accounts"
+            className="text-pri hover:underline font-medium"
           >
             Publishing accounts
           </Link>

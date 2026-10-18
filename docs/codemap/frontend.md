@@ -43,7 +43,7 @@ Nginx proxy configuration (`nginx/conf.d/app.conf:65-66`) defines `proxy_pass ht
 
 | Frontend Call (`frontend/src/lib/api.ts`) | Frontend Path | Backend Router Prefix / Definition | Real URL sent by Nginx | Backend Expectation | Status / Impact |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `listRadarAccounts` (`api.ts:395`), `listRadarStories` (`api.ts:404`), `getShadowReport` (`api.ts:406`), etc. | `/radar/...` | `backend/app/api/radar.py:12`:<br>`prefix="/api/radar"` | `GET /radar/...` | `GET /api/radar/...` | **BROKEN (404)**: Frontend omits `/api`, while backend router hardcodes `/api/radar`. Fails in both dev and prod. |
+| `listRadarAccounts` (`api.ts:395`), `listRadarStories` (`api.ts:404`), `getShadowReport` (`api.ts:406`), etc. | `/radar/...` | `backend/app/api/radar.py:12`:<br>`prefix="/radar"` | `GET /radar/...` | `GET /radar/...` | **VERIFIED 2026-10-18**: backend router uses prefix `/radar` and matches the frontend. |
 | `getScraperHealth` (`api.ts:39`) | `/scraper-health` | `backend/app/api/scraper_health.py:14`:<br>`prefix="/scraper-health"` | `GET /scraper-health` | `GET /scraper-health` | **FIXED 2026-10-18**: switched to bare prefix `/scraper-health` on frontend and backend. |
 | `listF1Drivers` (`api.ts:486`), `syncF1Drivers` (`api.ts:489`), `createF1Driver` (`api.ts:492`) | `/f1-drivers/...` | `backend/app/main.py:40`:<br>`prefix="/f1-drivers"` | `GET /f1-drivers/...` | `GET /f1-drivers/...` | **FIXED 2026-10-18**: switched to bare prefix `/f1-drivers` on frontend and backend. |
 | `listBurners` (`api.ts:69`), `createBurner` (`api.ts:71`), `deleteBurner` (`api.ts:74`), etc. | `/burners/...` | **None**: No burner router in `backend/app/main.py` | `GET /burners` | _No router_ | **DEAD CODE**: Burner endpoints in `api.ts` point to nonexistent backend routes. Not consumed by any active frontend component. |
@@ -206,7 +206,7 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
 1. `frontend/src/lib/api.ts:4` - `API_URL` defaults to `"http://localhost:8000"` if `process.env.NEXT_PUBLIC_API_URL` is unset.
 2. `frontend/src/lib/api.ts:24` - Response interceptor removes `"token"` from `localStorage` and triggers `window.location.href = "/login"` on HTTP 401.
 3. `nginx/conf.d/app.conf:66` - Nginx proxy passes `/api/` to `http://api:8000/`, stripping the `/api/` prefix.
-4. `backend/app/api/radar.py:12` - Radar APIRouter declares `prefix="/api/radar"`, conflicting with `api.ts:395` which calls `/radar/accounts`.
+4. `backend/app/api/radar.py:12` - Radar APIRouter uses prefix `/radar` and matches the frontend (verified 2026-10-18).
 5. `backend/app/api/scraper_health.py:14` - Scraper health router uses `prefix="/api/scraper-health"`; it works in prod only because `api.ts:39` also adds `/api` (double prefix). CORRECTED by reviewer: the executor first claimed it 404s; live check shows 403 (route exists).
 6. `backend/app/main.py:40` - F1 drivers router is registered with `prefix="/api/f1-drivers"`; works in prod via the same double-`/api` pattern (`api.ts:486`). CORRECTED by reviewer: not a 404.
 7. `frontend/src/lib/api.ts:69` - `listBurners`/`createBurner` call `/burners`, which has no backend router (live 404). The functions are unused by any page, so this is dead code, not a visible bug.

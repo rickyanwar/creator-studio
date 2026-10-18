@@ -31,7 +31,8 @@ class FanpageBase(BaseModel):
     # ── Publish pacing (anti-bot-detection) ──
     publish_sleep_start_hour: Optional[int] = 0
     publish_sleep_end_hour: Optional[int] = 6
-    publish_daily_limit: int = 35
+    publish_daily_limit: int = 45  # same default as the model and the publisher
+    publish_hour_weights: Optional[dict[str, float]] = None
 
     # ── Content modes (Feature 2) ──
     mode1_ig_repost_enabled: bool = True
@@ -249,6 +250,16 @@ class FanpageSourceRemove(BaseModel):
 
 class FanpageSourceRecreateUpdate(BaseModel):
     ig_recreate_enabled: Optional[bool] = None  # null = inherit the fanpage's setting
+    visual_engine_override: Optional[str] = None
+    format: Optional[str] = None
+
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v):
+        if v is not None:
+            from app.services.ig_mode import source_from_format
+            source_from_format(v)
+        return v
 
 
 class FanpageSourceTriggerUpdate(BaseModel):
@@ -286,6 +297,8 @@ class IGSourceRef(BaseModel):
     # Per-(fanpage, source) override of Mode-3 ig_recreate: null inherits the
     # fanpage's blanket ig_recreate_enabled setting.
     ig_recreate_enabled: Optional[bool] = None
+    visual_engine_override: Optional[str] = None
+    format: str = "follow"
     trigger: str = "every_post"
     # Per-source caption criteria (global; managed from the fanpage page)
     caption_tone: Optional[str] = None

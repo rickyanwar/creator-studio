@@ -121,6 +121,8 @@ def compute_next_slot(
     existing_slots_utc: Sequence[datetime],
     sleep_start_hour: int | None = None,
     sleep_end_hour: int | None = None,
+    publish_hour_weights: dict[str, float] | dict[int, float] | None = None,
+    hour_weights: dict[str, float] | dict[int, float] | None = None,
 ) -> datetime:
     """Compute the earliest valid aware UTC scheduled delivery instant."""
     if not isinstance(now_utc, datetime) or now_utc.tzinfo is None or now_utc.utcoffset() is None:
@@ -151,6 +153,70 @@ def compute_next_slot(
         if not (0 <= sleep_start_hour <= 23 and 0 <= sleep_end_hour <= 23):
             raise ValueError("sleep hours must be between 0 and 23")
 
+    weights_input = publish_hour_weights or hour_weights
+    if not weights_input:
+        earliest = now_utc
+        if clean_existing:
+            latest = max(clean_existing)
+            gap_target = latest + timedelta(minutes=min_gap_minutes)
+            if gap_target > earliest:
+                earliest = gap_target
+
+        cand = earliest
+
+        # Ponytail: linear daily rollover search bounded at 365 days; upgrade to direct interval math if targets span years.
+        for _ in range(1000):
+            if sleep_start_hour is not None and sleep_end_hour is not None and sleep_start_hour != sleep_end_hour:
+                cand_loc = cand.astimezone(target_tz)
+                if _is_sleeping(cand_loc.hour, sleep_start_hour, sleep_end_hour):
+                    if sleep_start_hour < sleep_end_hour:
+                        wake_date = cand_loc.date()
+                    else:
+                        if cand_loc.hour >= sleep_start_hour:
+                            wake_date = cand_loc.date() + timedelta(days=1)
+                        else:
+                            wake_date = cand_loc.date()
+                    wake_loc = datetime(
+                        wake_date.year,
+                        wake_date.month,
+                        wake_date.day,
+                        sleep_end_hour,
+                        0,
+                        0,
+                        tzinfo=target_tz,
+                    )
+                    wake_utc = wake_loc.astimezone(timezone.utc)
+                    if wake_utc > cand:
+                        cand = wake_utc
+
+            cand_loc = cand.astimezone(target_tz)
+            cand_date = cand_loc.date()
+
+            slots_on_day = sum(
+                1 for s in clean_existing if s.astimezone(target_tz).date() == cand_date
+            )
+            if slots_on_day >= daily_target:
+                next_day = cand_date + timedelta(days=1)
+                next_day_loc = datetime(
+                    next_day.year, next_day.month, next_day.day, 0, 0, 0, tzinfo=target_tz
+                )
+                cand = next_day_loc.astimezone(timezone.utc)
+                continue
+
+            return cand.astimezone(timezone.utc)
+
+        raise RuntimeError("Failed to compute next slot within iteration limit")
+
+    # Weighted slot planning when publish_hour_weights is present
+    weights: dict[int, float] = {}
+    for h in range(24):
+        if str(h) in weights_input:
+            weights[h] = float(weights_input[str(h)])
+        elif h in weights_input:
+            weights[h] = float(weights_input[h])
+        else:
+            weights[h] = 1.0
+
     earliest = now_utc
     if clean_existing:
         latest = max(clean_existing)
@@ -158,48 +224,90 @@ def compute_next_slot(
         if gap_target > earliest:
             earliest = gap_target
 
-    cand = earliest
+    cand_date = earliest.astimezone(target_tz).date()
+    step_minutes = max(int(min_gap_minutes), 1) if min_gap_minutes < 60 else 60
 
-    # Ponytail: linear daily rollover search bounded at 365 days; upgrade to direct interval math if targets span years.
+    # Ponytail: search bounded at 1000 days; rollover to next local calendar day when day is capped.
     for _ in range(1000):
-        if sleep_start_hour is not None and sleep_end_hour is not None and sleep_start_hour != sleep_end_hour:
-            cand_loc = cand.astimezone(target_tz)
-            if _is_sleeping(cand_loc.hour, sleep_start_hour, sleep_end_hour):
-                if sleep_start_hour < sleep_end_hour:
-                    wake_date = cand_loc.date()
-                else:
-                    if cand_loc.hour >= sleep_start_hour:
-                        wake_date = cand_loc.date() + timedelta(days=1)
-                    else:
-                        wake_date = cand_loc.date()
-                wake_loc = datetime(
-                    wake_date.year,
-                    wake_date.month,
-                    wake_date.day,
-                    sleep_end_hour,
-                    0,
-                    0,
-                    tzinfo=target_tz,
-                )
-                wake_utc = wake_loc.astimezone(timezone.utc)
-                if wake_utc > cand:
-                    cand = wake_utc
-
-        cand_loc = cand.astimezone(target_tz)
-        cand_date = cand_loc.date()
-
         slots_on_day = sum(
             1 for s in clean_existing if s.astimezone(target_tz).date() == cand_date
         )
         if slots_on_day >= daily_target:
-            next_day = cand_date + timedelta(days=1)
-            next_day_loc = datetime(
-                next_day.year, next_day.month, next_day.day, 0, 0, 0, tzinfo=target_tz
-            )
-            cand = next_day_loc.astimezone(timezone.utc)
+            cand_date += timedelta(days=1)
             continue
 
-        return cand.astimezone(timezone.utc)
+        allowed_hours = [
+            h for h in range(24)
+            if not (
+                sleep_start_hour is not None
+                and sleep_end_hour is not None
+                and sleep_start_hour != sleep_end_hour
+                and _is_sleeping(h, sleep_start_hour, sleep_end_hour)
+            )
+        ]
+        if not allowed_hours:
+            cand_date += timedelta(days=1)
+            continue
+
+        candidate_points: list[tuple[int, int]] = []
+        if step_minutes < 60:
+            for h in allowed_hours:
+                for m in range(0, 60, step_minutes):
+                    candidate_points.append((h, m))
+        else:
+            for h in allowed_hours:
+                candidate_points.append((h, 0))
+
+        # Rank candidates by descending hour weight, then chronological
+        candidate_points.sort(key=lambda item: (-weights.get(item[0], 1.0), item[0], item[1]))
+
+        selected_points: list[tuple[int, int]] = []
+        for h, m in candidate_points:
+            cand_dt = datetime(cand_date.year, cand_date.month, cand_date.day, h, m, 0, tzinfo=target_tz)
+            conflict = False
+            for sel_h, sel_m in selected_points:
+                sel_dt = datetime(cand_date.year, cand_date.month, cand_date.day, sel_h, sel_m, 0, tzinfo=target_tz)
+                if abs((cand_dt - sel_dt).total_seconds()) < min_gap_minutes * 60:
+                    conflict = True
+                    break
+            if not conflict:
+                selected_points.append((h, m))
+                if len(selected_points) >= daily_target:
+                    break
+
+        selected_points.sort(key=lambda item: (item[0], item[1]))
+
+        found_slot: datetime | None = None
+        for h, m in selected_points:
+            cand_loc = datetime(cand_date.year, cand_date.month, cand_date.day, h, m, 0, tzinfo=target_tz)
+            earliest_loc = earliest.astimezone(target_tz)
+            if cand_loc.date() == earliest_loc.date() and cand_loc.hour == earliest_loc.hour and earliest_loc > cand_loc:
+                cand_loc = earliest_loc
+
+            cand_utc = cand_loc.astimezone(timezone.utc)
+            if cand_utc < earliest:
+                continue
+
+            cand_loc_final = cand_utc.astimezone(target_tz)
+            if sleep_start_hour is not None and sleep_end_hour is not None and sleep_start_hour != sleep_end_hour:
+                if _is_sleeping(cand_loc_final.hour, sleep_start_hour, sleep_end_hour):
+                    continue
+
+            gap_ok = True
+            for s in clean_existing:
+                if abs((cand_utc - s).total_seconds()) < min_gap_minutes * 60:
+                    gap_ok = False
+                    break
+            if not gap_ok:
+                continue
+
+            found_slot = cand_utc
+            break
+
+        if found_slot is not None:
+            return found_slot
+
+        cand_date += timedelta(days=1)
 
     raise RuntimeError("Failed to compute next slot within iteration limit")
 

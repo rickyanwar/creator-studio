@@ -109,10 +109,10 @@ export function PacingTab({
       {/* ── 1. Audience Location ── */}
       <section className="card p-6 space-y-4">
         <div>
-          <h2 className="text-base font-bold text-text-primary">
+          <h2 className="text-base font-bold text-text">
             Audience location
           </h2>
-          <p className="text-xs text-text-secondary mt-0.5">
+          <p className="text-xs text-text2 mt-0.5">
             Where most of this channel&apos;s followers live. Posting times are planned on their local clock, not yours.
           </p>
         </div>
@@ -135,14 +135,14 @@ export function PacingTab({
 
           <div>
             <span className="label">Difference from your time</span>
-            <div className="h-[42px] px-3 rounded-md bg-bg-paper-hover border border-grey-700 flex items-center gap-2 text-xs text-text-primary">
-              <Icon icon="solar:clock-circle-bold" className="text-text-secondary" width={16} />
+            <div className="h-[42px] px-3 rounded-md bg-surface2 border border-line flex items-center gap-2 text-xs text-text">
+              <Icon icon="solar:clock-circle-bold" className="text-text2" width={16} />
               <span>{tzDiffText}</span>
             </div>
           </div>
         </div>
 
-        <p className="text-xs text-text-disabled">
+        <p className="text-xs text-text2">
           One channel plans on one time zone. If followers are split across regions, choose where most of them live.
         </p>
       </section>
@@ -150,10 +150,10 @@ export function PacingTab({
       {/* ── 2. When posts may go out ── */}
       <section className="card p-6 space-y-4">
         <div>
-          <h2 className="text-base font-bold text-text-primary">
+          <h2 className="text-base font-bold text-text">
             When posts may go out
           </h2>
-          <p className="text-xs text-text-secondary mt-0.5">
+          <p className="text-xs text-text2 mt-0.5">
             All pacing targets operate in the audience&apos;s local clock.
           </p>
         </div>
@@ -190,28 +190,28 @@ export function PacingTab({
               <span className="label !mb-0">Quiet hours (from brand)</span>
               {brand?.id && (
                 <Link
-                  href={`/social-media/brands/${brand.id}`}
-                  className="text-[11px] font-semibold text-primary-main hover:text-primary-dark transition"
+                  href={`/brands/${brand.id}`}
+                  className="text-[11px] font-semibold text-pri hover:opacity-90 transition"
                 >
                   Change on brand →
                 </Link>
               )}
             </div>
-            <div className="h-[42px] px-3 rounded-md bg-bg-paper-hover border border-grey-700 flex items-center text-xs text-text-secondary">
-              <Icon icon="solar:moon-bold" className="text-amber-400 mr-2" width={15} />
+            <div className="h-[42px] px-3 rounded-md bg-surface2 border border-line flex items-center text-xs text-text2">
+              <Icon icon="solar:moon-bold" className="text-warn mr-2" width={15} />
               <span>{quietHoursStr}</span>
             </div>
           </div>
         </div>
 
         {/* Built-in rules */}
-        <div className="space-y-2 pt-1 border-t border-divider-soft text-xs text-text-secondary">
+        <div className="space-y-2 pt-1 border-t border-line text-xs text-text2">
           <div className="flex items-center gap-2">
-            <Icon icon="solar:check-circle-bold" className="text-primary-main" width={15} />
+            <Icon icon="solar:check-circle-bold" className="text-pri" width={15} />
             <span>Posts a little more around lunch (12–14) and evening (18–21) local time</span>
           </div>
           <div className="flex items-center gap-2">
-            <Icon icon="solar:check-circle-bold" className="text-primary-main" width={15} />
+            <Icon icon="solar:check-circle-bold" className="text-pri" width={15} />
             <span>Each time shifts by a few random minutes, so it doesn&apos;t look scheduled</span>
           </div>
         </div>
@@ -219,12 +219,12 @@ export function PacingTab({
 
       {/* Save Button & Feedback */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <span className="text-xs text-text-secondary">
+        <span className="text-xs text-text2">
           Minimum gap is a floor. Shifts take effect on next planned slot generation.
         </span>
         <div className="flex items-center gap-3">
           {saveSuccess && (
-            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+            <span className="text-xs text-pri font-semibold flex items-center gap-1">
               <Icon icon="solar:check-circle-bold" width={14} />
               Saved pacing settings
             </span>
@@ -240,7 +240,7 @@ export function PacingTab({
       </div>
 
       {saveError && (
-        <div className="rounded-xl border border-error-main/40 bg-error-lighter/20 p-3 text-xs text-error-dark dark:text-rose-300">
+        <div className="rounded-xl border border-bad/30 bg-bad-soft p-3 text-xs text-bad">
           {saveError}
         </div>
       )}

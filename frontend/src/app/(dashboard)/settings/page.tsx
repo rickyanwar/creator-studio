@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { getSettings, updateSettings, testReplizCredentials, testProxies, testRelays } from "@/lib/api";
+import Link from "next/link";
+import { Icon } from "@iconify/react";
+import {
+  getSettings,
+  updateSettings,
+  testReplizCredentials,
+  testProxies,
+  testRelays,
+} from "@/lib/api";
 import { YouTubeSettingsCard } from "@/components/settings/YouTubeSettingsCard";
 import { HermesTokensCard } from "@/components/settings/HermesTokensCard";
 import { AiVideoSettingsCard } from "@/components/settings/AiVideoSettingsCard";
@@ -11,21 +19,85 @@ import { AiImageEngineSettingsCard } from "@/components/settings/AiImageEngineSe
 import { F1DriversSettings } from "@/components/settings/F1DriversSettings";
 import { DevicesSettingsCard } from "@/components/settings/DevicesSettingsCard";
 import type { AppSettings } from "@/lib/types";
-import { Icon } from "@iconify/react";
 
 const fetcher = () => getSettings().then((r) => r.data as AppSettings);
 
+type TabKey = "conn" | "ai" | "image" | "scrapers" | "engines" | "storage" | "moved";
+
+interface NavItem {
+  id: TabKey;
+  label: string;
+  flag?: string;
+  title: string;
+  desc: string;
+}
+
+const TABS: NavItem[] = [
+  {
+    id: "conn",
+    label: "Connections",
+    title: "Connections",
+    desc: "Accounts Studio talks to. Keys are never shown again after saving.",
+  },
+  {
+    id: "ai",
+    label: "AI models",
+    title: "AI models",
+    desc: "All AI goes through 9Router. Only models listed on its /v1/models can be picked.",
+  },
+  {
+    id: "image",
+    label: "AI image engine",
+    title: "AI image engine",
+    desc: "ChatGPT first, Codex as a share and backup, the template last.",
+  },
+  {
+    id: "scrapers",
+    label: "Scrapers",
+    title: "Scrapers",
+    desc: "How Studio collects Instagram posts, news and YouTube videos.",
+  },
+  {
+    id: "engines",
+    label: "Radar and video",
+    title: "Viral radar and AI video",
+    desc: "Engine settings shared by every brand that turns these modes on.",
+  },
+  {
+    id: "storage",
+    label: "Storage and labels",
+    title: "Storage and gallery labels",
+    desc: "Where media is kept and how gallery photos get labeled.",
+  },
+  {
+    id: "moved",
+    label: "Moved out",
+    flag: "1",
+    title: "Moved to a better place",
+    desc: "These were in Global settings but belong elsewhere.",
+  },
+];
+
 export default function SettingsPage() {
   const { data: settings, mutate } = useSWR("settings", fetcher);
+  const [activeTab, setActiveTab] = useState<TabKey>("conn");
   const [form, setForm] = useState<Record<string, string | number | boolean | null>>({});
-  const [saved, setSaved]               = useState(false);
-  const [loadingSave, setLoadingSave]   = useState(false);
-  const [loadingTest, setLoadingTest]   = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [loadingSave, setLoadingSave] = useState(false);
+  const [loadingTest, setLoadingTest] = useState(false);
   const [replizResult, setReplizResult] = useState<{ ok?: boolean; message?: string } | null>(null);
   const [proxyTesting, setProxyTesting] = useState(false);
-  const [proxyResults, setProxyResults] = useState<{ results: { proxy: string; ok: boolean; ip?: string; ms?: number; error?: string }[]; alive: number; total: number } | null>(null);
+  const [proxyResults, setProxyResults] = useState<{
+    results: { proxy: string; ok: boolean; ip?: string; ms?: number; error?: string }[];
+    alive: number;
+    total: number;
+  } | null>(null);
   const [relayTesting, setRelayTesting] = useState(false);
-  const [relayResults, setRelayResults] = useState<{ results: { proxy: string; ok: boolean; ip?: string; ms?: number; error?: string }[]; alive: number; total: number } | null>(null);
+  const [relayResults, setRelayResults] = useState<{
+    results: { proxy: string; ok: boolean; ip?: string; ms?: number; error?: string }[];
+    alive: number;
+    total: number;
+  } | null>(null);
 
   useEffect(() => {
     if (settings) {
@@ -45,7 +117,7 @@ export default function SettingsPage() {
         nine_router_base_url: settings.nine_router_base_url ?? "",
         nine_router_model: settings.nine_router_model ?? "",
         nine_router_discussion_model: settings.nine_router_discussion_model ?? "",
-        
+
         radar_sleep_start_wib: settings.radar_sleep_start_wib ?? "",
         radar_sleep_end_wib: settings.radar_sleep_end_wib ?? "",
         radar_very_hot_interval_min: settings.radar_very_hot_interval_min,
@@ -56,7 +128,7 @@ export default function SettingsPage() {
         radar_story_sharing: settings.radar_story_sharing ?? "shared",
         radar_share_max: settings.radar_share_max,
         radar_news_stagger_max_min: settings.radar_news_stagger_max_min,
-        
+
         nine_router_api_key: "",
         gemini_api_key: "",
         groq_api_key: "",
@@ -84,14 +156,15 @@ export default function SettingsPage() {
         if (typeof v === "string" && v === "") continue;
         payload[k] = v;
       }
-      // Proxy/relay pools must be sendable even when emptied (to clear them)
       payload.scraper_proxies = form.scraper_proxies ?? "";
       payload.scraper_relays = form.scraper_relays ?? "";
       await updateSettings(payload);
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      setTimeout(() => setSaved(false), 2500);
       mutate();
-    } finally { setLoadingSave(false); }
+    } finally {
+      setLoadingSave(false);
+    }
   }
 
   async function handleTestRepliz() {
@@ -108,7 +181,9 @@ export default function SettingsPage() {
       setReplizResult({ ok: true, message: `Connected — ${res.data.fanpages_found} fanpages found` });
     } catch {
       setReplizResult({ ok: false, message: "Connection failed — check credentials" });
-    } finally { setLoadingTest(false); }
+    } finally {
+      setLoadingTest(false);
+    }
   }
 
   async function handleTestProxies() {
@@ -119,7 +194,9 @@ export default function SettingsPage() {
       setProxyResults(res.data);
     } catch {
       setProxyResults({ results: [], alive: 0, total: 0 });
-    } finally { setProxyTesting(false); }
+    } finally {
+      setProxyTesting(false);
+    }
   }
 
   async function handleTestRelays() {
@@ -130,464 +207,676 @@ export default function SettingsPage() {
       setRelayResults(res.data);
     } catch {
       setRelayResults({ results: [], alive: 0, total: 0 });
-    } finally { setRelayTesting(false); }
+    } finally {
+      setRelayTesting(false);
+    }
   }
 
+  const currentTab = TABS.find((t) => t.id === activeTab) || TABS[0];
+
+  const SaveButton = () => (
+    <div className="flex items-center gap-3 pt-2">
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={loadingSave}
+        className="h-9 px-4 rounded-[10px] bg-pri text-pri-fg font-semibold text-sm flex items-center gap-2 hover:opacity-90 disabled:opacity-50 transition-opacity"
+      >
+        {loadingSave ? (
+          <Icon icon="svg-spinners:ring-resize" width={14} />
+        ) : saved ? (
+          <Icon icon="solar:check-circle-bold" width={16} />
+        ) : (
+          <Icon icon="solar:diskette-bold" width={16} />
+        )}
+        {saved ? "Saved!" : loadingSave ? "Saving…" : "Save changes"}
+      </button>
+      {saved && <span className="text-xs text-pri-text font-medium">Settings updated.</span>}
+    </div>
+  );
+
   return (
-    <div className="max-w-2xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-text-primary">Global Settings</h1>
-        <p className="text-sm text-text-secondary mt-1">Global configuration for the reposter</p>
+    <div className="space-y-6 max-w-[1240px] pb-24">
+      {/* ── Page Header ── */}
+      <div className="space-y-1">
+        <h1 className="text-[26px] font-bold text-text tracking-tight">Settings</h1>
+        <p className="text-sm text-text2">
+          App-wide settings, grouped by what they connect or control. Each brand&apos;s own settings are in Brand settings.
+        </p>
       </div>
 
-      {/* Repliz credentials */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Repliz API</h2>
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
-          {settings?.has_repliz_keys ? (
-            <>
-              <Icon icon="solar:check-circle-bold-duotone" width={14} className="text-primary-main" />
-              Keys saved
-            </>
-          ) : (
-            <>
-              <Icon icon="solar:close-circle-bold-duotone" width={14} className="text-error-main" />
-              Not configured
-            </>
-          )}
-        </div>
-        <div>
-          <label className="label">Access Key</label>
-          <input className="input-rect" type="password" placeholder="Leave blank to keep existing"
-            value={form.repliz_access_key as string ?? ""} onChange={(e) => set("repliz_access_key", e.target.value)} />
-        </div>
-        <div>
-          <label className="label">Secret Key</label>
-          <input className="input-rect" type="password" placeholder="Leave blank to keep existing"
-            value={form.repliz_secret_key as string ?? ""} onChange={(e) => set("repliz_secret_key", e.target.value)} />
-        </div>
-        <div className="flex items-center gap-3">
-          <button onClick={handleTestRepliz} disabled={loadingTest} className="btn-ghost">
-            <Icon icon="solar:refresh-bold-duotone" width={14} className={loadingTest ? "animate-spin" : "hidden"} />
-            {loadingTest ? "Testing…" : "Test Connection"}
-          </button>
-          {replizResult && (
-            <span className={`text-xs ${replizResult.ok ? "text-primary-main" : "text-error-main"}`}>
-              {replizResult.message}
-            </span>
-          )}
-        </div>
-      </section>
+      <div className="flex flex-col md:flex-row gap-5 items-start">
+        {/* ── Section Nav ── */}
+        <nav
+          aria-label="Settings sections"
+          className="w-full md:w-[230px] shrink-0 bg-surface border border-line rounded-[14px] p-2.5 flex flex-row md:flex-col gap-1 overflow-x-auto"
+        >
+          {TABS.map((t) => {
+            const active = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setActiveTab(t.id)}
+                aria-current={active ? "page" : undefined}
+                className={`flex items-center justify-between gap-2 min-h-[40px] px-3 rounded-[9px] text-sm text-left whitespace-nowrap transition-colors ${
+                  active
+                    ? "bg-pri-soft text-pri-text font-semibold"
+                    : "text-text hover:bg-surface2 font-medium"
+                }`}
+              >
+                <span>{t.label}</span>
+                {t.flag && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-warn-soft text-warn">
+                    {t.flag}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
 
-      {/* Post Metrics */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Post metrics (Repliz Gold)</h2>
-        <div className="flex items-center gap-3">
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" className="sr-only peer"
-              checked={form.metrics_ingestion_enabled as boolean ?? false}
-              onChange={(e) => set("metrics_ingestion_enabled", e.target.checked)} />
-            <div className="w-9 h-5 bg-divider-soft peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-main"></div>
-            <span className="ml-3 text-sm font-medium text-text-primary">Enable metrics ingestion</span>
-          </label>
-        </div>
-        <div className="text-xs text-text-secondary space-y-1">
-          <p>Plan Status: {settings?.metrics_plan_status || "Unknown"}</p>
-          <p>Last Checked: {settings?.metrics_plan_checked_at ? new Date(settings.metrics_plan_checked_at + "Z").toLocaleString() : "Never"}</p>
-          {settings?.metrics_last_error && <p className="text-error-main">Last Error: {settings.metrics_last_error}</p>}
-        </div>
-      </section>
-
-      {/* AI providers */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">AI Providers</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">
-              Gemini API Key{" "}
-              {settings?.has_gemini_key && <span className="text-primary-main">✓ saved</span>}
-            </label>
-            <input className="input-rect" type="password" placeholder="Leave blank to keep existing"
-              value={form.gemini_api_key as string ?? ""} onChange={(e) => set("gemini_api_key", e.target.value)} />
-          </div>
-          <div>
-            <label className="label">
-              Groq API Key{" "}
-              {settings?.has_groq_key && <span className="text-primary-main">✓ saved</span>}
-            </label>
-            <input className="input-rect" type="password" placeholder="Leave blank to keep existing"
-              value={form.groq_api_key as string ?? ""} onChange={(e) => set("groq_api_key", e.target.value)} />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">Failover after N failures</label>
-            <input className="input-rect" type="number"
-              value={form.ai_fallback_after_failures as number} onChange={(e) => set("ai_fallback_after_failures", parseInt(e.target.value))} />
-          </div>
-          <div>
-            <label className="label">Reset Gemini after (min)</label>
-            <input className="input-rect" type="number"
-              value={form.ai_fallback_reset_after_minutes as number} onChange={(e) => set("ai_fallback_reset_after_minutes", parseInt(e.target.value))} />
-          </div>
-        </div>
-      </section>
-
-      {/* Storage */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Media Storage</h2>
-        <div>
-          <label className="label">VPS Storage Path</label>
-          <input className="input-rect" value={form.storage_base_path as string ?? ""}
-            onChange={(e) => set("storage_base_path", e.target.value)} placeholder="/var/www/media" />
-        </div>
-        <div>
-          <label className="label">Public Base URL (HTTPS)</label>
-          <input className="input-rect" value={form.storage_base_url as string ?? ""}
-            onChange={(e) => set("storage_base_url", e.target.value)} placeholder="https://cdn.yourdomain.com/media" />
-        </div>
-      </section>
-
-      {/* Instagram Scraper (crawl schedule + fetch mode) */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Instagram Scraper</h2>
-        <p className="text-xs text-text-secondary">
-          How often the crawler runs and how it fetches posts. The crawler uses the Web Viewer scraper (GramSnap / AnonyIG / IGStoryViewer).
-        </p>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">Crawl Interval (minutes)</label>
-            <input className="input-rect" type="number"
-              value={form.crawl_interval_minutes as number} onChange={(e) => set("crawl_interval_minutes", parseInt(e.target.value))} />
-            <p className="text-xs text-text-secondary mt-1">Minimum 15 minutes recommended</p>
-          </div>
-          <div>
-            <label className="label">Max Post Age (days)</label>
-            <input className="input-rect" type="number" min={1} max={30}
-              value={form.max_post_age_days as number} onChange={(e) => set("max_post_age_days", parseInt(e.target.value))} />
-            <p className="text-xs text-text-secondary mt-1">Skip posts older than this — e.g. 1 = today only</p>
-          </div>
-        </div>
-      </section>
-
-      {/* News Scraper */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">News Scraper</h2>
-        <div>
-          <label className="label">
-            Proxy Pool{" "}
-            {typeof settings?.scraper_proxy_count === "number" && settings.scraper_proxy_count > 0 && (
-              <span className="text-primary-main">✓ {settings.scraper_proxy_count} proxies</span>
-            )}
-          </label>
-          <textarea
-            className="input-rect font-mono text-xs"
-            rows={6}
-            spellCheck={false}
-            placeholder={"One proxy per line, e.g.\nhttp://user:pass@host:port\nhttp://user:pass@1.2.3.4:8000"}
-            value={form.scraper_proxies as string ?? ""}
-            onChange={(e) => set("scraper_proxies", e.target.value)}
-          />
-          <p className="text-xs text-text-secondary mt-1">
-            The news scraper picks one at random per request (and rotates on block/timeout). One proxy per
-            line — a trailing label after the URL is ignored. Leave empty to scrape directly (no proxy).
-          </p>
-
-          <div className="mt-2 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleTestProxies}
-              disabled={proxyTesting}
-              className="btn btn-secondary text-xs"
-            >
-              {proxyTesting ? "Testing…" : "Test Proxies"}
-            </button>
-            {proxyResults && (
-              <span className={`text-xs font-semibold ${proxyResults.alive > 0 ? "text-primary-main" : "text-red-500"}`}>
-                {proxyResults.alive}/{proxyResults.total} alive
-              </span>
-            )}
+        {/* ── Pane Content ── */}
+        <div className="flex-1 min-w-0 w-full space-y-4">
+          <div className="space-y-0.5">
+            <h2 className="text-[19px] font-bold text-text">{currentTab.title}</h2>
+            <p className="text-sm text-text2">{currentTab.desc}</p>
           </div>
 
-          {proxyResults && proxyResults.results.length > 0 && (
-            <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-hairline divide-y divide-hairline text-xs font-mono">
-              {proxyResults.results.map((r) => (
-                <div key={r.proxy} className="flex items-center justify-between px-3 py-1.5">
-                  <span className="text-text-primary">{r.proxy}</span>
-                  {r.ok ? (
-                    <span className="text-emerald-600">✓ {r.ip} · {r.ms}ms</span>
-                  ) : (
-                    <span className="text-red-500 truncate max-w-[55%]" title={r.error}>✗ {r.error}</span>
+          {/* ────────────────── PANE: CONNECTIONS ────────────────── */}
+          {activeTab === "conn" && (
+            <div className="space-y-4">
+              {/* Repliz API Card */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Repliz</h3>
+                  <div className="flex items-center gap-2">
+                    {settings?.has_repliz_keys ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                        Connected
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-surface2 text-text2 border border-line">
+                        Not configured
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleTestRepliz}
+                      disabled={loadingTest}
+                      className="h-[34px] px-3 rounded-[9px] border border-line bg-surface text-text text-[13px] hover:bg-surface2 transition-colors disabled:opacity-50"
+                    >
+                      {loadingTest ? "Testing…" : "Test connection"}
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[13px] leading-relaxed text-text2">
+                  Facebook Pages · synced every 6 h (Sync from Repliz on Home or Brands).
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Access Key
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="password"
+                      placeholder="Leave blank to keep existing"
+                      value={(form.repliz_access_key as string) ?? ""}
+                      onChange={(e) => set("repliz_access_key", e.target.value)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Secret Key
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="password"
+                      placeholder="Leave blank to keep existing"
+                      value={(form.repliz_secret_key as string) ?? ""}
+                      onChange={(e) => set("repliz_secret_key", e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                {replizResult && (
+                  <p className={`text-xs ${replizResult.ok ? "text-pri-text" : "text-bad"}`}>
+                    {replizResult.message}
+                  </p>
+                )}
+              </section>
+
+              {/* Post Metrics Card */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Post metrics (Repliz Gold)</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                    {settings?.metrics_plan_status ? `Plan ${settings.metrics_plan_status}` : "Checked"}
+                  </span>
+                </div>
+
+                <label className="flex items-center gap-3 text-sm text-text cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 accent-pri rounded"
+                    checked={(form.metrics_ingestion_enabled as boolean) ?? false}
+                    onChange={(e) => set("metrics_ingestion_enabled", e.target.checked)}
+                  />
+                  <span>Pull likes, comments and shares every 5 min, plus an hourly backfill</span>
+                </label>
+
+                <div className="text-xs text-text2 space-y-0.5 pt-1 border-t border-line">
+                  <p>
+                    Last Checked:{" "}
+                    {settings?.metrics_plan_checked_at
+                      ? new Date(settings.metrics_plan_checked_at + "Z").toLocaleString()
+                      : "Never"}
+                  </p>
+                  {settings?.metrics_last_error && (
+                    <p className="text-bad">Last Error: {settings.metrics_last_error}</p>
                   )}
                 </div>
-              ))}
+              </section>
+
+              {/* Telegram Alerts Card */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Telegram alerts</h3>
+                  {settings?.telegram_chat_id ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                      Configured
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-surface2 text-text2 border border-line">
+                      Optional
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Bot Token
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="password"
+                      placeholder="Leave blank to keep existing"
+                      value={(form.telegram_bot_token as string) ?? ""}
+                      onChange={(e) => set("telegram_bot_token", e.target.value)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Chat ID
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      placeholder="-100 4821 5530"
+                      value={(form.telegram_chat_id as string) ?? ""}
+                      onChange={(e) => set("telegram_chat_id", e.target.value)}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              {/* Hermes API Tokens */}
+              <HermesTokensCard />
+
+              <SaveButton />
+            </div>
+          )}
+
+          {/* ────────────────── PANE: AI MODELS ────────────────── */}
+          {activeTab === "ai" && (
+            <div className="space-y-4">
+              {/* 9Router Card */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">9Router (Primary AI)</h3>
+                  {settings?.has_nine_router_key ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                      Reachable
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-surface2 text-text2 border border-line">
+                      Not configured
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[13px] leading-relaxed text-text2">
+                  Captions &amp; news copy route through 9Router first, then fall back to Gemini→Groq. Overrides NINE_ROUTER_* env vars.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text sm:col-span-2">
+                    Base URL
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      placeholder="http://your-9router-host:20128/v1"
+                      value={(form.nine_router_base_url as string) ?? ""}
+                      onChange={(e) => set("nine_router_base_url", e.target.value)}
+                    />
+                    <span className="text-[11px] font-normal text-text2">Must end with /v1</span>
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Main Model
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      placeholder="ag/claude-sonnet-4-6 (or combo)"
+                      value={(form.nine_router_model as string) ?? ""}
+                      onChange={(e) => set("nine_router_model", e.target.value)}
+                    />
+                    <span className="text-[11px] font-normal text-text2">Pick a model from /v1/models</span>
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Discussion Model
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      placeholder="smart-combo"
+                      value={(form.nine_router_discussion_model as string) ?? ""}
+                      onChange={(e) => set("nine_router_discussion_model", e.target.value)}
+                    />
+                    <span className="text-[11px] font-normal text-text2">Used only for discussion/hot-take cards</span>
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text sm:col-span-2">
+                    API Key / Token
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="password"
+                      placeholder="Leave blank to keep existing"
+                      value={(form.nine_router_api_key as string) ?? ""}
+                      onChange={(e) => set("nine_router_api_key", e.target.value)}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              {/* Backup Providers Card */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Backup providers</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                    Ready
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Gemini API Key
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="password"
+                      placeholder="Leave blank to keep existing"
+                      value={(form.gemini_api_key as string) ?? ""}
+                      onChange={(e) => set("gemini_api_key", e.target.value)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Groq API Key
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="password"
+                      placeholder="Leave blank to keep existing"
+                      value={(form.groq_api_key as string) ?? ""}
+                      onChange={(e) => set("groq_api_key", e.target.value)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Switch after N failures
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="number"
+                      value={(form.ai_fallback_after_failures as number) ?? 3}
+                      onChange={(e) => set("ai_fallback_after_failures", parseInt(e.target.value) || 3)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Retry Gemini after (min)
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="number"
+                      value={(form.ai_fallback_reset_after_minutes as number) ?? 15}
+                      onChange={(e) => set("ai_fallback_reset_after_minutes", parseInt(e.target.value) || 15)}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <SaveButton />
+            </div>
+          )}
+
+          {/* ────────────────── PANE: AI IMAGE ENGINE ────────────────── */}
+          {activeTab === "image" && (
+            <div className="space-y-4">
+              <AiImageEngineSettingsCard settings={settings} onChanged={() => mutate()} />
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <span className="text-xs text-text2">
+                  Changes to AI image engine settings are saved automatically.
+                </span>
+                <SaveButton />
+              </div>
+            </div>
+          )}
+
+          {/* ────────────────── PANE: SCRAPERS ────────────────── */}
+          {activeTab === "scrapers" && (
+            <div className="space-y-4">
+              {/* Instagram Scraper */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Instagram</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                    Running
+                  </span>
+                </div>
+
+                <p className="text-[13px] leading-relaxed text-text2">
+                  Crawling pauses 01:00–06:00 WIB. This pause is fixed and cannot be changed here. Each pass checks every Instagram account once.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Crawl every (minutes)
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="number"
+                      value={(form.crawl_interval_minutes as number) ?? 30}
+                      onChange={(e) => set("crawl_interval_minutes", parseInt(e.target.value) || 30)}
+                    />
+                    <span className="text-[11px] font-normal text-text2">Minimum 15 minutes recommended</span>
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Ignore posts older than (days)
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={(form.max_post_age_days as number) ?? 2}
+                      onChange={(e) => set("max_post_age_days", parseInt(e.target.value) || 2)}
+                    />
+                    <span className="text-[11px] font-normal text-text2">e.g. 1 = today only, 2 = past 48 h</span>
+                  </label>
+                </div>
+              </section>
+
+              {/* News Proxies and Relays */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">News proxies and relays</h3>
+                  {proxyResults ? (
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                        proxyResults.alive > 0
+                          ? "bg-pri-soft text-pri-text"
+                          : "bg-bad-soft text-bad"
+                      }`}
+                    >
+                      {proxyResults.alive} / {proxyResults.total} alive
+                    </span>
+                  ) : typeof settings?.scraper_proxy_count === "number" && settings.scraper_proxy_count > 0 ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                      {settings.scraper_proxy_count} proxies configured
+                    </span>
+                  ) : null}
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[13px] font-semibold text-text">Proxy Pool</span>
+                    <button
+                      type="button"
+                      onClick={handleTestProxies}
+                      disabled={proxyTesting}
+                      className="h-[30px] px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs hover:bg-surface2 transition-colors disabled:opacity-50"
+                    >
+                      {proxyTesting ? "Testing…" : "Test proxies"}
+                    </button>
+                  </div>
+                  <textarea
+                    className="w-full min-h-[100px] p-2.5 rounded-[10px] border border-line bg-surface text-text text-xs font-mono"
+                    rows={4}
+                    spellCheck={false}
+                    placeholder={"http://user:pass@host:port\nOne proxy per line"}
+                    value={(form.scraper_proxies as string) ?? ""}
+                    onChange={(e) => set("scraper_proxies", e.target.value)}
+                  />
+                  <p className="text-[11px] text-text2 mt-1">
+                    The news scraper picks one at random per request (and rotates on block/timeout).
+                  </p>
+                </div>
+
+                <div className="pt-3 border-t border-line">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[13px] font-semibold text-text">Relay Pool</span>
+                    <button
+                      type="button"
+                      onClick={handleTestRelays}
+                      disabled={relayTesting}
+                      className="h-[30px] px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs hover:bg-surface2 transition-colors disabled:opacity-50"
+                    >
+                      {relayTesting ? "Testing…" : "Test relays"}
+                    </button>
+                  </div>
+                  <textarea
+                    className="w-full min-h-[70px] p-2.5 rounded-[10px] border border-line bg-surface text-text text-xs font-mono"
+                    rows={2}
+                    spellCheck={false}
+                    placeholder={"https://vercel-relay-xxx.vercel.app\nOne relay URL per line"}
+                    value={(form.scraper_relays as string) ?? ""}
+                    onChange={(e) => set("scraper_relays", e.target.value)}
+                  />
+                  <p className="text-[11px] text-text2 mt-1">
+                    Fallback fetch path tried after the proxy pool.
+                  </p>
+                </div>
+              </section>
+
+              {/* YouTube Card */}
+              <YouTubeSettingsCard settings={settings} onChanged={() => mutate()} />
+
+              <SaveButton />
+            </div>
+          )}
+
+          {/* ────────────────── PANE: ENGINES (RADAR & VIDEO) ────────────────── */}
+          {activeTab === "engines" && (
+            <div className="space-y-4">
+              {/* Viral Radar Engine */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Viral radar engine</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                    Running
+                  </span>
+                </div>
+
+                <p className="text-[13px] leading-relaxed text-text2">
+                  Per-brand Radar rules (niches, shadow mode, minimum likes, ratios, max per day) live in each brand&apos;s settings.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Quiet hours start (WIB)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      placeholder="e.g. 0"
+                      value={(form.radar_sleep_start_wib as number | string) ?? ""}
+                      onChange={(e) =>
+                        set("radar_sleep_start_wib", e.target.value !== "" ? parseInt(e.target.value) : null)
+                      }
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Quiet hours end (WIB)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      placeholder="e.g. 6"
+                      value={(form.radar_sleep_end_wib as number | string) ?? ""}
+                      onChange={(e) =>
+                        set("radar_sleep_end_wib", e.target.value !== "" ? parseInt(e.target.value) : null)
+                      }
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Very hot interval (min)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_very_hot_interval_min as number) ?? 8}
+                      onChange={(e) => set("radar_very_hot_interval_min", parseInt(e.target.value) || 8)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Hot interval (min)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_hot_interval_min as number) ?? 12}
+                      onChange={(e) => set("radar_hot_interval_min", parseInt(e.target.value) || 12)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Cold interval (min)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_cold_interval_min as number) ?? 50}
+                      onChange={(e) => set("radar_cold_interval_min", parseInt(e.target.value) || 50)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Hot window (h)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_hot_window_h as number) ?? 2}
+                      onChange={(e) => set("radar_hot_window_h", parseInt(e.target.value) || 2)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Track max age (h)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_track_max_age_h as number) ?? 48}
+                      onChange={(e) => set("radar_track_max_age_h", parseInt(e.target.value) || 48)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Story sharing
+                    <select
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_story_sharing as string) ?? "shared"}
+                      onChange={(e) => set("radar_story_sharing", e.target.value)}
+                    >
+                      <option value="shared">Shared (multiple brands)</option>
+                      <option value="exclusive">Exclusive (one brand only)</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Share max fanpages
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_share_max as number) ?? 0}
+                      onChange={(e) => set("radar_share_max", parseInt(e.target.value) || 0)}
+                    />
+                    <span className="text-[11px] font-normal text-text2">0 = no limit</span>
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    News stagger max (min)
+                    <input
+                      type="number"
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.radar_news_stagger_max_min as number) ?? 10}
+                      onChange={(e) => set("radar_news_stagger_max_min", parseInt(e.target.value) || 10)}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              {/* AI Video (GFlow) Card */}
+              <AiVideoSettingsCard settings={settings} onChanged={() => mutate()} />
+
+              <SaveButton />
+            </div>
+          )}
+
+          {/* ────────────────── PANE: STORAGE AND LABELS ────────────────── */}
+          {activeTab === "storage" && (
+            <div className="space-y-4">
+              {/* Media Storage Card */}
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Media storage</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pri-soft text-pri-text">
+                    Active
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    VPS Storage Path
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.storage_base_path as string) ?? ""}
+                      onChange={(e) => set("storage_base_path", e.target.value)}
+                      placeholder="/opt/studio/media"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-text">
+                    Public Base URL (HTTPS)
+                    <input
+                      className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-normal"
+                      value={(form.storage_base_url as string) ?? ""}
+                      onChange={(e) => set("storage_base_url", e.target.value)}
+                      placeholder="https://autostudio.pro/media"
+                    />
+                  </label>
+                </div>
+              </section>
+
+              {/* Gallery Labels Card */}
+              <GalleryLabelsSettingsCard settings={settings} onChanged={() => mutate()} />
+
+              {/* F1 Drivers Card */}
+              <F1DriversSettings />
+
+              <SaveButton />
+            </div>
+          )}
+
+          {/* ────────────────── PANE: MOVED OUT ────────────────── */}
+          {activeTab === "moved" && (
+            <div className="space-y-4">
+              <section className="bg-surface border border-line rounded-[14px] p-5 flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <h3 className="text-base font-semibold text-text">Phones and Tailscale</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-surface2 text-text2 border border-line">
+                    Now in Brands › Accounts &amp; phones
+                  </span>
+                </div>
+                <p className="text-[13px] leading-relaxed text-text2">
+                  Phones, Facebook Profile channels and Repliz accounts are managed on Brands › Accounts &amp; phones.
+                </p>
+                <div>
+                  <Link
+                    href="/brands/accounts"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-pri-text hover:underline"
+                  >
+                    <span>Open Accounts &amp; phones</span>
+                    <Icon icon="solar:arrow-right-linear" width={14} />
+                  </Link>
+                </div>
+              </section>
+
+              {/* Full DevicesSettingsCard preserved below for device operations */}
+              <DevicesSettingsCard />
             </div>
           )}
         </div>
-
-        <div className="pt-2 border-t border-hairline">
-          <label className="label">
-            Relay Pool{" "}
-            {typeof settings?.scraper_relay_count === "number" && settings.scraper_relay_count > 0 && (
-              <span className="text-primary-main">✓ {settings.scraper_relay_count} relays</span>
-            )}
-          </label>
-          <textarea
-            className="input-rect font-mono text-xs"
-            rows={3}
-            spellCheck={false}
-            placeholder={"One relay base URL per line, e.g.\nhttps://vercel-relay-xxx.vercel.app"}
-            value={form.scraper_relays as string ?? ""}
-            onChange={(e) => set("scraper_relays", e.target.value)}
-          />
-          <p className="text-xs text-text-secondary mt-1">
-            Fallback fetch path tried after the proxy pool — a small server-side relay (e.g. deployed via
-            9Router&apos;s &quot;Deploy Relay&quot;) that fetches a URL and returns its raw response. Egresses
-            from the relay platform&apos;s own IP (e.g. Vercel&apos;s datacenter range) — clears sites that
-            block on request fingerprint, not sites that specifically block datacenter IPs. One URL per line.
-          </p>
-
-          <div className="mt-2 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleTestRelays}
-              disabled={relayTesting}
-              className="btn btn-secondary text-xs"
-            >
-              {relayTesting ? "Testing…" : "Test Relays"}
-            </button>
-            {relayResults && (
-              <span className={`text-xs font-semibold ${relayResults.alive > 0 ? "text-primary-main" : "text-red-500"}`}>
-                {relayResults.alive}/{relayResults.total} alive
-              </span>
-            )}
-          </div>
-
-          {relayResults && relayResults.results.length > 0 && (
-            <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-hairline divide-y divide-hairline text-xs font-mono">
-              {relayResults.results.map((r) => (
-                <div key={r.proxy} className="flex items-center justify-between px-3 py-1.5">
-                  <span className="text-text-primary">{r.proxy}</span>
-                  {r.ok ? (
-                    <span className="text-emerald-600">✓ {r.ip} · {r.ms}ms</span>
-                  ) : (
-                    <span className="text-red-500 truncate max-w-[55%]" title={r.error}>✗ {r.error}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* 9Router (primary AI) */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">9Router — Primary AI (OpenAI-compatible)</h2>
-        <p className="text-xs text-text-secondary -mt-2">
-          Captions &amp; news copy route through 9Router first, then fall back to Gemini→Groq. Overrides the
-          NINE_ROUTER_* env vars. Leave Base URL blank to disable and use Gemini directly.
-        </p>
-        <div>
-          <label className="label">Base URL</label>
-          <input
-            className="input-rect"
-            placeholder="http://your-9router-host:20128/v1"
-            value={form.nine_router_base_url as string ?? ""}
-            onChange={(e) => set("nine_router_base_url", e.target.value)}
-          />
-          <p className="text-xs text-text-secondary mt-1">Must end with <code>/v1</code>.</p>
-        </div>
-        <div>
-          <label className="label">Model</label>
-          <input
-            className="input-rect"
-            placeholder="ag/claude-sonnet-4-6 (or a combo name)"
-            value={form.nine_router_model as string ?? ""}
-            onChange={(e) => set("nine_router_model", e.target.value)}
-          />
-          <p className="text-xs text-text-secondary mt-1">A model id from your dashboard, or a combo name. Not <code>auto</code>.</p>
-        </div>
-        <div>
-          <label className="label">Discussion / Hot Take Model</label>
-          <input
-            className="input-rect"
-            placeholder="smart-combo"
-            value={form.nine_router_discussion_model as string ?? ""}
-            onChange={(e) => set("nine_router_discussion_model", e.target.value)}
-          />
-          <p className="text-xs text-text-secondary mt-1">
-            Used only for Mode 4 discussion/hot-take copy — everything else keeps using the Model above.
-            Leave blank to use the built-in default (<code>smart-combo</code>); swap it here if that combo
-            starts misbehaving.
-          </p>
-        </div>
-        <div>
-          <label className="label">
-            API Key / Token{" "}
-            {settings?.has_nine_router_key && <span className="text-primary-main">✓ saved</span>}
-          </label>
-          <input
-            className="input-rect"
-            type="password"
-            placeholder="Leave blank to keep existing"
-            value={form.nine_router_api_key as string ?? ""}
-            onChange={(e) => set("nine_router_api_key", e.target.value)}
-          />
-          <p className="text-xs text-text-secondary mt-1">Copy from the 9Router dashboard.</p>
-        </div>
-      </section>
-
-      <AiImageEngineSettingsCard settings={settings} onChanged={() => mutate()} />
-
-      {/* Radar Settings */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Viral Radar Engine</h2>
-        <p className="text-xs text-text-secondary -mt-2">
-          Global polling limits and scraping behavior for Viral Radar (Feature 3).
-        </p>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Sleep Window Start (Hour, WIB)</label>
-            <input
-              type="number"
-              className="input-rect"
-              placeholder="e.g. 0"
-              value={form.radar_sleep_start_wib as number | string ?? ""}
-              onChange={(e) => set("radar_sleep_start_wib", e.target.value !== "" ? parseInt(e.target.value) : null)}
-            />
-          </div>
-          <div>
-            <label className="label">Sleep Window End (Hour, WIB)</label>
-            <input
-              type="number"
-              className="input-rect"
-              placeholder="e.g. 6"
-              value={form.radar_sleep_end_wib as number | string ?? ""}
-              onChange={(e) => set("radar_sleep_end_wib", e.target.value !== "" ? parseInt(e.target.value) : null)}
-            />
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="label">Very Hot Interval (min)</label>
-            <input
-              type="number"
-              className="input-rect"
-              value={form.radar_very_hot_interval_min as number ?? 8}
-              onChange={(e) => set("radar_very_hot_interval_min", parseInt(e.target.value) || 8)}
-            />
-          </div>
-          <div>
-            <label className="label">Hot Interval (min)</label>
-            <input
-              type="number"
-              className="input-rect"
-              value={form.radar_hot_interval_min as number ?? 12}
-              onChange={(e) => set("radar_hot_interval_min", parseInt(e.target.value) || 12)}
-            />
-          </div>
-          <div>
-            <label className="label">Cold Interval (min)</label>
-            <input
-              type="number"
-              className="input-rect"
-              value={form.radar_cold_interval_min as number ?? 50}
-              onChange={(e) => set("radar_cold_interval_min", parseInt(e.target.value) || 50)}
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Hot Window (h)</label>
-            <input
-              type="number"
-              className="input-rect"
-              value={form.radar_hot_window_h as number ?? 2}
-              onChange={(e) => set("radar_hot_window_h", parseInt(e.target.value) || 2)}
-            />
-            <p className="text-[10px] text-text-secondary mt-1">Posts newer than this get hot/very-hot intervals.</p>
-          </div>
-          <div>
-            <label className="label">Track Max Age (h)</label>
-            <input
-              type="number"
-              className="input-rect"
-              value={form.radar_track_max_age_h as number ?? 48}
-              onChange={(e) => set("radar_track_max_age_h", parseInt(e.target.value) || 48)}
-            />
-            <p className="text-[10px] text-text-secondary mt-1">Stop tracking likes after this age.</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="label">Sharing Mode</label>
-            <select
-              className="input w-full"
-              value={form.radar_story_sharing as string ?? "shared"}
-              onChange={(e) => set("radar_story_sharing", e.target.value)}
-            >
-              <option value="shared">Shared</option>
-              <option value="exclusive">Exclusive</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Share Max Fanpages</label>
-            <input
-              type="number"
-              className="input-rect"
-              value={form.radar_share_max as number ?? 0}
-              onChange={(e) => set("radar_share_max", parseInt(e.target.value) || 0)}
-            />
-            <p className="text-[10px] text-text-secondary mt-1">0 = infinite</p>
-          </div>
-          <div>
-            <label className="label">News Stagger Max (min)</label>
-            <input
-              type="number"
-              className="input-rect"
-              value={form.radar_news_stagger_max_min as number ?? 10}
-              onChange={(e) => set("radar_news_stagger_max_min", parseInt(e.target.value) || 10)}
-            />
-          </div>
-        </div>
-      </section>
-
-      <YouTubeSettingsCard settings={settings} onChanged={() => mutate()} />
-
-      <AiVideoSettingsCard settings={settings} onChanged={() => mutate()} />
-
-      <GalleryLabelsSettingsCard settings={settings} onChanged={() => mutate()} />
-
-      <HermesTokensCard />
-
-      {/* Telegram */}
-      <section className="card space-y-4">
-        <h2 className="text-base font-semibold text-text-primary">Telegram Notifications (optional)</h2>
-        <div>
-          <label className="label">Bot Token</label>
-          <input className="input-rect" type="password" placeholder="Leave blank to keep existing"
-            value={form.telegram_bot_token as string ?? ""} onChange={(e) => set("telegram_bot_token", e.target.value)} />
-        </div>
-        <div>
-          <label className="label">Chat ID</label>
-          <input className="input-rect" value={form.telegram_chat_id as string ?? ""}
-            onChange={(e) => set("telegram_chat_id", e.target.value)} placeholder="-1001234567890" />
-        </div>
-      </section>
-
-      <button onClick={handleSave} disabled={loadingSave} className="btn-primary mb-6">
-        <Icon icon="solar:refresh-bold-duotone" width={14} className={loadingSave ? "animate-spin" : "hidden"} />
-        {saved ? "Saved!" : loadingSave ? "Saving…" : "Save Settings"}
-      </button>
-
-      <DevicesSettingsCard />
-
-      <F1DriversSettings />
+      </div>
     </div>
   );
 }

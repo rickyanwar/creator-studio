@@ -247,7 +247,7 @@ def plan_engines(
     return EnginePlan(order, reason)
 
 
-def render_queue_for(db, fanpage, content_kind: str) -> str | None:
+def render_queue_for(db, fanpage, content_kind: str, visual_engine_override: str | None = None) -> str | None:
     try:
         if fanpage is None:
             return None
@@ -261,7 +261,7 @@ def render_queue_for(db, fanpage, content_kind: str) -> str | None:
         elif content_kind == "facebook":
             toggle = getattr(fanpage, "fb_visual_engine", None)
         elif content_kind == "instagram":
-            toggle = getattr(fanpage, "visual_engine", None)
+            toggle = visual_engine_override if visual_engine_override is not None else getattr(fanpage, "visual_engine", None)
         else:
             return None
 

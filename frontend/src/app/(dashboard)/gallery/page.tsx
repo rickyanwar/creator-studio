@@ -82,13 +82,19 @@ export default function GalleryPage() {
     () => listGalleryKeywords().then((r) => r.data as Keyword[]),
     { refreshInterval: 30000 }
   );
+
   const { data: appSettings, mutate: mutateSettings } = useSWR(
     "settings",
     () =>
       getSettings().then(
-        (r) => r.data as { gallery_scraping_paused: boolean; gallery_ai_filter_last_criteria: string | null }
-      ),
+        (r) =>
+          r.data as {
+            gallery_scraping_paused: boolean;
+            gallery_ai_filter_last_criteria: string | null;
+          }
+      )
   );
+
   const [pauseToggling, setPauseToggling] = useState(false);
   async function toggleScrapingPause() {
     if (!appSettings) return;
@@ -100,6 +106,7 @@ export default function GalleryPage() {
       setPauseToggling(false);
     }
   }
+
   const { data: niches = [], mutate: mutateNiches } = useSWR<string[]>(
     "gallery-niches",
     () => listGalleryNiches().then((r) => r.data as string[])
@@ -109,19 +116,27 @@ export default function GalleryPage() {
   const [filterNiche, setFilterNiche] = useState<string>("");
   const [imageSearch, setImageSearch] = useState<string>("");
   const [keywordSearch, setKeywordSearch] = useState<string>("");
+
+  // Label filters
+  const [labelPeopleFilter, setLabelPeopleFilter] = useState<string>("any");
+  const [labelShotFilter, setLabelShotFilter] = useState<string>("any");
+  const [hideArchival, setHideArchival] = useState<boolean>(false);
+
+  // Add photos menu dropdown
+  const [showAddMenu, setShowAddMenu] = useState<boolean>(false);
+
   const visibleKeywords = keywords
     .filter((k) => (filterNiche ? k.niche === filterNiche : true))
     .filter((k) => (keywordSearch ? k.keyword.toLowerCase().includes(keywordSearch.trim().toLowerCase()) : true));
-  const keywordsFiltered = !!filterNiche || !!keywordSearch;
 
-  // Debounce the image free-text search so we don't hit the API on every keystroke
+  // Debounce the image free-text search
   const [imageSearchDebounced, setImageSearchDebounced] = useState<string>("");
   useEffect(() => {
     const t = setTimeout(() => setImageSearchDebounced(imageSearch.trim()), 350);
     return () => clearTimeout(t);
   }, [imageSearch]);
 
-  // ── Infinite scroll (offset pagination) — handles thousands of images ──
+  // ── Infinite scroll (offset pagination) ──
   const PAGE_SIZE = 60;
   type ImagePage = { total: number; images: GalleryImage[] };
   const {
@@ -132,7 +147,7 @@ export default function GalleryPage() {
     isValidating,
   } = useSWRInfinite<ImagePage>(
     (index, prev: ImagePage | null) => {
-      if (prev && prev.images.length < PAGE_SIZE) return null; // no more pages
+      if (prev && prev.images.length < PAGE_SIZE) return null;
       return ["gallery-images", filterKeyword, filterNiche, imageSearchDebounced, index] as const;
     },
     ([, kw, nc, s, index]) =>
@@ -146,7 +161,7 @@ export default function GalleryPage() {
     { revalidateFirstPage: false }
   );
 
-  const images = pages ? pages.flatMap((p) => p.images) : [];
+  const rawImages = pages ? pages.flatMap((p) => p.images) : [];
   const total = pages?.[0]?.total ?? 0;
   const lastPage = pages?.[pages.length - 1];
   const reachedEnd = !!lastPage && lastPage.images.length < PAGE_SIZE;
@@ -157,7 +172,25 @@ export default function GalleryPage() {
     setSize(1);
   }, [filterKeyword, filterNiche, imageSearchDebounced, setSize]);
 
-  // Load next page when the sentinel scrolls into view
+  // Client-side filtering by attributes (people count, shot, archival)
+  const images = rawImages.filter((img) => {
+    const attrs = img.attributes || {};
+    if (hideArchival && attrs.archival_photo === true) return false;
+    if (labelPeopleFilter === "1") {
+      const cnt = attrs.people_count ?? attrs.people?.length;
+      if (cnt !== 1) return false;
+    } else if (labelPeopleFilter === "2") {
+      const cnt = attrs.people_count ?? attrs.people?.length;
+      if (cnt !== 2) return false;
+    }
+    if (labelShotFilter && labelShotFilter !== "any") {
+      const shot = (attrs.shot_type || "").toLowerCase();
+      if (!shot.includes(labelShotFilter.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  // Load next page when sentinel scrolls into view
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinelRef.current;
@@ -200,10 +233,16 @@ export default function GalleryPage() {
   }, [lightboxIdx, closeLightbox, showPrev, showNext]);
 
   async function handleLinkImport() {
-    if (!linkText.trim()) { notify("Paste at least one link.", "error"); return; }
+    if (!linkText.trim()) {
+      notify("Paste at least one link.", "error");
+      return;
+    }
     setLinkImporting(true);
     try {
-      const { data } = await importGalleryLinks(linkText, linkKeyword, { ...linkHints, year: linkHints.year ? Number(linkHints.year) : undefined });
+      const { data } = await importGalleryLinks(linkText, linkKeyword, {
+        ...linkHints,
+        year: linkHints.year ? Number(linkHints.year) : undefined,
+      });
       let done = false;
       while (!done) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -215,24 +254,40 @@ export default function GalleryPage() {
       notify("Link import finished.", "success");
     } catch (err: any) {
       notify(`Link import failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
-    } finally { setLinkImporting(false); }
+    } finally {
+      setLinkImporting(false);
+    }
   }
 
   async function saveLabels(relabel = false) {
     if (lightboxIdx === null) return;
     const image = images[lightboxIdx];
     try {
-      await updateGalleryImageLabels(image.id, {
-        ...labelForm,
-        year: labelForm.year ? Number(labelForm.year) : undefined,
-        people_count: labelForm.people_count ? Number(labelForm.people_count) : undefined,
-        archival_photo: labelForm.archival_photo === "true" ? true : labelForm.archival_photo === "false" ? false : undefined,
-      }, relabel);
+      await updateGalleryImageLabels(
+        image.id,
+        {
+          ...labelForm,
+          year: labelForm.year ? Number(labelForm.year) : undefined,
+          people_count: labelForm.people_count ? Number(labelForm.people_count) : undefined,
+          archival_photo:
+            labelForm.archival_photo === "true"
+              ? true
+              : labelForm.archival_photo === "false"
+              ? false
+              : undefined,
+        },
+        relabel
+      );
       await mutateImages();
       setEditingLabels(false);
       notify("Labels updated.", "success");
-    } catch (err: any) { notify(`Label update failed: ${err.response?.data?.detail ?? "unknown error"}`, "error"); }
+    } catch (err: any) {
+      notify(`Label update failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
+    }
   }
+
+  // Keywords panel expand/collapse
+  const [keywordsExpanded, setKeywordsExpanded] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -240,11 +295,10 @@ export default function GalleryPage() {
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState<number | null>(null);
 
-  // ── Manual AI closeup filter (standalone tool, not tied to any keyword's
-  // config) — setup modal (criteria + scope) -> scanning -> review modal. ──
+  // AI cleanup modal
   const [showAIFilterSetup, setShowAIFilterSetup] = useState(false);
   const [aiFilterCriteria, setAIFilterCriteria] = useState("");
-  const [aiFilterScope, setAIFilterScope] = useState(""); // "" = all keywords
+  const [aiFilterScope, setAIFilterScope] = useState("");
   const [aiFilterScanning, setAIFilterScanning] = useState(false);
   const [aiFilterProgress, setAIFilterProgress] = useState<{ done: number; total: number } | null>(null);
   const [filterReview, setFilterReview] = useState<{
@@ -266,15 +320,10 @@ export default function GalleryPage() {
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
   const [uploadKeywordInput, setUploadKeywordInput] = useState("");
 
-  // Collapsed by default — with many keywords the table pushed the image
-  // grid far down the page; collapse + an internal scroll box keep it in reach.
-  const [keywordsExpanded, setKeywordsExpanded] = useState(false);
-
-  // Extra keyword tags per image — a photo can feature more than one person.
   const [tagTarget, setTagTarget] = useState<GalleryImage | null>(null);
   const [tagInput, setTagInput] = useState("");
 
-  function set(field: string, value: unknown) {
+  function setField(field: string, value: unknown) {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
@@ -300,7 +349,7 @@ export default function GalleryPage() {
     setShowForm(true);
   }
 
-  async function handleSave() {
+  async function handleSaveKeyword() {
     if (!form.keyword.trim()) {
       notify("Keyword is required.", "error");
       return;
@@ -316,16 +365,11 @@ export default function GalleryPage() {
       mutateKeywords();
       mutateNiches();
       notify(editingId ? "Keyword updated." : "Keyword created.", "success");
-    } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      notify(`Save failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
+    } catch (e: any) {
+      notify(`Save failed: ${e.response?.data?.detail ?? "unknown error"}`, "error");
     } finally {
       setSaving(false);
     }
-  }
-
-  function handleDeleteKeyword(k: Keyword) {
-    setConfirmDeleteKeyword(k);
   }
 
   async function confirmDeleteKeywordAction() {
@@ -347,7 +391,7 @@ export default function GalleryPage() {
     setDownloading(id);
     try {
       await downloadGalleryKeywordNow(id);
-      notify("Download queued — new images will appear within a few minutes.", "success");
+      notify("Download queued — new images will appear shortly.", "success");
     } finally {
       setDownloading(null);
     }
@@ -367,7 +411,7 @@ export default function GalleryPage() {
   async function handleStartAIFilterScan() {
     const criteria = aiFilterCriteria.trim();
     if (!criteria) {
-      notify("Enter a filter criteria first.", "error");
+      notify("Enter filter criteria first.", "error");
       return;
     }
     setAIFilterScanning(true);
@@ -377,8 +421,6 @@ export default function GalleryPage() {
       const taskId = (res.data as { task_id: string }).task_id;
 
       let candidates: FilterCandidate[] | null = null;
-      // Poll for up to ~10 minutes — a global scan can span the whole
-      // gallery (thousands of images), each needing its own AI vision call.
       for (let i = 0; i < 300; i++) {
         const r = await getAIFilterScanStatus(taskId);
         const data = r.data as { status: string; done: number; total: number; candidates: FilterCandidate[] | null };
@@ -396,12 +438,12 @@ export default function GalleryPage() {
       }
 
       if (candidates === null) {
-        notify("AI filter is taking longer than expected — try again shortly.", "error");
+        notify("AI filter timed out.", "error");
         return;
       }
       mutateSettings();
       if (candidates.length === 0) {
-        notify("No images flagged — everything already matches the criteria.", "success");
+        notify("No images flagged — all match the criteria.", "success");
         setShowAIFilterSetup(false);
         return;
       }
@@ -458,9 +500,8 @@ export default function GalleryPage() {
       mutateImages();
       mutateKeywords();
       notify(`Uploaded to "${keyword}".`, "success");
-    } catch (err) {
-      const ex = err as { response?: { data?: { detail?: string } } };
-      notify(`Upload failed: ${ex.response?.data?.detail ?? "unknown error"}`, "error");
+    } catch (err: any) {
+      notify(`Upload failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -588,7 +629,7 @@ export default function GalleryPage() {
     try {
       items = JSON.parse(bulkText);
     } catch {
-      notify("Invalid JSON — please fix the syntax and try again.", "error");
+      notify("Invalid JSON — fix syntax and try again.", "error");
       return;
     }
     if (!Array.isArray(items)) {
@@ -602,445 +643,660 @@ export default function GalleryPage() {
       setBulkResult(res.data as { created: number; updated: number; errors: string[] });
       mutateKeywords();
       mutateNiches();
-    } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      notify(`Bulk import failed: ${err.response?.data?.detail ?? "unknown error"}`, "error");
+    } catch (e: any) {
+      notify(`Bulk import failed: ${e.response?.data?.detail ?? "unknown error"}`, "error");
     } finally {
       setBulkSaving(false);
     }
   }
 
-  const inputCls = "input-rect py-2";
-  const labelCls = "block text-xs font-semibold text-ink-80 mb-1";
+  const paused = Boolean(appSettings?.gallery_scraping_paused);
+  const feeds = `${total.toLocaleString()} photos for News, Discussion, FB recreate and the Instagram two-photo layout.`;
+  const subtitle = paused
+    ? `${feeds} Scraping is paused for all niches.`
+    : `${feeds} New ones arrive from keyword searches every day.`;
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1
-            className="text-display-md text-ink"
-            style={{ fontFamily: "'SF Pro Display', system-ui, sans-serif" }}
-          >
-            Gallery
-          </h1>
-          <p className="text-caption text-ink-48 mt-1">
-            {total} image{total === 1 ? "" : "s"} — used by the News-to-Image designer
-            {appSettings?.gallery_scraping_paused && (
-              <span className="ml-2 text-red-500 font-semibold">· Scraping paused globally</span>
-            )}
-          </p>
+    <div className="space-y-5 max-w-[1240px] pb-24">
+      {/* ── 1. Page Header ── */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-[26px] font-bold text-text tracking-tight">Gallery</h1>
+          <p className="text-sm text-text2">{subtitle}</p>
         </div>
-        <div className="flex gap-2 shrink-0">
+
+        <div className="flex flex-wrap items-center gap-2">
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
-          {appSettings && (
-            <button
-              onClick={toggleScrapingPause}
-              disabled={pauseToggling}
-              title={appSettings.gallery_scraping_paused ? "Resume scheduled gallery scraping" : "Pause scheduled gallery scraping (Download Now still works)"}
-              className={`btn flex items-center gap-2 ${appSettings.gallery_scraping_paused ? "btn-secondary" : "border border-hairline text-ink-80 hover:border-red-400 hover:text-red-500"}`}
-            >
-              {pauseToggling ? (
-                <Icon icon="svg-spinners:ring-resize" width={16} />
-              ) : (
-                <Icon icon={appSettings.gallery_scraping_paused ? "solar:play-bold-duotone" : "solar:pause-bold-duotone"} width={16} />
-              )}
-              {appSettings.gallery_scraping_paused ? "Resume Scraping" : "Pause Scraping"}
-            </button>
-          )}
+
+          {/* Pause / Resume scraping */}
           <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="btn btn-secondary flex items-center gap-2"
+            type="button"
+            onClick={toggleScrapingPause}
+            disabled={pauseToggling}
+            title={
+              paused
+                ? "Resume scheduled gallery scraping"
+                : "Pause scheduled gallery scraping for all niches (manual downloads still work)"
+            }
+            className={`h-10 px-3 rounded-[10px] text-sm font-medium border transition-colors ${
+              paused
+                ? "border-line bg-surface text-text hover:bg-surface2"
+                : "border-bad/60 bg-surface text-bad hover:bg-bad-soft"
+            }`}
           >
-            {uploading ? <Icon icon="svg-spinners:ring-resize" width={16} /> : <Icon icon="solar:upload-bold-duotone" width={16} />}
-            Upload Image
+            {pauseToggling ? "Updating…" : paused ? "Resume scraping" : "Pause scraping"}
           </button>
-          <button onClick={() => setShowLinkImport(true)} className="btn btn-secondary flex items-center gap-2">
-            <Icon icon="solar:link-bold-duotone" width={16} />
-            Download from Link
+
+          {/* Keywords panel toggle */}
+          <button
+            type="button"
+            onClick={() => setKeywordsExpanded((v) => !v)}
+            className={`h-10 px-3 rounded-[10px] border text-sm font-medium transition-colors ${
+              keywordsExpanded
+                ? "border-pri bg-pri-soft text-pri-text font-semibold"
+                : "border-line bg-surface text-text hover:bg-surface2"
+            }`}
+          >
+            Keywords ({keywords.length})
           </button>
-          <button onClick={openAIFilterSetup} className="btn btn-secondary flex items-center gap-2">
-            <Icon icon="solar:filter-bold-duotone" width={16} />
-            Run AI Filter
+
+          {/* AI cleanup */}
+          <button
+            type="button"
+            onClick={openAIFilterSetup}
+            className="h-10 px-3 rounded-[10px] border border-line bg-surface text-text text-sm font-medium hover:bg-surface2 transition-colors"
+          >
+            AI cleanup
           </button>
-          <button onClick={openBulkModal} className="btn btn-secondary flex items-center gap-2">
-            <Icon icon="solar:code-bold-duotone" width={16} />
-            Bulk Edit (JSON)
-          </button>
-          <button onClick={openCreate} className="btn btn-primary flex items-center gap-2">
-            <Icon icon="solar:add-circle-bold-duotone" width={16} />
-            Add Keyword
-          </button>
+
+          {/* Add photos menu */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowAddMenu((v) => !v)}
+              className="h-10 px-4 rounded-[10px] bg-pri text-pri-fg text-sm font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5"
+            >
+              <span>Add photos</span>
+              <Icon icon={showAddMenu ? "solar:alt-arrow-up-bold" : "solar:alt-arrow-down-bold"} width={14} />
+            </button>
+
+            {showAddMenu && (
+              <div
+                className="absolute right-0 top-11 w-48 rounded-xl bg-surface border border-line shadow-lg p-1.5 z-30 flex flex-col gap-0.5 text-xs font-medium"
+                onClick={() => setShowAddMenu(false)}
+              >
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-text hover:bg-surface2 text-left"
+                >
+                  <Icon icon="solar:upload-bold-duotone" width={16} />
+                  <span>Upload file</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowLinkImport(true)}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-text hover:bg-surface2 text-left"
+                >
+                  <Icon icon="solar:link-bold-duotone" width={16} />
+                  <span>Download from link</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={openCreate}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-text hover:bg-surface2 text-left"
+                >
+                  <Icon icon="solar:add-circle-bold-duotone" width={16} />
+                  <span>New keyword</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* ── Add/Edit keyword form ── */}
-      {showForm && (
-        <div className="card p-6 space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-ink">{editingId ? "Edit Keyword" : "New Download Keyword"}</h2>
-            <button onClick={() => setShowForm(false)} className="text-ink-48 hover:text-ink">
-              <Icon icon="solar:close-circle-bold-duotone" width={20} />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className={labelCls}>Keyword</label>
-              <input className={inputCls} value={form.keyword} onChange={(e) => set("keyword", e.target.value)} placeholder="marc marquez" />
+      {/* ── 2. Collapsible Keywords Panel ── */}
+      {keywordsExpanded && (
+        <section className="bg-surface border border-line rounded-[14px] p-5 space-y-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-bold text-text">
+                Keywords ({visibleKeywords.length}
+                {visibleKeywords.length !== keywords.length ? ` of ${keywords.length}` : ""})
+              </h2>
+              {filterKeyword && (
+                <button
+                  onClick={() => setFilterKeyword("")}
+                  className="inline-flex items-center gap-1 rounded-full bg-pri-soft text-pri-text px-2 py-0.5 text-[11px] font-semibold"
+                >
+                  Filtered: {filterKeyword}
+                  <Icon icon="solar:close-circle-bold" width={12} />
+                </button>
+              )}
             </div>
-            <div>
-              <label className={labelCls}>Niche / Category</label>
+
+            <div className="flex flex-wrap items-center gap-2">
               <input
-                className={inputCls}
-                list="niche-options"
-                value={form.niche}
-                onChange={(e) => set("niche", e.target.value)}
-                placeholder="F1, MotoGP, UFC…"
+                type="text"
+                value={keywordSearch}
+                onChange={(e) => setKeywordSearch(e.target.value)}
+                placeholder="Search keywords…"
+                className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-44"
               />
-              <datalist id="niche-options">
-                {niches.map((n) => (
-                  <option key={n} value={n} />
-                ))}
-              </datalist>
-            </div>
-            <div>
-              <label className={labelCls}>Max Images per Run</label>
-              <input type="number" min={1} max={200} className={inputCls} value={form.max_images} onChange={(e) => set("max_images", parseInt(e.target.value) || 50)} />
-            </div>
-            <div>
-              <label className={labelCls}>Pages to Download</label>
-              <input type="number" min={1} max={50} className={inputCls} value={form.max_pages} onChange={(e) => set("max_pages", parseInt(e.target.value) || 10)} />
-            </div>
-            <div>
-              <label className={labelCls}>Source Engine</label>
-              <select className={inputCls} value={form.source_engine} onChange={(e) => set("source_engine", e.target.value)}>
-                <option value="9router">9Router (web-fetch)</option>
-                <option value="bing">Bing (legacy)</option>
-                <option value="google">Google (legacy)</option>
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Min Width (px)</label>
-              <input type="number" min={50} className={inputCls} value={form.min_width} onChange={(e) => set("min_width", parseInt(e.target.value) || 200)} />
-            </div>
-            <div>
-              <label className={labelCls}>Min Height (px)</label>
-              <input type="number" min={50} className={inputCls} value={form.min_height} onChange={(e) => set("min_height", parseInt(e.target.value) || 200)} />
+              <button
+                onClick={openBulkModal}
+                className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs font-medium hover:bg-surface2 flex items-center gap-1.5"
+              >
+                <Icon icon="solar:code-bold-duotone" width={14} /> Bulk JSON
+              </button>
+              <button
+                onClick={openCreate}
+                className="h-8 px-2.5 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
+              >
+                <Icon icon="solar:add-circle-bold" width={14} /> Add keyword
+              </button>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 border-t border-hairline pt-4">
-            <button onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
-            <button onClick={handleSave} disabled={saving} className="btn btn-primary flex items-center gap-2">
-              {saving && <Icon icon="svg-spinners:ring-resize" width={14} />}
-              {editingId ? "Save Changes" : "Create Keyword"}
-            </button>
+          {/* Add / Edit keyword form */}
+          {showForm && (
+            <div className="p-4 rounded-xl border border-line bg-surface2 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-text">
+                  {editingId ? "Edit Keyword" : "New Download Keyword"}
+                </span>
+                <button onClick={() => setShowForm(false)} className="text-text2 hover:text-text">
+                  <Icon icon="solar:close-circle-bold" width={16} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Keyword</label>
+                  <input
+                    className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+                    value={form.keyword}
+                    onChange={(e) => setField("keyword", e.target.value)}
+                    placeholder="marc marquez"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Niche / Category</label>
+                  <input
+                    className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+                    list="niche-options-list"
+                    value={form.niche}
+                    onChange={(e) => setField("niche", e.target.value)}
+                    placeholder="MotoGP, F1, UFC…"
+                  />
+                  <datalist id="niche-options-list">
+                    {niches.map((n) => (
+                      <option key={n} value={n} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Max Images / Run</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+                    value={form.max_images}
+                    onChange={(e) => setField("max_images", parseInt(e.target.value) || 50)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Pages to Download</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+                    value={form.max_pages}
+                    onChange={(e) => setField("max_pages", parseInt(e.target.value) || 10)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Source Engine</label>
+                  <select
+                    className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+                    value={form.source_engine}
+                    onChange={(e) => setField("source_engine", e.target.value)}
+                  >
+                    <option value="9router">9Router (web-fetch)</option>
+                    <option value="bing">Bing (legacy)</option>
+                    <option value="google">Google (legacy)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Min Width (px)</label>
+                  <input
+                    type="number"
+                    min={50}
+                    className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+                    value={form.min_width}
+                    onChange={(e) => setField("min_width", parseInt(e.target.value) || 200)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Min Height (px)</label>
+                  <input
+                    type="number"
+                    min={50}
+                    className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+                    value={form.min_height}
+                    onChange={(e) => setField("min_height", parseInt(e.target.value) || 200)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="h-7 px-2.5 rounded-[6px] border border-line bg-surface text-text text-xs hover:bg-surface2"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveKeyword}
+                  disabled={saving}
+                  className="h-7 px-3 rounded-[6px] bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : editingId ? "Save Changes" : "Create Keyword"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Keywords table */}
+          <div className="max-h-[380px] overflow-y-auto rounded-lg border border-line">
+            <table className="w-full text-xs">
+              <thead className="bg-surface2 border-b border-line sticky top-0 z-10 text-text2 font-semibold">
+                <tr>
+                  <th className="px-3.5 py-2 text-left">Keyword</th>
+                  <th className="px-3 py-2 text-left">Niche</th>
+                  <th className="px-3 py-2 text-left">Images</th>
+                  <th className="px-3 py-2 text-left">Min Size</th>
+                  <th className="px-3 py-2 text-left">Pages</th>
+                  <th className="px-3 py-2 text-left">Last Download</th>
+                  <th className="px-3 py-2 text-left">Next Event</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line/60 bg-surface">
+                {visibleKeywords.map((k) => (
+                  <tr key={k.id} className="hover:bg-surface2/50 transition-colors">
+                    <td className="px-3.5 py-2 font-medium text-text">
+                      <button
+                        onClick={() => setFilterKeyword(filterKeyword === k.keyword ? "" : k.keyword)}
+                        className={`hover:underline text-left ${filterKeyword === k.keyword ? "text-pri-text font-bold" : ""}`}
+                      >
+                        {k.keyword}
+                      </button>
+                    </td>
+                    <td className="px-3 py-2 text-text2">
+                      {k.niche ? (
+                        <button
+                          onClick={() => setFilterNiche(filterNiche === k.niche ? "" : (k.niche as string))}
+                          className="px-1.5 py-0.5 rounded bg-surface2 text-text text-[11px] hover:border-line border border-transparent"
+                        >
+                          {k.niche}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-text2">{k.image_count}</td>
+                    <td className="px-3 py-2 text-text2">{k.min_width}×{k.min_height}</td>
+                    <td className="px-3 py-2 text-text2">{k.max_pages}</td>
+                    <td className="px-3 py-2 text-text2">
+                      {k.last_downloaded_at
+                        ? formatDistanceToNowStrict(new Date(k.last_downloaded_at), { addSuffix: true })
+                        : "never"}
+                    </td>
+                    <td className="px-3 py-2 text-text2">
+                      {k.next_event_date ? (
+                        <span>
+                          {format(new Date(`${k.next_event_date}T00:00:00`), "d MMM")}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {!k.is_active ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface2 text-text2">
+                          Inactive
+                        </span>
+                      ) : k.last_download_error ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-bad-soft text-bad" title={k.last_download_error}>
+                          Error
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-pri-soft text-pri-text">
+                          Active
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => handleDownloadNow(k.id)}
+                          disabled={downloading === k.id}
+                          title="Download now"
+                          className="p-1 rounded text-text2 hover:text-text hover:bg-surface2"
+                        >
+                          {downloading === k.id ? (
+                            <Icon icon="svg-spinners:ring-resize" width={14} />
+                          ) : (
+                            <Icon icon="solar:download-bold-duotone" width={14} />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => updateGalleryKeyword(k.id, { is_active: !k.is_active }).then(() => mutateKeywords())}
+                          title={k.is_active ? "Deactivate" : "Activate"}
+                          className="p-1 rounded text-text2 hover:text-text hover:bg-surface2"
+                        >
+                          <Icon icon={k.is_active ? "solar:pause-circle-bold-duotone" : "solar:play-bold-duotone"} width={14} />
+                        </button>
+                        <button
+                          onClick={() => openEdit(k)}
+                          title="Edit"
+                          className="p-1 rounded text-text2 hover:text-text hover:bg-surface2"
+                        >
+                          <Icon icon="solar:pen-bold-duotone" width={14} />
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteKeyword(k)}
+                          title="Delete"
+                          className="p-1 rounded text-text2 hover:text-bad hover:bg-bad-soft"
+                        >
+                          <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
+        </section>
       )}
 
-      {/* ── Keywords table (collapsible — can get long) ── */}
-      {keywords.length > 0 && (
-        <div className="card overflow-hidden p-0">
-          <button
-            onClick={() => setKeywordsExpanded((v) => !v)}
-            className="w-full flex items-center justify-between px-5 py-3 border-b border-hairline bg-parchment/50 hover:bg-parchment transition-colors"
-          >
-            <span className="text-sm font-bold text-ink flex items-center gap-2">
-              Keywords
-              <span className="text-ink-48 font-normal">
-                ({visibleKeywords.length}{keywordsFiltered ? ` of ${keywords.length}` : ""})
-              </span>
-            </span>
-            <span className="flex items-center gap-1 text-ink-48 text-xs font-medium">
-              {keywordsExpanded ? "Collapse" : "Expand"}
-              <Icon icon={keywordsExpanded ? "solar:alt-arrow-up-bold" : "solar:alt-arrow-down-bold"} width={16} />
-            </span>
-          </button>
+      {/* ── 3. Main Content: Left Filters Aside + Right Photos Section ── */}
+      <div className="flex flex-col md:flex-row gap-5 items-start">
+        {/* Left Sidebar Filters */}
+        <aside
+          aria-label="Filters"
+          className="w-full md:w-[240px] shrink-0 bg-surface border border-line rounded-[14px] p-3.5 flex flex-col gap-4"
+        >
+          {/* Free-text search input */}
+          <input
+            type="search"
+            aria-label="Search photos"
+            placeholder="Search photos"
+            value={imageSearch}
+            onChange={(e) => setImageSearch(e.target.value)}
+            className="h-[38px] px-2.5 rounded-[9px] border border-line bg-surface text-text text-[13px] placeholder:text-text2 outline-none focus:border-pri"
+          />
 
-          {keywordsExpanded && (
-            <>
-              <div className="flex items-center gap-2 px-5 py-3 border-b border-hairline bg-parchment/50">
-                <div className="relative">
-                  <Icon icon="solar:magnifer-linear" width={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-48" />
-                  <input
-                    type="text"
-                    value={keywordSearch}
-                    onChange={(e) => setKeywordSearch(e.target.value)}
-                    placeholder="Search keywords…"
-                    className="input-rect py-1 pl-7 text-xs w-52"
-                  />
-                  {keywordSearch && (
-                    <button
-                      onClick={() => setKeywordSearch("")}
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-ink-48 hover:text-primary-main"
-                      title="Clear search"
-                    >
-                      <Icon icon="solar:close-circle-bold" width={14} />
-                    </button>
-                  )}
-                </div>
-                <label className="text-xs font-semibold text-ink-80">Niche</label>
-                <select
-                  className="input-rect py-1 text-xs w-44"
-                  value={filterNiche}
-                  onChange={(e) => setFilterNiche(e.target.value)}
+          {/* Niche filter pills */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold tracking-wider uppercase text-text2">Niche</span>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setFilterNiche("")}
+                className={`h-[30px] px-2.5 rounded-[8px] border text-xs font-medium transition-colors ${
+                  !filterNiche
+                    ? "bg-pri-soft text-pri-text font-semibold border-pri/40"
+                    : "bg-surface text-text border-line hover:bg-surface2"
+                }`}
+              >
+                All
+              </button>
+              {niches.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setFilterNiche(filterNiche === n ? "" : n)}
+                  className={`h-[30px] px-2.5 rounded-[8px] border text-xs font-medium transition-colors ${
+                    filterNiche === n
+                      ? "bg-pri-soft text-pri-text font-semibold border-pri/40"
+                      : "bg-surface text-text border-line hover:bg-surface2"
+                  }`}
                 >
-                  <option value="">All niches</option>
-                  {niches.map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-                {filterNiche && (
-                  <button
-                    onClick={() => setFilterNiche("")}
-                    className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
-                  >
-                    {filterNiche}
-                    <Icon icon="solar:close-circle-bold" width={12} />
-                  </button>
-                )}
-              </div>
-              <div className="max-h-[420px] overflow-y-auto">
-              <table className="w-full text-caption">
-                <thead className="bg-parchment border-b border-hairline sticky top-0 z-10">
-                  <tr>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Keyword</th>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Niche</th>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Images</th>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Min Size</th>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Pages</th>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Last Download</th>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Next Event</th>
-                    <th className="px-5 py-3 text-left text-ink-80 font-semibold">Status</th>
-                    <th className="px-5 py-3"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-hairline">
-                  {visibleKeywords.map((k) => (
-                <tr key={k.id} className="hover:bg-parchment/50 transition-colors">
-                  <td className="px-5 py-3">
-                    <button onClick={() => setFilterKeyword(filterKeyword === k.keyword ? "" : k.keyword)} className="text-ink font-medium hover:text-primary-main">
-                      {k.keyword}
-                    </button>
-                  </td>
-                  <td className="px-5 py-3">
-                    {k.niche ? (
-                      <button
-                        onClick={() => setFilterNiche(filterNiche === k.niche ? "" : (k.niche as string))}
-                        className="inline-flex items-center rounded-full bg-parchment px-2 py-0.5 text-[11px] font-semibold text-ink-80 hover:text-primary-main"
-                      >
-                        {k.niche}
-                      </button>
-                    ) : (
-                      <span className="text-ink-48">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 text-ink-80">{k.image_count}</td>
-                  <td className="px-5 py-3 text-ink-80">{k.min_width}×{k.min_height}</td>
-                  <td className="px-5 py-3 text-ink-80">{k.max_pages}</td>
-                  <td className="px-5 py-3 text-ink-80">
-                    {k.last_downloaded_at ? formatDistanceToNowStrict(new Date(k.last_downloaded_at), { addSuffix: true }) : "never"}
-                  </td>
-                  <td className="px-5 py-3 text-ink-80">
-                    {k.next_event_date ? (
-                      <span title="Detected automatically — see event_calendar / gallery_downloader">
-                        {format(new Date(`${k.next_event_date}T00:00:00`), "d MMM")}{" "}
-                        <span className="text-[11px] text-ink-48">
-                          ({(() => {
-                            const days = differenceInCalendarDays(new Date(`${k.next_event_date}T00:00:00`), new Date());
-                            return days === 0 ? "today" : days > 0 ? `in ${days}d` : `${-days}d ago`;
-                          })()})
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="text-ink-48">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3">
-                    {!k.is_active ? (
-                      <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">Inactive</span>
-                    ) : k.last_download_error ? (
-                      <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700" title={k.last_download_error}>Error</span>
-                    ) : (
-                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Active</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        onClick={() => handleDownloadNow(k.id)}
-                        disabled={downloading === k.id}
-                        title="Download now"
-                        className="p-1.5 rounded-lg text-ink-48 hover:text-primary-main hover:bg-parchment transition-colors"
-                      >
-                        {downloading === k.id ? <Icon icon="svg-spinners:ring-resize" width={16} /> : <Icon icon="solar:download-bold-duotone" width={16} />}
-                      </button>
-                      <button
-                        onClick={() => updateGalleryKeyword(k.id, { is_active: !k.is_active }).then(() => mutateKeywords())}
-                        title={k.is_active ? "Deactivate" : "Activate"}
-                        className="p-1.5 rounded-lg text-ink-48 hover:text-primary-main hover:bg-parchment transition-colors"
-                      >
-                        <Icon icon={k.is_active ? "solar:pause-circle-bold-duotone" : "solar:play-bold-duotone"} width={16} />
-                      </button>
-                      <button
-                        onClick={() => openEdit(k)}
-                        title="Edit"
-                        className="p-1.5 rounded-lg text-ink-48 hover:text-primary-main hover:bg-parchment transition-colors"
-                      >
-                        <Icon icon="solar:pen-bold-duotone" width={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteKeyword(k)}
-                        title="Delete"
-                        className="p-1.5 rounded-lg text-ink-48 hover:text-red-600 hover:bg-red-50 transition-colors"
-                      >
-                        <Icon icon="solar:trash-bin-trash-bold-duotone" width={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                  {n}
+                </button>
               ))}
-                </tbody>
-              </table>
+            </div>
+          </div>
+
+          {/* Keywords list */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold tracking-wider uppercase text-text2">Keywords</span>
+              {filterKeyword && (
+                <button
+                  onClick={() => setFilterKeyword("")}
+                  className="text-[11px] text-pri-text hover:underline"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <div className="max-h-52 overflow-y-auto space-y-0.5 divide-y divide-line/40 pr-1">
+              {visibleKeywords.slice(0, 12).map((k) => (
+                <button
+                  key={k.id}
+                  type="button"
+                  onClick={() => setFilterKeyword(filterKeyword === k.keyword ? "" : k.keyword)}
+                  className={`w-full flex items-center justify-between py-1 px-1 rounded text-[13px] text-left transition-colors ${
+                    filterKeyword === k.keyword
+                      ? "bg-pri-soft text-pri-text font-semibold"
+                      : "text-text hover:bg-surface2"
+                  }`}
+                >
+                  <span className="truncate">{k.keyword}</span>
+                  <span
+                    className={`text-xs ml-2 ${
+                      k.last_download_error ? "text-bad font-semibold" : "text-text2"
+                    }`}
+                  >
+                    {k.image_count}
+                  </span>
+                </button>
+              ))}
+              {visibleKeywords.length > 12 && (
+                <button
+                  onClick={() => setKeywordsExpanded(true)}
+                  className="text-xs text-pri-text hover:underline pt-1 block"
+                >
+                  + {visibleKeywords.length - 12} more keywords…
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Labels filters */}
+          <div className="flex flex-col gap-2.5">
+            <span className="text-xs font-semibold tracking-wider uppercase text-text2">Labels</span>
+            <label className="flex flex-col gap-1 text-[13px] text-text">
+              People in photo
+              <select
+                value={labelPeopleFilter}
+                onChange={(e) => setLabelPeopleFilter(e.target.value)}
+                className="h-9 px-2 rounded-[9px] border border-line bg-surface text-text text-xs"
+              >
+                <option value="any">Any</option>
+                <option value="1">1 person</option>
+                <option value="2">2 people</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[13px] text-text">
+              Shot
+              <select
+                value={labelShotFilter}
+                onChange={(e) => setLabelShotFilter(e.target.value)}
+                className="h-9 px-2 rounded-[9px] border border-line bg-surface text-text text-xs"
+              >
+                <option value="any">Any</option>
+                <option value="portrait">Portrait</option>
+                <option value="action">Action</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-[13px] text-text cursor-pointer pt-0.5">
+              <input
+                type="checkbox"
+                checked={hideArchival}
+                onChange={(e) => setHideArchival(e.target.checked)}
+                className="w-4 h-4 rounded accent-pri border-line"
+              />
+              <span>Hide archival photos</span>
+            </label>
+          </div>
+
+          {/* Auto-download status */}
+          <div className="flex flex-col gap-1.5 pt-3 border-t border-line text-[13px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-text font-medium">Auto-download</span>
+              <span
+                className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                  paused ? "bg-warn-soft text-warn" : "bg-pri-soft text-pri-text"
+                }`}
+              >
+                {paused ? "Paused" : "Running"}
+              </span>
+            </div>
+            <span className="text-xs text-text2 leading-relaxed">
+              Pause scraping stops the scheduled keyword downloads for every niche. Add photos and manual downloads still work.
+            </span>
+          </div>
+        </aside>
+
+        {/* Right Section: Photos Grid */}
+        <section aria-label="Photos" className="flex-1 min-w-0 w-full flex flex-col gap-3">
+          {images.length === 0 ? (
+            <div className="bg-surface border border-line rounded-[14px] p-10 text-center text-text2">
+              <Icon icon="solar:gallery-wide-bold-duotone" width={40} className="mx-auto mb-3 opacity-40" />
+              <p className="text-sm">
+                {keywords.length === 0
+                  ? "No keywords yet. Add one and queue a download, or upload images manually."
+                  : "No images match the current filters."}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                {images.map((img, idx) => {
+                  const attrs = img.attributes || {};
+                  const labelsList: string[] = [];
+                  if (attrs.people && attrs.people.length > 0) {
+                    labelsList.push(attrs.people.length === 1 ? "1 person" : `${attrs.people.length} people`);
+                  } else if (attrs.people_count) {
+                    labelsList.push(attrs.people_count === 1 ? "1 person" : `${attrs.people_count} people`);
+                  }
+                  if (attrs.shot_type) labelsList.push(attrs.shot_type);
+
+                  return (
+                    <div key={img.id} className="flex flex-col gap-1.5 group">
+                      <div className="relative aspect-[4/3] rounded-[10px] overflow-hidden bg-surface2 border border-line">
+                        {/* Used badge */}
+                        {img.is_used && (
+                          <span className="absolute right-2 top-2 px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[11px] font-semibold z-10">
+                            Used
+                          </span>
+                        )}
+
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={img.public_url}
+                          alt={img.keyword}
+                          className="w-full h-full object-cover cursor-zoom-in"
+                          loading="lazy"
+                          onClick={() => setLightboxIdx(idx)}
+                        />
+
+                        {/* Hover delete button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteImage(img);
+                          }}
+                          title="Delete image"
+                          className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/60 text-white opacity-0 group-hover:opacity-100 hover:bg-bad transition-all z-10"
+                        >
+                          <Icon icon="solar:trash-bin-trash-bold" width={14} />
+                        </button>
+                      </div>
+
+                      <div className="px-0.5">
+                        <span className="text-[13px] font-semibold text-text truncate block">
+                          {img.keyword}
+                        </span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {labelsList.map((l) => (
+                            <span
+                              key={l}
+                              className="px-1.5 py-0.5 rounded-[6px] bg-surface2 text-text2 text-[11px]"
+                            >
+                              {l}
+                            </span>
+                          ))}
+                          {img.extra_keywords?.map((tag) => (
+                            <span
+                              key={tag}
+                              className="px-1.5 py-0.5 rounded-[6px] bg-surface2 text-text2 text-[11px] flex items-center gap-0.5"
+                            >
+                              {tag}
+                              <button
+                                onClick={() => removeTag(img, tag)}
+                                className="hover:text-bad"
+                                title={`Remove tag ${tag}`}
+                              >
+                                <Icon icon="solar:close-circle-bold" width={10} />
+                              </button>
+                            </span>
+                          ))}
+                          <button
+                            onClick={() => openTagDialog(img)}
+                            title="Add tag"
+                            className="px-1 py-0.5 rounded-[6px] border border-dashed border-line text-text2 hover:text-pri-text text-[11px] inline-flex items-center gap-0.5"
+                          >
+                            <Icon icon="solar:add-circle-linear" width={10} /> tag
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Infinite-scroll sentinel + counter */}
+              <div ref={sentinelRef} className="h-6" />
+              <div className="text-center py-3 text-xs text-text2">
+                {loadingMore ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Icon icon="svg-spinners:180-ring" width={14} /> Loading more…
+                  </span>
+                ) : (
+                  `Showing ${images.length} of ${total.toLocaleString()} · loads more as you scroll`
+                )}
               </div>
             </>
           )}
-        </div>
-      )}
-
-      {/* ── Image grid ── */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold text-ink">
-              Images
-              {pages && <span className="text-ink-48 font-normal text-sm ml-1">({total})</span>}
-            </h2>
-            {filterKeyword && (
-              <button
-                onClick={() => setFilterKeyword("")}
-                className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
-              >
-                {filterKeyword}
-                <Icon icon="solar:close-circle-bold" width={12} />
-              </button>
-            )}
-            {filterNiche && (
-              <button
-                onClick={() => setFilterNiche("")}
-                className="inline-flex items-center gap-1 rounded-full bg-primary-main/10 text-primary-main px-2.5 py-0.5 text-[11px] font-semibold"
-              >
-                {filterNiche}
-                <Icon icon="solar:close-circle-bold" width={12} />
-              </button>
-            )}
-          </div>
-          <div className="relative">
-            <Icon icon="solar:magnifer-linear" width={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-48" />
-            <input
-              type="text"
-              value={imageSearch}
-              onChange={(e) => setImageSearch(e.target.value)}
-              placeholder="Search images by keyword…"
-              className="input-rect py-1.5 pl-7 text-xs w-64"
-            />
-            {imageSearch && (
-              <button
-                onClick={() => setImageSearch("")}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-ink-48 hover:text-primary-main"
-                title="Clear search"
-              >
-                <Icon icon="solar:close-circle-bold" width={14} />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {images.length === 0 ? (
-          <div className="card p-10 text-center text-ink-48">
-            <Icon icon="solar:gallery-wide-bold-duotone" width={40} className="mx-auto mb-3 opacity-40" />
-            <p className="text-sm">
-              {keywords.length === 0
-                ? "No keywords yet. Add one and hit Download Now, or upload images manually."
-                : "No images yet — queue a download or upload manually."}
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {images.map((img, idx) => (
-                <div key={img.id} className="card p-0 overflow-hidden group relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={img.public_url}
-                    alt={img.keyword}
-                    className="w-full h-36 object-cover cursor-zoom-in"
-                    loading="lazy"
-                    onClick={() => setLightboxIdx(idx)}
-                  />
-                  <div className="p-2">
-                    <p className="text-[11px] font-semibold text-ink truncate">{img.keyword}</p>
-                    <p className="text-[10px] text-ink-48">
-                      {img.width}×{img.height} · {img.source_engine}
-                      {img.is_used && <span className="ml-1 text-emerald-600 font-semibold">used</span>}
-                    </p>
-                    {img.downloaded_at && (
-                      <p className="text-[10px] text-ink-48">{formatDistanceToNowStrict(new Date(img.downloaded_at), { addSuffix: true })}</p>
-                    )}
-                    {/* Extra keyword tags — a photo can feature more than one person */}
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {img.extra_keywords.map((tag) => (
-                        <span
-                          key={tag}
-                          className="inline-flex items-center gap-0.5 rounded-full bg-parchment px-1.5 py-0.5 text-[9px] font-medium text-ink-80"
-                        >
-                          {tag}
-                          <button onClick={() => removeTag(img, tag)} title={`Remove "${tag}"`} className="hover:text-red-600">
-                            <Icon icon="solar:close-circle-bold" width={9} />
-                          </button>
-                        </span>
-                      ))}
-                      <button
-                        onClick={() => openTagDialog(img)}
-                        title="Tag another person in this photo"
-                        className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-hairline px-1.5 py-0.5 text-[9px] font-medium text-ink-48 hover:text-primary-main hover:border-primary-main transition-colors"
-                      >
-                        <Icon icon="solar:add-circle-bold" width={9} /> tag
-                      </button>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteImage(img)}
-                    title="Delete"
-                    className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/40 text-white opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all"
-                  >
-                    <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            {/* Infinite-scroll sentinel + status */}
-            <div ref={sentinelRef} className="h-10" />
-            <div className="text-center py-4 text-caption text-ink-48">
-              {loadingMore ? (
-                <span className="inline-flex items-center gap-2">
-                  <Icon icon="svg-spinners:180-ring" width={16} /> Loading more…
-                </span>
-              ) : reachedEnd ? (
-                `All ${images.length} images loaded`
-              ) : null}
-            </div>
-          </>
-        )}
+        </section>
       </div>
 
       {/* ── Lightbox ── */}
       {lightboxIdx !== null && images[lightboxIdx] && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4"
           onClick={closeLightbox}
         >
           <button
@@ -1053,7 +1309,10 @@ export default function GalleryPage() {
 
           {lightboxIdx > 0 && (
             <button
-              onClick={(e) => { e.stopPropagation(); showPrev(); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                showPrev();
+              }}
               title="Previous (←)"
               className="absolute left-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
             >
@@ -1062,7 +1321,10 @@ export default function GalleryPage() {
           )}
           {lightboxIdx < images.length - 1 && (
             <button
-              onClick={(e) => { e.stopPropagation(); showNext(); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                showNext();
+              }}
               title="Next (→)"
               className="absolute right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
             >
@@ -1070,14 +1332,17 @@ export default function GalleryPage() {
             </button>
           )}
 
-          <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="max-w-[90vw] max-h-[90vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={images[lightboxIdx].public_url}
               alt={images[lightboxIdx].keyword}
-              className="max-w-[90vw] max-h-[82vh] object-contain rounded-lg"
+              className="max-w-[90vw] max-h-[75vh] object-contain rounded-lg"
             />
-            <div className="mt-3 text-center text-white/80 text-caption">
+            <div className="mt-3 text-center text-white/80 text-xs">
               <span className="font-semibold text-white">{images[lightboxIdx].keyword}</span>
               {images[lightboxIdx].extra_keywords.length > 0 && (
                 <span className="text-white/60"> (+ {images[lightboxIdx].extra_keywords.join(", ")})</span>
@@ -1086,21 +1351,33 @@ export default function GalleryPage() {
               {" · "}{images[lightboxIdx].source_engine}
               {" · "}{lightboxIdx + 1}/{images.length}
             </div>
-            <div className="mt-4 w-full max-w-xl rounded-lg bg-black/50 p-4 text-left text-sm text-white/85">
+
+            <div className="mt-3 w-full max-w-xl rounded-xl bg-black/60 border border-white/20 p-4 text-left text-xs text-white/90">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-semibold text-white">Labels</span>
                 <button
-                  className="text-xs text-white/70 hover:text-white"
+                  className="text-xs text-white/70 hover:text-white underline"
                   onClick={() => {
                     const attrs = images[lightboxIdx].attributes || {};
                     const event = attrs.event || {};
-                    setLabelForm({ shot_type: attrs.shot_type || "", session: event.session || "", year: event.year ? String(event.year) : "", event_name: event.event_name || "", archival_photo: attrs.archival_photo == null ? "" : String(attrs.archival_photo), people_count: attrs.people_count == null ? "" : String(attrs.people_count), label: "" });
+                    setLabelForm({
+                      shot_type: attrs.shot_type || "",
+                      session: event.session || "",
+                      year: event.year ? String(event.year) : "",
+                      event_name: event.event_name || "",
+                      archival_photo: attrs.archival_photo == null ? "" : String(attrs.archival_photo),
+                      people_count: attrs.people_count == null ? "" : String(attrs.people_count),
+                      label: "",
+                    });
                     setEditingLabels(true);
                   }}
-                >Edit</button>
+                >
+                  Edit
+                </button>
               </div>
+
               {!editingLabels ? (
-                <div className="grid grid-cols-2 gap-1 text-xs">
+                <div className="grid grid-cols-2 gap-1 text-white/80">
                   <span>People: {(images[lightboxIdx].attributes.people || []).map((p: any) => p.name).join(", ") || "—"}</span>
                   <span>Shot: {images[lightboxIdx].attributes.shot_type || "—"}</span>
                   <span>Event: {images[lightboxIdx].attributes.event?.event_name || "—"}</span>
@@ -1109,13 +1386,53 @@ export default function GalleryPage() {
                   <span>Archival: {images[lightboxIdx].attributes.archival_photo == null ? "—" : String(images[lightboxIdx].attributes.archival_photo)}</span>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <input className="input-rect py-1 text-ink" placeholder="Shot type" value={labelForm.shot_type || ""} onChange={(e) => setLabelForm({ ...labelForm, shot_type: e.target.value })} />
+                <div className="space-y-2 text-text">
+                  <input
+                    className="h-8 px-2.5 rounded border border-line bg-surface text-xs w-full text-text"
+                    placeholder="Shot type"
+                    value={labelForm.shot_type || ""}
+                    onChange={(e) => setLabelForm({ ...labelForm, shot_type: e.target.value })}
+                  />
                   <div className="grid grid-cols-2 gap-2">
-                    {(["session", "event_name", "year", "people_count"] as const).map((field) => <input key={field} className="input-rect py-1 text-ink" placeholder={field.replace("_", " ")} value={labelForm[field] || ""} onChange={(e) => setLabelForm({ ...labelForm, [field]: e.target.value })} />)}
+                    {(["session", "event_name", "year", "people_count"] as const).map((field) => (
+                      <input
+                        key={field}
+                        className="h-8 px-2.5 rounded border border-line bg-surface text-xs w-full text-text"
+                        placeholder={field.replace("_", " ")}
+                        value={labelForm[field] || ""}
+                        onChange={(e) => setLabelForm({ ...labelForm, [field]: e.target.value })}
+                      />
+                    ))}
                   </div>
-                  <select className="input-rect py-1 text-ink" value={labelForm.archival_photo || ""} onChange={(e) => setLabelForm({ ...labelForm, archival_photo: e.target.value })}><option value="">Archival photo</option><option value="true">Yes</option><option value="false">No</option></select>
-                  <div className="flex justify-end gap-2"><button className="btn btn-secondary text-xs" onClick={() => setEditingLabels(false)}>Cancel</button><button className="btn btn-secondary text-xs" onClick={() => saveLabels(true)}>Save + re-label with AI</button><button className="btn btn-primary text-xs" onClick={() => saveLabels(false)}>Save</button></div>
+                  <select
+                    className="h-8 px-2 rounded border border-line bg-surface text-xs w-full text-text"
+                    value={labelForm.archival_photo || ""}
+                    onChange={(e) => setLabelForm({ ...labelForm, archival_photo: e.target.value })}
+                  >
+                    <option value="">Archival photo</option>
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      className="h-7 px-2.5 rounded bg-surface2 text-text text-xs"
+                      onClick={() => setEditingLabels(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="h-7 px-2.5 rounded bg-surface text-text text-xs border border-line"
+                      onClick={() => saveLabels(true)}
+                    >
+                      Save + re-label with AI
+                    </button>
+                    <button
+                      className="h-7 px-3 rounded bg-pri text-pri-fg text-xs font-semibold"
+                      onClick={() => saveLabels(false)}
+                    >
+                      Save
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1123,68 +1440,163 @@ export default function GalleryPage() {
         </div>
       )}
 
+      {/* ── Link Import Modal ── */}
       {showLinkImport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !linkImporting && setShowLinkImport(false)}>
-          <div className="card w-full max-w-lg p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between"><h2 className="text-base font-bold text-ink">Download from Link</h2><button onClick={() => setShowLinkImport(false)} className="text-ink-48 hover:text-ink"><Icon icon="solar:close-circle-bold-duotone" width={20} /></button></div>
-            <textarea className="input-rect min-h-[150px]" value={linkText} onChange={(e) => setLinkText(e.target.value)} placeholder="one link per line, max 20 — Getty page links or direct image links" />
-            <input className="input-rect" value={linkKeyword} onChange={(e) => setLinkKeyword(e.target.value)} placeholder="Keyword (optional; auto-detect Getty caption)" />
-            <div className="grid grid-cols-2 gap-2"><input className="input-rect" value={linkHints.people} onChange={(e) => setLinkHints({ ...linkHints, people: e.target.value })} placeholder="People (comma separated)" /><input className="input-rect" value={linkHints.session} onChange={(e) => setLinkHints({ ...linkHints, session: e.target.value })} placeholder="Session" /><input className="input-rect" value={linkHints.event_name} onChange={(e) => setLinkHints({ ...linkHints, event_name: e.target.value })} placeholder="Event name" /><input className="input-rect" value={linkHints.year} onChange={(e) => setLinkHints({ ...linkHints, year: e.target.value })} placeholder="Year" /><input className="input-rect col-span-2" value={linkHints.note} onChange={(e) => setLinkHints({ ...linkHints, note: e.target.value })} maxLength={300} placeholder="Owner note (optional)" /></div>
-            {linkResults.length > 0 && <div className="max-h-40 overflow-auto space-y-1 text-xs">{linkResults.map((result) => <div key={result.url} className="flex justify-between gap-2"><span className="truncate">{result.url}</span><span className={result.status === "saved" ? "text-green-600" : "text-red-600"}>{result.status}{result.reason ? `: ${result.reason}` : ""}</span></div>)}</div>}
-            <div className="flex justify-end gap-2"><button className="btn btn-secondary" onClick={() => setShowLinkImport(false)} disabled={linkImporting}>Close</button><button className="btn btn-primary" onClick={handleLinkImport} disabled={linkImporting}>{linkImporting ? "Importing…" : "Download"}</button></div>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !linkImporting && setShowLinkImport(false)}
+        >
+          <div className="bg-surface border border-line rounded-[14px] w-full max-w-lg p-5 space-y-3.5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-text">Download from Link</h2>
+              <button onClick={() => setShowLinkImport(false)} className="text-text2 hover:text-text">
+                <Icon icon="solar:close-circle-bold" width={20} />
+              </button>
+            </div>
+            <textarea
+              className="w-full min-h-[120px] p-2.5 rounded-[10px] border border-line bg-surface text-text text-xs font-mono"
+              value={linkText}
+              onChange={(e) => setLinkText(e.target.value)}
+              placeholder="one link per line, max 20 — Getty page links or direct image links"
+            />
+            <input
+              className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
+              value={linkKeyword}
+              onChange={(e) => setLinkKeyword(e.target.value)}
+              placeholder="Keyword (optional; auto-detect Getty caption)"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs"
+                value={linkHints.people}
+                onChange={(e) => setLinkHints({ ...linkHints, people: e.target.value })}
+                placeholder="People (comma separated)"
+              />
+              <input
+                className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs"
+                value={linkHints.session}
+                onChange={(e) => setLinkHints({ ...linkHints, session: e.target.value })}
+                placeholder="Session"
+              />
+              <input
+                className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs"
+                value={linkHints.event_name}
+                onChange={(e) => setLinkHints({ ...linkHints, event_name: e.target.value })}
+                placeholder="Event name"
+              />
+              <input
+                className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs"
+                value={linkHints.year}
+                onChange={(e) => setLinkHints({ ...linkHints, year: e.target.value })}
+                placeholder="Year"
+              />
+              <input
+                className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs col-span-2"
+                value={linkHints.note}
+                onChange={(e) => setLinkHints({ ...linkHints, note: e.target.value })}
+                placeholder="Owner note (optional)"
+                maxLength={300}
+              />
+            </div>
+            {linkResults.length > 0 && (
+              <div className="max-h-36 overflow-auto space-y-1 text-xs">
+                {linkResults.map((r) => (
+                  <div key={r.url} className="flex justify-between gap-2">
+                    <span className="truncate">{r.url}</span>
+                    <span className={r.status === "saved" ? "text-pri-text" : "text-bad"}>
+                      {r.status}{r.reason ? `: ${r.reason}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2 border-t border-line">
+              <button
+                className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text text-xs"
+                onClick={() => setShowLinkImport(false)}
+                disabled={linkImporting}
+              >
+                Close
+              </button>
+              <button
+                className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold disabled:opacity-50"
+                onClick={handleLinkImport}
+                disabled={linkImporting}
+              >
+                {linkImporting ? "Importing…" : "Download"}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* ── Bulk edit / import keywords (JSON) ── */}
+      {/* ── Bulk Import Modal ── */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowBulkModal(false)}>
-          <div className="card w-full max-w-3xl max-h-[85vh] flex flex-col p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowBulkModal(false)}
+        >
+          <div
+            className="bg-surface border border-line rounded-[14px] w-full max-w-3xl max-h-[85vh] flex flex-col p-5 space-y-3.5"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-bold text-ink">Bulk Edit / Import Keywords</h2>
-                <p className="text-[11px] text-ink-48 mt-0.5">
-                  Edit this JSON directly, or replace it with an uploaded file, then Save. Matching is by
-                  <code className="mx-1 px-1 py-0.5 rounded bg-parchment">keyword</code>
-                  — existing keywords are updated in place, new ones are created. Nothing is deleted by an import.
+                <h2 className="text-base font-bold text-text">Bulk Edit / Import Keywords</h2>
+                <p className="text-[11px] text-text2 mt-0.5">
+                  Edit JSON directly or load from file. Matching by keyword.
                 </p>
               </div>
-              <button onClick={() => setShowBulkModal(false)} className="text-ink-48 hover:text-ink shrink-0">
-                <Icon icon="solar:close-circle-bold-duotone" width={20} />
+              <button onClick={() => setShowBulkModal(false)} className="text-text2 hover:text-text">
+                <Icon icon="solar:close-circle-bold" width={20} />
               </button>
             </div>
 
             <textarea
-              className="input-rect font-mono text-xs flex-1 min-h-[320px] resize-none"
+              className="w-full flex-1 min-h-[300px] p-2.5 rounded-[10px] border border-line bg-surface text-text text-xs font-mono resize-none"
               spellCheck={false}
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
             />
 
             {bulkResult && (
-              <div className="rounded-lg bg-parchment px-3 py-2 text-xs text-ink-80">
+              <div className="rounded-lg bg-surface2 px-3 py-2 text-xs text-text">
                 {bulkResult.created} created, {bulkResult.updated} updated
                 {bulkResult.errors.length > 0 && (
-                  <span className="text-red-600"> — {bulkResult.errors.length} error(s): {bulkResult.errors.join("; ")}</span>
+                  <span className="text-bad"> — {bulkResult.errors.join("; ")}</span>
                 )}
               </div>
             )}
 
-            <div className="flex items-center justify-between gap-2 border-t border-hairline pt-4">
+            <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
               <div className="flex gap-2">
                 <input ref={bulkFileRef} type="file" accept="application/json,.json" className="hidden" onChange={handleBulkFile} />
-                <button onClick={() => bulkFileRef.current?.click()} className="btn btn-secondary text-xs flex items-center gap-1.5">
+                <button
+                  onClick={() => bulkFileRef.current?.click()}
+                  className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs flex items-center gap-1.5"
+                >
                   <Icon icon="solar:folder-open-bold-duotone" width={14} /> Load file
                 </button>
-                <button onClick={handleBulkDownload} className="btn btn-secondary text-xs flex items-center gap-1.5">
+                <button
+                  onClick={handleBulkDownload}
+                  className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs flex items-center gap-1.5"
+                >
                   <Icon icon="solar:download-bold-duotone" width={14} /> Download .json
                 </button>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setShowBulkModal(false)} className="btn btn-secondary">Close</button>
-                <button onClick={handleBulkSave} disabled={bulkSaving} className="btn btn-primary flex items-center gap-2">
-                  {bulkSaving && <Icon icon="svg-spinners:ring-resize" width={14} />}
-                  Save
+                <button
+                  onClick={() => setShowBulkModal(false)}
+                  className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text text-xs"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={handleBulkSave}
+                  disabled={bulkSaving}
+                  className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold disabled:opacity-50"
+                >
+                  {bulkSaving ? "Saving…" : "Save"}
                 </button>
               </div>
             </div>
@@ -1192,32 +1604,32 @@ export default function GalleryPage() {
         </div>
       )}
 
-      {/* ── AI filter setup modal (criteria + scope, then scan) ── */}
+      {/* ── AI Filter Setup Modal ── */}
       {showAIFilterSetup && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={() => !aiFilterScanning && setShowAIFilterSetup(false)}
         >
-          <div className="card w-full max-w-lg p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-surface border border-line rounded-[14px] w-full max-w-lg p-5 space-y-3.5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-bold text-ink">Run AI Filter</h2>
-                <p className="text-[11px] text-ink-48 mt-0.5">
-                  Nothing is deleted automatically — you&apos;ll get a list to review and confirm first.
+                <h2 className="text-base font-bold text-text">Run AI Filter</h2>
+                <p className="text-[11px] text-text2 mt-0.5">
+                  Nothing is deleted automatically — review and confirm candidates first.
                 </p>
               </div>
               <button
                 onClick={() => !aiFilterScanning && setShowAIFilterSetup(false)}
-                className="text-ink-48 hover:text-ink shrink-0"
+                className="text-text2 hover:text-text"
               >
-                <Icon icon="solar:close-circle-bold-duotone" width={20} />
+                <Icon icon="solar:close-circle-bold" width={20} />
               </button>
             </div>
 
             <div>
-              <label className={labelCls}>Filter Criteria</label>
+              <label className="block text-xs font-semibold text-text mb-1">Filter Criteria</label>
               <textarea
-                className={inputCls}
+                className="w-full min-h-[80px] p-2.5 rounded-[10px] border border-line bg-surface text-text text-xs"
                 rows={3}
                 value={aiFilterCriteria}
                 onChange={(e) => setAIFilterCriteria(e.target.value)}
@@ -1227,22 +1639,24 @@ export default function GalleryPage() {
             </div>
 
             <div>
-              <label className={labelCls}>Scope</label>
+              <label className="block text-xs font-semibold text-text mb-1">Scope</label>
               <select
-                className={inputCls}
+                className="h-9 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs w-full"
                 value={aiFilterScope}
                 onChange={(e) => setAIFilterScope(e.target.value)}
                 disabled={aiFilterScanning}
               >
                 <option value="">All keywords (entire gallery)</option>
                 {keywords.map((k) => (
-                  <option key={k.id} value={k.keyword}>{k.keyword}</option>
+                  <option key={k.id} value={k.keyword}>
+                    {k.keyword}
+                  </option>
                 ))}
               </select>
             </div>
 
             {aiFilterScanning && (
-              <div className="rounded-lg bg-parchment px-3 py-2 text-xs text-ink-80 flex items-center gap-2">
+              <div className="rounded-lg bg-surface2 px-3 py-2 text-xs text-text flex items-center gap-2">
                 <Icon icon="svg-spinners:ring-resize" width={14} />
                 {aiFilterProgress
                   ? `Scanning ${aiFilterProgress.done} of ${aiFilterProgress.total} images…`
@@ -1250,52 +1664,50 @@ export default function GalleryPage() {
               </div>
             )}
 
-            <div className="flex justify-end gap-2 border-t border-hairline pt-4">
+            <div className="flex justify-end gap-2 border-t border-line pt-3">
               <button
                 onClick={() => setShowAIFilterSetup(false)}
                 disabled={aiFilterScanning}
-                className="btn btn-secondary"
+                className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text text-xs"
               >
                 Cancel
               </button>
               <button
                 onClick={handleStartAIFilterScan}
                 disabled={aiFilterScanning || !aiFilterCriteria.trim()}
-                className="btn btn-primary flex items-center gap-2"
+                className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold disabled:opacity-50"
               >
-                {aiFilterScanning && <Icon icon="svg-spinners:ring-resize" width={14} />}
-                Scan
+                {aiFilterScanning ? "Scanning…" : "Scan"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── AI closeup filter review modal ── */}
+      {/* ── AI Filter Review Modal ── */}
       {filterReview && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={() => !filterConfirming && setFilterReview(null)}
         >
           <div
-            className="card w-full max-w-3xl max-h-[85vh] flex flex-col p-6 space-y-4"
+            className="bg-surface border border-line rounded-[14px] w-full max-w-3xl max-h-[85vh] flex flex-col p-5 space-y-3.5"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-bold text-ink">
+                <h2 className="text-base font-bold text-text">
                   AI Filter Review — {filterReview.scopeLabel}
                 </h2>
-                <p className="text-[11px] text-ink-48 mt-0.5">
-                  {filterReview.candidates.length} image(s) did NOT match the filter criteria. Checked images
-                  will be deleted — uncheck any you want to keep.
+                <p className="text-[11px] text-text2 mt-0.5">
+                  {filterReview.candidates.length} image(s) did NOT match criteria. Checked images will be deleted.
                 </p>
               </div>
               <button
                 onClick={() => !filterConfirming && setFilterReview(null)}
-                className="text-ink-48 hover:text-ink shrink-0"
+                className="text-text2 hover:text-text"
               >
-                <Icon icon="solar:close-circle-bold-duotone" width={20} />
+                <Icon icon="solar:close-circle-bold" width={20} />
               </button>
             </div>
 
@@ -1306,17 +1718,19 @@ export default function GalleryPage() {
                     prev ? { ...prev, selected: new Set(prev.candidates.map((c) => c.id)) } : prev
                   )
                 }
-                className="text-primary-main hover:underline font-medium"
+                className="text-pri-text hover:underline font-semibold"
               >
                 Select all
               </button>
               <button
                 onClick={() => setFilterReview((prev) => (prev ? { ...prev, selected: new Set() } : prev))}
-                className="text-primary-main hover:underline font-medium"
+                className="text-pri-text hover:underline font-semibold"
               >
                 Select none
               </button>
-              <span className="text-ink-48">{filterReview.selected.size} of {filterReview.candidates.length} selected for deletion</span>
+              <span className="text-text2">
+                {filterReview.selected.size} of {filterReview.candidates.length} selected for deletion
+              </span>
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -1327,19 +1741,19 @@ export default function GalleryPage() {
                     <label
                       key={c.id}
                       className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-colors ${
-                        checked ? "border-red-500" : "border-transparent"
+                        checked ? "border-bad" : "border-transparent"
                       }`}
                     >
                       <input
                         type="checkbox"
-                        className="absolute top-1.5 left-1.5 z-10 w-4 h-4 accent-red-600"
+                        className="absolute top-1.5 left-1.5 z-10 w-4 h-4 accent-bad"
                         checked={checked}
                         onChange={() => toggleFilterCandidate(c.id)}
                       />
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={c.public_url} alt="" className="w-full h-28 object-cover" loading="lazy" />
-                      <div className={`absolute inset-0 pointer-events-none ${checked ? "bg-red-600/20" : ""}`} />
-                      <span className="absolute bottom-1 left-1.5 text-[9px] font-medium text-white bg-black/60 rounded px-1 py-0.5 truncate max-w-[70%]">
+                      <div className={`absolute inset-0 pointer-events-none ${checked ? "bg-bad/15" : ""}`} />
+                      <span className="absolute bottom-1 left-1.5 text-[10px] font-medium text-white bg-black/60 rounded px-1 py-0.5 truncate max-w-[70%]">
                         {c.keyword}
                       </span>
                       <span className="absolute bottom-1 right-1.5 text-[9px] font-semibold text-white bg-black/60 rounded px-1 py-0.5">
@@ -1351,27 +1765,27 @@ export default function GalleryPage() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-hairline pt-4">
+            <div className="flex justify-end gap-2 border-t border-line pt-3">
               <button
                 onClick={() => setFilterReview(null)}
                 disabled={filterConfirming}
-                className="btn btn-secondary"
+                className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text text-xs"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmFilterDelete}
                 disabled={filterConfirming || filterReview.selected.size === 0}
-                className="btn btn-primary bg-red-600 hover:bg-red-700 flex items-center gap-2"
+                className="h-8 px-3 rounded-[8px] bg-bad text-white text-xs font-semibold disabled:opacity-50"
               >
-                {filterConfirming && <Icon icon="svg-spinners:ring-resize" width={14} />}
-                Delete Selected ({filterReview.selected.size})
+                {filterConfirming ? "Deleting…" : `Delete Selected (${filterReview.selected.size})`}
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* ── Dialogs ── */}
       <ConfirmDialog
         open={!!confirmDeleteKeyword}
         title={`Delete keyword "${confirmDeleteKeyword?.keyword ?? ""}"?`}
@@ -1386,7 +1800,7 @@ export default function GalleryPage() {
       <ConfirmDialog
         open={!!confirmDeleteImage}
         title="Delete this image?"
-        message="The file is removed and this exact photo will never be downloaded again for its keyword."
+        message="The file is removed and this photo will not be downloaded again for its keyword."
         confirmLabel="Delete"
         danger
         loading={deletingImage}

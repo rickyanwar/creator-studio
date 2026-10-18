@@ -1,5 +1,6 @@
 from typing import Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, DB
 from app.schemas.publish_job import PublishJobOut, PublishJobCaptionUpdate, RegenerateCaptionRequest
@@ -253,9 +254,66 @@ def get_design_payload(job_id: int, db: DB, _: CurrentUser):
             "canvas_width": template.canvas_width,
             "canvas_height": template.canvas_height,
             "template_json": template.template_json,
+            "category": template.category if template else category,
         } if template else None,
         "image_candidates": candidates,
+        "design_draft_json": job.design_draft_json,
+        "saved_at": job.design_draft_saved_at.isoformat() if job.design_draft_saved_at else None,
+        "design_draft_saved_at": job.design_draft_saved_at.isoformat() if job.design_draft_saved_at else None,
     }
+
+
+class DesignDraftIn(BaseModel):
+    draft: dict = Field(..., description="Fabric canvas JSON serialization")
+
+
+@router.put("/{job_id}/design-draft")
+def save_design_draft(job_id: int, body: DesignDraftIn, db: DB, _: CurrentUser):
+    """Save an in-progress design draft for a pending_design job."""
+    import json
+    from datetime import datetime, timezone
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+    job = db.query(PublishJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Publish job not found")
+
+    if job.status != PublishJobStatus.pending_design:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot save draft for job in status: {job.status.value}",
+        )
+
+    try:
+        raw_bytes = json.dumps(body.draft).encode("utf-8")
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid draft JSON: {e}")
+
+    if len(raw_bytes) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Draft exceeds maximum allowed size (~2 MB)")
+
+    saved_at = datetime.now(timezone.utc)
+    job.design_draft_json = body.draft
+    job.design_draft_saved_at = saved_at
+    db.commit()
+
+    return {"status": "ok", "saved_at": saved_at.isoformat()}
+
+
+@router.delete("/{job_id}/design-draft")
+def delete_design_draft(job_id: int, db: DB, _: CurrentUser):
+    """Discard an in-progress design draft."""
+    from app.models.publish_jobs import PublishJob
+
+    job = db.query(PublishJob).filter_by(id=job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Publish job not found")
+
+    job.design_draft_json = None
+    job.design_draft_saved_at = None
+    db.commit()
+
+    return {"status": "ok"}
 
 
 @router.post("/{job_id}/design-image", response_model=PublishJobOut)
@@ -288,6 +346,8 @@ async def upload_design_image(job_id: int, db: DB, _: CurrentUser, file: UploadF
     job.design_engine_note = "Designer (manual)"
     job.status = PublishJobStatus.pending_publish
     job.last_error = None
+    job.design_draft_json = None
+    job.design_draft_saved_at = None
 
     article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first() if job.source_article_id else None
     if article:
@@ -315,6 +375,8 @@ def render_now(job_id: int, db: DB, _: CurrentUser):
     job = db.query(PublishJob).filter_by(id=job_id).first()
     if job and job.content_type == ContentType.youtube_clip:
         return _rerender_clip(job, db)
+    if job and job.content_type == ContentType.ai_video:
+        return _rerender_ai_video(job, db)
     if not job or job.content_type != ContentType.news_content:
         raise HTTPException(status_code=404, detail="News job not found")
     if job.status != PublishJobStatus.pending_design:
@@ -350,6 +412,32 @@ def _rerender_clip(job, db):
     job.attempt_count = 0
     db.commit()
     render_youtube_clip.delay(job.id)
+    db.refresh(job)
+    return _enrich_job(job, db)
+
+
+def _rerender_ai_video(job, db):
+    from app.models.publish_jobs import PublishJobStatus
+    from app.tasks.ai_video_finalize import find_raw_ai_video_path, rerender_ai_video_overlay
+
+    if job.status not in (
+        PublishJobStatus.pending_review,
+        PublishJobStatus.pending_publish,
+        PublishJobStatus.failed,
+    ):
+        raise HTTPException(status_code=400, detail=f"Can't re-render an AI video that is {job.status.value}")
+
+    raw_path = find_raw_ai_video_path(job, db)
+    if not raw_path:
+        raise HTTPException(
+            status_code=409,
+            detail="The original AI video file is gone; it cannot be re-rendered",
+        )
+
+    job.status = PublishJobStatus.pending_design
+    job.last_error = None
+    db.commit()
+    rerender_ai_video_overlay.apply_async(args=[job.id], queue="video")
     db.refresh(job)
     return _enrich_job(job, db)
 

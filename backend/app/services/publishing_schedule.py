@@ -64,6 +64,7 @@ def compute_audience_slot(
     sleep_start_hour: int | None = None,
     sleep_end_hour: int | None = None,
     namespace: str = "default",
+    hour_weights: dict[str, float] | dict[int, float] | None = None,
 ) -> datetime:
     """Compute the earliest valid aware UTC scheduled delivery instant.
 
@@ -123,7 +124,120 @@ def compute_audience_slot(
     start_date = now_utc.astimezone(target_tz).date()
     min_gap_sec = max(float(min_gap_minutes) * 60.0, 1.0)
 
-    # Search up to _MAX_BOUNDED_DAYS local calendar days
+    if not hour_weights:
+        # Search up to _MAX_BOUNDED_DAYS local calendar days (unweighted baseline)
+        for day_offset in range(_MAX_BOUNDED_DAYS):
+            current_date = start_date + timedelta(days=day_offset)
+
+            # 1. Enforce local calendar day cap
+            slots_on_day = sum(
+                1 for s in clean_existing if s.astimezone(target_tz).date() == current_date
+            )
+            if slots_on_day >= daily_target:
+                continue
+
+            # 2. Determine active hours and compute minute weights for current day
+            minute_weights: list[float] = [0.0] * 1440
+            for m in range(1440):
+                hr = m // 60
+                if sleep_start_hour is not None and sleep_end_hour is not None:
+                    if _is_sleeping(hr, sleep_start_hour, sleep_end_hour):
+                        continue
+                else:
+                    if not (DEFAULT_ACTIVE_START_HOUR <= hr < DEFAULT_ACTIVE_END_HOUR):
+                        continue
+                minute_weights[m] = get_hour_weight(hr)
+
+            active_minutes = [m for m in range(1440) if minute_weights[m] > 0]
+            if not active_minutes:
+                continue
+
+            total_weight = sum(minute_weights[m] for m in active_minutes)
+            if total_weight <= 0:
+                continue
+
+            # 3. Generate deterministic candidate slots across active window using fixed quantile grid
+            day_candidates: list[datetime] = []
+            cum_weights: list[float] = [0.0] * len(active_minutes)
+            acc = 0.0
+            for i, m in enumerate(active_minutes):
+                acc += minute_weights[m]
+                cum_weights[i] = acc
+
+            num_active = len(active_minutes)
+            for idx in range(daily_target):
+                target_start = (idx / daily_target) * total_weight
+                target_end = ((idx + 1) / daily_target) * total_weight
+
+                k_start = 0
+                while k_start < num_active and cum_weights[k_start] < target_start:
+                    k_start += 1
+                k_end = k_start
+                while k_end < num_active and cum_weights[k_end] < target_end:
+                    k_end += 1
+                if k_end >= num_active:
+                    k_end = num_active - 1
+                if k_start > k_end:
+                    k_start = k_end
+
+                # Hash jitter bounded within [0.15, 0.85] of quantile cell
+                h = hashlib.sha256(f"{current_date.isoformat()}:{namespace}:{idx}".encode("utf-8")).digest()
+                rnd = int.from_bytes(h[:8], "big") / 0xFFFFFFFFFFFFFFFF
+                jitter = 0.15 + 0.70 * rnd
+                k_chosen = int(round(k_start + jitter * (k_end - k_start)))
+                if k_chosen >= num_active:
+                    k_chosen = num_active - 1
+                chosen_m = active_minutes[k_chosen]
+
+                cand_local = datetime(
+                    current_date.year,
+                    current_date.month,
+                    current_date.day,
+                    chosen_m // 60,
+                    chosen_m % 60,
+                    0,
+                    tzinfo=target_tz,
+                )
+
+                # Validate DST roundtrip
+                cand_utc = cand_local.astimezone(timezone.utc)
+                roundtrip_local = cand_utc.astimezone(target_tz)
+                if roundtrip_local.hour != cand_local.hour or roundtrip_local.minute != cand_local.minute:
+                    cand_utc = cand_utc.replace(second=0, microsecond=0)
+
+                day_candidates.append(cand_utc)
+
+            # 4. Filter candidates: must be >= min_lead_utc and >= min_gap from ALL existing slots
+            valid_candidates: list[datetime] = []
+            for cand in sorted(day_candidates):
+                if cand < min_lead_utc:
+                    continue
+
+                cand_loc = cand.astimezone(target_tz)
+                if sleep_start_hour is not None and sleep_end_hour is not None:
+                    if _is_sleeping(cand_loc.hour, sleep_start_hour, sleep_end_hour):
+                        continue
+                else:
+                    if not (DEFAULT_ACTIVE_START_HOUR <= cand_loc.hour < DEFAULT_ACTIVE_END_HOUR):
+                        continue
+
+                # Check gap against all existing slots (neighbors before and after)
+                separated = True
+                for exist in clean_existing:
+                    if abs((cand - exist).total_seconds()) < min_gap_sec:
+                        separated = False
+                        break
+                if not separated:
+                    continue
+
+                valid_candidates.append(cand)
+
+            if valid_candidates:
+                return min(valid_candidates)
+
+        raise RuntimeError("Failed to compute audience slot within bounded search limit")
+
+    # Weighted branch: among valid candidates of the day, prefer heavier local hours
     for day_offset in range(_MAX_BOUNDED_DAYS):
         current_date = start_date + timedelta(days=day_offset)
 
@@ -155,8 +269,8 @@ def compute_audience_slot(
             continue
 
         # 3. Generate deterministic candidate slots across active window using fixed quantile grid
-        day_candidates: list[datetime] = []
-        cum_weights: list[float] = [0.0] * len(active_minutes)
+        day_candidates = []
+        cum_weights = [0.0] * len(active_minutes)
         acc = 0.0
         for i, m in enumerate(active_minutes):
             acc += minute_weights[m]
@@ -206,7 +320,7 @@ def compute_audience_slot(
             day_candidates.append(cand_utc)
 
         # 4. Filter candidates: must be >= min_lead_utc and >= min_gap from ALL existing slots
-        valid_candidates: list[datetime] = []
+        valid_candidates = []
         for cand in sorted(day_candidates):
             if cand < min_lead_utc:
                 continue
@@ -231,7 +345,33 @@ def compute_audience_slot(
             valid_candidates.append(cand)
 
         if valid_candidates:
-            return min(valid_candidates)
+            if len(valid_candidates) == 1:
+                return valid_candidates[0]
+
+            cand_weights: list[float] = []
+            for c in valid_candidates:
+                loc_hr = c.astimezone(target_tz).hour
+                if str(loc_hr) in hour_weights:
+                    cand_weights.append(max(float(hour_weights[str(loc_hr)]), 0.0))
+                elif loc_hr in hour_weights:
+                    cand_weights.append(max(float(hour_weights[loc_hr]), 0.0))
+                else:
+                    cand_weights.append(1.0)
+
+            total_cand_w = sum(cand_weights)
+            if total_cand_w <= 0.0:
+                return min(valid_candidates)
+
+            # Deterministic weighted choice reusing function's namespace & sha256 hash pattern
+            h_choice = hashlib.sha256(f"{current_date.isoformat()}:{namespace}:choice".encode("utf-8")).digest()
+            rnd_choice = int.from_bytes(h_choice[:8], "big") / 0xFFFFFFFFFFFFFFFF
+            target_w = rnd_choice * total_cand_w
+            acc_w = 0.0
+            for cand, w in zip(valid_candidates, cand_weights):
+                acc_w += w
+                if acc_w >= target_w:
+                    return cand
+            return valid_candidates[-1]
 
     raise RuntimeError("Failed to compute audience slot within bounded search limit")
 

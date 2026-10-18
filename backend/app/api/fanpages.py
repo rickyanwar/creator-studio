@@ -1,8 +1,11 @@
 import io
+import threading
 import uuid
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Body
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import CurrentUser, DB
@@ -14,7 +17,7 @@ from app.schemas.fanpage import (
     PreviewNewsCopyRequest, PreviewNewsCopyResponse,
     FanpageSourceRecreateUpdate, FanpageSourceTriggerUpdate,
     DiscussionTopicAdd, DiscussionTopicUpdate,
-    DiscussionContentIdeaUpdate, DiscussionContentIdeaCreate,
+    DiscussionContentIdeaUpdate, DiscussionContentIdeaCreate, DiscussionContentIdeaRef,
     PinterestSourceAdd, PinterestSourceUpdate, PinterestContentIdeaUpdate,
     FacebookPhotoSourceAdd, FacebookPhotoSourceUpdate, FacebookPhotoIdeaUpdate,
 )
@@ -45,10 +48,12 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
     links = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, is_active=True).all()
     source_ids = [l.ig_source_id for l in links]
     recreate_by_source = {l.ig_source_id: l.ig_recreate_enabled for l in links}
+    override_by_source = {l.ig_source_id: l.visual_engine_override for l in links}
     trigger_by_source = {l.ig_source_id: l.trigger for l in links}
     sources = db.query(IGSource).filter(IGSource.id.in_(source_ids)).all() if source_ids else []
 
     from app.schemas.fanpage import IGSourceRef
+    from app.services.ig_mode import format_from_source
     out = FanpageDetailOut.model_validate(fp)
     out.ig_sources = [
         IGSourceRef(
@@ -56,6 +61,8 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
             ig_username=s.ig_username,
             album_image_indices=s.album_image_indices or [1],
             ig_recreate_enabled=recreate_by_source.get(s.id),
+            visual_engine_override=override_by_source.get(s.id),
+            format=format_from_source(recreate_by_source.get(s.id), override_by_source.get(s.id)),
             trigger=trigger_by_source.get(s.id, "every_post"),
             caption_tone=s.caption_tone,
             caption_language=s.caption_language,
@@ -229,14 +236,34 @@ def set_source_recreate_override(fanpage_id: int, ig_source_id: int, body: Fanpa
     """Set (or clear, with null) this source's override of Mode-3 ig_recreate
     for this fanpage — null inherits the fanpage's blanket setting."""
     from app.models.fanpage_sources import FanpageSource
+    from app.services.ig_mode import format_from_source, source_from_format
 
     link = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, ig_source_id=ig_source_id).first()
     if not link:
         raise HTTPException(status_code=404, detail="Source link not found")
 
-    link.ig_recreate_enabled = body.ig_recreate_enabled
+    if body.format is not None:
+        try:
+            recreate_enabled, engine_override = source_from_format(body.format)
+        except ValueError as err:
+            raise HTTPException(status_code=422, detail=str(err))
+        link.ig_recreate_enabled = recreate_enabled
+        link.visual_engine_override = engine_override
+    else:
+        link.ig_recreate_enabled = body.ig_recreate_enabled
+        if body.visual_engine_override is not None:
+            link.visual_engine_override = body.visual_engine_override
+        elif body.ig_recreate_enabled is False or body.ig_recreate_enabled is None:
+            link.visual_engine_override = None
+
     db.commit()
-    return {"ok": True, "ig_recreate_enabled": link.ig_recreate_enabled}
+    fmt = format_from_source(link.ig_recreate_enabled, link.visual_engine_override)
+    return {
+        "ok": True,
+        "ig_recreate_enabled": link.ig_recreate_enabled,
+        "visual_engine_override": link.visual_engine_override,
+        "format": fmt,
+    }
 
 
 @router.put("/{fanpage_id}/sources/{ig_source_id}/trigger")
@@ -452,6 +479,103 @@ def create_discussion_content_idea(fanpage_id: int, body: DiscussionContentIdeaC
     db.commit()
     db.refresh(idea)
     return DiscussionContentIdeaRef.model_validate(idea)
+
+
+class DiscussionIdeasDraftRequest(BaseModel):
+    count: int = Field(default=5, ge=1, le=10)
+    topic_hint: Optional[str] = Field(default=None, max_length=200)
+
+
+_running_drafts: set[int] = set()
+_running_drafts_lock = threading.Lock()
+
+
+def _acquire_draft_lock(fanpage_id: int):
+    try:
+        import redis
+        settings = get_settings()
+        if settings.redis_url:
+            r = redis.from_url(settings.redis_url, decode_responses=True)
+            key = f"lock:discussion_draft:{fanpage_id}"
+            if not r.set(key, "1", nx=True, ex=60):
+                return False, r, key
+            return True, r, key
+    except Exception:
+        pass
+
+    with _running_drafts_lock:
+        if fanpage_id in _running_drafts:
+            return False, None, None
+        _running_drafts.add(fanpage_id)
+        return True, None, None
+
+
+def _release_draft_lock(fanpage_id: int, r, key):
+    if r and key:
+        try:
+            r.delete(key)
+        except Exception:
+            pass
+    with _running_drafts_lock:
+        _running_drafts.discard(fanpage_id)
+
+
+@router.post("/{fanpage_id}/discussion-ideas/draft", response_model=list[DiscussionContentIdeaRef])
+def draft_discussion_ideas_endpoint(
+    fanpage_id: int,
+    db: DB,
+    _: CurrentUser,
+    body: DiscussionIdeasDraftRequest = Body(default_factory=DiscussionIdeasDraftRequest),
+):
+    """Draft multiple DiscussionContentIdea rows with AI (1..10 ideas), saving them
+    as pending ideas in the review queue. Enforces max 1 running draft per brand."""
+    from app.models.target_fanpages import TargetFanpage
+    from app.models.discussion_content_ideas import DiscussionContentIdea
+    from app.schemas.fanpage import DiscussionContentIdeaRef
+    from app.services.news_copywriter import draft_discussion_ideas
+
+    fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
+    if not fanpage:
+        raise HTTPException(status_code=404, detail="Fanpage not found")
+
+    if not fanpage.discussion_enabled:
+        raise HTTPException(status_code=409, detail="Discussion mode is disabled for this brand")
+
+    acquired, r_client, r_key = _acquire_draft_lock(fanpage_id)
+    if not acquired:
+        raise HTTPException(status_code=429, detail="A draft is already running for this brand")
+
+    try:
+        copies = draft_discussion_ideas(
+            fanpage,
+            count=body.count,
+            topic_hint=body.topic_hint.strip() if body.topic_hint else None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI drafting failed: {exc}")
+    finally:
+        _release_draft_lock(fanpage_id, r_client, r_key)
+
+    created_ideas = []
+    for copy in copies:
+        idea = DiscussionContentIdea(
+            fanpage_id=fanpage_id,
+            label=copy.label,
+            question=copy.question,
+            subject_name=copy.subject_name,
+            caption=copy.caption,
+            source_type="ai_draft",
+            status="pending",
+        )
+        db.add(idea)
+        created_ideas.append(idea)
+
+    db.commit()
+    for idea in created_ideas:
+        db.refresh(idea)
+
+    return [DiscussionContentIdeaRef.model_validate(i) for i in created_ideas]
+
 
 
 @router.put("/{fanpage_id}/discussion-content-ideas/{idea_id}")

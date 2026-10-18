@@ -149,9 +149,9 @@ def test_render_pending_designs_routing():
          patch("app.tasks.design_renderer.render_facebook_photo.delay") as mock_fb_delay:
         render_pending_designs()
 
-        mock_news_async.assert_called_once_with(args=[101], queue="visual")
+        mock_news_async.assert_called_once_with(args=[101], queue="visual", expires=1800)
         mock_news_delay.assert_not_called()
-        mock_fb_async.assert_called_once_with(args=[102], queue="visual")
+        mock_fb_async.assert_called_once_with(args=[102], queue="visual", expires=1800)
         mock_fb_delay.assert_not_called()
 
     # Case B: q = None

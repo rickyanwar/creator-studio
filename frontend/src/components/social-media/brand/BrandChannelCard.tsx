@@ -4,12 +4,21 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { Icon } from "@iconify/react";
-import { getEstimatedTimes } from "@/lib/socialBrandsApi";
-import type { ChannelSummaryOut, EstimatedTimesOut } from "@/lib/socialBrandsApi";
+import { getEstimatedTimes, listReplizAccounts } from "@/lib/socialBrandsApi";
+import type { ChannelSummaryOut, EstimatedTimesOut, ReplizAccountsOut } from "@/lib/socialBrandsApi";
 
 export interface BrandChannelCardProps {
   channel: ChannelSummaryOut;
   defaultSlotsOpen?: boolean;
+}
+
+function getInitials(name: string): string {
+  if (!name) return "??";
+  const words = name.trim().split(/\s+/);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
 }
 
 function getKindLabel(kind: string): string {
@@ -33,6 +42,17 @@ export function BrandChannelCard({
   defaultSlotsOpen = false,
 }: BrandChannelCardProps) {
   const [slotsOpen, setSlotsOpen] = useState(defaultSlotsOpen);
+  const [imgError, setImgError] = useState(false);
+
+  const { data: replizData } = useSWR<ReplizAccountsOut>(
+    "repliz-accounts",
+    listReplizAccounts
+  );
+
+  const replizPicture =
+    channel.repliz_account_id && replizData?.accounts
+      ? replizData.accounts.find((a) => a.id === channel.repliz_account_id)?.picture || null
+      : null;
 
   const {
     data: estimatedTimes,
@@ -85,9 +105,18 @@ export function BrandChannelCard({
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-bg-paper-hover border border-divider-soft flex items-center justify-center shrink-0">
-            {getChannelIcon(channel.kind)}
-          </div>
+          {replizPicture && !imgError ? (
+            <img
+              src={replizPicture}
+              alt={channel.name}
+              onError={() => setImgError(true)}
+              className="w-10 h-10 rounded-xl object-cover shrink-0"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-xl bg-bg-paper-hover border border-divider-soft flex items-center justify-center shrink-0 font-bold text-sm text-text-primary">
+              {getInitials(channel.name)}
+            </div>
+          )}
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-bold text-text-primary">{channel.name}</h3>
@@ -102,13 +131,13 @@ export function BrandChannelCard({
 
         <div className="flex flex-wrap items-center gap-2">
           <Link
-            href={`/social-media/channels/${channel.id}`}
+            href={`/brands/channels/${channel.id}`}
             className="btn-secondary text-xs px-3.5 py-1.5"
           >
             Change how it publishes
           </Link>
           <Link
-            href={`/social-media/channels/${channel.id}?tab=pacing`}
+            href={`/brands/channels/${channel.id}?tab=pacing`}
             className="btn-ghost text-xs px-3.5 py-1.5"
           >
             Pacing

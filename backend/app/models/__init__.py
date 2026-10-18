@@ -49,6 +49,8 @@ from app.models.social_publishing import (
     RecoveryIncident,
     OperationalNotification,
 )
+from app.models.log_handled import LogHandled
+from app.models.auth_events import AuthEvent
 
 __all__ = [
     "User",
@@ -111,4 +113,6 @@ __all__ = [
     "DeviceLease",
     "RecoveryIncident",
     "OperationalNotification",
+    "LogHandled",
+    "AuthEvent",
 ]

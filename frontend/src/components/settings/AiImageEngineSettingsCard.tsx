@@ -76,12 +76,12 @@ function ClampedNumberInput({
 
   return (
     <div>
-      <label className="label">{label}</label>
+      <label className="block text-xs font-semibold text-text mb-1">{label}</label>
       <input
         type="number"
         min={min}
         max={max}
-        className="input-rect"
+        className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
         value={local}
         onChange={(e) => setLocal(e.target.value)}
         onBlur={commit}
@@ -118,10 +118,10 @@ function TextInput({
 
   return (
     <div>
-      <label className="label">{label}</label>
+      <label className="block text-xs font-semibold text-text mb-1">{label}</label>
       <input
         type="text"
-        className="input-rect"
+        className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
         placeholder={placeholder}
         value={local}
         onChange={(e) => setLocal(e.target.value)}
@@ -213,36 +213,36 @@ export function AiImageEngineSettingsCard({
   const selectedFanpageIds = settings?.gptcli_fanpage_ids ?? [];
 
   return (
-    <section className="card space-y-4">
+    <section className="bg-surface border border-line rounded-[14px] p-5 space-y-4">
       <div>
-        <h2 className="text-base font-semibold text-text-primary">
+        <h2 className="text-base font-semibold text-text">
           AI Image Engine (ChatGPT / Codex)
         </h2>
-        <p className="text-xs text-text-secondary mt-1">
+        <p className="text-xs text-text2 mt-1">
           ChatGPT (gpt serve) is the primary image engine; Codex (9Router) shares the load and
           is the fallback; the template is the last resort. Switch off = previous behaviour.
         </p>
       </div>
 
       {error && (
-        <p className="text-xs text-error-main bg-red-50 rounded p-2">
+        <p className="text-xs text-bad bg-bad-soft rounded-lg p-2.5">
           {error}
         </p>
       )}
 
       {/* Toggle */}
       <div>
-        <label className="flex items-center gap-3 text-sm text-text-primary cursor-pointer">
+        <label className="flex items-center gap-3 text-sm text-text cursor-pointer">
           <input
             type="checkbox"
-            className="w-4 h-4 accent-primary-main rounded"
+            className="w-4 h-4 accent-pri rounded"
             checked={settings?.gptcli_enabled ?? false}
             onChange={(e) => update("gptcli_enabled", e.target.checked)}
           />
-          Use ChatGPT (gpt-cli)
+          <span>Use ChatGPT (gpt-cli)</span>
         </label>
         {settings?.gptcli_enabled && (
-          <p className="text-xs text-amber-600 mt-1">
+          <p className="text-xs text-warn mt-1">
             Only enable after the server checks (phase A) passed.
           </p>
         )}
@@ -258,11 +258,11 @@ export function AiImageEngineSettingsCard({
 
       {/* Token */}
       <div>
-        <div className="flex items-center justify-between">
-          <label className="label">
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-xs font-semibold text-text">
             gpt serve token{" "}
             {settings?.has_gptcli_token && (
-              <span className="text-primary-main">✓ saved</span>
+              <span className="text-pri-text">✓ saved</span>
             )}
           </label>
           {settings?.has_gptcli_token && (
@@ -272,7 +272,7 @@ export function AiImageEngineSettingsCard({
                 update("gptcli_token", "");
                 setToken("");
               }}
-              className="text-xs text-error-main hover:underline cursor-pointer"
+              className="text-xs text-bad hover:underline cursor-pointer"
             >
               Clear
             </button>
@@ -280,7 +280,7 @@ export function AiImageEngineSettingsCard({
         </div>
         <input
           type="password"
-          className="input-rect"
+          className="h-9 px-3 rounded-[8px] border border-line bg-surface text-text text-sm w-full"
           placeholder="Leave blank to keep existing"
           value={token}
           onChange={(e) => setToken(e.target.value)}
@@ -301,22 +301,22 @@ export function AiImageEngineSettingsCard({
 
       {/* Fanpages */}
       <div>
-        <label className="label">Fanpages</label>
-        <p className="text-xs text-text-secondary -mt-1 mb-2">
+        <label className="block text-xs font-semibold text-text">Brands / Fanpages</label>
+        <p className="text-xs text-text2 mb-2">
           None selected = all fanpages
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-2 rounded border border-border-default bg-bg-subtle">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-2 rounded-lg border border-line bg-surface2">
           {fanpages && fanpages.length > 0 ? (
             fanpages.map((fp) => {
               const checked = selectedFanpageIds.includes(fp.id);
               return (
                 <label
                   key={fp.id}
-                  className="flex items-center gap-2 text-xs text-text-primary cursor-pointer"
+                  className="flex items-center gap-2 text-xs text-text cursor-pointer"
                 >
                   <input
                     type="checkbox"
-                    className="w-4 h-4 accent-primary-main rounded"
+                    className="w-4 h-4 accent-pri rounded"
                     checked={checked}
                     onChange={() => toggleFanpage(fp.id)}
                   />
@@ -325,18 +325,17 @@ export function AiImageEngineSettingsCard({
               );
             })
           ) : (
-            <span className="text-xs text-text-secondary">No fanpages found</span>
+            <span className="text-xs text-text2">No fanpages found</span>
           )}
         </div>
       </div>
 
-      {/* Thread, Size, Day starts */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <TextInput
           label="Thread"
-          value={settings?.gptcli_thread ?? "studio"}
-          placeholder="studio"
-          onCommit={(val) => update("gptcli_thread", val || "studio")}
+          value={settings?.gptcli_thread ?? "default"}
+          placeholder="default"
+          onCommit={(val) => update("gptcli_thread", val || "default")}
         />
         <TextInput
           label="Size"
@@ -353,11 +352,11 @@ export function AiImageEngineSettingsCard({
       </div>
 
       {/* Codex section */}
-      <div className="pt-2 border-t border-border-default space-y-3">
-        <h3 className="text-sm font-semibold text-text-primary">
+      <div className="pt-2 border-t border-line space-y-3">
+        <h3 className="text-sm font-semibold text-text">
           Codex (9Router cx/*)
         </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
           <ClampedNumberInput
             label="Day share max %"
             value={settings?.codex_share_percent}
@@ -454,66 +453,66 @@ export function AiImageEngineSettingsCard({
       </div>
 
       {/* Today status box */}
-      <div className="pt-2 border-t border-border-default space-y-2">
-        <h3 className="text-sm font-semibold text-text-primary">Today</h3>
+      <div className="pt-2 border-t border-line space-y-2">
+        <h3 className="text-sm font-semibold text-text">Today</h3>
         {statusError ? (
-          <p className="text-xs text-text-secondary italic">Status unavailable</p>
+          <p className="text-xs text-text2 italic">Status unavailable</p>
         ) : !statusData ? (
-          <p className="text-xs text-text-secondary italic">Loading status…</p>
+          <p className="text-xs text-text2 italic">Loading status…</p>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">ChatGPT</span>
-              <span className="font-semibold text-text-primary">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">ChatGPT</span>
+              <span className="font-semibold text-text text-sm">
                 {statusData.today?.gptcli?.success ?? 0} ok / {statusData.today?.gptcli?.recovered ?? 0} rec / {statusData.today?.gptcli?.failed ?? 0} fail
               </span>
             </div>
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">Codex</span>
-              <span className="font-semibold text-text-primary">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">Codex</span>
+              <span className="font-semibold text-text text-sm">
                 {statusData.today?.["9router"]?.success ?? 0} ok / {statusData.today?.["9router"]?.recovered ?? 0} rec / {statusData.today?.["9router"]?.failed ?? 0} fail
               </span>
             </div>
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">Deferred</span>
-              <span className="font-semibold text-text-primary">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">Deferred</span>
+              <span className="font-semibold text-text text-base">
                 {statusData.today?.deferred ?? 0}
               </span>
             </div>
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">Face-check rejects</span>
-              <span className="font-semibold text-text-primary">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">Face-check rejects</span>
+              <span className="font-semibold text-text text-base">
                 {statusData.identity_rejects_today ?? 0}
               </span>
             </div>
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">Codex day share</span>
-              <span className="font-semibold text-text-primary">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">Codex day share</span>
+              <span className="font-semibold text-text text-base">
                 {statusData.codex_day_share != null
                   ? `${Math.round(statusData.codex_day_share <= 1 && statusData.codex_day_share > 0 ? statusData.codex_day_share * 100 : statusData.codex_day_share)}%`
                   : "N/A"}
               </span>
             </div>
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">Codex 5 h usage</span>
-              <span className="font-semibold text-text-primary">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">Codex 5 h usage</span>
+              <span className="font-semibold text-text text-sm">
                 {statusData.codex_usage
                   ? `${Math.round(statusData.codex_usage.window_pct ?? 0)}% (${statusData.codex_usage.source || "estimate"}${formatTime(statusData.codex_usage.resets_at) ? ` · reset ${formatTime(statusData.codex_usage.resets_at)}` : ""})`
                   : "N/A"}
               </span>
             </div>
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">gpt serve</span>
-              <span className="font-semibold text-text-primary">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">gpt serve</span>
+              <span className="font-semibold text-text text-sm">
                 {formatUnavailable(
                   statusData.gptcli_unavailable_until,
                   statusData.gptcli_unavailable_reason
                 )}
               </span>
             </div>
-            <div className="bg-bg-subtle p-2 rounded">
-              <span className="text-text-secondary block">Visual queue</span>
-              <span className="font-semibold text-text-primary">
+            <div className="bg-surface2 p-2.5 rounded-lg">
+              <span className="text-text2 block text-[11px]">Visual queue</span>
+              <span className="font-semibold text-text text-base">
                 {statusData.visual_queue_len ?? 0}
               </span>
             </div>

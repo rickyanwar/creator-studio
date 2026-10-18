@@ -584,7 +584,7 @@ export default function DesignTemplatesSection({ fanpage, onSaved }: Props) {
             </select>
           </div>
           <div>
-            <label className="label">Discussion template (Mode 4)</label>
+            <label className="label">Discussion template</label>
             <select
               className="input w-full mt-1 text-xs"
               value={effectiveId(advDiscId, styleDiscId) ?? ""}
@@ -606,7 +606,7 @@ export default function DesignTemplatesSection({ fanpage, onSaved }: Props) {
       </details>
 
       <div className="space-y-1 text-xs text-text-secondary">
-        <p>Mode 5 (Pinterest) has no separate setting — it reuses the Quote/News templates above (face → Quote, no face → News).</p>
+        <p>Pinterest has no separate setting — it reuses the Quote/News templates above (face → Quote, no face → News).</p>
         <p>
           Create, edit or tag templates in{" "}
           <Link href="/templates" className="text-primary-main hover:underline">

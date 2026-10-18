@@ -47,8 +47,8 @@ export function BrandContentTable({
           </p>
         </div>
         <Link
-          href={`/fanpages/${brandId}`}
-          className="text-xs sm:text-sm font-semibold text-primary-main hover:underline whitespace-nowrap"
+          href={`/brands/${brandId}?tab=content`}
+          className="text-xs sm:text-sm font-semibold text-pri hover:underline whitespace-nowrap"
         >
           Sources, templates and captions →
         </Link>

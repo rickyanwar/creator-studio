@@ -94,130 +94,142 @@ export function F1DriversSettings() {
   };
 
   return (
-    <div className="card mt-6 p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-xl font-bold">F1 drivers (Team Radio)</h3>
-        <div className="flex gap-2">
+    <section className="bg-surface border border-line rounded-[14px] p-5 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-text">F1 drivers (team radio)</h2>
+          <p className="text-xs text-text2 mt-0.5">
+            Driver database used by the designer for team radio cards.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <select
-            className="select select-sm select-bordered"
+            className="h-8 px-2.5 rounded-[8px] border border-line bg-surface text-text text-xs"
             value={season}
             onChange={(e) => setSeason(parseInt(e.target.value))}
           >
             {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map((y) => (
               <option key={y} value={y}>
-                {y}
+                {y} Season
               </option>
             ))}
           </select>
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="btn btn-sm btn-outline"
+            className="h-8 px-3 rounded-[8px] border border-line bg-surface text-text hover:bg-surface2 text-xs font-medium flex items-center gap-1.5 disabled:opacity-50"
           >
-            <Icon icon="mdi:refresh" className={syncing ? "animate-spin" : ""} /> Sync from OpenF1
+            <Icon icon="solar:refresh-bold-duotone" width={14} className={syncing ? "animate-spin" : ""} />
+            Sync OpenF1
           </button>
-          <button onClick={handleAdd} className="btn btn-sm btn-primary">
-            <Icon icon="mdi:plus" /> Add
+          <button
+            onClick={handleAdd}
+            className="h-8 px-3 rounded-[8px] bg-pri text-pri-fg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
+          >
+            <Icon icon="solar:add-circle-bold" width={14} /> Add
           </button>
         </div>
       </div>
 
-      <div className="alert alert-info mb-4">
-        <Icon icon="mdi:information" className="text-xl" />
-        <span>Verify numbers/teams for this season — rows marked unverified</span>
+      <div className="p-3 rounded-lg bg-info-soft text-info text-xs flex items-center gap-2 font-medium">
+        <Icon icon="solar:info-circle-bold" width={16} className="shrink-0" />
+        <span>Verify numbers and teams for this season — rows marked unverified</span>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="table table-sm">
-          <thead>
+      <div className="overflow-x-auto rounded-lg border border-line">
+        <table className="w-full text-xs">
+          <thead className="bg-surface2 border-b border-line text-text2 font-semibold">
             <tr>
-              <th>Verified</th>
-              <th>#</th>
-              <th>Surname</th>
-              <th>Full Name</th>
-              <th>Team</th>
-              <th>Colour</th>
-              <th>Logo</th>
-              <th>Actions</th>
+              <th className="px-3 py-2 text-left">Verified</th>
+              <th className="px-3 py-2 text-left">#</th>
+              <th className="px-3 py-2 text-left">Surname</th>
+              <th className="px-3 py-2 text-left">Full Name</th>
+              <th className="px-3 py-2 text-left">Team</th>
+              <th className="px-3 py-2 text-left">Colour</th>
+              <th className="px-3 py-2 text-left">Logo</th>
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-line/60 bg-surface">
             {loading ? (
-              <tr><td colSpan={8} className="text-center py-4">Loading...</td></tr>
+              <tr><td colSpan={8} className="text-center py-4 text-text2">Loading...</td></tr>
             ) : drivers.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-4 text-gray-400">No drivers for {season}</td></tr>
+              <tr><td colSpan={8} className="text-center py-4 text-text2">No drivers for {season}</td></tr>
             ) : (
               drivers.map((d) => (
-                <tr key={d.id} className={d.verified ? "" : "bg-base-200"}>
+                <tr key={d.id} className={d.verified ? "hover:bg-surface2/50" : "bg-warn-soft/20 hover:bg-warn-soft/30"}>
                   {editingId === d.id ? (
                     <>
-                      <td>
+                      <td className="px-3 py-2">
                         <input
                           type="checkbox"
-                          className="checkbox checkbox-sm"
+                          className="w-3.5 h-3.5 rounded accent-pri"
                           checked={editForm.verified ?? d.verified}
                           onChange={(e) => setEditForm({ ...editForm, verified: e.target.checked })}
                         />
                       </td>
-                      <td>
+                      <td className="px-3 py-2">
                         <input
                           type="number"
-                          className="input input-sm input-bordered w-16"
+                          className="h-7 px-2 rounded border border-line bg-surface text-text text-xs w-14"
                           value={editForm.number ?? d.number}
                           onChange={(e) => setEditForm({ ...editForm, number: parseInt(e.target.value) })}
                         />
                       </td>
-                      <td>
+                      <td className="px-3 py-2">
                         <input
                           type="text"
-                          className="input input-sm input-bordered w-32"
+                          className="h-7 px-2 rounded border border-line bg-surface text-text text-xs w-28 uppercase"
                           value={editForm.surname ?? d.surname}
                           onChange={(e) => setEditForm({ ...editForm, surname: e.target.value.toUpperCase() })}
                         />
                       </td>
-                      <td>
+                      <td className="px-3 py-2">
                         <input
                           type="text"
-                          className="input input-sm input-bordered w-32"
+                          className="h-7 px-2 rounded border border-line bg-surface text-text text-xs w-28"
                           value={editForm.full_name ?? d.full_name ?? ""}
                           onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
                         />
                       </td>
-                      <td>
+                      <td className="px-3 py-2">
                         <input
                           type="text"
-                          className="input input-sm input-bordered w-32"
+                          className="h-7 px-2 rounded border border-line bg-surface text-text text-xs w-28"
                           value={editForm.team_name ?? d.team_name}
                           onChange={(e) => setEditForm({ ...editForm, team_name: e.target.value })}
                         />
                       </td>
-                      <td>
+                      <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
                           <input
                             type="color"
                             value={editForm.team_colour ?? d.team_colour}
                             onChange={(e) => setEditForm({ ...editForm, team_colour: e.target.value })}
+                            className="w-6 h-6 rounded cursor-pointer border border-line"
                           />
                           <input
                             type="text"
-                            className="input input-sm input-bordered w-24"
+                            className="h-7 px-1.5 rounded border border-line bg-surface text-text text-xs w-20 font-mono"
                             value={editForm.team_colour ?? d.team_colour}
                             onChange={(e) => setEditForm({ ...editForm, team_colour: e.target.value })}
                           />
                         </div>
                       </td>
-                      <td>-</td>
-                      <td>
-                        <button onClick={() => handleSave(d.id)} disabled={saving} className="btn btn-sm btn-success mr-2">Save</button>
-                        <button onClick={() => setEditingId(null)} disabled={saving} className="btn btn-sm">Cancel</button>
+                      <td className="px-3 py-2 text-text2">—</td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => handleSave(d.id)} disabled={saving} className="h-7 px-2.5 rounded bg-pri text-pri-fg text-xs font-semibold">Save</button>
+                          <button onClick={() => setEditingId(null)} disabled={saving} className="h-7 px-2.5 rounded border border-line bg-surface text-text text-xs">Cancel</button>
+                        </div>
                       </td>
                     </>
                   ) : (
                     <>
-                      <td>
+                      <td className="px-3 py-2">
                         <input
                           type="checkbox"
-                          className="checkbox checkbox-sm"
+                          className="w-3.5 h-3.5 rounded accent-pri"
                           checked={d.verified}
                           onChange={async (e) => {
                             try {
@@ -229,26 +241,27 @@ export function F1DriversSettings() {
                           }}
                         />
                       </td>
-                      <td>{d.number}</td>
-                      <td className="font-bold">{d.surname}</td>
-                      <td>{d.full_name || "-"}</td>
-                      <td>{d.team_name}</td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded" style={{ backgroundColor: d.team_colour }} />
-                          <span className="text-xs">{d.team_colour}</span>
+                      <td className="px-3 py-2 font-mono text-text2">{d.number}</td>
+                      <td className="px-3 py-2 font-bold text-text">{d.surname}</td>
+                      <td className="px-3 py-2 text-text2">{d.full_name || "-"}</td>
+                      <td className="px-3 py-2 text-text">{d.team_name}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-3.5 h-3.5 rounded border border-line" style={{ backgroundColor: d.team_colour }} />
+                          <span className="font-mono text-[11px] text-text2">{d.team_colour}</span>
                         </div>
                       </td>
-                      <td>
-                        <div className="flex items-center gap-2">
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-1.5">
                           {d.team_logo_path ? (
-                            <img src={`${process.env.NEXT_PUBLIC_API_URL || ""}/${d.team_logo_path}`} className="h-6 object-contain" alt="logo" />
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={`${process.env.NEXT_PUBLIC_API_URL || ""}/${d.team_logo_path}`} className="h-5 object-contain" alt="logo" />
                           ) : (
-                            <span className="text-xs opacity-50">No logo</span>
+                            <span className="text-[11px] text-text2">No logo</span>
                           )}
                           <input
                             type="file"
-                            className="file-input file-input-xs w-full max-w-xs"
+                            className="text-[10px] text-text2 w-28 file:mr-1 file:py-0.5 file:px-1.5 file:rounded file:border-0 file:bg-surface2 file:text-text file:text-[10px]"
                             accept=".png,.jpg,.webp"
                             onChange={(e) => {
                               if (e.target.files?.[0]) handleLogoUpload(d.id, e.target.files[0]);
@@ -256,13 +269,23 @@ export function F1DriversSettings() {
                           />
                         </div>
                       </td>
-                      <td>
-                        <button onClick={() => { setEditingId(d.id); setEditForm(d); }} className="btn btn-sm btn-ghost p-1">
-                          <Icon icon="mdi:pencil" />
-                        </button>
-                        <button onClick={() => handleDelete(d.id)} className="btn btn-sm btn-ghost text-red-500 p-1">
-                          <Icon icon="mdi:trash-can" />
-                        </button>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => { setEditingId(d.id); setEditForm(d); }}
+                            className="p-1 rounded text-text2 hover:text-text hover:bg-surface2"
+                            title="Edit"
+                          >
+                            <Icon icon="solar:pen-bold-duotone" width={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(d.id)}
+                            className="p-1 rounded text-text2 hover:text-bad hover:bg-bad-soft"
+                            title="Delete"
+                          >
+                            <Icon icon="solar:trash-bin-trash-bold-duotone" width={14} />
+                          </button>
+                        </div>
                       </td>
                     </>
                   )}
@@ -272,6 +295,6 @@ export function F1DriversSettings() {
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
   );
 }

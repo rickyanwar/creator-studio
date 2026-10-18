@@ -4,13 +4,14 @@ from sqlalchemy.orm import Session
 from app.models.strategy import StrategyRecommendation
 from app.models.target_fanpages import TargetFanpage
 
-APPLICABLE_KINDS = ("sleep_window", "daily_cap")
-INFO_KINDS = ("best_hours", "content_mix", "topic", "other")
+APPLICABLE_KINDS = ("sleep_window", "daily_cap", "best_hours")
+INFO_KINDS = ("content_mix", "topic", "other")
 
 # Fanpage fields each applicable kind may change (checked again at apply time).
 _APPLY_KEYS = {
     "sleep_window": ("publish_sleep_start_hour", "publish_sleep_end_hour"),
     "daily_cap": ("publish_daily_limit",),
+    "best_hours": ("publish_hour_weights",),
 }
 
 
@@ -48,6 +49,12 @@ def validate_proposal(kind: str, proposal: dict) -> dict:
         if not (1 <= limit <= 100):
             raise ValueError("limit must be between 1 and 100")
             
+    elif kind == "best_hours":
+        if not isinstance(proposal, dict):
+            raise ValueError("proposal must be a dictionary")
+        if len(json.dumps(proposal)) > 4096:
+            raise ValueError("proposal size exceeds 4 KB limit")
+
     elif kind in INFO_KINDS:
         if not isinstance(proposal, dict):
             raise ValueError("proposal must be a dictionary")
@@ -86,6 +93,7 @@ def create_recommendation(db: Session, fanpage_id: int, kind: str, title: str, p
         for o in older:
             o.status = "superseded"
             
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     rec = StrategyRecommendation(
         fanpage_id=fanpage_id,
         kind=kind,
@@ -95,7 +103,8 @@ def create_recommendation(db: Session, fanpage_id: int, kind: str, title: str, p
         evidence=evidence,
         token_id=token_id,
         status="proposed",
-        source="hermes"
+        source="hermes",
+        created_at=now,
     )
     db.add(rec)
     db.commit()
@@ -122,12 +131,49 @@ def approve(db: Session, rec: StrategyRecommendation, username: str):
                 raise Exception("Fanpage not found")
                 
             prev = {}
-            allowed = _APPLY_KEYS[rec.kind]
-            for k, v in rec.proposal.items():
-                if k not in allowed:
-                    raise ValueError(f"Field {k} cannot be changed by a {rec.kind} recommendation")
-                prev[k] = getattr(fanpage, k)
-                setattr(fanpage, k, v)
+            if rec.kind == "best_hours":
+                proposal = rec.proposal or {}
+                bh_list = proposal.get("best_hours")
+                best_hour_ints = set()
+                if isinstance(bh_list, list):
+                    for h in bh_list:
+                        if isinstance(h, dict) and "hour" in h:
+                            h = h["hour"]
+                        try:
+                            best_hour_ints.add(int(h))
+                        except (ValueError, TypeError):
+                            pass
+
+                w_input = proposal.get("weights") or proposal.get("publish_hour_weights")
+                if not w_input and not best_hour_ints:
+                    if any(str(k).isdigit() for k in proposal.keys()):
+                        w_input = proposal
+
+                final_weights: dict[str, float] = {}
+                if w_input and isinstance(w_input, dict):
+                    for h in range(24):
+                        k_str = str(h)
+                        if k_str in w_input:
+                            final_weights[k_str] = float(w_input[k_str])
+                        elif h in w_input:
+                            final_weights[k_str] = float(w_input[h])
+                        elif h in best_hour_ints:
+                            final_weights[k_str] = 2.0
+                        else:
+                            final_weights[k_str] = 1.0
+                else:
+                    for h in range(24):
+                        final_weights[str(h)] = 2.0 if h in best_hour_ints else 1.0
+
+                prev["publish_hour_weights"] = fanpage.publish_hour_weights
+                fanpage.publish_hour_weights = final_weights
+            else:
+                allowed = _APPLY_KEYS[rec.kind]
+                for k, v in rec.proposal.items():
+                    if k not in allowed:
+                        raise ValueError(f"Field {k} cannot be changed by a {rec.kind} recommendation")
+                    prev[k] = getattr(fanpage, k)
+                    setattr(fanpage, k, v)
                 
             rec.previous_values = prev
             rec.status = "applied"

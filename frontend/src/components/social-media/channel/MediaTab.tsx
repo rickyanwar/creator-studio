@@ -80,63 +80,81 @@ export function MediaTab({ destination, onSave }: Props) {
 
   return (
     <form onSubmit={handleSave} className="flex flex-col gap-6">
-      <section className="card p-6 space-y-4">
+      <section className="bg-surface border border-line rounded-2xl p-6 flex flex-col gap-4 shadow-sm">
         <div>
-          <h2 className="text-base font-bold text-text-primary">
+          <h2 className="text-base font-bold text-text">
             Media this channel accepts
           </h2>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Posts made by the brand that match unchecked media formats will not be scheduled for this channel.
+          <p className="text-xs text-text2 mt-1 leading-relaxed">
+            The brand makes the posts; this channel only takes the kinds ticked here. Posts of an unchecked kind will not be scheduled for this channel.
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {MEDIA_OPTIONS.map((opt) => {
-            const checked = selectedMedia.includes(opt.key);
+            const kindStr = destination.kind as string;
+            const isPlatformForbidden = kindStr === "youtube" && opt.key !== "video";
+            const checked = !isPlatformForbidden && selectedMedia.includes(opt.key);
+
             return (
               <label
                 key={opt.key}
-                className={`p-4 rounded-xl border cursor-pointer transition flex flex-col justify-between gap-3 ${
-                  checked
-                    ? "bg-[#111a2e] border-primary-main ring-1 ring-primary-main"
-                    : "bg-bg-paper border-divider-soft hover:border-text-disabled"
+                className={`p-3.5 rounded-xl border transition flex flex-col justify-between gap-2.5 min-h-[96px] ${
+                  isPlatformForbidden
+                    ? "opacity-40 cursor-not-allowed bg-surface2 border-line"
+                    : "cursor-pointer " +
+                      (checked
+                        ? "bg-pri-soft border-pri ring-1 ring-pri"
+                        : "bg-surface border-line hover:border-text2")
                 }`}
               >
                 <div className="flex items-center justify-between w-full">
-                  <div className="flex items-center gap-2.5">
-                    <Icon
-                      icon={opt.icon}
-                      className={checked ? "text-primary-main" : "text-text-disabled"}
-                      width={20}
-                    />
-                    <span className="text-sm font-bold text-text-primary">
-                      {opt.label}
-                    </span>
-                  </div>
+                  <Icon
+                    icon={opt.icon}
+                    className={checked ? "text-pri" : "text-text2"}
+                    width={22}
+                  />
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={() => toggleMedia(opt.key)}
-                    className="w-4 h-4 rounded text-primary-main focus:ring-primary-main"
+                    disabled={isPlatformForbidden}
+                    onChange={() => !isPlatformForbidden && toggleMedia(opt.key)}
+                    className="w-4 h-4 rounded text-pri focus:ring-pri accent-pri"
                   />
                 </div>
-                <p className="text-xs text-text-secondary leading-relaxed">
-                  {opt.desc}
-                </p>
+                <div>
+                  <span className="text-sm font-bold text-text block">
+                    {opt.label}
+                  </span>
+                  <span className="text-xs text-text2 leading-snug">
+                    {isPlatformForbidden
+                      ? `Not accepted by ${destination.kind}`
+                      : checked
+                      ? "Accepted"
+                      : "Not accepted"}
+                  </span>
+                </div>
               </label>
             );
           })}
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-info-soft text-text flex flex-col gap-1 border border-info/20 text-xs">
+          <span className="font-bold text-info">Platform rules</span>
+          <span className="text-text2 leading-relaxed">
+            Facebook accepts single images, albums and videos. Captions are preserved.
+          </span>
         </div>
       </section>
 
       {/* Save Button & Feedback */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <span className="text-xs text-text-secondary">
+        <span className="text-xs text-text2">
           At least one media format required.
         </span>
         <div className="flex items-center gap-3">
           {saveSuccess && (
-            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+            <span className="text-xs text-pri font-semibold flex items-center gap-1">
               <Icon icon="solar:check-circle-bold" width={14} />
               Saved media settings
             </span>
@@ -152,7 +170,7 @@ export function MediaTab({ destination, onSave }: Props) {
       </div>
 
       {saveError && (
-        <div className="rounded-xl border border-error-main/40 bg-error-lighter/20 p-3 text-xs text-error-dark dark:text-rose-300">
+        <div className="p-3 rounded-xl border border-bad/30 bg-bad-soft text-bad text-xs">
           {saveError}
         </div>
       )}

@@ -3,21 +3,17 @@
 import type React from "react";
 
 export type SettingsTabId =
-  | "global"
-  | "ig"
-  | "news"
-  | "discussion"
-  | "pinterest"
-  | "facebook"
-  | "youtube"
-  | "aivideo"
-  | "radar";
+  | "content"
+  | "channels"
+  | "pacing"
+  | "captions"
+  | "design"
+  | "ideas";
 
 export interface SettingsTab {
   id: SettingsTabId;
   label: string;
-  mode?: string;
-  enabled?: boolean;
+  count?: string;
 }
 
 export function SettingsTabs({
@@ -46,49 +42,39 @@ export function SettingsTabs({
   }
 
   return (
-    <div className="sticky top-16 z-40 -mx-1 px-1 py-2 bg-bg-default border-b border-hairline">
-      <div role="tablist" aria-label="Fanpage settings" className="flex gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-visible">
-        {tabs.map((tab, idx) => {
-          const isSelected = active === tab.id;
-          const title =
-            tab.label +
-            (tab.enabled === undefined ? "" : tab.enabled ? " — on" : " — off");
-
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={"tab-" + tab.id}
-              aria-selected={isSelected}
-              aria-controls={"tab-panel-" + tab.id}
-              tabIndex={isSelected ? 0 : -1}
-              title={title}
-              onClick={() => onChange(tab.id)}
-              onKeyDown={(e) => handleKeyDown(e, idx)}
-              className={`shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-                isSelected
-                  ? "bg-primary-main text-white"
-                  : "text-text-secondary hover:bg-bg-paper-hover hover:text-text-primary"
-              }`}
-            >
-              {tab.enabled !== undefined && (
-                <span
-                  className={
-                    "w-1.5 h-1.5 rounded-full " +
-                    (tab.enabled ? "bg-emerald-500" : "bg-hairline")
-                  }
-                  aria-hidden
-                />
-              )}
-              {tab.label}
-              {tab.mode && (
-                <span className="opacity-70 font-normal">{tab.mode}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+    <div
+      role="tablist"
+      aria-label="Brand settings sections"
+      className="flex flex-wrap gap-1 p-1 rounded-2xl bg-surface2 border border-line"
+    >
+      {tabs.map((tab, idx) => {
+        const isSelected = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            id={"tab-" + tab.id}
+            aria-selected={isSelected}
+            aria-controls={"tab-panel-" + tab.id}
+            tabIndex={isSelected ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            onKeyDown={(e) => handleKeyDown(e, idx)}
+            className={`flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm transition-all cursor-pointer ${
+              isSelected
+                ? "bg-surface text-pri-text font-semibold shadow-sm border border-pri"
+                : "bg-transparent text-text font-medium border border-transparent hover:bg-surface/50"
+            }`}
+          >
+            <span>{tab.label}</span>
+            {tab.count && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-surface2 text-text2 tabular-nums">
+                {tab.count}
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

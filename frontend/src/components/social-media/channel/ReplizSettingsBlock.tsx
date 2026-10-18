@@ -20,8 +20,8 @@ export function ReplizSettingsBlock({
 }: Props) {
   return (
     <section className="card p-5 space-y-4">
-      <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
-        <Icon icon="solar:cloud-upload-bold" className="text-purple-400" width={16} />
+      <h3 className="text-sm font-bold text-text flex items-center gap-2">
+        <Icon icon="solar:cloud-upload-bold" className="text-pri" width={16} />
         Repliz Settings
       </h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -55,13 +55,13 @@ export function ReplizSettingsBlock({
 
         <div>
           <span className="label">Connection Status</span>
-          <div className="h-[42px] px-3 rounded-md bg-bg-paper-hover border border-grey-700 flex items-center gap-2 text-xs">
+          <div className="h-[42px] px-3 rounded-md bg-surface2 border border-line flex items-center gap-2 text-xs">
             <span
               className={`w-2 h-2 rounded-full ${
                 replizData?.configured ? "bg-emerald-500" : "bg-amber-500"
               }`}
             />
-            <span className="text-text-primary">
+            <span className="text-text">
               {replizData?.configured
                 ? "Connected · status checked every 5 min"
                 : replizData?.error || "Repliz not configured"}

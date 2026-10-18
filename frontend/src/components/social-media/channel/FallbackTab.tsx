@@ -5,49 +5,74 @@ import { Icon } from "@iconify/react";
 
 export function FallbackTab() {
   return (
-    <div className="flex flex-col gap-6">
-      <section className="card p-6 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-950/40 border border-amber-800/50 flex items-center justify-center text-amber-400">
-            <Icon icon="solar:shield-warning-bold" width={22} />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-text-primary">If the phone fails</h2>
-            <p className="text-xs text-text-secondary">
-              Automatic fallback rules protecting your channel against duplicate or lost posts.
-            </p>
-          </div>
-        </div>
-
-        <div className="p-4 rounded-xl bg-bg-default border border-divider-soft space-y-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-            <Icon icon="solar:check-circle-bold" className="text-primary-main" width={18} />
-            Send the post through Repliz instead
-          </div>
-
-          <ul className="space-y-2.5 text-xs text-text-secondary pl-6 list-disc">
-            <li>
-              <strong className="text-text-primary">Recovery threshold:</strong> Only after automatic phone recovery failed at least twice.
-            </li>
-            <li>
-              <strong className="text-text-primary">Accuracy over availability:</strong> Never for a post whose result is uncertain — it may already be live.
-            </li>
-            <li>
-              <strong className="text-text-primary">Duplicate prevention:</strong> Never twice: skipped when the same caption and media were already posted.
-            </li>
-            <li>
-              <strong className="text-text-primary">Instant alerts:</strong> You get a Telegram message when it happens, and another with the result.
-            </li>
-          </ul>
-        </div>
-
-        <div className="rounded-xl border border-blue-900/40 bg-blue-950/20 p-3.5 flex items-start gap-3 text-xs text-blue-300">
-          <Icon icon="solar:info-circle-bold" width={18} className="flex-shrink-0 mt-0.5" />
-          <p className="leading-relaxed">
-            These rules are enforced automatically by the delivery engine. There are no manual override toggles to ensure Facebook accounts remain safe from duplicate spam or ghost bans.
+    <div className="flex flex-col gap-4">
+      <section className="bg-surface border border-line rounded-2xl p-6 flex flex-col gap-4 shadow-sm">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-base font-bold text-text">If the phone fails</h2>
+          <p className="text-xs text-text2 leading-relaxed">
+            What happens when the phone cannot post this Page. The rules below protect against double posts.
           </p>
         </div>
+
+        <ul className="m-0 p-0 list-none grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <li className="p-4 rounded-xl bg-surface2 flex flex-col gap-2">
+            <span
+              aria-hidden="true"
+              className="w-8 h-8 rounded-lg bg-pri-soft text-pri-text inline-flex items-center justify-center"
+            >
+              <Icon icon="solar:plain-bold-duotone" width={18} />
+            </span>
+            <strong className="text-sm font-bold text-text">Send through Repliz instead</strong>
+            <span className="text-xs text-text2 leading-relaxed">
+              Only after automatic phone recovery ends in “needs you” with at least 2 checks.
+            </span>
+          </li>
+
+          <li className="p-4 rounded-xl bg-surface2 flex flex-col gap-2">
+            <span
+              aria-hidden="true"
+              className="w-8 h-8 rounded-lg bg-warn-soft text-warn inline-flex items-center justify-center"
+            >
+              <Icon icon="solar:danger-triangle-bold" width={18} />
+            </span>
+            <strong className="text-sm font-bold text-text">Never for uncertain post</strong>
+            <span className="text-xs text-text2 leading-relaxed">
+              When the result is unclear the post may already be live, so it is never sent again.
+            </span>
+          </li>
+
+          <li className="p-4 rounded-xl bg-surface2 flex flex-col gap-2">
+            <span
+              aria-hidden="true"
+              className="w-8 h-8 rounded-lg bg-warn-soft text-warn inline-flex items-center justify-center"
+            >
+              <Icon icon="solar:copy-bold" width={18} />
+            </span>
+            <strong className="text-sm font-bold text-text">Never twice</strong>
+            <span className="text-xs text-text2 leading-relaxed">
+              Skipped when the same caption and media were already posted on this channel.
+            </span>
+          </li>
+
+          <li className="p-4 rounded-xl bg-surface2 flex flex-col gap-2">
+            <span
+              aria-hidden="true"
+              className="w-8 h-8 rounded-lg bg-info-soft text-info inline-flex items-center justify-center"
+            >
+              <Icon icon="solar:bell-bold" width={18} />
+            </span>
+            <strong className="text-sm font-bold text-text">You are told</strong>
+            <span className="text-xs text-text2 leading-relaxed">
+              A Telegram message when it happens, and another with the result.
+            </span>
+          </li>
+        </ul>
+
+        <p className="m-0 text-xs text-text2 leading-relaxed pt-1">
+          These rules are fixed for safety. The fallback exists only for Page channels that have a Repliz account; Profile channels never fall back.
+        </p>
       </section>
     </div>
   );
 }
+

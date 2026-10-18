@@ -47,19 +47,19 @@ export function StepPacing({
         !isStep3Valid ? "opacity-50 pointer-events-none" : ""
       }`}
     >
-      <h2 id="step4-h" className="text-sm font-bold text-text-primary flex items-center gap-2">
-        <span className="w-5 h-5 rounded-full bg-primary-main/20 text-primary-main text-xs flex items-center justify-center font-bold">
+      <h2 id="step4-h" className="text-sm font-bold text-text flex items-center gap-2">
+        <span className="w-5 h-5 rounded-full bg-pri-soft text-pri text-xs flex items-center justify-center font-bold">
           4
         </span>
         Pacing
       </h2>
 
-      <label className="flex items-center gap-2.5 cursor-pointer text-xs font-medium text-text-primary">
+      <label className="flex items-center gap-2.5 cursor-pointer text-xs font-medium text-text">
         <input
           type="checkbox"
           checked={useBrandDefaults}
           onChange={(e) => setUseBrandDefaults(e.target.checked)}
-          className="w-4 h-4 rounded text-primary-main focus:ring-primary-main"
+          className="w-4 h-4 rounded text-pri focus:ring-pri"
         />
         <span>
           Use brand defaults ({brandTz}, quiet {quietHoursStr})
@@ -72,7 +72,7 @@ export function StepPacing({
             Posts / day
           </label>
           {mode === "mixed" ? (
-            <div className="h-[42px] px-3 rounded-md bg-bg-paper-hover border border-grey-700 flex items-center font-bold text-sm text-text-primary">
+            <div className="h-[42px] px-3 rounded-md bg-surface2 border border-line flex items-center font-bold text-sm text-text">
               {effectiveDailyTarget} (Split sum)
             </div>
           ) : (
@@ -123,7 +123,7 @@ export function StepPacing({
 
         <div>
           <span className="label">Quiet hours</span>
-          <div className="h-[42px] px-3 rounded-md bg-bg-paper-hover border border-grey-700 flex items-center text-xs text-text-secondary">
+          <div className="h-[42px] px-3 rounded-md bg-surface2 border border-line flex items-center text-xs text-text2">
             {quietHoursStr}
           </div>
         </div>
@@ -137,7 +137,7 @@ export function StepPacing({
               type="checkbox"
               checked={supportedMedia.includes("image")}
               onChange={() => handleToggleMedia("image")}
-              className="w-4 h-4 rounded text-primary-main focus:ring-primary-main"
+              className="w-4 h-4 rounded text-pri focus:ring-pri"
             />
             <span>Single image</span>
           </label>
@@ -147,7 +147,7 @@ export function StepPacing({
               type="checkbox"
               checked={supportedMedia.includes("album")}
               onChange={() => handleToggleMedia("album")}
-              className="w-4 h-4 rounded text-primary-main focus:ring-primary-main"
+              className="w-4 h-4 rounded text-pri focus:ring-pri"
             />
             <span>Album</span>
           </label>
@@ -157,7 +157,7 @@ export function StepPacing({
               type="checkbox"
               checked={supportedMedia.includes("video")}
               onChange={() => handleToggleMedia("video")}
-              className="w-4 h-4 rounded text-primary-main focus:ring-primary-main"
+              className="w-4 h-4 rounded text-pri focus:ring-pri"
             />
             <span>Video · Reel</span>
           </label>

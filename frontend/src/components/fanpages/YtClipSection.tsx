@@ -12,6 +12,8 @@ type Props = {
   set: (key: string, value: unknown) => void;
   /** Re-fetch the fanpage and return its fresh source list. */
   refreshSources: () => Promise<void>;
+  hideIdeas?: boolean;
+  onNavigateTab?: (tab: string) => void;
 };
 
 const KIND_ICON: Record<YtClipSourceRef["kind"], string> = {
@@ -47,13 +49,13 @@ function NumberField({ label, value, min, max, onChange, hint }: {
 function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
   return (
     <label className="flex items-center gap-2 cursor-pointer text-sm text-text-primary">
-      <input type="checkbox" className="w-4 h-4 rounded accent-primary-main" checked={on} onChange={onClick} />
+      <input type="checkbox" className="w-4 h-4 rounded accent-pri" checked={on} onChange={onClick} />
       {label}
     </label>
   );
 }
 
-function YtClipSettings({ form, set }: Pick<Props, "form" | "set">) {
+function YtClipSettings({ form, set, onNavigateTab }: Pick<Props, "form" | "set" | "onNavigateTab">) {
   const num = (key: keyof FanpageDetail, fallback: number) => (form[key] as number | undefined) ?? fallback;
   return (
     <>
@@ -90,7 +92,7 @@ function YtClipSettings({ form, set }: Pick<Props, "form" | "set">) {
                   name="yt-clip-action-crop"
                   checked={(form.yt_clip_action_crop ?? "smart") === value}
                   onChange={() => set("yt_clip_action_crop", value)}
-                  className="accent-primary-main"
+                  className="accent-pri"
                 />
                 <span className="text-sm text-text-primary">{text}</span>
               </label>
@@ -103,9 +105,18 @@ function YtClipSettings({ form, set }: Pick<Props, "form" | "set">) {
         </div>
         <div>
           <label className="label">Overlays</label>
-          <div className="flex gap-5 pt-2">
+          <div className="flex flex-wrap items-center gap-5 pt-2">
             <Toggle on={form.yt_clip_captions ?? true} onClick={() => set("yt_clip_captions", !(form.yt_clip_captions ?? true))} label="Captions" />
             <Toggle on={form.yt_clip_watermark ?? true} onClick={() => set("yt_clip_watermark", !(form.yt_clip_watermark ?? true))} label="Watermark" />
+            {onNavigateTab && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab("design")}
+                className="text-xs text-pri hover:underline text-left inline-flex items-center gap-1"
+              >
+                Logo: set in Design › Brand logo
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -195,7 +206,7 @@ function YtClipSources({ fanpageId, form, refreshSources }: Omit<Props, "set">) 
             <div key={s.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-hairline">
               <input
                 type="checkbox"
-                className="w-4 h-4 rounded accent-primary-main shrink-0"
+                className="w-4 h-4 rounded accent-pri shrink-0"
                 checked={s.is_active}
                 onChange={() => act(() => updateYtClipSource(fanpageId, s.id, { is_active: !s.is_active }), "Couldn't update the source.")}
                 title={s.is_active ? "Active — click to pause" : "Paused — click to activate"}
@@ -253,13 +264,13 @@ function YtClipSources({ fanpageId, form, refreshSources }: Omit<Props, "set">) 
 }
 
 /** Mode 7 — YouTube clips, on the fanpage edit page. */
-export function YtClipSection({ fanpageId, form, set, refreshSources }: Props) {
+export function YtClipSection({ fanpageId, form, set, refreshSources, hideIdeas, onNavigateTab }: Props) {
   const enabled = !!form.yt_clip_enabled;
   return (
     <section className="card space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold text-text-primary">Mode 7: YouTube Clips</h2>
+          <h2 className="text-base font-semibold text-text-primary">YouTube clips</h2>
           <p className="text-xs text-text-secondary mt-0.5">
             Long YouTube videos → the AI picks the best moments from the transcript → vertical 9:16 clips (the crop
             follows the speaker&apos;s face; action shots keep the whole frame) → posted as Reels on this fanpage&apos;s
@@ -268,18 +279,22 @@ export function YtClipSection({ fanpageId, form, set, refreshSources }: Props) {
         </div>
         <button
           onClick={() => set("yt_clip_enabled", !enabled)}
-          className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${enabled ? "bg-primary-main" : "bg-hairline"}`}
-          aria-label="Toggle Mode 7"
+          className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${enabled ? "bg-pri" : "bg-line"}`}
+          aria-label="Toggle YouTube clips"
         >
           <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${enabled ? "translate-x-5" : ""}`} />
         </button>
       </div>
       {enabled && (
         <>
-          <YtClipSettings form={form} set={set} />
+          <YtClipSettings form={form} set={set} onNavigateTab={onNavigateTab} />
           <YtClipSources fanpageId={fanpageId} form={form} refreshSources={refreshSources} />
-          <YtClipIdeaQueue fanpageId={fanpageId} />
-          <YtVideoList fanpageId={fanpageId} />
+          {!hideIdeas && (
+            <>
+              <YtClipIdeaQueue fanpageId={fanpageId} />
+              <YtVideoList fanpageId={fanpageId} />
+            </>
+          )}
         </>
       )}
     </section>

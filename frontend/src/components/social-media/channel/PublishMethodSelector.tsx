@@ -7,18 +7,26 @@ interface Props {
   mode: "phone" | "repliz" | "mixed";
   setMode: (m: "phone" | "repliz" | "mixed") => void;
   isProfile: boolean;
+  isReplizOnly?: boolean;
 }
 
-export function PublishMethodSelector({ mode, setMode, isProfile }: Props) {
+export function PublishMethodSelector({
+  mode,
+  setMode,
+  isProfile,
+  isReplizOnly = false,
+}: Props) {
   return (
     <section aria-labelledby="method-heading" className="flex flex-col gap-3">
       <div>
-        <h2 id="method-heading" className="text-base font-bold text-text-primary">
+        <h2 id="method-heading" className="text-base font-bold text-text">
           How posts get uploaded
         </h2>
-        <p className="text-xs text-text-secondary">
+        <p className="text-xs text-text2">
           {isProfile
             ? "Facebook Profiles publish directly via an assigned Android phone."
+            : isReplizOnly
+            ? "This platform publishes via Repliz only."
             : "Pick one. A Facebook Page can use a phone, Repliz, or split the day between both."}
         </p>
       </div>
@@ -29,26 +37,31 @@ export function PublishMethodSelector({ mode, setMode, isProfile }: Props) {
           type="button"
           role="radio"
           aria-checked={mode === "phone"}
-          onClick={() => setMode("phone")}
+          disabled={isReplizOnly}
+          onClick={() => !isReplizOnly && setMode("phone")}
           className={`text-left p-4 rounded-xl border transition flex flex-col justify-between gap-3 min-h-[140px] ${
+            isReplizOnly
+              ? "opacity-40 cursor-not-allowed bg-surface2 border-line"
+              : "cursor-pointer"
+          } ${
             mode === "phone"
-              ? "bg-[#111a2e] border-primary-main ring-1 ring-primary-main"
-              : "bg-bg-paper border-divider-soft hover:border-text-disabled"
+              ? "bg-pri-soft border-pri ring-1 ring-pri"
+              : "bg-surface border-line hover:border-text2"
           }`}
         >
           <div className="flex items-center justify-between w-full">
-            <span className="text-sm font-bold text-text-primary flex items-center gap-2">
-              <Icon icon="solar:smartphone-bold" className="text-blue-400" width={18} />
+            <span className="text-sm font-bold text-text flex items-center gap-2">
+              <Icon icon="solar:smartphone-bold" className="text-info" width={18} />
               Phone
             </span>
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/60 text-emerald-400 border border-emerald-800/60">
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-pri-soft text-pri-text">
               Ready
             </span>
           </div>
-          <p className="text-xs text-text-secondary leading-relaxed">
+          <p className="text-xs text-text2 leading-relaxed">
             A Facebook Profile signed in on your phone switches to this Page and posts it, like a person would.
           </p>
-          <span className="text-[11px] text-text-disabled">
+          <span className="text-[11px] text-text2">
             Needs: Profile on phone, online ADB, dry-run passed.
           </span>
         </button>
@@ -61,26 +74,26 @@ export function PublishMethodSelector({ mode, setMode, isProfile }: Props) {
           disabled={isProfile}
           onClick={() => !isProfile && setMode("repliz")}
           className={`text-left p-4 rounded-xl border transition flex flex-col justify-between gap-3 min-h-[140px] ${
-            isProfile ? "opacity-40 cursor-not-allowed bg-bg-default border-divider-soft" : ""
+            isProfile ? "opacity-40 cursor-not-allowed bg-surface2 border-line" : "cursor-pointer"
           } ${
             mode === "repliz"
-              ? "bg-[#111a2e] border-primary-main ring-1 ring-primary-main"
-              : "bg-bg-paper border-divider-soft hover:border-text-disabled"
+              ? "bg-pri-soft border-pri ring-1 ring-pri"
+              : "bg-surface border-line hover:border-text2"
           }`}
         >
           <div className="flex items-center justify-between w-full">
-            <span className="text-sm font-bold text-text-primary flex items-center gap-2">
-              <Icon icon="solar:cloud-upload-bold" className="text-purple-400" width={18} />
+            <span className="text-sm font-bold text-text flex items-center gap-2">
+              <Icon icon="solar:cloud-upload-bold" className="text-pri" width={18} />
               Repliz
             </span>
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/60 text-emerald-400 border border-emerald-800/60">
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-pri-soft text-pri-text">
               Ready
             </span>
           </div>
-          <p className="text-xs text-text-secondary leading-relaxed">
+          <p className="text-xs text-text2 leading-relaxed">
             Repliz schedules and posts it. No phone involved.
           </p>
-          <span className="text-[11px] text-text-disabled">
+          <span className="text-[11px] text-text2">
             Needs: A connected Repliz account for this Page.
           </span>
         </button>
@@ -90,29 +103,31 @@ export function PublishMethodSelector({ mode, setMode, isProfile }: Props) {
           type="button"
           role="radio"
           aria-checked={mode === "mixed"}
-          disabled={isProfile}
-          onClick={() => !isProfile && setMode("mixed")}
+          disabled={isProfile || isReplizOnly}
+          onClick={() => !isProfile && !isReplizOnly && setMode("mixed")}
           className={`text-left p-4 rounded-xl border transition flex flex-col justify-between gap-3 min-h-[140px] ${
-            isProfile ? "opacity-40 cursor-not-allowed bg-bg-default border-divider-soft" : ""
+            isProfile || isReplizOnly
+              ? "opacity-40 cursor-not-allowed bg-surface2 border-line"
+              : "cursor-pointer"
           } ${
             mode === "mixed"
-              ? "bg-[#111a2e] border-primary-main ring-1 ring-primary-main"
-              : "bg-bg-paper border-divider-soft hover:border-text-disabled"
+              ? "bg-pri-soft border-pri ring-1 ring-pri"
+              : "bg-surface border-line hover:border-text2"
           }`}
         >
           <div className="flex items-center justify-between w-full">
-            <span className="text-sm font-bold text-text-primary flex items-center gap-2">
-              <Icon icon="solar:shuffle-bold" className="text-amber-400" width={18} />
+            <span className="text-sm font-bold text-text flex items-center gap-2">
+              <Icon icon="solar:shuffle-bold" className="text-warn" width={18} />
               Phone + Repliz
             </span>
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/60 text-emerald-400 border border-emerald-800/60">
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-pri-soft text-pri-text">
               Ready
             </span>
           </div>
-          <p className="text-xs text-text-secondary leading-relaxed">
+          <p className="text-xs text-text2 leading-relaxed">
             Split the day: some posts go out from the phone, the rest through Repliz.
           </p>
-          <span className="text-[11px] text-text-disabled">
+          <span className="text-[11px] text-text2">
             Needs: Both verified phone and connected Repliz.
           </span>
         </button>

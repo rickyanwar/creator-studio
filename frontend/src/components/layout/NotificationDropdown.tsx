@@ -13,9 +13,9 @@ const TYPE_ICON: Record<string, string> = {
   info:    "solar:info-circle-bold-duotone",
 };
 const TYPE_COLOR: Record<string, string> = {
-  error:   "#FF5630",
-  warning: "#FFAB00",
-  info:    "#00B8D9",
+  error:   "var(--bad)",
+  warning: "var(--warn)",
+  info:    "var(--info)",
 };
 const TYPE_LABEL: Record<string, string> = {
   error:   "Error",
@@ -86,35 +86,40 @@ export default function NotificationDropdown({ open, onClose }: Props) {
       {/* Full-height right panel */}
       <div
         className={clsx(
-          "fixed top-0 right-0 h-full w-[420px] z-[301] flex flex-col",
-          "shadow-dropdown transition-transform duration-300 ease-in-out"
+          "fixed top-0 right-0 h-full w-[420px] max-w-[100vw] z-[301] flex flex-col bg-surface border-l border-line",
+          "transition-transform duration-300 ease-in-out",
+          open ? "shadow-dropdown" : "shadow-none pointer-events-none"
         )}
         style={{
-          background: "var(--bg-paper)",
-          transform: open ? "translateX(0)" : "translateX(100%)",
+          transform: open ? "translateX(0)" : "translateX(calc(100% + 80px))",
         }}
+        aria-hidden={!open}
       >
-        {/* ── Header ── */}
-        <div className="flex items-center justify-between px-5 h-16 flex-shrink-0">
-          <h3 className="text-xl font-bold text-text-primary">Notifications</h3>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 h-16 flex-shrink-0 border-b border-line">
+          <h3 className="text-lg font-bold text-text">Notifications</h3>
           <div className="flex items-center gap-1">
             <button
               onClick={markAllRead}
               title="Mark all as read"
-              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-bg-paper-hover transition-colors"
+              aria-label="Mark all as read"
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface2 text-pri transition-colors cursor-pointer"
             >
-              <Icon icon="solar:check-read-bold-duotone" width={20} className="text-primary-main" />
+              <Icon icon="solar:check-read-bold-duotone" width={20} />
             </button>
             <button
-              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-bg-paper-hover transition-colors"
+              onClick={onClose}
+              title="Close notifications"
+              aria-label="Close notifications"
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface2 text-text2 hover:text-text transition-colors cursor-pointer"
             >
-              <Icon icon="solar:settings-bold-duotone" width={18} className="text-text-secondary" />
+              <Icon icon="solar:close-circle-bold-duotone" width={20} />
             </button>
           </div>
         </div>
 
-        {/* ── Tabs ── */}
-        <div className="flex items-center gap-0.5 px-4 pb-3 flex-shrink-0">
+        {/* Tabs */}
+        <div className="flex items-center gap-1.5 px-5 py-3 flex-shrink-0 border-b border-line">
           {(["all", "unread", "archived"] as Tab[]).map((t) => {
             const count =
               t === "all" ? all.length :
@@ -126,22 +131,20 @@ export default function NotificationDropdown({ open, onClose }: Props) {
                 key={t}
                 onClick={() => setTab(t)}
                 className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-colors capitalize",
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors capitalize cursor-pointer",
                   active
-                    ? "bg-text-primary text-bg-paper"
-                    : "text-text-secondary hover:bg-bg-paper-hover hover:text-text-primary"
+                    ? "bg-pri text-pri-fg"
+                    : "text-text2 hover:bg-surface2 hover:text-text"
                 )}
               >
                 {t}
                 {count > 0 && (
                   <span
                     className={clsx(
-                      "text-[11px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center leading-none",
+                      "text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none",
                       active
-                        ? "bg-bg-paper text-text-primary"
-                        : t === "unread"
-                          ? "bg-primary-lighter text-primary-darker"
-                          : "bg-bg-paper-hover text-text-secondary"
+                        ? "bg-white/20 text-white"
+                        : "bg-surface2 text-text2"
                     )}
                   >
                     {count}
@@ -152,20 +155,20 @@ export default function NotificationDropdown({ open, onClose }: Props) {
           })}
         </div>
 
-        {/* ── List ── */}
-        <div className="flex-1 overflow-y-auto divide-y divide-divider-soft">
+        {/* List */}
+        <div className="flex-1 overflow-y-auto divide-y divide-line">
           {displayed.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
-              <div className="w-14 h-14 rounded-full bg-bg-paper-hover flex items-center justify-center">
-                <Icon icon="solar:bell-bold-duotone" width={28} className="text-text-disabled" />
+              <div className="w-12 h-12 rounded-full bg-surface2 flex items-center justify-center text-text2">
+                <Icon icon="solar:bell-bold-duotone" width={24} />
               </div>
-              <p className="text-sm font-bold text-text-primary">You're all caught up!</p>
-              <p className="text-xs text-text-secondary">No {tab === "all" ? "" : tab} notifications</p>
+              <p className="text-sm font-semibold text-text">You're all caught up</p>
+              <p className="text-xs text-text2">No {tab === "all" ? "" : tab} notifications</p>
             </div>
           ) : (
             displayed.map((n) => {
               const isUnread = !readIds.has(n.id);
-              const color    = TYPE_COLOR[n.type] ?? "#919EAB";
+              const color    = TYPE_COLOR[n.type] ?? "var(--text2)";
               const icon     = TYPE_ICON[n.type]  ?? "solar:info-circle-bold-duotone";
               const label    = TYPE_LABEL[n.type] ?? n.type;
 
@@ -181,45 +184,44 @@ export default function NotificationDropdown({ open, onClose }: Props) {
                   key={n.id}
                   className={clsx(
                     "flex gap-3 px-5 py-4 transition-colors",
-                    isUnread ? "bg-[rgba(0,167,111,0.04)]" : "hover:bg-bg-paper-hover"
+                    isUnread ? "bg-pri-soft/30" : "hover:bg-surface2"
                   )}
                 >
-                  {/* Avatar */}
+                  {/* Icon */}
                   <div
-                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center mt-0.5"
-                    style={{ background: `${color}20` }}
+                    className="w-9 h-9 rounded-xl flex-shrink-0 flex items-center justify-center mt-0.5"
+                    style={{ background: `color-mix(in srgb, ${color} 15%, transparent)` }}
                   >
-                    <Icon icon={icon} width={20} style={{ color }} />
+                    <Icon icon={icon} width={18} style={{ color }} />
                   </div>
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm leading-snug text-text-primary">
-                      <span className="font-bold">{n.title}</span>
+                    <p className="text-sm leading-snug text-text font-semibold">
+                      {n.title}
                     </p>
-                    <p className="text-xs text-text-secondary mt-0.5 line-clamp-2 leading-relaxed">
+                    <p className="text-xs text-text2 mt-1 line-clamp-2 leading-relaxed">
                       {n.message}
                     </p>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <Icon icon="solar:clock-circle-bold-duotone" width={11} className="text-text-disabled" />
-                      <span className="text-[11px] text-text-disabled">{timeAgo(n.created_at)}</span>
-                      <span className="text-[11px] text-text-disabled">·</span>
-                      <span className="text-[11px] text-text-disabled">{label}</span>
+                    <div className="flex items-center gap-1.5 mt-1.5 text-text2 text-[11px]">
+                      <Icon icon="solar:clock-circle-bold-duotone" width={12} />
+                      <span>{timeAgo(n.created_at)}</span>
+                      <span>·</span>
+                      <span>{label}</span>
                     </div>
 
                     {/* Action button */}
                     <button
                       onClick={() => handleNavigate(n)}
-                      className="mt-2.5 px-3 py-1 rounded-lg text-xs font-bold transition-opacity hover:opacity-80"
-                      style={{ background: "var(--text-primary)", color: "var(--bg-paper)" }}
+                      className="mt-2.5 px-3 py-1 rounded-lg text-xs font-semibold bg-surface2 text-text hover:bg-pri hover:text-pri-fg transition-colors cursor-pointer"
                     >
                       {actionLabel}
                     </button>
                   </div>
 
-                  {/* Unread dot */}
+                  {/* Unread indicator */}
                   {isUnread && (
-                    <div className="w-2 h-2 rounded-full bg-primary-main flex-shrink-0 mt-2" />
+                    <div className="w-2 h-2 rounded-full bg-pri flex-shrink-0 mt-2" />
                   )}
                 </div>
               );
@@ -227,13 +229,13 @@ export default function NotificationDropdown({ open, onClose }: Props) {
           )}
         </div>
 
-        {/* ── Footer ── */}
-        <div className="flex-shrink-0 py-4 text-center border-t border-divider-soft">
+        {/* Footer */}
+        <div className="flex-shrink-0 py-3 px-5 text-center border-t border-line">
           <button
             onClick={() => { onClose(); router.push("/queue"); }}
-            className="text-sm font-bold text-text-primary hover:text-primary-main transition-colors"
+            className="text-xs font-semibold text-pri-text hover:text-pri transition-colors cursor-pointer"
           >
-            View all
+            View review queue
           </button>
         </div>
       </div>

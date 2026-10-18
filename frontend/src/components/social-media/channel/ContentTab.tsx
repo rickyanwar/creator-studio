@@ -47,30 +47,30 @@ export function ContentTab({ destination, brand }: Props) {
   return (
     <div className="flex flex-col gap-6">
       {/* ── Brand Relationship Card ── */}
-      <section className="p-5 rounded-xl bg-[#0f1d33] border border-[#1e3a5f] flex flex-wrap items-center justify-between gap-4">
+      <section className="p-5 rounded-xl bg-surface2 border border-line flex flex-wrap items-center justify-between gap-4">
         <div className="max-w-xl space-y-1.5">
-          <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
-            <Icon icon="solar:folder-with-files-bold-duotone" className="text-primary-main" width={18} />
+          <h2 className="text-sm font-bold text-text flex items-center gap-2">
+            <Icon icon="solar:folder-with-files-bold-duotone" className="text-pri" width={18} />
             Content comes from the brand
           </h2>
-          <p className="text-xs text-text-secondary leading-relaxed">
-            <strong className="text-text-primary">{brandName}</strong> is the Content Project. It decides what gets made — News, IG recreate, Discussion and so on — and every channel of the brand receives the same posts. This channel only filters by <strong className="text-text-primary">media type</strong> (configured under Media tab).
+          <p className="text-xs text-text2 leading-relaxed">
+            <strong className="text-text">{brandName}</strong> is the Content Project. It decides what gets made — News, IG recreate, Discussion and so on — and every channel of the brand receives the same posts. This channel only filters by <strong className="text-text">media type</strong> (configured under Media tab).
           </p>
         </div>
 
         {brand?.id ? (
           <Link
-            href={`/social-media/brands/${brand.id}`}
+            href={`/brands/${brand.id}`}
             className="btn-primary text-xs px-4 py-2 flex-shrink-0"
           >
             Edit content on brand →
           </Link>
         ) : (
           <Link
-            href="/content-projects"
+            href="/brands"
             className="btn-primary text-xs px-4 py-2 flex-shrink-0"
           >
-            Manage Content Projects →
+            Manage Brands →
           </Link>
         )}
       </section>
@@ -78,15 +78,15 @@ export function ContentTab({ destination, brand }: Props) {
       {/* ── What Reaches This Page Table ── */}
       <section className="card p-6 space-y-4">
         <div>
-          <h3 className="text-base font-bold text-text-primary">
+          <h3 className="text-base font-bold text-text">
             What reaches this channel
           </h3>
-          <p className="text-xs text-text-secondary mt-0.5">
+          <p className="text-xs text-text2 mt-0.5">
             Read-only here. Turn content on or off, and set quotas, on the brand.
           </p>
         </div>
 
-        <div className="border border-divider-soft rounded-xl overflow-hidden divide-y divide-divider-soft">
+        <div className="border border-line rounded-xl overflow-hidden divide-y divide-line">
           {modes.map((m) => {
             const desc = MODE_DESCRIPTIONS[m.key] || MODE_DESCRIPTIONS[m.label] || "Brand content mode";
             const mediaType = m.media?.toLowerCase() || "image";
@@ -98,17 +98,17 @@ export function ContentTab({ destination, brand }: Props) {
                 : supportedMedia.includes("image") || supportedMedia.includes("album");
 
             let reachText = "Reaches this Page";
-            let reachColor = "text-emerald-400";
-            let reachDot = "bg-emerald-500";
+            let reachColor = "text-pri";
+            let reachDot = "bg-pri";
 
             if (!m.enabled) {
               reachText = "Brand doesn’t make it";
-              reachColor = "text-text-disabled";
-              reachDot = "bg-slate-500";
+              reachColor = "text-text2";
+              reachDot = "bg-text2";
             } else if (!channelAccepts) {
               reachText = `Channel ignores ${m.media}`;
-              reachColor = "text-amber-400";
-              reachDot = "bg-amber-500";
+              reachColor = "text-warn";
+              reachDot = "bg-warn";
             }
 
             const brandStateText = m.enabled
@@ -118,25 +118,25 @@ export function ContentTab({ destination, brand }: Props) {
             return (
               <div
                 key={m.key}
-                className="flex flex-wrap items-center justify-between gap-3 p-4 bg-bg-paper hover:bg-bg-paper-hover transition"
+                className="flex flex-wrap items-center justify-between gap-3 p-4 bg-surface hover:bg-surface2 transition"
               >
                 <div className="flex-1 min-w-[240px]">
-                  <span className="text-sm font-semibold text-text-primary block">
+                  <span className="text-sm font-semibold text-text block">
                     {m.label}
                   </span>
-                  <span className="text-xs text-text-secondary mt-0.5 block">
+                  <span className="text-xs text-text2 mt-0.5 block">
                     {desc}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-4 flex-wrap">
-                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-bg-paper-hover border border-grey-700 text-text-secondary">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-surface2 border border-line text-text2">
                     {m.media}
                   </span>
 
                   <span
                     className={`text-xs min-w-[130px] font-medium ${
-                      m.enabled ? "text-text-primary" : "text-text-disabled"
+                      m.enabled ? "text-text" : "text-text2"
                     }`}
                   >
                     {brandStateText}

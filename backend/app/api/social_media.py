@@ -4,16 +4,20 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hmac
+import json
+import logging
 import os
 import re
 from typing import Optional
 import zoneinfo
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import CurrentUser, DB
 from app.config import get_settings
+from app.models.publish_jobs import PublishJob, PublishJobStatus
 from app.models.social_publishing import (
     DeliveryEvent,
     DestinationDeviceAssignment,
@@ -45,7 +49,9 @@ from app.services.publishing_schedule import (
     compute_audience_slot,
     get_destination_reservations_utc,
 )
-from app.services.social_delivery_policy import validate_route
+from app.services.social_delivery_policy import choose_method_for_slot, validate_route
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/social-media", tags=["social-media"])
 
@@ -58,6 +64,23 @@ _NONTERMINAL_STATES = (
     "needs_human",
     "repliz_scheduled",
 )
+
+_FB_KINDS = {"facebook_page", "facebook_profile"}
+_NON_FB_KINDS = {"instagram", "youtube", "threads", "x"}
+_ALL_VALID_KINDS = _FB_KINDS | _NON_FB_KINDS
+
+
+def _normalize_kind(kind: str | None) -> str | None:
+    if kind is None:
+        return None
+    k = kind.strip().lower()
+    if k in ("profile", "facebook_profile"):
+        return "facebook_profile"
+    if k in ("page", "facebook_page"):
+        return "facebook_page"
+    if k in _NON_FB_KINDS:
+        return k
+    return k
 
 
 # ── Destinations CRUD ─────────────────────────────────────────────────────────
@@ -76,7 +99,7 @@ def list_destinations(
     if content_project_id is not None:
         q = q.filter(SocialDestination.content_project_id == content_project_id)
     if kind is not None:
-        norm_k = "facebook_profile" if kind in ("profile", "facebook_profile") else "facebook_page"
+        norm_k = _normalize_kind(kind)
         q = q.filter(SocialDestination.kind == norm_k)
     if is_active is not None:
         q = q.filter(SocialDestination.is_active == is_active)
@@ -183,8 +206,18 @@ def create_destination(payload: SocialDestinationCreate, db: DB, _: CurrentUser)
     if not project:
         raise HTTPException(status_code=400, detail="Content project not found")
 
-    norm_kind = "profile" if payload.kind in ("profile", "facebook_profile") else "page"
-    db_kind = "facebook_profile" if norm_kind == "profile" else "facebook_page"
+    db_kind = _normalize_kind(payload.kind)
+    if db_kind not in _ALL_VALID_KINDS:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform kind: {payload.kind}")
+    norm_kind = "profile" if db_kind == "facebook_profile" else "page"
+
+    if db_kind in _NON_FB_KINDS:
+        if payload.mode != "repliz":
+            raise HTTPException(status_code=400, detail=f"{db_kind} destination must use repliz mode")
+        if not payload.repliz_account_id:
+            raise HTTPException(status_code=400, detail=f"{db_kind} destination requires repliz_account_id")
+        if payload.parent_profile_id is not None:
+            raise HTTPException(status_code=400, detail=f"{db_kind} destination cannot have a parent profile")
 
     try:
         validate_route(
@@ -204,6 +237,8 @@ def create_destination(payload: SocialDestinationCreate, db: DB, _: CurrentUser)
             raise HTTPException(status_code=400, detail="Profile destination cannot have a parent profile")
         if payload.repliz_account_id is not None:
             raise HTTPException(status_code=400, detail="Profile destination cannot have a Repliz account")
+    elif db_kind in _NON_FB_KINDS:
+        pass
     else:  # facebook_page
         if payload.mode in ("phone", "mixed"):
             if not payload.parent_profile_id:
@@ -215,6 +250,37 @@ def create_destination(payload: SocialDestinationCreate, db: DB, _: CurrentUser)
                 raise HTTPException(status_code=400, detail="Parent destination must be a Facebook Profile")
         if payload.mode == "repliz" and payload.parent_profile_id is not None:
             raise HTTPException(status_code=400, detail="Repliz-only page must not have a parent profile")
+
+    # Validate kind vs account type via Repliz if client available
+    if payload.repliz_account_id:
+        try:
+            from app.services.repliz_client import get_repliz_client_from_db, get_repliz_client_from_env
+            try:
+                client = get_repliz_client_from_db(db)
+            except Exception:
+                client = get_repliz_client_from_env()
+            with client:
+                accounts = client.list_accounts() if hasattr(client, "list_accounts") else client.list_facebook_accounts()
+                matching_acc = next(
+                    (
+                        acc for acc in accounts
+                        if str(acc.get("_id") or acc.get("id") or "").strip() == str(payload.repliz_account_id).strip()
+                    ),
+                    None,
+                )
+                if matching_acc:
+                    raw_type = str(matching_acc.get("type") or "facebook").lower()
+                    acc_type = "x" if raw_type in ("twitter", "x") else raw_type
+                    expected_kind = "facebook_page" if acc_type == "facebook" else acc_type
+                    if db_kind != expected_kind:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Account '{payload.repliz_account_id}' is of type '{acc_type}', does not match kind '{db_kind}'",
+                        )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
     if payload.repliz_account_id:
         existing_rep = (
@@ -265,6 +331,23 @@ def update_destination(
     if not dest:
         raise HTTPException(status_code=404, detail="Destination not found")
 
+    fields_set = payload.model_fields_set
+    has_kind_update = "kind" in fields_set and payload.kind is not None
+    if has_kind_update:
+        target_kind = _normalize_kind(payload.kind)
+        if target_kind not in _ALL_VALID_KINDS:
+            raise HTTPException(status_code=400, detail=f"Unsupported platform kind: {payload.kind}")
+        dest_is_fb = dest.kind in _FB_KINDS
+        target_is_fb = target_kind in _FB_KINDS
+        if dest_is_fb != target_is_fb:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot change channel kind between Facebook and non-Facebook platform ({dest.kind} -> {target_kind})",
+            )
+        db_kind = target_kind
+    else:
+        db_kind = dest.kind
+
     if dest.is_active:
         has_nonterminal = (
             db.query(PublishDelivery)
@@ -275,11 +358,8 @@ def update_destination(
             .first()
         )
         if has_nonterminal:
-            fields_set = payload.model_fields_set
-            if "kind" in fields_set:
-                new_k = "facebook_profile" if payload.kind in ("profile", "facebook_profile") else "facebook_page"
-                if new_k != dest.kind:
-                    raise HTTPException(status_code=400, detail="Cannot change destination kind while nonterminal deliveries exist")
+            if has_kind_update and db_kind != dest.kind:
+                raise HTTPException(status_code=400, detail="Cannot change destination kind while nonterminal deliveries exist")
             if "parent_profile_id" in fields_set and payload.parent_profile_id != dest.parent_profile_id:
                 raise HTTPException(status_code=400, detail="Cannot change parent profile while nonterminal deliveries exist")
             if "content_project_id" in fields_set and payload.content_project_id != dest.content_project_id:
@@ -287,11 +367,8 @@ def update_destination(
             if "facebook_actor_id" in fields_set and payload.facebook_actor_id != dest.facebook_actor_id:
                 raise HTTPException(status_code=400, detail="Cannot change facebook actor ID while nonterminal deliveries exist")
 
-    fields_set = payload.model_fields_set
     content_project_id = payload.content_project_id if "content_project_id" in fields_set and payload.content_project_id is not None else dest.content_project_id
-    kind_raw = payload.kind if "kind" in fields_set and payload.kind is not None else dest.kind
-    norm_kind = "profile" if kind_raw in ("profile", "facebook_profile") else "page"
-    db_kind = "facebook_profile" if norm_kind == "profile" else "facebook_page"
+    norm_kind = "profile" if db_kind == "facebook_profile" else "page"
     name = payload.name if "name" in fields_set and payload.name is not None else dest.name
     facebook_actor_id = payload.facebook_actor_id if "facebook_actor_id" in fields_set else dest.facebook_actor_id
     parent_profile_id = payload.parent_profile_id if "parent_profile_id" in fields_set else dest.parent_profile_id
@@ -330,12 +407,22 @@ def update_destination(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    if db_kind in _NON_FB_KINDS:
+        if mode != "repliz":
+            raise HTTPException(status_code=400, detail=f"{db_kind} destination must use repliz mode")
+        if not repliz_account_id:
+            raise HTTPException(status_code=400, detail=f"{db_kind} destination requires repliz_account_id")
+        if parent_profile_id is not None:
+            raise HTTPException(status_code=400, detail=f"{db_kind} destination cannot have a parent profile")
+
     if db_kind == "facebook_profile":
         if parent_profile_id is not None:
             raise HTTPException(status_code=400, detail="Profile destination cannot have a parent profile")
         if repliz_account_id is not None:
             raise HTTPException(status_code=400, detail="Profile destination cannot have a Repliz account")
-    else:
+    elif db_kind in _NON_FB_KINDS:
+        pass
+    else:  # facebook_page
         if parent_profile_id == dest.id:
             raise HTTPException(status_code=400, detail="Page destination cannot be its own parent")
         if mode in ("phone", "mixed"):
@@ -348,6 +435,37 @@ def update_destination(
                 raise HTTPException(status_code=400, detail="Parent destination must be a Facebook Profile")
         if mode == "repliz" and parent_profile_id is not None:
             raise HTTPException(status_code=400, detail="Repliz-only page must not have a parent profile")
+
+    # Validate kind vs account type via Repliz if client available and account/kind was changed
+    if repliz_account_id and ("repliz_account_id" in fields_set or has_kind_update):
+        try:
+            from app.services.repliz_client import get_repliz_client_from_db, get_repliz_client_from_env
+            try:
+                client = get_repliz_client_from_db(db)
+            except Exception:
+                client = get_repliz_client_from_env()
+            with client:
+                accounts = client.list_accounts() if hasattr(client, "list_accounts") else client.list_facebook_accounts()
+                matching_acc = next(
+                    (
+                        acc for acc in accounts
+                        if str(acc.get("_id") or acc.get("id") or "").strip() == str(repliz_account_id).strip()
+                    ),
+                    None,
+                )
+                if matching_acc:
+                    raw_type = str(matching_acc.get("type") or "facebook").lower()
+                    acc_type = "x" if raw_type in ("twitter", "x") else raw_type
+                    expected_kind = "facebook_page" if acc_type == "facebook" else acc_type
+                    if db_kind != expected_kind:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Account '{repliz_account_id}' is of type '{acc_type}', does not match kind '{db_kind}'",
+                        )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
     if repliz_account_id:
         existing_rep = (
@@ -1165,3 +1283,404 @@ def list_activity(
             )
         )
     return results
+
+
+# ── Delivery Copies & Manual Actions (TASK C1) ────────────────────────────────
+
+
+class DeliveryCopyOut(BaseModel):
+    id: int
+    publish_job_id: int
+    destination_id: int
+    destination_name: Optional[str] = None
+    destination_kind: Optional[str] = None
+    platform: Optional[str] = None
+    kind: Optional[str] = None
+    method: Optional[str] = None
+    intended_method: Optional[str] = None
+    actual_method: Optional[str] = None
+    state: str
+    repliz_schedule_id: Optional[str] = None
+    facebook_post_id: Optional[str] = None
+    facebook_permalink: Optional[str] = None
+    scheduled_for: Optional[datetime] = None
+    published_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    uncertain_since: Optional[datetime] = None
+    device_id: Optional[int] = None
+    device_name: Optional[str] = None
+    attempt_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+def _serialize_delivery_copy(d: PublishDelivery) -> DeliveryCopyOut:
+    dest = d.destination
+    dev = d.device
+    method = d.actual_method or d.intended_method
+    platform_kind = dest.kind if dest else None
+    return DeliveryCopyOut(
+        id=d.id,
+        publish_job_id=d.publish_job_id,
+        destination_id=d.destination_id,
+        destination_name=dest.name if dest else None,
+        destination_kind=platform_kind,
+        platform=platform_kind,
+        kind=platform_kind,
+        method=method,
+        intended_method=d.intended_method,
+        actual_method=d.actual_method,
+        state=d.state,
+        repliz_schedule_id=d.repliz_schedule_id,
+        facebook_post_id=d.facebook_post_id,
+        facebook_permalink=d.facebook_permalink,
+        scheduled_for=d.scheduled_for,
+        published_at=d.published_at,
+        last_error=d.last_error,
+        uncertain_since=d.uncertain_since,
+        device_id=d.device_id,
+        device_name=dev.name if dev else None,
+        attempt_count=d.attempt_count or 0,
+    )
+
+
+@router.get("/deliveries", response_model=list[DeliveryCopyOut])
+def get_deliveries(
+    db: DB,
+    _: CurrentUser,
+    publish_job_ids: Optional[str] = Query(None, description="Comma-separated publish job IDs (max 100)"),
+):
+    """Fetch channel copies for specified publish jobs (max 100)."""
+    if not publish_job_ids:
+        return []
+
+    job_ids: list[int] = []
+    for part in publish_job_ids.split(","):
+        s = part.strip()
+        if not s:
+            continue
+        try:
+            job_ids.append(int(s))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid job ID: '{s}'")
+
+    if not job_ids:
+        return []
+
+    if len(job_ids) > 100:
+        raise HTTPException(status_code=400, detail="Maximum 100 job IDs allowed per request")
+
+    deliveries = (
+        db.query(PublishDelivery)
+        .options(
+            joinedload(PublishDelivery.destination),
+            joinedload(PublishDelivery.device),
+        )
+        .filter(PublishDelivery.publish_job_id.in_(job_ids))
+        .order_by(PublishDelivery.publish_job_id.asc(), PublishDelivery.id.asc())
+        .all()
+    )
+
+    return [_serialize_delivery_copy(d) for d in deliveries]
+
+
+@router.post("/deliveries/{id}/mark-posted", response_model=DeliveryCopyOut)
+def mark_delivery_posted(
+    id: int,
+    db: DB,
+    _: CurrentUser,
+):
+    """Mark an uncertain delivery copy as published by hand."""
+    delivery = (
+        db.query(PublishDelivery)
+        .options(
+            joinedload(PublishDelivery.destination),
+            joinedload(PublishDelivery.device),
+        )
+        .filter(PublishDelivery.id == id)
+        .populate_existing()
+        .with_for_update(of=PublishDelivery)
+        .first()
+    )
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery copy not found")
+
+    if delivery.state != "uncertain":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot mark posted from state '{delivery.state}'; only 'uncertain' deliveries can be marked posted",
+        )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    prev_state = delivery.state
+    delivery.state = "published"
+    delivery.published_at = delivery.published_at or now
+    delivery.uncertain_since = None
+
+    event = DeliveryEvent(
+        delivery_id=delivery.id,
+        event_type="manual_override",
+        details={
+            "actor": "owner",
+            "note": "Marked posted by hand",
+            "previous_state": prev_state,
+            "new_state": "published",
+        },
+    )
+    db.add(event)
+
+    all_deliveries = (
+        db.query(PublishDelivery)
+        .filter(PublishDelivery.publish_job_id == delivery.publish_job_id)
+        .all()
+    )
+    all_accepted = bool(all_deliveries) and all(
+        d.state in ("repliz_scheduled", "published") for d in all_deliveries
+    )
+    if all_accepted:
+        job = db.query(PublishJob).filter(PublishJob.id == delivery.publish_job_id).first()
+        if job and job.status != PublishJobStatus.published:
+            job.status = PublishJobStatus.published
+            job.published_at = delivery.published_at
+
+    db.commit()
+    db.refresh(delivery)
+    return _serialize_delivery_copy(delivery)
+
+
+@router.post("/deliveries/{id}/mark-not-posted", response_model=DeliveryCopyOut)
+def mark_delivery_not_posted(
+    id: int,
+    db: DB,
+    _: CurrentUser,
+):
+    """Mark an uncertain delivery copy as not posted (failed) by hand."""
+    delivery = (
+        db.query(PublishDelivery)
+        .options(
+            joinedload(PublishDelivery.destination),
+            joinedload(PublishDelivery.device),
+        )
+        .filter(PublishDelivery.id == id)
+        .populate_existing()
+        .with_for_update(of=PublishDelivery)
+        .first()
+    )
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery copy not found")
+
+    if delivery.state != "uncertain":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot mark not posted from state '{delivery.state}'; only 'uncertain' deliveries can be marked not posted",
+        )
+
+    prev_state = delivery.state
+    delivery.state = "failed"
+    delivery.last_error = "Marked not posted by hand"
+    delivery.uncertain_since = None
+
+    event = DeliveryEvent(
+        delivery_id=delivery.id,
+        event_type="manual_override",
+        details={
+            "actor": "owner",
+            "note": "Marked not posted by hand",
+            "previous_state": prev_state,
+            "new_state": "failed",
+        },
+    )
+    db.add(event)
+
+    job = db.query(PublishJob).filter(PublishJob.id == delivery.publish_job_id).first()
+    if job and job.status == PublishJobStatus.publishing:
+        job.status = PublishJobStatus.pending_publish
+
+    db.commit()
+    db.refresh(delivery)
+    return _serialize_delivery_copy(delivery)
+
+
+@router.post("/deliveries/{id}/retry", response_model=DeliveryCopyOut)
+def retry_delivery(
+    id: int,
+    db: DB,
+    _: CurrentUser,
+):
+    """Retry a failed delivery copy that has no external ID."""
+    deliv_stub = (
+        db.query(PublishDelivery.id, PublishDelivery.destination_id)
+        .filter(PublishDelivery.id == id)
+        .first()
+    )
+    if not deliv_stub:
+        raise HTTPException(status_code=404, detail="Delivery copy not found")
+
+    dest = (
+        db.query(SocialDestination)
+        .filter(SocialDestination.id == deliv_stub.destination_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if not dest:
+        raise HTTPException(status_code=404, detail="Social destination not found")
+
+    delivery = (
+        db.query(PublishDelivery)
+        .options(
+            joinedload(PublishDelivery.destination),
+            joinedload(PublishDelivery.device),
+        )
+        .filter(PublishDelivery.id == id)
+        .populate_existing()
+        .with_for_update(of=PublishDelivery)
+        .first()
+    )
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery copy not found")
+
+    if delivery.state != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot retry delivery in state '{delivery.state}'; only 'failed' copies can be retried",
+        )
+
+    if delivery.repliz_schedule_id or delivery.facebook_post_id:
+        ext_id = delivery.repliz_schedule_id or delivery.facebook_post_id
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot retry copy with external ID '{ext_id}'",
+        )
+
+    fanpage = getattr(dest, "content_project", None)
+    if fanpage is None and dest.content_project_id:
+        fanpage = db.query(TargetFanpage).filter_by(id=dest.content_project_id).first()
+
+    sleep_start = None
+    sleep_end = None
+    if (
+        fanpage
+        and getattr(fanpage, "publish_sleep_start_hour", None) is not None
+        and getattr(fanpage, "publish_sleep_end_hour", None) is not None
+    ):
+        sleep_start = fanpage.publish_sleep_start_hour
+        sleep_end = fanpage.publish_sleep_end_hour
+
+    dest_hour_weights = getattr(fanpage, "publish_hour_weights", None) if fanpage else None
+
+    aware_now = datetime.now(timezone.utc)
+    existing_slots_utc = get_destination_reservations_utc(db, dest)
+
+    next_slot_utc = compute_audience_slot(
+        now_utc=aware_now,
+        timezone_name=dest.timezone,
+        daily_target=dest.daily_target,
+        min_gap_minutes=dest.min_gap_minutes,
+        existing_slots_utc=existing_slots_utc,
+        sleep_start_hour=sleep_start,
+        sleep_end_hour=sleep_end,
+        namespace=f"dest-{dest.id}",
+        hour_weights=dest_hour_weights,
+    )
+    naive_scheduled_for = next_slot_utc.astimezone(timezone.utc).replace(tzinfo=None)
+
+    target_tz = zoneinfo.ZoneInfo(dest.timezone)
+    slot_local_date = next_slot_utc.astimezone(target_tz).date()
+    existing_on_day = sum(
+        1
+        for s in existing_slots_utc
+        if s.astimezone(target_tz).date() == slot_local_date
+    )
+
+    intended_method = choose_method_for_slot(
+        mode=dest.mode,
+        slot_index=existing_on_day,
+        phone_daily_target=dest.phone_daily_target,
+        repliz_daily_target=dest.repliz_daily_target,
+    )
+
+    supported = dest.supported_media or []
+    if isinstance(supported, str):
+        try:
+            supported = json.loads(supported)
+        except Exception:
+            supported = [supported]
+    is_supported = (delivery.media_kind in supported) if (delivery.media_kind and supported) else True
+
+    if not is_supported:
+        new_state = "waiting_for_slot"
+        assigned_device_id = None
+        new_last_error = f"Unsupported media kind '{delivery.media_kind}' for destination"
+    elif intended_method == "phone":
+        assigned_device_id = None
+        has_available = False
+        assignments = (
+            db.query(DestinationDeviceAssignment)
+            .filter(
+                DestinationDeviceAssignment.destination_id == dest.id,
+                DestinationDeviceAssignment.is_active.is_(True),
+            )
+            .order_by(DestinationDeviceAssignment.priority)
+            .all()
+        )
+        for a in assignments:
+            if a.device and a.device.status == "available":
+                has_available = True
+                assigned_device_id = a.device.id
+                break
+
+        if has_available:
+            new_state = "scheduled"
+            new_last_error = None
+        else:
+            new_state = "waiting_for_device"
+            new_last_error = "Device not available"
+    else:  # repliz
+        new_state = "scheduled"
+        assigned_device_id = None
+        new_last_error = None
+
+    prev_state = delivery.state
+    delivery.state = new_state
+    delivery.device_id = assigned_device_id
+    delivery.intended_method = intended_method
+    delivery.actual_method = None
+    delivery.scheduled_for = naive_scheduled_for
+    delivery.claimed_at = None
+    delivery.claim_token = None
+    delivery.attempt_count = 0
+    delivery.last_error = new_last_error
+    delivery.uncertain_since = None
+    delivery.published_at = None
+
+    event = DeliveryEvent(
+        delivery_id=delivery.id,
+        event_type="manual_override",
+        details={
+            "actor": "owner",
+            "note": "Retried by hand",
+            "previous_state": prev_state,
+            "new_state": new_state,
+            "intended_method": intended_method,
+            "scheduled_for": naive_scheduled_for.isoformat() if naive_scheduled_for else None,
+            "reason": new_last_error,
+        },
+    )
+    db.add(event)
+
+    job = db.query(PublishJob).filter(PublishJob.id == delivery.publish_job_id).first()
+    if job and job.status == PublishJobStatus.failed:
+        job.status = PublishJobStatus.pending_publish
+
+    db.commit()
+    db.refresh(delivery)
+
+    try:
+        from app.tasks.social_delivery import dispatch_social_deliveries
+        dispatch_social_deliveries.delay()
+    except Exception as exc:
+        logger.warning("Could not enqueue dispatch_social_deliveries: %s", exc)
+
+    return _serialize_delivery_copy(delivery)
+

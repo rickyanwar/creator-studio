@@ -21,7 +21,7 @@ class SocialDestination(Base):
     __tablename__ = "social_destinations"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('facebook_profile', 'facebook_page')",
+            "kind IN ('facebook_profile', 'facebook_page', 'instagram', 'youtube', 'threads', 'x')",
             name="ck_social_destinations_kind",
         ),
         CheckConstraint(
@@ -402,7 +402,7 @@ class OperationalNotification(Base):
     __tablename__ = "operational_notifications"
     __table_args__ = (
         CheckConstraint(
-            "state IN ('pending', 'sent', 'failed')",
+            "state IN ('pending', 'sent', 'failed', 'open', 'resolved')",
             name="ck_operational_notifications_state",
         ),
     )
