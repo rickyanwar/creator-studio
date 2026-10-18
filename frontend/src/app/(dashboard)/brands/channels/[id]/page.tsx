@@ -69,7 +69,11 @@ function ChannelDetailInner() {
   const searchParams = useSearchParams();
 
   const idNum = Number(params?.id);
-  const activeTab: TabKey = (searchParams.get("tab") as TabKey) || "publish";
+  const tabParam = searchParams.get("tab");
+  const activeTab: TabKey =
+    tabParam && TABS.some((t) => t.id === tabParam)
+      ? (tabParam as TabKey)
+      : "publish";
 
   const setTab = (t: TabKey) => {
     const p = new URLSearchParams(searchParams.toString());

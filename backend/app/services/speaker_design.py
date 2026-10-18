@@ -130,13 +130,18 @@ def _matches(row: GalleryImage, names: list[str]) -> bool:
 
 def _rows(db, names: list[str]) -> list[GalleryImage]:
     conditions = []
+    is_sqlite = bool(hasattr(db, "bind") and db.bind and getattr(db.bind, "dialect", None) and db.bind.dialect.name == "sqlite")
     for variant in names:
         pattern = f"%{variant}%"
-        conditions.extend([
+        conds = [
             GalleryImage.keyword.ilike(pattern),
-            GalleryImage.extra_keywords.any(variant),
-            cast(GalleryImage.attributes, String).ilike(pattern),
-        ])
+            cast(GalleryImage.attributes["people"], String).ilike(pattern),
+        ]
+        if is_sqlite:
+            conds.append(cast(GalleryImage.extra_keywords, String).ilike(pattern))
+        else:
+            conds.append(GalleryImage.extra_keywords.any(variant))
+        conditions.extend(conds)
     return (db.query(GalleryImage)
             .filter(GalleryImage.is_deleted.is_(False), or_(*conditions))
             .order_by(func.coalesce(GalleryImage.captured_at, GalleryImage.downloaded_at).desc())
@@ -502,6 +507,41 @@ def _finish(image_bytes: bytes) -> bytes:
     return out.getvalue()
 
 
+def verify_speaker_photo(photo: GalleryImage | Any, speaker: str) -> str:
+    """Ask Gemini Flash vision whether the reference photo shows the named speaker.
+    Returns 'yes', 'no', 'unsure', or 'error'.
+    Fails closed: only 'yes' is accepted for composing."""
+    try:
+        if isinstance(photo, (bytes, bytearray)):
+            photo_bytes = bytes(photo)
+        else:
+            photo_bytes = _read_photo(photo)
+
+        prompt = f"Is the main person in this photo {speaker}? Answer yes / no / unsure"
+        data_uri = design_images._vision_datauri(photo_bytes)
+        content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": data_uri}},
+        ]
+        raw = design_images._vision_chat(
+            content,
+            max_tokens=200,
+            temperature=0,
+            context="speaker_reference_check",
+        )
+        ans = (raw or "").strip().lower()
+        if re.search(r"\byes\b", ans) and not re.search(r"\bno\b", ans):
+            return "yes"
+        elif re.search(r"\bno\b", ans):
+            return "no"
+        elif "unsure" in ans:
+            return "unsure"
+        return "unsure"
+    except Exception as exc:
+        logger.warning("verify_speaker_photo error for speaker %s: %s", speaker, exc)
+        return "error"
+
+
 def compose_speaker_design(
     db, fanpage, *, speaker: str, subjects: list[str], article_text: str,
     sport: str, around: datetime, story_photo_path: str | None = None,
@@ -510,7 +550,25 @@ def compose_speaker_design(
 ) -> bytes | None:
     try:
         mood = story_mood(article_text)
-        speakers = pick_speaker_photos(db, speaker, mood=mood)
+        candidate_speakers = pick_speaker_photos(db, speaker, mood=mood)
+        if not candidate_speakers:
+            logger.info("speaker design skipped: missing speaker candidates")
+            return None
+
+        verified_speaker = None
+        for cand in candidate_speakers:
+            gallery_id = getattr(cand, "id", None)
+            ans = verify_speaker_photo(cand, speaker)
+            logger.info("speaker reference check: speaker=%s gallery_id=%s answer=%s", speaker, gallery_id, ans)
+            if ans == "yes":
+                verified_speaker = cand
+                break
+
+        if not verified_speaker:
+            logger.info("speaker design skipped: no candidate photo verified as %s", speaker)
+            return None
+
+        speakers = [verified_speaker] + [c for c in candidate_speakers if c is not verified_speaker]
         moments = pick_moment_photos(db, subjects, around, article_text=article_text, speaker=speaker)
         bikes = pick_bike_photos(db, subjects[0] if subjects else speaker)
 

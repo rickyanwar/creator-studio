@@ -10,6 +10,12 @@ from app.services.identity_check import IdentityResult
 from app.services.visual_engine import GenerationResult, VisualEngineDeferred, VisualEngineError
 
 
+@pytest.fixture(autouse=True)
+def _reference_photo_check_passes(monkeypatch):
+    # The reference-photo identity check has its own tests (test_speaker_subject_guard.py).
+    monkeypatch.setattr(speaker_design, "verify_speaker_photo", lambda *a, **k: "yes")
+
+
 def _make_image(size=(1024, 1536), color=(40, 80, 120)):
     buf = BytesIO()
     Image.new("RGB", size, color).save(buf, format="PNG")

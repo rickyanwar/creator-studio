@@ -142,6 +142,12 @@ export function BrandChannelCard({
           >
             Pacing
           </Link>
+          <Link
+            href={`/brands/channels/${channel.id}?tab=history`}
+            className="btn-ghost text-xs px-3.5 py-1.5"
+          >
+            History
+          </Link>
         </div>
       </div>
 

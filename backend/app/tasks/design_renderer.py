@@ -110,6 +110,61 @@ def _name_badge(value: str | None) -> str | None:
     return value
 
 
+def _is_likely_speaker_person(db, name: str) -> bool:
+    """Return True if *name* from a headline prefix looks like a real person:
+    - 2 or more capitalized words (e.g. 'Max Verstappen', 'Jorge Martin'), OR
+    - A single word that equals a known driver surname or full name in f1_drivers, OR
+    - A single word that equals a confirmed person in GalleryImage (where keyword matches
+      and label is 'face' or shot_type is portrait/face/half_body, or where attributes['people']
+      records the person).
+    Never treats circuits, venues, teams, or locations (e.g. 'Portimao') as a person."""
+    if not name:
+        return False
+    words = name.strip().split()
+    if not words:
+        return False
+    if len(words) >= 2 and all(w[0].isupper() for w in words):
+        return True
+    if len(words) == 1 and db is not None:
+        single = words[0].strip()
+        try:
+            from app.models.f1_drivers import F1Driver
+            from sqlalchemy import func, or_
+            driver = db.query(F1Driver.id).filter(
+                or_(
+                    func.lower(F1Driver.surname) == single.lower(),
+                    func.lower(F1Driver.full_name) == single.lower(),
+                )
+            ).first()
+            if driver is not None:
+                return True
+        except Exception:
+            pass
+
+        try:
+            from app.models.gallery import GalleryImage
+            from sqlalchemy import func, or_, and_, cast, String
+            pattern = f"%{single}%"
+            row = db.query(GalleryImage.id).filter(
+                GalleryImage.is_deleted.is_(False),
+                or_(
+                    and_(
+                        func.lower(GalleryImage.keyword) == single.lower(),
+                        or_(
+                            GalleryImage.label == "face",
+                            cast(GalleryImage.attributes["shot_type"], String).in_(["face_closeup", "portrait", "half_body"]),
+                        ),
+                    ),
+                    cast(GalleryImage.attributes["people"], String).ilike(pattern),
+                ),
+            ).first()
+            if row is not None:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str) -> bytes | None:
     """Return a speaker-led image when the per-mode toggle is enabled."""
     toggle = getattr(fanpage, "news_visual_engine" if mode == "news" else "fb_visual_engine", "off")
@@ -125,7 +180,9 @@ def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str) -> by
     speaker = _name_badge(job.design_subtitle)
     if not speaker:
         match = _HEADLINE_NAME_RE.match(article_title) or _HEADLINE_NAME_RE.match(title)
-        speaker = match.group(1).strip() if match else ""
+        candidate = match.group(1).strip() if match else ""
+        if candidate and _is_likely_speaker_person(db, candidate):
+            speaker = candidate
 
     extraction_title = " — ".join(
         part for part in (job.design_subtitle, getattr(article, "scraped_title", None), title) if part

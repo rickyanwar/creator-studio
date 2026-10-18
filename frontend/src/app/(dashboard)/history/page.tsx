@@ -31,7 +31,7 @@ import { useBrandFilter } from "@/contexts/BrandFilterContext";
 const parseUtc = (s: string) =>
   new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
 
-type FanpageLite = { id: number; name: string };
+type FanpageLite = { id: number; name: string; is_active?: boolean };
 
 function jobTimes(job: PublishJob) {
   const queuedRaw =
@@ -146,6 +146,15 @@ export default function HistoryPage() {
     "history-fanpages",
     () => listFanpages().then((r) => r.data as FanpageLite[])
   );
+
+  const sortedFanpages = useMemo(() => {
+    return [...fanpages].sort((a, b) => {
+      const aActive = a.is_active !== false ? 1 : 0;
+      const bActive = b.is_active !== false ? 1 : 0;
+      if (aActive !== bActive) return bActive - aActive;
+      return a.name.localeCompare(b.name);
+    });
+  }, [fanpages]);
 
   const { data: jobStats } = useSWR(
     fanpageFilter ? ["history-fanpage-stats", fanpageFilter] : null,
@@ -443,9 +452,9 @@ export default function HistoryPage() {
             className="h-9 px-2.5 rounded-lg border border-line bg-surface text-text text-xs focus:outline-none focus:border-pri"
           >
             <option value="">All brands</option>
-            {fanpages.map((f) => (
+            {sortedFanpages.map((f) => (
               <option key={f.id} value={f.id}>
-                {f.name}
+                {f.name}{f.is_active === false ? " (paused)" : ""}
               </option>
             ))}
           </select>
@@ -594,94 +603,116 @@ export default function HistoryPage() {
                             return (
                               <div className="flex flex-col gap-2 min-w-[220px]">
                                 <ul className="list-none m-0 p-0 flex flex-col">
-                                  {copies.map((c, i) => (
-                                    <li
-                                      key={c.id}
-                                      className={`flex flex-col gap-1 py-1.5 ${
-                                        i > 0 ? "border-t border-line/60" : ""
-                                      }`}
-                                    >
-                                      <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <div className="flex flex-col min-w-0">
-                                          <span className={`font-semibold text-xs text-text ${blurClass}`}>
-                                            {c.destination_name || fanpage}
-                                          </span>
-                                          <span className="text-[11px] text-text2">
-                                            {c.method === "phone"
-                                              ? (c.device_name ? `Phone · ${c.device_name}` : "Phone")
-                                              : c.method === "repliz"
-                                              ? "Repliz"
-                                              : (c.actual_method || c.intended_method || "Direct")}
-                                            {c.published_at ? (
-                                              ` · Went live ${format(parseUtc(c.published_at), "MMM d, HH:mm")}`
-                                            ) : c.scheduled_for ? (
-                                              ` · ${
-                                                parseUtc(c.scheduled_for).getTime() > Date.now() + 60_000
-                                                  ? "Goes live"
-                                                  : "Scheduled"
-                                              } ${format(parseUtc(c.scheduled_for), "MMM d, HH:mm")}`
-                                            ) : null}
-                                          </span>
+                                  {copies.map((c, i) => {
+                                    const isPhone =
+                                      c.method === "phone" ||
+                                      c.actual_method === "phone" ||
+                                      c.intended_method === "phone";
+                                    const channelName = c.destination_name || fanpage;
+
+                                    return (
+                                      <li
+                                        key={c.id}
+                                        className={`flex flex-col gap-1 py-1.5 ${
+                                          i > 0 ? "border-t border-line/60" : ""
+                                        }`}
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div className="flex flex-col min-w-0">
+                                            <span className={`font-semibold text-xs text-text ${blurClass}`}>
+                                              {channelName}
+                                            </span>
+                                            <span className="text-[11px] text-text2">
+                                              {isPhone
+                                                ? `Phone · ${channelName}`
+                                                : c.method === "repliz"
+                                                ? "Repliz"
+                                                : (c.actual_method || c.intended_method || "Direct")}
+                                              {c.published_at ? (
+                                                ` · Went live ${format(parseUtc(c.published_at), "MMM d, HH:mm")}`
+                                              ) : c.scheduled_for ? (
+                                                ` · ${
+                                                  parseUtc(c.scheduled_for).getTime() > Date.now() + 60_000
+                                                    ? "Goes live"
+                                                    : "Scheduled"
+                                                } ${format(parseUtc(c.scheduled_for), "MMM d, HH:mm")}`
+                                              ) : null}
+                                            </span>
+                                          </div>
+                                          <StatusBadge status={c.state} />
                                         </div>
-                                        <StatusBadge status={c.state} />
-                                      </div>
 
-                                      {c.last_error && (
-                                        <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded leading-snug">
-                                          {c.last_error}
-                                        </p>
-                                      )}
+                                        {c.last_error && (
+                                          <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded leading-snug">
+                                            {c.last_error}
+                                          </p>
+                                        )}
 
-                                      {c.state === "uncertain" && (
-                                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                                          {(c.facebook_permalink || c.facebook_post_id) && !blurred && (
+                                        {c.facebook_permalink && !blurred && c.state !== "uncertain" && (
+                                          <div className="mt-0.5">
                                             <a
-                                              href={c.facebook_permalink || `https://facebook.com/${c.facebook_post_id}`}
+                                              href={c.facebook_permalink}
                                               target="_blank"
                                               rel="noreferrer"
-                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text inline-flex items-center gap-1 transition-colors"
+                                              className="text-[11px] text-pri hover:underline inline-flex items-center gap-1"
                                             >
                                               <Icon icon="solar:link-circle-bold-duotone" width={12} />
-                                              Check on Facebook
+                                              View on Facebook
                                             </a>
-                                          )}
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              setConfirmDeliveryAction({ delivery: c, action: "mark-posted" })
-                                            }
-                                            className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text transition-colors"
-                                          >
-                                            Mark posted
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              setConfirmDeliveryAction({ delivery: c, action: "mark-not-posted" })
-                                            }
-                                            className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-bad-soft text-bad transition-colors"
-                                          >
-                                            Mark not posted
-                                          </button>
-                                        </div>
-                                      )}
+                                          </div>
+                                        )}
 
-                                      {c.state === "failed" && !c.repliz_schedule_id && !c.facebook_post_id && (
-                                        <div className="flex items-center gap-1.5 mt-0.5">
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              setConfirmDeliveryAction({ delivery: c, action: "retry" })
-                                            }
-                                            className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-pri transition-colors inline-flex items-center gap-1"
-                                          >
-                                            <Icon icon="solar:restart-bold" width={11} />
-                                            Retry this copy
-                                          </button>
-                                        </div>
-                                      )}
-                                    </li>
-                                  ))}
+                                        {c.state === "uncertain" && (
+                                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                            {(c.facebook_permalink || c.facebook_post_id) && !blurred && (
+                                              <a
+                                                href={c.facebook_permalink || `https://facebook.com/${c.facebook_post_id}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text inline-flex items-center gap-1 transition-colors"
+                                              >
+                                                <Icon icon="solar:link-circle-bold-duotone" width={12} />
+                                                View on Facebook
+                                              </a>
+                                            )}
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setConfirmDeliveryAction({ delivery: c, action: "mark-posted" })
+                                              }
+                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text transition-colors"
+                                            >
+                                              Mark posted
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setConfirmDeliveryAction({ delivery: c, action: "mark-not-posted" })
+                                              }
+                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-bad-soft text-bad transition-colors"
+                                            >
+                                              Mark not posted
+                                            </button>
+                                          </div>
+                                        )}
+
+                                        {c.state === "failed" && !c.repliz_schedule_id && !c.facebook_post_id && (
+                                          <div className="flex items-center gap-1.5 mt-0.5">
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setConfirmDeliveryAction({ delivery: c, action: "retry" })
+                                              }
+                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-pri transition-colors inline-flex items-center gap-1"
+                                            >
+                                              <Icon icon="solar:restart-bold" width={11} />
+                                              Retry this copy
+                                            </button>
+                                          </div>
+                                        )}
+                                      </li>
+                                    );
+                                  })}
                                 </ul>
 
                                 {src && !blurred && (

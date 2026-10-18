@@ -12,6 +12,12 @@ from app.services import speaker_design
 from app.services.visual_engine import GenerationResult
 
 
+@pytest.fixture(autouse=True)
+def _reference_photo_check_passes(monkeypatch):
+    # The reference-photo identity check has its own tests (test_speaker_subject_guard.py).
+    monkeypatch.setattr(speaker_design, "verify_speaker_photo", lambda *a, **k: "yes")
+
+
 def _as_result(fn):
     def wrapper(db, req, **kwargs):
         kwargs.pop("exclude", None)
