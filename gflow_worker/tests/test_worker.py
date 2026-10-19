@@ -49,6 +49,18 @@ def test_happy_path(cfg, studio, runner, count):
     assert JobState(cfg.work_dir, 1, 1).data["uploaded"] is True
 
 
+def test_cut_style_clips_are_all_t2v(cfg, studio, runner):
+    # Cut-style templates (e.g. health) mark every clip t2v: no frame chaining, no seed frames.
+    job = payload(3)
+    job["clips"] = [dict(clip, mode="t2v") for clip in job["clips"]]
+    runner.run_job(job)
+    assert not studio.events("/fail")
+    assert len(studio.uploads) == 1
+    commands = calls(cfg)[1:]
+    assert [command[:2] for command in commands] == [["video", "t2v"]] * 3
+    assert all("--initial-frame" not in command for command in commands)
+
+
 @pytest.mark.parametrize("acknowledged", [True, False])
 def test_resume_only_remaining(cfg, studio, runner, acknowledged):
     job = payload()

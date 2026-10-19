@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from app.models.ai_video import VideoIdea
 from app.services import news_copywriter
 from app.services.ai_video_ideas import ConflictError, LimitExceededError, create_idea
-from app.services.video_templates import allowed_video_templates, clip_choices, get_template, list_templates
+from app.services.video_templates import allowed_video_templates, clip_choices, fanpage_niche, get_template, list_templates
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +15,17 @@ IDEA_SOURCE = "ai"
 MAX_IDEAS_PER_RUN = 4
 RECENT_TOPIC_DAYS = 30
 RECENT_TOPIC_LIMIT = 60
-
-
-def fanpage_niche(fanpage) -> str:
-    page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
-    niche_text = " ".join(str(value) for value in page_niches) + " " + getattr(fanpage, "name", "")
-    return "motogp" if re.search(r"moto\s*-?\s*gp", niche_text, re.I) else "f1"
+TOPIC_GUIDELINES = {
+    "health": "Topics must be evergreen everyday-health explainers a soft 3D medical animation can show (how a body "
+              "process, a common condition, a treatment or a device works); never name real brands, companies or "
+              "products; never give personal medical advice, a diagnosis or a dosage; do not invent numbers or study "
+              "results (there is no research step, so keep claims general and well established).",
+}
+MOTORSPORT_TOPIC_GUIDELINE = (
+    "Topics must be evergreen, technical and visual (things a 3D x-ray / exploded-view or telemetry animation can show); "
+    "never name real teams, sponsors or brands; do not invent numbers, dates or race results (there is no research step, "
+    "so keep claims general)."
+)
 
 
 def writer_templates(fanpage) -> list:
@@ -79,7 +84,7 @@ Available templates:
 Guidelines:
 - Pick the template that fits each idea best; spread ideas across templates when more than one template is listed.
 - Pick clips for each idea from that template's allowed_clips: the smallest number for a simple single-idea topic, the largest when the topic needs more explanation (more parts or steps).
-- Topics must be evergreen, technical and visual (things a 3D x-ray / exploded-view or telemetry animation can show); never name real teams, sponsors or brands; do not invent numbers, dates or race results (there is no research step, so keep claims general).
+- {TOPIC_GUIDELINES.get(niche, MOTORSPORT_TOPIC_GUIDELINE)}
 - Never repeat or paraphrase any of these topics: {json.dumps(avoid_topics)}.
 - Write topic and angle in English (the page language is applied later, when the script is written).
 - Score each idea honestly 0-100 for how well it fits the template and this page's audience; rationale = one or two sentences why.

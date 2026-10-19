@@ -107,6 +107,13 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
                 return re.sub(r"\s+", " ", str(value).strip())[:300]
 
             lines = []
+            # Templates without a vehicle (health) name one visual_subject shown in every clip, cut into short shots.
+            has_subject = expectations.get("visual_subject") is not None
+            if has_subject:
+                lines.append(
+                    "Main subject in every clip: " + clean(expectations["visual_subject"])
+                    + ". It keeps the same look in every clip; hard cuts between short shots are intended."
+                )
             has_mechanism = all(expectations.get(key) is not None for key in ("part", "mechanism_action", "final_state"))
             if has_mechanism:
                 lines.append(
@@ -145,9 +152,16 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
                     + '"; any misspelled, garbled or extra text fails.'
                 )
             prompt += " ".join(lines) + " "
-            fail_clauses = [
-                "rigid parts (wings, bodywork, wheels, suspension) bend, twist, melt or tilt unnaturally"
-            ]
+            if has_subject:
+                fail_clauses = [
+                    "text, letters, numbers, labels or logos appear in the image",
+                    "the anatomy is physically impossible or a body part sits in the wrong place",
+                    "gore, more blood than a small drop, or a needle piercing skin in close-up",
+                ]
+            else:
+                fail_clauses = [
+                    "rigid parts (wings, bodywork, wheels, suspension) bend, twist, melt or tilt unnaturally"
+                ]
             if has_mechanism:
                 fail_clauses.append("the shown part or motion contradicts the expected mechanism")
             if expectations.get("fixed_parts") is not None:

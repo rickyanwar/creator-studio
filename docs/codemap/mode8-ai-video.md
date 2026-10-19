@@ -87,8 +87,10 @@ Defined in `backend/app/models/ai_video.py:62` (`VideoIdea.status`).
 
 ### 3.1 Registry & Template Data Model
 - Templates loaded from `backend/app/video_templates/*.json` and merged with `_shared_blocks.json` via `@lru_cache(maxsize=1)` (`video_templates.py:60`).
-- Models: `motorsport_tech_explainer`, `motorsport_corner_masterclass`, `motorsport_legend_innovation`.
-- Core constants: `model="omni-flash"`, `aspect="9:16"`, `clip_seconds=10`, `credits_per_clip=15`. Clip options typically `[2, 3]` (20s or 30s).
+- Models: `motorsport_tech_explainer`, `motorsport_corner_masterclass`, `motorsport_legend_innovation`, `health_3d_explainer` (2026-10-20, for Ayok sehat).
+- Core constants: `model="omni-flash"`, `aspect="9:16"`, `clip_seconds=10`, `credits_per_clip=15`. Clip options typically `[2, 3]` (20s or 30s); health `[4, 5]` (40–50 s, 60–75 credits).
+- **Templates without a vehicle** (`"uses_vehicle": false`, `video_templates.uses_vehicle`): no `vehicle_preset`, livery or lettering. `render_clips` → `_render_plain`: style + audio + one identical narrator sentence in every clip, slots `visual_subject` + `shot_<n>a/b/c` + `narration_<n>`, every clip `t2v` (three hard-cut shots per clip, no frame chaining). Prompts over `MAX_PROMPT_CHARS` (2900) fail, because Flow refuses ~3,000+ characters.
+- **Niche** (`video_templates.fanpage_niche`, shared by fill, idea writer and research desk): `motogp` from gallery niches / name; else a non-motorsport niche from the page's templates (all health → `health`) or name; else `f1`.
 
 ### 3.2 Template Rotation Math
 In `ai_video_plan.py:62-77`, the planner prevents template fatigue on a fanpage:
@@ -105,8 +107,9 @@ In `ai_video_plan.py:62-77`, the planner prevents template fatigue on a fanpage:
 - **Daily Budget Exhaustion**: If `per_day` budget minus spent today cannot cover minimum clips, idea stays `approved` and waits for midnight reset (`ai_video_plan.py:102`).
 
 ### 3.4 Variable Filling & Look Injection
-- **Muse Bypass (`fill_from_research`)**: If `research_ready()` (`ai_video_fill.py:169`), idea already contains complete variables, title, and caption. Skips LLM generation entirely. Injects `GENERIC_LOCK` for `moving_part` and `fixed_parts` if missing (`ai_video_fill.py:163-166`).
-- **LLM Filling (`fill_idea`)**: Calls 9Router via `news_copywriter._generate_with_fallback`. Prompts include mechanical rules, physical placement grounding, and language word budgets (`ai_video_fill.py:47-88`).
+- **Muse Bypass (`fill_from_research`)**: If `research_ready()`, idea already contains complete variables, title, and caption. Skips LLM generation entirely. Injects `GENERIC_LOCK` for `moving_part` and `fixed_parts` if missing, only when the template uses those slots.
+- **LLM Filling (`fill_idea`)**: Calls 9Router via `news_copywriter._generate_with_fallback`. Vehicle templates: mechanical rules (`MECHANICAL_ACCURACY`), vehicle presets, mechanism references. Templates without a vehicle: `NICHE_ACCURACY[niche]` (health: anatomy, mainstream mechanisms, one subject, shots match words, no advice/dosage) and "never name real brands, companies or products". Both get language word budgets.
+- **Muse research desk**: niches `f1`, `motogp`, `health`. A niche in `research_desk.NICHE_GUIDES` (health) gets a `guide` in the brief that replaces the top-level studio, idea sources, global rules, research defaults and motion check. Health variants must not send `vehicle_preset` / `team_livery`.
 - **Studio Look Resolution (`apply_system_look`, `ai_video_fill.py:136`)**:
   - `narrator_preset`: Fanpage timezone `Australia/*` -> `EN-AUSSIE-ENG`; `America/*` -> `EN-US-ENG`; else `fanpage.id % 4` of `["EN-PADDOCK", "EN-SCOT", "EN-JOURNO-F", "EN-DOC"]`.
   - `livery`: `pick_livery(db, fanpage_id, template)` inspects past 50 jobs, picks unused livery or least recently used.
@@ -206,7 +209,7 @@ Implemented in `gflow_worker/probe_credits.py`:
 ### 6.1 Inter-Clip Visual Continuity
 `gflow_worker/runner.py:99-106`:
 - Clip 1: text-to-video (`t2v`) with template prompt.
-- Clip N > 1: image-to-video (`i2v`) using `Media.last_frame(clip_prev, seed_png, offset_ms=100)`.
+- Clip N > 1: image-to-video (`i2v`) using `Media.last_frame(clip_prev, seed_png, offset_ms=100)`, unless the clip's `mode` is `t2v` (cut-style templates such as health): then it is its own t2v generation.
 - `Media.last_frame` (`media.py:20-33`): Runs `ffmpeg -sseof -0.1 -i clip.mp4 -frames:v 1 seed.png`. Fallback to positive seek if `-sseof` fails.
 
 ### 6.2 Concat Assembly & Frozen Frame Removal

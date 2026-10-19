@@ -96,7 +96,8 @@ class JobRunner:
                 out = (state.directory / f"clip-{index}.mp4").resolve()
                 kwargs = dict(profile=job["account"]["profile"], project=project, model=job["model"],
                               aspect=job["aspect"], duration=job["clip_seconds"], out=out)
-                if index == 1:
+                if index == 1 or clip.get("mode") == "t2v":
+                    # Cut-style templates (e.g. health) make every clip as its own t2v shot list.
                     result = self.gflow.t2v(clip["prompt"], **kwargs)
                 else:
                     frame = self.media.last_frame(paths[-1], state.directory / f"seed-{index}.png", self.cfg.seed_offset_ms)
