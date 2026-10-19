@@ -20,6 +20,7 @@ from app.services.engine_router import (
     codex_allowed,
     codex_daily_used,
     codex_share,
+    gptcli_queue_len,
     is_night,
     parse_hhmm,
     plan_engines,
@@ -90,6 +91,77 @@ def test_visual_queue_len():
 
     with patch("app.services.engine_router.redis.from_url", side_effect=Exception("Redis down")):
         assert visual_queue_len() == 0
+
+
+def test_gptcli_queue_len_health_and_running_profile(mock_db):
+    """queue_len + 1 when any profile has running=True."""
+    mock_r = MagicMock()
+    mock_r.get.return_value = None
+
+    health_running = {
+        "queue_len": 2,
+        "profiles": {
+            "utama": {"running": True},
+            "cadangan": {"running": False},
+        },
+    }
+    with patch("app.services.engine_router.redis.from_url", return_value=mock_r), \
+         patch("app.services.gptcli_client.serve_health", return_value=health_running):
+        assert gptcli_queue_len(mock_db) == 3
+        mock_r.set.assert_called_once_with("gptcli:queue_len_cache", "3", ex=30)
+
+    # Not running -> queue_len as-is
+    mock_r.reset_mock()
+    mock_r.get.return_value = None
+    health_idle = {
+        "queue_len": 2,
+        "profiles": {
+            "utama": {"running": False},
+        },
+    }
+    with patch("app.services.engine_router.redis.from_url", return_value=mock_r), \
+         patch("app.services.gptcli_client.serve_health", return_value=health_idle):
+        assert gptcli_queue_len(mock_db) == 2
+        mock_r.set.assert_called_once_with("gptcli:queue_len_cache", "2", ex=30)
+
+
+def test_gptcli_queue_len_serve_health_none_treated_as_zero(mock_db):
+    """serve_health None -> treated as 0."""
+    mock_r = MagicMock()
+    mock_r.get.return_value = None
+
+    with patch("app.services.engine_router.redis.from_url", return_value=mock_r), \
+         patch("app.services.gptcli_client.serve_health", return_value=None):
+        assert gptcli_queue_len(mock_db) == 0
+
+
+def test_gptcli_queue_len_redis_down_treated_as_zero(mock_db):
+    """Redis down -> returns 0, does not raise."""
+    with patch("app.services.engine_router.redis.from_url", side_effect=Exception("Redis down")):
+        assert gptcli_queue_len(mock_db) == 0
+
+
+def test_gptcli_queue_len_cache_avoids_serve_health_call(mock_db):
+    """Within 30 s cache hit returns cached int and does not call serve_health."""
+    mock_r = MagicMock()
+    mock_r.get.return_value = "4"
+
+    with patch("app.services.engine_router.redis.from_url", return_value=mock_r), \
+         patch("app.services.gptcli_client.serve_health") as mock_health:
+        assert gptcli_queue_len(mock_db) == 4
+        mock_health.assert_not_called()
+        mock_r.get.assert_called_once_with("gptcli:queue_len_cache")
+
+
+def test_gptcli_queue_len_bad_data_treated_as_zero(mock_db):
+    """Bad data in serve_health -> treated as 0 without raising."""
+    mock_r = MagicMock()
+    mock_r.get.return_value = None
+
+    for bad in ["not-a-dict", {"queue_len": "corrupt"}, {"queue_len": None}]:
+        with patch("app.services.engine_router.redis.from_url", return_value=mock_r), \
+             patch("app.services.gptcli_client.serve_health", return_value=bad):
+            assert gptcli_queue_len(mock_db) == 0
 
 
 def test_codex_allowed_cases(mock_db, mock_settings):
@@ -234,6 +306,44 @@ def test_5_day_share_under_and_queue_overflow(mock_db):
         assert plan.defer_until is None
 
 
+def test_5b_day_gptcli_queue_overflow(mock_db):
+    """5b. day, visual queue 0 but gptcli queue 3 -> ("9router","gptcli") overflow."""
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.10), \
+         patch("app.services.engine_router.visual_queue_len", return_value=0), \
+         patch("app.services.engine_router.gptcli_queue_len", return_value=3) as mock_q, \
+         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, None, None, "estimate")), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
+
+        assert plan.order == ("9router", "gptcli")
+        assert plan.reason == "overflow"
+        assert plan.defer_until is None
+        mock_q.assert_called_once_with(mock_db)
+
+
+def test_5c_day_queues_zero_not_overflow(mock_db):
+    """5c. day, visual queue 0 and gptcli queue 0 -> not overflow (the existing behaviour)."""
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.10), \
+         patch("app.services.engine_router.visual_queue_len", return_value=0), \
+         patch("app.services.engine_router.gptcli_queue_len", return_value=0), \
+         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, None, None, "estimate")), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME, rand=lambda: 0.99)
+
+        assert plan.order == ("gptcli", "9router")
+        assert plan.reason == "gptcli_first"
+
+
 def test_6_day_share_exhausted_long_queue_gptcli_first(mock_db):
     """6. day, share 0.35 (= percent) and queue 10 -> ("gptcli","9router") gptcli_first."""
     with patch("app.services.engine_router.get_gptcli_config"), \
@@ -252,6 +362,25 @@ def test_6_day_share_exhausted_long_queue_gptcli_first(mock_db):
         assert plan.defer_until is None
 
 
+def test_6b_codex_budget_zero_skips_gptcli_queue_len(mock_db):
+    """Codex budget left 0 -> gptcli_queue_len is not even called."""
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.35), \
+         patch("app.services.engine_router.visual_queue_len", return_value=0), \
+         patch("app.services.engine_router.gptcli_queue_len") as mock_q, \
+         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, None, None, "estimate")), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
+
+        assert plan.order == ("gptcli", "9router")
+        assert plan.reason == "gptcli_first"
+        mock_q.assert_not_called()
+
+
 def test_7_day_share_random_selection(mock_db):
     """7. day, share 0.0, rand 0.1 < 0.35 -> share; rand 0.9 -> gptcli_first."""
     with patch("app.services.engine_router.get_gptcli_config"), \
@@ -259,6 +388,7 @@ def test_7_day_share_random_selection(mock_db):
          patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
          patch("app.services.engine_router.codex_share", return_value=0.0), \
          patch("app.services.engine_router.visual_queue_len", return_value=0), \
+         patch("app.services.engine_router.gptcli_queue_len", return_value=0), \
          patch("app.services.engine_router.codex_resting", return_value=False), \
          patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, None, None, "estimate")), \
          patch("app.services.engine_router.codex_daily_used", return_value=10):

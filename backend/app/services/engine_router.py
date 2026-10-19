@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.models.ai_copy_events import AICopyEvent
 from app.models.settings import Settings
 from app.services.codex_budget import codex_resting, get_codex_usage
+from app.services import gptcli_client
 from app.services.gptcli_client import (
     get_gptcli_config,
     gptcli_applies,
@@ -32,6 +33,8 @@ logger = logging.getLogger(__name__)
 WIB = ZoneInfo("Asia/Jakarta")
 SHARE_REASONS = ("share", "overflow")
 CHOICE_REASONS = ("share", "overflow", "gptcli_first")
+GPTCLI_QUEUE_LEN_CACHE_KEY = "gptcli:queue_len_cache"
+GPTCLI_QUEUE_LEN_TTL_S = 30
 
 
 @dataclass(frozen=True)
@@ -139,6 +142,41 @@ def visual_queue_len() -> int:
         return 0
 
 
+def _redis():
+    return redis.from_url(get_settings().redis_url, decode_responses=True)
+
+
+def gptcli_queue_len(db) -> int:
+    try:
+        r = _redis()
+        cached = r.get(GPTCLI_QUEUE_LEN_CACHE_KEY)
+        if cached is not None:
+            return int(cached)
+
+        cfg = gptcli_client.get_gptcli_config(db)
+        health = gptcli_client.serve_health(cfg)
+        queue_len = 0
+        if isinstance(health, dict):
+            queue_len = max(0, int(health.get("queue_len") or 0))
+            profiles = health.get("profiles")
+            if isinstance(profiles, dict) and any(
+                isinstance(p, dict) and p.get("running") is True for p in profiles.values()
+            ):
+                queue_len += 1
+
+        # Cache misses too, so an unreachable gpt serve costs one 10 s probe per TTL.
+
+        try:
+            r.set(GPTCLI_QUEUE_LEN_CACHE_KEY, str(queue_len), ex=GPTCLI_QUEUE_LEN_TTL_S)
+        except Exception as exc:
+            logger.warning("engine_router: failed to cache gptcli queue len: %s", exc)
+
+        return queue_len
+    except Exception as exc:
+        logger.warning("engine_router: gptcli_queue_len error: %s", exc)
+        return 0
+
+
 def codex_allowed(db, now: datetime, *, night: bool, settings=None) -> tuple[bool, str]:
     if codex_resting(db, now):
         return False, "codex_resting"
@@ -232,7 +270,7 @@ def plan_engines(
             overflow_queue_len = 3
 
         if left > 0.0 and usage.window_pct < share_max_pct and not codex_resting(db, now):
-            if visual_queue_len() >= overflow_queue_len:
+            if visual_queue_len() >= overflow_queue_len or gptcli_queue_len(db) >= overflow_queue_len:
                 order = ("9router", "gptcli")
                 reason = "overflow"
             elif rand() < left:
