@@ -157,3 +157,51 @@ def test_archival_photo_forces_estimated_confidence_without_changing_date():
     muse_labeler.apply_archival_photo(row, attrs)
     assert row.captured_at == date(2026, 1, 2)
     assert row.attributes["captured_at_confidence"] == "estimated"
+
+
+def test_merge_label_attributes_keyword_person_visible():
+    existing_kw = {"people": [{"name": "Max Verstappen", "source": "keyword"}]}
+
+    # keyword_person_visible unsure -> people []
+    m_unsure = muse_labeler.merge_label_attributes(existing_kw, {"keyword_person_visible": "unsure", "people": []})
+    assert m_unsure["people"] == []
+    assert m_unsure["keyword_person_visible"] == "unsure"
+
+    # keyword_person_visible no -> people []
+    m_no = muse_labeler.merge_label_attributes(existing_kw, {"keyword_person_visible": "no", "people": []})
+    assert m_no["people"] == []
+    assert m_no["keyword_person_visible"] == "no"
+
+    # keyword_person_visible yes with no new people -> existing kept
+    m_yes = muse_labeler.merge_label_attributes(existing_kw, {"keyword_person_visible": "yes", "people": []})
+    assert m_yes["people"] == existing_kw["people"]
+    assert m_yes["keyword_person_visible"] == "yes"
+
+    # manual people -> kept regardless of keyword_person_visible
+    existing_manual = {"people": [{"name": "Max Verstappen", "source": "keyword"}], "manual_fields": ["people"]}
+    m_manual = muse_labeler.merge_label_attributes(existing_manual, {"keyword_person_visible": "no", "people": []})
+    assert m_manual["people"] == existing_manual["people"]
+
+    # old-style label without the key -> current behaviour (existing keyword people kept)
+    m_old = muse_labeler.merge_label_attributes(existing_kw, {"people": []})
+    assert m_old["people"] == existing_kw["people"]
+    assert "keyword_person_visible" not in m_old
+
+    # non-keyword existing people preserved when keyword person dropped
+    existing_mixed = {
+        "people": [
+            {"name": "Max Verstappen", "source": "keyword"},
+            {"name": "Lewis Hamilton", "source": "face"},
+        ]
+    }
+    m_mixed = muse_labeler.merge_label_attributes(existing_mixed, {"keyword_person_visible": "unsure", "people": []})
+    assert m_mixed["people"] == [{"name": "Lewis Hamilton", "source": "face"}]
+
+    # new people identified by Gemini preserved even if keyword_person_visible is unsure
+    m_new_people = muse_labeler.merge_label_attributes(
+        existing_kw,
+        {"people": [{"name": "Lewis Hamilton", "confidence": 0.9}], "keyword_person_visible": "unsure"},
+    )
+    assert m_new_people["people"] == [{"name": "Lewis Hamilton", "confidence": 0.9}]
+
+

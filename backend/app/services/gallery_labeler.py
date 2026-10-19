@@ -319,6 +319,8 @@ def _apply_hints(result: dict, hints: dict | None) -> dict:
         return result
     if hints.get("people"):
         result["people"] = [{"name": name, "confidence": 1.0, "source": "manual"} for name in hints["people"]]
+        result["keyword_mismatch"] = False
+        result["keyword_person_visible"] = "yes"
     event = dict(result.get("event") or {})
     for key in ("session", "event_name", "year"):
         if hints.get(key) not in (None, ""):

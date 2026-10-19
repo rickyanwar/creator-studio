@@ -214,6 +214,43 @@ def test_rows_does_not_match_location_or_getty_hints_in_attributes(db_session):
     assert [r.id for r in verstappen_matches] == [102]
 
 
+def test_rows_excludes_keyword_mismatch(db_session):
+    """_rows must exclude photos where keyword_mismatch is True."""
+    row_good = GalleryImage(
+        id=201,
+        keyword="Fernando Alonso",
+        extra_keywords=[],
+        source_image_url="https://example.com/fa_good.jpg",
+        local_path="/tmp/fa_good.jpg",
+        public_url="/media/fa_good.jpg",
+        width=800,
+        height=1000,
+        source_engine="bing",
+        label="face",
+        attributes={"people": [{"name": "Fernando Alonso", "confidence": 0.95}], "keyword_mismatch": False},
+        is_deleted=False,
+    )
+    row_bad = GalleryImage(
+        id=202,
+        keyword="Fernando Alonso",
+        extra_keywords=[],
+        source_image_url="https://example.com/fa_bad.jpg",
+        local_path="/tmp/fa_bad.jpg",
+        public_url="/media/fa_bad.jpg",
+        width=800,
+        height=1000,
+        source_engine="bing",
+        label="face",
+        attributes={"people": [{"name": "Lance Stroll", "confidence": 0.95}], "keyword_mismatch": True},
+        is_deleted=False,
+    )
+    db_session.add_all([row_good, row_bad])
+    db_session.commit()
+
+    matches = speaker_design._rows(db_session, ["Fernando Alonso"])
+    assert [r.id for r in matches] == [201]
+
+
 # ---------------------------------------------------------------------------
 # Test 4: Reference check vision guard (Fix C)
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ from PIL import Image
 from sqlalchemy import String, cast, func, or_
 
 from app.models.gallery import GalleryImage
+from app.services.gallery_filters import not_keyword_mismatch
 from app.services import design_images, visual_engine
 from app.services.visual_engine import GenerationRequest, VisualEngineError
 from app.services.visual_sourcing import get_name_variants
@@ -143,7 +144,7 @@ def _rows(db, names: list[str]) -> list[GalleryImage]:
             conds.append(GalleryImage.extra_keywords.any(variant))
         conditions.extend(conds)
     return (db.query(GalleryImage)
-            .filter(GalleryImage.is_deleted.is_(False), or_(*conditions))
+            .filter(GalleryImage.is_deleted.is_(False), or_(*conditions), not_keyword_mismatch())
             .order_by(func.coalesce(GalleryImage.captured_at, GalleryImage.downloaded_at).desc())
             .limit(300).all())
 
