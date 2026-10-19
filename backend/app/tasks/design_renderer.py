@@ -18,6 +18,9 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+from sqlalchemy.orm import Session
 
 import httpx
 
@@ -386,6 +389,119 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
     return None, None, None
 
 
+def render_card_png(
+    job: Any,
+    fanpage: Any,
+    template: Any,
+    image_src: str,
+    *,
+    label: str | None = None,
+    article: Any = None,
+    db: Any = None,
+    main_path: str | None = None,
+    skip_face_fix: bool = False,
+) -> bytes:
+    """Render a card PNG through the headless renderer service.
+
+    Extracts the payload construction and POST to renderer:3001 so both
+    render_design and pro_poster_eval produce identical card layouts.
+    """
+    from app.services.design_images import (
+        prepare_design_images,
+        focus_points_for,
+        align_split_focus_points,
+        watermark_datauri,
+        find_role_object,
+        _safe_face_cy_ceiling,
+        fix_unsafe_single_photo_face,
+    )
+
+    art = article or getattr(job, "source_article", None)
+    scraped_title = getattr(art, "scraped_title", "") if art else ""
+    title = getattr(job, "design_title", None) or scraped_title or ""
+    subtitle = getattr(job, "design_subtitle", None) or ""
+    caption = getattr(job, "design_caption", None) or ""
+
+    subject_title = " — ".join(
+        p for p in (subtitle, scraped_title, title) if p
+    ) or title
+
+    session = db or (Session.object_session(job) if hasattr(job, "_sa_instance_state") else None)
+
+    template_json, image_srcs = prepare_design_images(
+        session,
+        template.template_json,
+        template.canvas_width,
+        subject_title,
+        getattr(fanpage, "name", "") if fanpage else "",
+        image_src,
+        main_path=main_path,
+        expand=bool(getattr(fanpage, "design_expand", False)),
+    )
+    image_zooms = template_json.pop("_splitImageZooms", None)
+
+    image_2_slot = find_role_object(template_json, "image_2")
+    is_split = (
+        image_2_slot is not None
+        and image_2_slot.get("type") == "rect"
+        and len(image_srcs) >= 2
+        and image_srcs[0]
+        and image_srcs[1]
+    )
+    safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
+    if not is_split and not skip_face_fix and image_srcs and image_srcs[0]:
+        try:
+            main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
+            fixed = fix_unsafe_single_photo_face(
+                main_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+            )
+            if fixed:
+                image_srcs[0] = fixed
+        except Exception as exc:
+            logger.warning("Design: fix_unsafe_single_photo_face failed for job %s: %s", getattr(job, "id", None), exc)
+
+    focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
+    if is_split:
+        focus_points = align_split_focus_points(focus_points)
+
+    if label is not None:
+        news_badge_text = label
+    else:
+        category = getattr(template, "category", "news") or "news"
+        breaking = getattr(job, "is_breaking", False)
+        news_badge_text = _news_badge_text(fanpage, breaking=breaking) if category == "news" else ""
+
+    title = clean_title_for_render(title)
+    template_json = clear_template_text_objects(template_json)
+    sub_text, cap_text = _speaker_line_fields(template_json, subtitle, caption)
+
+    cfg = get_settings()
+    renderer_url = cfg.renderer_url.rstrip("/")
+    resp = httpx.post(
+        f"{renderer_url}/render",
+        json={
+            "template_json": template_json,
+            "width": template.canvas_width,
+            "height": template.canvas_height,
+            "title": title,
+            "subtitle": sub_text,
+            "caption": cap_text,
+            "label": news_badge_text,
+            "watermark": (getattr(fanpage, "watermark_text", None) or "") if fanpage else "",
+            "watermark_image": watermark_datauri(fanpage) if fanpage else None,
+            "image_srcs": image_srcs,
+            "focus_points": focus_points,
+            "image_zooms": image_zooms,
+            "scale": cfg.design_render_scale,
+            "accent": getattr(fanpage, "accent_color", None) if fanpage else None,
+            "look": brand_look(fanpage, template_json) if fanpage else None,
+        },
+        timeout=_RENDER_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+
 @celery_app.task(name="app.tasks.design_renderer.render_design", bind=True, max_retries=2)
 def render_design(self, job_id: int):
     db = SessionLocal()
@@ -464,39 +580,89 @@ def render_design(self, job_id: int):
         # on manual review instead of looping forever.
         image_src = gallery_image = image_marker = None
         speaker_gallery_images = []
+        pro_poster_label = None
+        pro_poster_engine = None
+        pro_poster_engine_note = None
+
         from app.services.visual_engine import VisualEngineDeferred
-        try:
-            speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="news")
-        except VisualEngineDeferred as exc:
-            _defer_job(db, job, exc)
-            return
-        if speaker_design:
-            speaker_gallery_images = getattr(speaker_design, "used_gallery_images", [])
-            image_src = f"data:image/png;base64,{base64.b64encode(speaker_design).decode()}"
-            image_marker = "speaker_design"
-        else:
-            exclude_marker = job.last_image_marker
-            for _attempt in range(3):
-                cand_src, cand_gi, cand_marker = select_image_for_job(
-                    db, job, fanpage, article, exclude_marker=exclude_marker,
-                )
-                if not cand_src:
-                    break
-                try:
-                    cand_bytes = base64.b64decode(cand_src.split(",", 1)[1])
-                    fits = single_photo_face_fits(
-                        cand_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+        from app.services.pro_poster.pipeline import compose_pro_poster, pro_poster_applies
+
+        if pro_poster_applies(db, fanpage):
+            try:
+                pp_res = compose_pro_poster(db, fanpage, job, article)
+                analysis = dict(job.design_analysis_json or {})
+                if pp_res.qa is not None:
+                    analysis["pro_poster_qa"] = {
+                        "scores": pp_res.qa.scores,
+                        "issues": list(pp_res.qa.issues),
+                        "passed": pp_res.qa.passed,
+                    }
+                else:
+                    analysis["pro_poster_qa"] = None
+                job.design_analysis_json = analysis
+
+                if pp_res.image:
+                    image_src = f"data:image/png;base64,{base64.b64encode(pp_res.image).decode()}"
+                    image_marker = "pro_poster"
+                    pro_poster_engine = pp_res.engine
+                    scores_str = " ".join(f"{k}:{v}" for k, v in pp_res.qa.scores.items()) if (pp_res.qa and pp_res.qa.scores) else ""
+                    note_text = f"pro poster · qa {scores_str}".strip()
+                    pro_poster_engine_note = note_text[:200]
+                    pro_poster_label = pp_res.brief.badge_label
+                elif pp_res.fallback_reason == "no verified photo":
+                    # TYPOGRAPHIC CARD
+                    from app.services.pro_poster import typo_background
+                    bg_bytes = typo_background.make_typographic_background(
+                        pp_res.brief,
+                        brand_color=getattr(fanpage, "accent_color", None),
+                        seed=job.id,
                     )
-                except Exception:
-                    fits = True  # can't decode to check — don't block over a hiccup
-                if fits:
-                    image_src, gallery_image, image_marker = cand_src, cand_gi, cand_marker
-                    break
-                logger.info(
-                    "Design: job %d rejected candidate %s — face too large for this template's safe zone",
-                    job_id, cand_marker,
-                )
-                exclude_marker = cand_marker
+                    image_src = typo_background.background_datauri(bg_bytes)
+                    image_marker = "pro_poster_typo"
+                    pro_poster_engine = "template"
+                    pro_poster_engine_note = (pp_res.fallback_reason or "")[:200]
+                    pro_poster_label = pp_res.brief.badge_label
+                else:
+                    logger.info("Pro poster job %d fell back to the old path: %s", job_id, pp_res.fallback_reason)
+            except VisualEngineDeferred as exc:
+                _defer_job(db, job, exc)
+                return
+            except Exception as exc:
+                logger.exception("Pro poster compose failed for job %d, continuing: %s", job_id, exc)
+
+        if not image_src:
+            try:
+                speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="news")
+            except VisualEngineDeferred as exc:
+                _defer_job(db, job, exc)
+                return
+            if speaker_design:
+                speaker_gallery_images = getattr(speaker_design, "used_gallery_images", [])
+                image_src = f"data:image/png;base64,{base64.b64encode(speaker_design).decode()}"
+                image_marker = "speaker_design"
+            else:
+                exclude_marker = job.last_image_marker
+                for _attempt in range(3):
+                    cand_src, cand_gi, cand_marker = select_image_for_job(
+                        db, job, fanpage, article, exclude_marker=exclude_marker,
+                    )
+                    if not cand_src:
+                        break
+                    try:
+                        cand_bytes = base64.b64decode(cand_src.split(",", 1)[1])
+                        fits = single_photo_face_fits(
+                            cand_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
+                        )
+                    except Exception:
+                        fits = True  # can't decode to check — don't block over a hiccup
+                    if fits:
+                        image_src, gallery_image, image_marker = cand_src, cand_gi, cand_marker
+                        break
+                    logger.info(
+                        "Design: job %d rejected candidate %s — face too large for this template's safe zone",
+                        job_id, cand_marker,
+                    )
+                    exclude_marker = cand_marker
         if not image_src:
             job.status = PublishJobStatus.pending_design
             job.last_error = "needs manual image — no gallery match and no article hero image"
@@ -504,117 +670,18 @@ def render_design(self, job_id: int):
             logger.warning("Design: job %d needs a manual image", job_id)
             return
 
-        # Two-slot templates also get a secondary photo (inset/split — see
-        # design_images.prepare_design_images) with face-aware focus crops.
-        title = job.design_title or article.scraped_title
-        # extract_two_subjects/extract_secondary_subject (called inside
-        # prepare_design_images) need a real name to reason about. A
-        # quote-category job's title is DELIBERATELY the bare quote with no
-        # name in it (news_copywriter.py's prompt: "Do NOT include the
-        # speaker's name here" — the name goes in design_subtitle's name
-        # badge instead), so passing just `title` here starves the model of
-        # any subject signal and it hallucinates a plausible-sounding pair
-        # instead of correctly answering NONE/one-person — real incident,
-        # 2026-08-25: job 4796, a George Russell quote about a Mercedes
-        # team-order swap, paired with Lando Norris/Oscar Piastri photos —
-        # neither of whom is in the story. Splicing the name badge and the
-        # original scraped headline in ahead of the bare title gives it real
-        # names to ground on whenever they exist; `title` itself (the exact
-        # on-card text) is untouched below for the actual render payload.
-        subject_title = " — ".join(
-            p for p in (job.design_subtitle, article.scraped_title, title) if p
-        ) or title
-        template_json, image_srcs = prepare_design_images(
-            db, template.template_json, template.canvas_width,
-            subject_title, fanpage.name, image_src,
+        skip_face_fix = (image_marker == "pro_poster_typo")
+        png_bytes = render_card_png(
+            job,
+            fanpage,
+            template,
+            image_src,
+            label=pro_poster_label,
+            article=article,
+            db=db,
             main_path=gallery_image.local_path if gallery_image else None,
-            expand=bool(fanpage.design_expand),
+            skip_face_fix=skip_face_fix,
         )
-        # See build_split_srcs / prepare_design_images's split-flow branch —
-        # the corrective per-photo zoom is stashed here rather than widening
-        # prepare_design_images's return signature (every other branch there
-        # returns a plain 2-tuple).
-        image_zooms = template_json.pop("_splitImageZooms", None)
-
-        # A rectangular image_2 with both slots filled means prepare_design_images
-        # took the split flow (see its "Split flow" branch). Both photos DO
-        # have an overlay on them — the real template's scrim gradient is
-        # baked over the bottom ~40% of the full-height split photo (not a
-        # separate non-overlapping band) — so this is exactly the situation
-        # for_split=False's upward face-lift bias exists for; for_split=True
-        # is for the OLD flat-band-below-photo design where nothing is drawn
-        # over the photo at all. See focus_points_for's docstring — this was
-        # backwards until 2026-08-21 (found via a real render: faces landing
-        # under the scrim with for_split=True's no-lift behavior).
-        image_2_slot = find_role_object(template_json, "image_2")
-        is_split = (
-            image_2_slot is not None and image_2_slot.get("type") == "rect"
-            and len(image_srcs) >= 2 and image_srcs[0] and image_srcs[1]
-        )
-        # The chosen template's own title-box position, not a flat guess —
-        # see _safe_face_cy_ceiling's docstring (found 2026-08-24 via 5 real
-        # renders where the face landed under the title text on templates
-        # whose title starts much higher than the old flat 0.44/0.7 ceiling
-        # assumed).
-        safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
-        # Single-photo-only safety net: a landscape source on this canvas's
-        # portrait aspect has ZERO cover-fit vertical slack (confirmed via
-        # real-number testing 2026-08-24 — corrective zoom, the split fix's
-        # approach, does NOT work here, see fix_unsafe_single_photo_face's
-        # docstring for why), so the ceiling above can compute the right
-        # target but the renderer has no room to actually honor it. Content-
-        # aware-fills the photo instead when that's genuinely the case; a
-        # no-op (returns None, image_srcs[0] left untouched) for the common
-        # case where real slack already exists or the face is already safe.
-        if not is_split and image_srcs and image_srcs[0]:
-            try:
-                main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
-                fixed = fix_unsafe_single_photo_face(
-                    main_bytes, template.canvas_width, template.canvas_height, safe_cy_ceiling,
-                )
-                if fixed:
-                    image_srcs[0] = fixed
-            except Exception as exc:
-                logger.warning("Design: fix_unsafe_single_photo_face failed for job %d: %s", job_id, exc)
-        focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
-        if is_split:
-            focus_points = align_split_focus_points(focus_points)
-
-        # Small pill badge above the headline on News templates (e.g. "F1
-        # NEWS" or "BREAKING").
-        breaking = getattr(job, "is_breaking", False)
-        news_badge_text = _news_badge_text(fanpage, breaking=breaking) if category == "news" else ""
-
-        # ── Render via Puppeteer + Fabric.js service ──
-        title = clean_title_for_render(title)
-        template_json = clear_template_text_objects(template_json)
-        sub_text, cap_text = _speaker_line_fields(template_json, job.design_subtitle or "", job.design_caption or "")
-        resp = httpx.post(
-            f"{settings.renderer_url.rstrip('/')}/render",
-            json={
-                "template_json": template_json,
-                "width": template.canvas_width,
-                "height": template.canvas_height,
-                "title": title,
-                "subtitle": sub_text,
-                "caption": cap_text,
-                "label": news_badge_text,
-                # No fallback to fanpage name/username — a fanpage that hasn't
-                # set an explicit watermark_text/watermark_image gets NO
-                # watermark on the design at all.
-                "watermark": fanpage.watermark_text or "",
-                "watermark_image": watermark_datauri(fanpage),
-                "image_srcs": image_srcs,
-                "focus_points": focus_points,
-                "image_zooms": image_zooms,
-                "scale": settings.design_render_scale,
-                "accent": fanpage.accent_color,
-                "look": brand_look(fanpage, template_json),
-            },
-            timeout=_RENDER_TIMEOUT,
-        )
-        resp.raise_for_status()
-        png_bytes = resp.content
 
         designs_dir = Path(settings.storage_base_path) / "designs"
         designs_dir.mkdir(parents=True, exist_ok=True)
@@ -625,7 +692,10 @@ def render_design(self, job_id: int):
         job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{filename}"
         job.design_template_id = template.id
         job.last_image_marker = image_marker
-        if image_marker == "speaker_design":
+        if image_marker in ("pro_poster", "pro_poster_typo"):
+            job.design_engine = pro_poster_engine
+            job.design_engine_note = pro_poster_engine_note
+        elif image_marker == "speaker_design":
             job.design_engine = getattr(speaker_design, "engine", None) or "codex"
             note = getattr(speaker_design, "engine_note", "") or None
             job.design_engine_note = note[:200] if note else None

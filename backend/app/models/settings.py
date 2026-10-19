@@ -127,6 +127,8 @@ class Settings(Base):
     gptcli_fanpage_ids = Column(JSON, default=list, nullable=False, server_default="[]")
     gptcli_thread = Column(String(64), default="studio", nullable=False, server_default="studio")
     gptcli_size = Column(String(16), default="1080x1350", nullable=False, server_default="1080x1350")
+    pro_poster_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    pro_poster_fanpage_ids = Column(JSON, default=list, nullable=False, server_default="[]")
     ai_day_start = Column(String(5), default="05:30", nullable=False, server_default="05:30")  # WIB; = gpt serve sleep end
     codex_share_percent = Column(Integer, default=35, nullable=False, server_default="35")
     codex_share_window_jobs = Column(Integer, default=40, nullable=False, server_default="40")

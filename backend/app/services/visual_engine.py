@@ -401,11 +401,25 @@ def generate_ex(
     timeout: float = 600,
     fanpage_id: int | None = None,
     exclude: frozenset = frozenset(),
+    engines: tuple[str, ...] | None = None,
 ) -> GenerationResult:
     now = datetime.now(timezone.utc)
     plan = engine_router.plan_engines(db, fanpage_id, now, exclude=exclude)
 
     if plan.reason == "gptcli_off":
+        if engines is not None and "9router" not in engines:
+            ev = AICopyEvent(
+                context="image_gen",
+                fanpage_id=fanpage_id,
+                outcome="failed",
+                models_tried="",
+                final_provider=None,
+                error_message=f"plan=gptcli_off; engines={','.join(engines)}; no allowed engine",
+                latency_ms=0,
+            )
+            db.add(ev)
+            db.commit()
+            raise VisualEngineError("quota", "no allowed engine available")
         return GenerationResult(
             _generate_legacy(db, req, timeout=timeout, fanpage_id=fanpage_id),
             "9router",
@@ -414,6 +428,19 @@ def generate_ex(
         )
 
     if plan.defer_until:
+        if engines is not None:
+            ev = AICopyEvent(
+                context="image_gen",
+                fanpage_id=fanpage_id,
+                outcome="failed",
+                models_tried="",
+                final_provider=None,
+                error_message=f"plan={plan.reason}; engines={','.join(engines)}; no allowed engine",
+                latency_ms=0,
+            )
+            db.add(ev)
+            db.commit()
+            raise VisualEngineError("quota", "no allowed engine available")
         ev = AICopyEvent(
             context="image_gen",
             fanpage_id=fanpage_id,
@@ -427,19 +454,27 @@ def generate_ex(
         db.commit()
         raise VisualEngineDeferred(plan.defer_until, plan.reason)
 
-    if not plan.order:
+    order = plan.order if engines is None else tuple(e for e in plan.order if e in engines)
+
+    if not order:
+        error_message = (
+            f"plan={plan.reason}; engines={','.join(engines)}; no allowed engine"
+            if engines is not None
+            else f"plan={plan.reason}; no engine available"
+        )
+        err_msg = "no allowed engine available" if engines is not None else "no engine available"
         ev = AICopyEvent(
             context="image_gen",
             fanpage_id=fanpage_id,
             outcome="failed",
             models_tried="",
             final_provider=None,
-            error_message=f"plan={plan.reason}; no engine available",
+            error_message=error_message,
             latency_ms=0,
         )
         db.add(ev)
         db.commit()
-        raise VisualEngineError("quota", "no engine available")
+        raise VisualEngineError("quota", err_msg)
 
     start_time = datetime.now(timezone.utc)
     tried: list[str] = []
@@ -450,7 +485,7 @@ def generate_ex(
     winner_image: bytes | None = None
     winner_meta: dict = {}
 
-    for engine in plan.order:
+    for engine in order:
         if engine == "gptcli":
             tried.append("gptcli")
             try:
@@ -516,7 +551,7 @@ def generate_ex(
             continue
 
     if winner_engine is not None:
-        outcome = "success" if winner_engine == plan.order[0] else "recovered"
+        outcome = "success" if winner_engine == order[0] else "recovered"
         final_provider = winner_engine
     else:
         outcome = "failed"

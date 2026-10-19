@@ -565,6 +565,8 @@ export interface AppSettings {
   research_last_report?: Record<string, unknown> | null;
   research_last_call_at?: string | null;
   gallery_labeling_enabled?: boolean;
+  pro_poster_enabled?: boolean;
+  pro_poster_fanpage_ids?: number[];
   gallery_labeling_daily_cap?: number;
   gallery_labeling_since?: string | null;
   gallery_labels_today?: number;
