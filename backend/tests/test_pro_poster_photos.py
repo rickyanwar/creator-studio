@@ -667,6 +667,45 @@ def test_candidates_never_match_on_getty_hints_location(db_session, make_photo, 
         assert p_d in paths
 
 
+def test_candidates_exclude_keyword_mismatch(db_session, make_photo, sample_brief):
+    p_good = make_photo("verstappen_good.jpg", b"verstappen_good")
+    img_good = GalleryImage(
+        keyword="Max Verstappen",
+        extra_keywords=[],
+        source_image_url="http://test-good",
+        local_path=p_good,
+        public_url="http://test-good.jpg",
+        width=1000,
+        height=800,
+        source_engine="bing",
+        is_deleted=False,
+        attributes={"people": [{"name": "Max Verstappen", "confidence": 0.95}], "keyword_mismatch": False},
+    )
+
+    p_bad = make_photo("verstappen_bad.jpg", b"verstappen_bad")
+    img_bad = GalleryImage(
+        keyword="Max Verstappen",
+        extra_keywords=[],
+        source_image_url="http://test-bad",
+        local_path=p_bad,
+        public_url="http://test-bad.jpg",
+        width=1000,
+        height=800,
+        source_engine="bing",
+        is_deleted=False,
+        attributes={"people": [{"name": "Jack Doohan", "confidence": 0.95}], "keyword_mismatch": True},
+    )
+
+    db_session.add_all([img_good, img_bad])
+    db_session.commit()
+
+    with patch("app.services.speaker_design.pick_speaker_photos", return_value=[]):
+        candidates = gather_candidates(db_session, sample_brief)
+        paths = [c.path_or_url for c in candidates]
+        assert p_good in paths
+        assert p_bad not in paths
+
+
 # ---------------------------------------------------------------------------
 # Additional Test: story photo role and fallback to context
 # ---------------------------------------------------------------------------

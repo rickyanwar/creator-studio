@@ -509,6 +509,7 @@ def update_image_labels(image_id: int, body: ManualLabelsBody, db: DB, _: Curren
     changes = body.model_dump(exclude_none=True)
     if "people" in changes:
         attributes["people"] = [{"name": name, "confidence": 1.0, "source": "manual"} for name in changes.pop("people")]
+        attributes["keyword_mismatch"] = False
     event = dict(attributes.get("event") or {})
     for field in ("session", "year", "event_name"):
         if field in changes:

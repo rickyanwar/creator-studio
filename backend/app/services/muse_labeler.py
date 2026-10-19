@@ -193,6 +193,8 @@ def merge_label_attributes(existing: dict | None, labelled: dict) -> dict:
         merged["people"] = existing_people
     elif labelled.get("keyword_mismatch") is True:
         merged["people"] = [person for person in labelled_people if person.get("source") != "keyword"]
+    elif labelled.get("keyword_person_visible") is not None and str(labelled.get("keyword_person_visible")).lower() != "yes":
+        merged["people"] = labelled_people or [person for person in (existing_people or []) if person.get("source") != "keyword"]
     elif existing_people and (not labelled_people or all(person.get("source") == "keyword" for person in labelled_people)):
         merged["people"] = existing_people
     return merged

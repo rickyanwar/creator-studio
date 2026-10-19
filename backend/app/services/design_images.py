@@ -2927,6 +2927,7 @@ def _gallery_verified_candidates(
         exclude_paths = (exclude_paths or set()) | {exclude_path}
     from sqlalchemy import func, or_
     from app.models.gallery import GalleryImage
+    from app.services.gallery_filters import not_keyword_mismatch
 
     import re
     cleaned = re.sub(r'[^a-zA-Z0-9]+', '%', subject.strip(' \'`"'))
@@ -2940,6 +2941,7 @@ def _gallery_verified_candidates(
             func.array_to_string(GalleryImage.extra_keywords, ",").ilike(needle),
         ),
         GalleryImage.is_deleted == False,
+        not_keyword_mismatch(),
     )
 
     rows = []

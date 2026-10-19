@@ -24,6 +24,7 @@ from typing import Literal
 
 from sqlalchemy import func, cast, String
 from app.models.gallery import GalleryImage
+from app.services.gallery_filters import not_keyword_mismatch
 from app.services.ig_content_classifier import PostAnalysis
 from app.services.design_images import (
     fetch_subject_datauri,
@@ -276,7 +277,8 @@ def _find_inset_pick(
     # --- Gallery candidates ---
     base_query = db.query(GalleryImage).filter(
         GalleryImage.is_deleted == False,
-        GalleryImage.label == label
+        GalleryImage.label == label,
+        not_keyword_mismatch(),
     )
     if exclude_ids:
         base_query = base_query.filter(GalleryImage.id.notin_(exclude_ids))
@@ -484,7 +486,8 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                 base_query = db.query(GalleryImage).filter(
                     GalleryImage.is_deleted == False,
                     GalleryImage.label == label,
-                    width_condition
+                    width_condition,
+                    not_keyword_mismatch(),
                 )
                 if exclude_ids:
                     base_query = base_query.filter(GalleryImage.id.notin_(exclude_ids))
@@ -653,7 +656,8 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                 
                 base_query = db.query(GalleryImage).filter(
                     GalleryImage.is_deleted == False,
-                    GalleryImage.label == w_labels.get('hero', 'face')
+                    GalleryImage.label == w_labels.get('hero', 'face'),
+                    not_keyword_mismatch(),
                 )
                 if exclude_ids:
                     base_query = base_query.filter(GalleryImage.id.notin_(exclude_ids))
