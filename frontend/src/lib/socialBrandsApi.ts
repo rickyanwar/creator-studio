@@ -71,6 +71,8 @@ export interface BrandSummaryOut {
   today: TodayCountsOut;
   next_post_at: string | null;
   attention: AttentionOut[];
+  enabled_groups?: string[];
+  mode_backlog?: { group: string; label: string; waiting: number; per_day: number; days: number | null }[];
 }
 
 export interface AIImagesTodayOut {

@@ -709,6 +709,12 @@ export default function BrandEditPage() {
 
   const totalIdeasCount = discIdeas.length + ideas.length + fbPhotoIdeas.length;
 
+  const pilingBacklog = useMemo(() => {
+    return (brand?.mode_backlog || []).filter(
+      (item) => item.days !== null && item.days >= 2
+    );
+  }, [brand?.mode_backlog]);
+
   const tabs: SettingsTab[] = [
     { id: "content", label: "Content", count: `${enabledModes.length} on` },
     { id: "channels", label: "Channels", count: String(channelCount) },
@@ -838,6 +844,32 @@ export default function BrandEditPage() {
           </div>
         </div>
       </header>
+
+      {/* ── Content Backlog Warning ───────────────────── */}
+      {pilingBacklog.length > 0 && (
+        <div className="rounded-xl border border-warn/30 bg-warn-soft p-4 flex items-start gap-3 text-xs">
+          <Icon
+            icon="solar:danger-triangle-bold-duotone"
+            width={20}
+            className="text-warn shrink-0 mt-0.5"
+          />
+          <div className="space-y-1">
+            <p className="font-semibold text-text">
+              Content is piling up:
+            </p>
+            <div className="space-y-0.5 text-text">
+              {pilingBacklog.map((item) => (
+                <div key={item.group}>
+                  {item.label} {item.waiting} waiting ≈ {item.days} days of slots.
+                </div>
+              ))}
+            </div>
+            <p className="text-text2 pt-0.5">
+              Lower that mode&apos;s production or raise Posts / day.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Six Navigation Tabs ─────────────────────────── */}
       <SettingsTabs tabs={tabs} active={activeTab} onChange={selectTab} />

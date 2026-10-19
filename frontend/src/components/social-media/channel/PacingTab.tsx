@@ -11,6 +11,7 @@ import {
   getErrorMessage,
 } from "./channelUtils";
 import { EstimatedSlotsView } from "./EstimatedSlotsView";
+import { ModeSplitEditor } from "./ModeSplitEditor";
 
 interface Props {
   destination: SocialDestination;
@@ -30,6 +31,15 @@ export function PacingTab({
   const [timezone, setTimezone] = useState(destination.timezone || "Europe/London");
   const [dailyTarget, setDailyTarget] = useState<number>(destination.daily_target || 6);
   const [minGapMinutes, setMinGapMinutes] = useState<number>(destination.min_gap_minutes || 20);
+  const [modeShares, setModeShares] = useState<Record<string, number> | null>(
+    destination.mode_shares ?? null
+  );
+  const [borrowHours, setBorrowHours] = useState<number>(
+    destination.borrow_hours_before_sleep ?? 3
+  );
+  const [newsStaleHours, setNewsStaleHours] = useState<number>(
+    destination.news_stale_hours ?? 24
+  );
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -39,11 +49,15 @@ export function PacingTab({
     setTimezone(destination.timezone || "Europe/London");
     setDailyTarget(destination.daily_target || 6);
     setMinGapMinutes(destination.min_gap_minutes || 20);
+    setModeShares(destination.mode_shares ?? null);
+    setBorrowHours(destination.borrow_hours_before_sleep ?? 3);
+    setNewsStaleHours(destination.news_stale_hours ?? 24);
   }, [destination]);
 
   const allTzs = getAllTimezones();
   const tzOptions = Array.from(new Set([timezone, ...allTzs])).sort();
   const tzDiffText = getTimezoneDiffWib(timezone);
+  const isSplitEnabled = Boolean(modeShares && Object.keys(modeShares).length > 0);
 
   // Quiet hours from brand
   const sleepStart = brand?.publish_sleep_start_hour ?? 0;
@@ -59,6 +73,14 @@ export function PacingTab({
     }
     if (minGapMinutes < 1) {
       setSaveError("Minimum gap must be at least 1 minute.");
+      return;
+    }
+    if (borrowHours < 0 || borrowHours > 12) {
+      setSaveError("Share unused slots hours must be between 0 and 12.");
+      return;
+    }
+    if (newsStaleHours < 1 || newsStaleHours > 168) {
+      setSaveError("Skip news older than hours must be between 1 and 168.");
       return;
     }
 
@@ -93,6 +115,9 @@ export function PacingTab({
         phone_daily_target: phoneTarget,
         repliz_daily_target: replizTarget,
         min_gap_minutes: minGapMinutes,
+        mode_shares: isSplitEnabled ? modeShares : null,
+        borrow_hours_before_sleep: borrowHours,
+        news_stale_hours: newsStaleHours,
       });
 
       setSaveSuccess(true);
@@ -200,6 +225,66 @@ export function PacingTab({
             <div className="h-[42px] px-3 rounded-md bg-surface2 border border-line flex items-center text-xs text-text2">
               <Icon icon="solar:moon-bold" className="text-warn mr-2" width={15} />
               <span>{quietHoursStr}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Posts per mode */}
+        <div className="pt-4 border-t border-line space-y-4">
+          <div>
+            <h3 className="text-sm font-bold text-text">Posts per mode</h3>
+            <p className="text-xs text-text2 mt-0.5">
+              Split daily posts between content types by percentage.
+            </p>
+          </div>
+
+          <ModeSplitEditor
+            dailyTarget={dailyTarget}
+            enabledGroups={brand?.enabled_groups ?? []}
+            shares={modeShares}
+            onChange={setModeShares}
+          />
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            {Boolean(modeShares && Object.keys(modeShares).length > 0) && (
+              <div>
+                <label className="label">
+                  Share unused slots in the last hours before quiet hours
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={12}
+                  value={borrowHours}
+                  onChange={(e) =>
+                    setBorrowHours(
+                      e.target.value === "" ? 0 : parseInt(e.target.value, 10) || 0
+                    )
+                  }
+                  className="input-rect"
+                />
+                <p className="text-xs text-text2 mt-1">
+                  0 = never share. A slot is shared only when its own mode has nothing waiting.
+                </p>
+              </div>
+            )}
+
+            <div>
+              <label className="label">
+                Skip news older than (hours)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={168}
+                value={newsStaleHours}
+                onChange={(e) =>
+                  setNewsStaleHours(
+                    e.target.value === "" ? 1 : parseInt(e.target.value, 10) || 1
+                  )
+                }
+                className="input-rect"
+              />
             </div>
           </div>
         </div>

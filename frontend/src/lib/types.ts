@@ -929,6 +929,9 @@ export interface SocialDestination {
   supported_media: string[];
   is_active: boolean;
   identity_verified_at: string | null;
+  mode_shares?: Record<string, number> | null;
+  borrow_hours_before_sleep?: number;
+  news_stale_hours?: number;
   created_at: string;
   updated_at: string;
 }
@@ -965,6 +968,9 @@ export interface SocialDestinationUpdate {
   min_gap_minutes?: number;
   supported_media?: string[];
   is_active?: boolean;
+  mode_shares?: Record<string, number> | null;
+  borrow_hours_before_sleep?: number;
+  news_stale_hours?: number;
 }
 
 export interface SchedulePreviewSlot {

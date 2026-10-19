@@ -8,7 +8,7 @@ slot allocation, method quotas, and media capability checks.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
@@ -301,10 +301,9 @@ def ensure_deliveries(
                 supported = [supported]
         is_supported = payload.media_kind in supported
 
-        from app.services.publishing_schedule import (
-            compute_audience_slot,
-            get_destination_reservations_utc,
-        )
+        from app.services.content_groups import group_of
+        from app.services.mode_quota import pick_slot
+        from app.services.publishing_schedule import get_destination_reservations_utc
 
         existing_slots_utc = get_destination_reservations_utc(db, destination)
 
@@ -313,17 +312,35 @@ def ensure_deliveries(
             dest_fanpage = db.query(TargetFanpage).filter_by(id=destination.content_project_id).first()
         dest_hour_weights = getattr(dest_fanpage, "publish_hour_weights", None) if dest_fanpage else None
 
-        next_slot_utc = compute_audience_slot(
+        next_slot_utc = pick_slot(
+            db=db,
+            destination=destination,
+            job=job,
+            fanpage=dest_fanpage,
             now_utc=aware_now,
-            timezone_name=destination.timezone,
-            daily_target=destination.daily_target,
-            min_gap_minutes=destination.min_gap_minutes,
-            existing_slots_utc=existing_slots_utc,
-            sleep_start_hour=sleep_start,
-            sleep_end_hour=sleep_end,
-            namespace=f"dest-{destination.id}",
+            all_reservations=existing_slots_utc,
             hour_weights=dest_hour_weights,
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
         )
+
+        job_created_at = getattr(job, "created_at", None)
+        if job_created_at is None:
+            job_created_at_utc = aware_now
+        elif job_created_at.tzinfo is None:
+            job_created_at_utc = job_created_at.replace(tzinfo=timezone.utc)
+        else:
+            job_created_at_utc = job_created_at.astimezone(timezone.utc)
+
+        news_stale_hours = getattr(destination, "news_stale_hours", 24)
+        if news_stale_hours is None:
+            news_stale_hours = 24
+
+        is_stale_news = (
+            group_of(job.content_type) == "news"
+            and (next_slot_utc - job_created_at_utc) > timedelta(hours=news_stale_hours)
+        )
+
         naive_scheduled_for = next_slot_utc.astimezone(timezone.utc).replace(
             tzinfo=None
         )
@@ -345,7 +362,12 @@ def ensure_deliveries(
 
         platform = destination.kind
         platform_accepted = {"youtube": {"video"}, "x": {"image", "album", "video"}}.get(platform)
-        if platform_accepted and payload.media_kind not in platform_accepted:
+        if is_stale_news:
+            state = "skipped"
+            assigned_device_id = None
+            naive_scheduled_for = None
+            last_error = f"stale: no News slot within {news_stale_hours} h"
+        elif platform_accepted and payload.media_kind not in platform_accepted:
             state = "skipped"
             assigned_device_id = None
             last_error = f"Media not accepted by {destination.kind}"

@@ -32,11 +32,19 @@ from app.schemas.social_brands import (
     ContentModeOut,
     EstimatedSlotOut,
     EstimatedTimesOut,
+    ModeBacklogOut,
     RecentDeliveryOut,
     ReplizAccountOut,
     ReplizAccountsOut,
     TodayCountsOut,
 )
+from app.services.content_groups import (
+    GROUP_IDS,
+    GROUP_LABELS,
+    enabled_groups,
+    group_of,
+)
+from app.services.mode_quota import WAITING_STATUS_VALUES, even_shares, group_quotas
 from app.services.publishing_schedule import (
     compute_audience_slot,
     get_destination_reservations_utc,
@@ -380,6 +388,83 @@ def _build_brand_summary(
         else None
     )
 
+    brand_enabled = enabled_groups(brand)
+    est_shares = even_shares(brand_enabled)
+    active_dests = [d for d in destinations if d.is_active]
+    per_day_counts = {gid: 0 for gid in GROUP_IDS}
+    for d in active_dests:
+        shares = d.mode_shares if d.mode_shares else est_shares
+        quotas = group_quotas(d.daily_target, shares, brand_enabled)
+        for gid in GROUP_IDS:
+            per_day_counts[gid] += quotas.get(gid, 0)
+
+    waiting_counts = {gid: 0 for gid in GROUP_IDS}
+    job_rows = (
+        db.query(PublishJob.content_type, func.count(PublishJob.id))
+        .filter(
+            PublishJob.fanpage_id == brand.id,
+            PublishJob.status.in_(WAITING_STATUS_VALUES),
+            PublishJob.is_deleted.is_(False),
+        )
+        .group_by(PublishJob.content_type)
+        .all()
+    )
+    for ct, count in job_rows:
+        gid = group_of(ct)
+        if gid:
+            waiting_counts[gid] = waiting_counts.get(gid, 0) + count
+
+    dest_ids = [d.id for d in destinations]
+    if dest_ids:
+        naive_now = (
+            now_utc.astimezone(timezone.utc).replace(tzinfo=None)
+            if now_utc.tzinfo
+            else now_utc
+        )
+        deliv_rows = (
+            db.query(
+                func.coalesce(
+                    PublishDelivery.content_type_snapshot, PublishJob.content_type
+                ),
+                func.count(PublishDelivery.id),
+            )
+            .outerjoin(PublishJob, PublishDelivery.publish_job_id == PublishJob.id)
+            .filter(
+                PublishDelivery.destination_id.in_(dest_ids),
+                PublishDelivery.state.in_(
+                    ["scheduled", "waiting_for_slot", "waiting_for_device"]
+                ),
+                PublishDelivery.scheduled_for > naive_now,
+            )
+            .group_by(
+                func.coalesce(
+                    PublishDelivery.content_type_snapshot, PublishJob.content_type
+                )
+            )
+            .all()
+        )
+        for ct, count in deliv_rows:
+            gid = group_of(ct)
+            if gid:
+                waiting_counts[gid] = waiting_counts.get(gid, 0) + count
+
+    mode_backlog = []
+    for gid in GROUP_IDS:
+        is_en = gid in brand_enabled
+        wait = waiting_counts.get(gid, 0)
+        if is_en or wait > 0:
+            pd = per_day_counts.get(gid, 0)
+            days = round(wait / pd, 1) if pd > 0 else None
+            mode_backlog.append(
+                ModeBacklogOut(
+                    group=gid,
+                    label=GROUP_LABELS.get(gid, gid),
+                    waiting=wait,
+                    per_day=pd,
+                    days=days,
+                )
+            )
+
     return BrandSummaryOut(
         id=brand.id,
         name=brand.name,
@@ -399,6 +484,8 @@ def _build_brand_summary(
         today=today,
         next_post_at=next_post_at,
         attention=attention,
+        enabled_groups=brand_enabled,
+        mode_backlog=mode_backlog,
     )
 
 

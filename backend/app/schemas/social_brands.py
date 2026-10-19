@@ -63,6 +63,14 @@ class ChannelSummaryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ModeBacklogOut(BaseModel):
+    group: str
+    label: str
+    waiting: int
+    per_day: int
+    days: Optional[float] = None
+
+
 class BrandSummaryOut(BaseModel):
     id: int
     name: str
@@ -82,6 +90,8 @@ class BrandSummaryOut(BaseModel):
     today: TodayCountsOut
     next_post_at: Optional[datetime] = None
     attention: List[AttentionOut] = Field(default_factory=list)
+    enabled_groups: List[str] = Field(default_factory=list)
+    mode_backlog: List[ModeBacklogOut] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

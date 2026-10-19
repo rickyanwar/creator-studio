@@ -262,6 +262,8 @@ def test_legacy_jobs_counted_in_reservations_and_daily_cap(db_session):
         sleep_end=8,
         mode="repliz",
     )
+    dest.news_stale_hours = 168
+    db_session.flush()
 
     # Legacy job with scheduled_for today at 10:00 UTC, no ledger rows
     legacy_job = PublishJob(
@@ -283,6 +285,7 @@ def test_legacy_jobs_counted_in_reservations_and_daily_cap(db_session):
         content_type=ContentType.news_content,
         design_image_url="https://cdn.example.com/job1.jpg",
         status=PublishJobStatus.pending_publish,
+        created_at=now_utc.replace(tzinfo=None),
     )
     db_session.add(job1)
     db_session.flush()
@@ -293,6 +296,7 @@ def test_legacy_jobs_counted_in_reservations_and_daily_cap(db_session):
         content_type=ContentType.news_content,
         design_image_url="https://cdn.example.com/job2.jpg",
         status=PublishJobStatus.pending_publish,
+        created_at=now_utc.replace(tzinfo=None),
     )
     db_session.add(job2)
     db_session.flush()

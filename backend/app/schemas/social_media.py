@@ -108,6 +108,24 @@ class SocialDestinationCreate(BaseModel):
     min_gap_minutes: int = 5
     supported_media: list[str] = ["image", "album", "video"]
     is_active: bool = False
+    mode_shares: Optional[dict[str, int]] = None
+    borrow_hours_before_sleep: int = Field(default=3, ge=0, le=12)
+    news_stale_hours: int = Field(default=24, ge=1, le=168)
+
+    @field_validator("mode_shares")
+    def validate_mode_shares(cls, v: Optional[dict[str, int]]) -> Optional[dict[str, int]]:
+        if v is None or len(v) == 0:
+            return None
+        from app.services.content_groups import GROUP_IDS
+        for key, val in v.items():
+            if key not in GROUP_IDS:
+                raise ValueError(f"Unknown group id '{key}'. Must be one of {GROUP_IDS}")
+            if not isinstance(val, int) or val < 0 or val > 100:
+                raise ValueError(f"Mode share for '{key}' must be an integer between 0 and 100")
+        total = sum(v.values())
+        if total != 100:
+            raise ValueError(f"Mode shares must sum to 100, got {total}")
+        return v
 
     @field_validator("name")
     def clean_name(cls, v: str) -> str:
@@ -212,6 +230,24 @@ class SocialDestinationUpdate(BaseModel):
     min_gap_minutes: Optional[int] = None
     supported_media: Optional[list[str]] = None
     is_active: Optional[bool] = None
+    mode_shares: Optional[dict[str, int]] = None
+    borrow_hours_before_sleep: Optional[int] = Field(default=None, ge=0, le=12)
+    news_stale_hours: Optional[int] = Field(default=None, ge=1, le=168)
+
+    @field_validator("mode_shares")
+    def validate_mode_shares(cls, v: Optional[dict[str, int]]) -> Optional[dict[str, int]]:
+        if v is None or len(v) == 0:
+            return None
+        from app.services.content_groups import GROUP_IDS
+        for key, val in v.items():
+            if key not in GROUP_IDS:
+                raise ValueError(f"Unknown group id '{key}'. Must be one of {GROUP_IDS}")
+            if not isinstance(val, int) or val < 0 or val > 100:
+                raise ValueError(f"Mode share for '{key}' must be an integer between 0 and 100")
+        total = sum(v.values())
+        if total != 100:
+            raise ValueError(f"Mode shares must sum to 100, got {total}")
+        return v
 
     @field_validator("name")
     def clean_name(cls, v: Optional[str]) -> Optional[str]:
@@ -319,6 +355,9 @@ class SocialDestinationOut(BaseModel):
     min_gap_minutes: int
     supported_media: list[str]
     is_active: bool
+    mode_shares: Optional[dict[str, int]] = None
+    borrow_hours_before_sleep: int = 3
+    news_stale_hours: int = 24
     identity_verified_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime

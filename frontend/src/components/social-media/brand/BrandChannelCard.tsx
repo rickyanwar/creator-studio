@@ -5,11 +5,13 @@ import Link from "next/link";
 import useSWR from "swr";
 import { Icon } from "@iconify/react";
 import { getEstimatedTimes, listReplizAccounts } from "@/lib/socialBrandsApi";
-import type { ChannelSummaryOut, EstimatedTimesOut, ReplizAccountsOut } from "@/lib/socialBrandsApi";
+import type { ChannelSummaryOut, EstimatedTimesOut, ReplizAccountsOut, BrandSummaryOut } from "@/lib/socialBrandsApi";
+import { groupQuotas, quotaSummary } from "@/lib/modeSplit";
 
 export interface BrandChannelCardProps {
   channel: ChannelSummaryOut;
   defaultSlotsOpen?: boolean;
+  brand?: BrandSummaryOut | null;
 }
 
 function getInitials(name: string): string {
@@ -40,6 +42,7 @@ function getChannelIcon(kind: string) {
 export function BrandChannelCard({
   channel,
   defaultSlotsOpen = false,
+  brand,
 }: BrandChannelCardProps) {
   const [slotsOpen, setSlotsOpen] = useState(defaultSlotsOpen);
   const [imgError, setImgError] = useState(false);
@@ -166,6 +169,19 @@ export function BrandChannelCard({
           <dd className="m-0 font-semibold text-text-primary">
             {channel.daily_target}/day · {channel.min_gap_minutes} min gap
           </dd>
+          {Boolean(
+            (channel as any).mode_shares &&
+              Object.keys((channel as any).mode_shares).length > 0
+          ) && (
+            <p className="text-[11px] text-text-secondary">
+              {quotaSummary(
+                groupQuotas(
+                  channel.daily_target,
+                  (channel as any).mode_shares
+                )
+              )}
+            </p>
+          )}
           <p className="text-[11px] text-text-secondary">{channel.timezone}</p>
         </div>
 
