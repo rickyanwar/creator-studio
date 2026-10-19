@@ -89,30 +89,25 @@ def test_gptcli_result_identity_passed(
 @patch("app.services.redesign_pipeline.upscale_image_bytes", return_value=b"upscaled")
 @patch("builtins.open")
 @patch("os.makedirs")
-def test_gptcli_result_identity_failed_falls_back_to_codex(
+def test_gptcli_result_identity_failed_no_fallback(
     mock_makedirs, mock_open, mock_upscale, mock_check, mock_ocr, mock_id, mock_gen, mock_driver, mock_plan, mock_layout, mock_analyze, dummy_deps
 ):
     post, fanpage = dummy_deps
     _setup_pipeline_mocks(mock_analyze, mock_layout, mock_plan, mock_driver, "team_radio")
 
     mock_open.return_value.__enter__.return_value.read.return_value = b"hero_ref_bytes"
-    mock_gen.side_effect = [
-        GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=1),
-        GenerationResult(image=b"codex_image", engine="9router", meta={}, event_id=2),
-    ]
+    mock_gen.return_value = GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=1)
     mock_id.return_value = IdentityResult(passed=False, sface=0.15, gemini="no", reason="face mismatch")
     mock_ocr.return_value = (True, "")
     mock_check.return_value = QAResult(passed=True, problems=())
 
     res = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=RadarStoryDecision(id=1))
 
-    assert res.ok is True
-    assert mock_gen.call_count == 2
-    assert mock_gen.call_args_list[1].kwargs["exclude"] == frozenset({"gptcli"})
-    assert mock_check.call_count == 1
-    assert mock_check.call_args.args[0] == b"codex_image"
+    assert res.ok is False
+    assert mock_gen.call_count == 1
+    assert mock_check.call_count == 0
+    assert "identity" in res.problems
     assert any("engine=gptcli rejected: face mismatch" in n for n in res.notes)
-    assert any("engine=9router" in n for n in res.notes)
 
 
 @patch("app.services.redesign_pipeline.analyze_ig_post")
@@ -135,35 +130,30 @@ def test_team_radio_ocr_mismatch_and_error_fallback(
     mock_id.return_value = IdentityResult(passed=True, sface=0.8, gemini="yes", reason="ok")
     mock_check.return_value = QAResult(passed=True, problems=())
 
-    # Case 1: OCR mismatch
-    mock_gen.side_effect = [
-        GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=1),
-        GenerationResult(image=b"codex_image", engine="9router", meta={}, event_id=2),
-    ]
+    # Case 1: OCR mismatch -> single call, fails
+    mock_gen.return_value = GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=1)
     mock_ocr.return_value = (False, "text mismatch: BOX missing")
 
     res = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=RadarStoryDecision(id=1))
 
-    assert res.ok is True
-    assert mock_gen.call_count == 2
-    assert mock_gen.call_args_list[1].kwargs["exclude"] == frozenset({"gptcli"})
-    assert mock_check.call_count == 1
+    assert res.ok is False
+    assert mock_gen.call_count == 1
+    assert mock_check.call_count == 0
+    assert any("radio_text_mismatch:text mismatch: BOX missing" in p for p in res.problems)
     assert any("text mismatch: BOX missing" in n for n in res.notes)
 
-    # Case 2: OCR error string
+    # Case 2: OCR error string -> single call, fails
     mock_gen.reset_mock()
     mock_check.reset_mock()
-    mock_gen.side_effect = [
-        GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=3),
-        GenerationResult(image=b"codex_image", engine="9router", meta={}, event_id=4),
-    ]
+    mock_gen.return_value = GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=2)
     mock_ocr.return_value = (False, "ocr error: TimeoutError")
 
     res2 = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=RadarStoryDecision(id=1))
 
-    assert res2.ok is True
-    assert mock_gen.call_count == 2
-    assert mock_check.call_count == 1
+    assert res2.ok is False
+    assert mock_gen.call_count == 1
+    assert mock_check.call_count == 0
+    assert any("radio_text_mismatch:ocr error: TimeoutError" in p for p in res2.problems)
     assert any("ocr error: TimeoutError" in n for n in res2.notes)
 
 
@@ -196,7 +186,7 @@ def test_radio_ocr_ok_helper():
 @patch("app.services.redesign_pipeline._radio_ocr_ok")
 @patch("app.services.redesign_pipeline.check_generated")
 @patch("builtins.open")
-def test_codex_fallback_raising_visual_engine_error(
+def test_gptcli_identity_fail_single_call_no_retry(
     mock_open, mock_check, mock_ocr, mock_id, mock_gen, mock_driver, mock_plan, mock_layout, mock_analyze, dummy_deps
 ):
     post, fanpage = dummy_deps
@@ -204,16 +194,14 @@ def test_codex_fallback_raising_visual_engine_error(
     mock_open.return_value.__enter__.return_value.read.return_value = b"hero_ref_bytes"
     mock_id.return_value = IdentityResult(passed=False, sface=0.1, gemini="no", reason="bad face")
     mock_ocr.return_value = (True, "")
-    mock_gen.side_effect = [
-        GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=1),
-        VisualEngineError("quota", "codex daily limit reached"),
-    ]
+    mock_gen.return_value = GenerationResult(image=b"gptcli_image", engine="gptcli", meta={}, event_id=1)
 
     res = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
 
     assert res.ok is False
     assert res.final_text_rendered_by == "template"
-    assert any("VisualEngineError: codex daily limit reached" in p for p in res.problems)
+    assert "identity" in res.problems
+    assert mock_gen.call_count == 1
     assert mock_check.call_count == 0
 
 
@@ -292,18 +280,17 @@ def test_redesign_card_engine_labels(
     assert res1.engine == "chatgpt"
     assert res1.engine_note == ""
 
-    # 2. face-check reject -> "codex_fallback" with "rejected" in the note
-    mock_gen.side_effect = [
-        GenerationResult(image=b"gptcli_bad", engine="gptcli", meta={}, event_id=1),
-        GenerationResult(image=b"codex_image", engine="9router", meta={}, event_id=2),
-    ]
+    # 2. face-check reject -> fails immediately, single generate_ex call, engine is None
+    mock_gen.reset_mock()
+    mock_gen.side_effect = None
+    mock_gen.return_value = GenerationResult(image=b"gptcli_bad", engine="gptcli", meta={}, event_id=1)
     mock_id.return_value = IdentityResult(passed=False, sface=0.10, gemini="no", reason="sface 0.10 < 0.25")
     mock_ocr.return_value = (True, "")
     res2 = redesign_card(MagicMock(), post=post, fanpage=fanpage, job=None, decision=None)
-    assert res2.ok is True
-    assert res2.engine == "codex_fallback"
-    assert "rejected" in res2.engine_note
-    assert "sface 0.10 < 0.25" in res2.engine_note
+    assert res2.ok is False
+    assert res2.engine is None
+    assert "identity" in res2.problems
+    assert mock_gen.call_count == 1
 
     # 3. Codex after gpt-cli error (meta fallback_from) -> "codex_fallback"
     mock_gen.side_effect = None
