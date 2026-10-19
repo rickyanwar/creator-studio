@@ -3,9 +3,11 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 from app.services.gallery_labeler import (
     normalise_label_output,
+    build_label_prompt,
     label_image,
     LabelerError,
     LabelerUnavailable,
+    LABEL_PROMPT,
 )
 
 
@@ -218,3 +220,83 @@ def test_label_image_external_provider_http_errors(tmp_path):
 
             with pytest.raises(LabelerError):
                 label_image(str(test_img), provider="external")
+
+
+def test_normaliser_keyword_person_visible_yes_fills_people():
+    norm = normalise_label_output(
+        {"people": [], "keyword_person_visible": "yes", "keyword_mismatch": False},
+        keyword="sergio perez",
+    )
+    assert norm["people"] == [{"name": "Sergio Perez", "confidence": 0.8, "source": "keyword"}]
+    assert norm["keyword_mismatch"] is False
+    assert norm["keyword_person_visible"] == "yes"
+
+
+def test_normaliser_keyword_person_visible_no_sets_mismatch_and_empty_people():
+    norm = normalise_label_output(
+        {"people": [], "keyword_person_visible": "no", "keyword_mismatch": False},
+        keyword="sergio perez",
+    )
+    assert norm["people"] == []
+    assert norm["keyword_mismatch"] is True
+    assert norm["keyword_person_visible"] == "no"
+
+
+def test_normaliser_keyword_person_visible_unsure_keeps_mismatch_and_empty_people():
+    norm = normalise_label_output(
+        {"people": [], "keyword_person_visible": "unsure", "keyword_mismatch": False},
+        keyword="sergio perez",
+    )
+    assert norm["people"] == []
+    assert norm["keyword_mismatch"] is False
+    assert norm["keyword_person_visible"] == "unsure"
+
+
+@pytest.mark.parametrize("raw_kpv", [None, "", "maybe", "invalid", 123, True, []])
+def test_normaliser_keyword_person_visible_missing_or_garbage_treated_as_unsure(raw_kpv):
+    payload = {"people": [], "keyword_mismatch": False}
+    if raw_kpv is not None:
+        payload["keyword_person_visible"] = raw_kpv
+    norm = normalise_label_output(payload, keyword="sergio perez")
+    assert norm["people"] == []
+    assert norm["keyword_mismatch"] is False
+    assert norm["keyword_person_visible"] == "unsure"
+
+
+def test_prompt_and_normaliser_without_keyword_person_name():
+    # Prompt without keyword person name has no keyword_person_visible question
+    for kw in (None, "", "formula 1", "f1 podium", "crash news"):
+        prompt = build_label_prompt(kw)
+        assert prompt == LABEL_PROMPT
+        assert "keyword_person_visible" not in prompt
+
+    # Prompt with keyword person name has question and schema field
+    prompt_perez = build_label_prompt("sergio perez")
+    assert '"keyword_person_visible": "yes|no|unsure"' in prompt_perez
+    assert "Is Sergio Perez clearly visible" in prompt_perez
+
+    # Normalising with generic keyword even if yes does not create person
+    norm = normalise_label_output({"people": [], "keyword_person_visible": "yes"}, keyword="formula 1")
+    assert norm["people"] == []
+    assert norm["keyword_person_visible"] == "yes"
+
+
+def test_manual_hints_override_keyword_person(tmp_path):
+    from PIL import Image
+    test_img = tmp_path / "test_hint.jpg"
+    im = Image.new("RGB", (100, 100), color="green")
+    im.save(test_img, "JPEG")
+
+    # Model returned no people and keyword_person_visible = "no"
+    model_json = '{"shot_type": "portrait", "people": [], "keyword_person_visible": "no"}'
+    with patch("app.services.gallery_labeler._image_to_datauri", return_value="data:image/jpeg;base64,x"), patch(
+        "app.services.design_images._vision_chat", return_value=model_json
+    ) as mock_vision:
+        res = label_image(str(test_img), provider="router", keyword="sergio perez", hints={"people": ["Max Verstappen"]})
+        assert res["people"] == [{"name": "Max Verstappen", "confidence": 1.0, "source": "manual"}]
+        # Check prompt included Sergio Perez question AND owner hints
+        prompt_sent = mock_vision.call_args[0][0][0]["text"]
+        assert "Sergio Perez" in prompt_sent
+        assert "Owner hints" in prompt_sent
+        assert "Max Verstappen" in prompt_sent
+

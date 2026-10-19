@@ -99,6 +99,27 @@ Output only valid JSON with no extra commentary or Markdown formatting.
 """
 
 
+def build_label_prompt(keyword: str | None = None) -> str:
+    """Build label prompt, adding keyword_person_visible question when keyword has a person name."""
+    name = keyword_name_from_gallery_keyword(keyword)
+    if not name:
+        return LABEL_PROMPT
+    extra_field = '  "keyword_person_visible": "yes|no|unsure",\n'
+    extra_instruction = (
+        f'"keyword_person_visible": "yes|no|unsure" — Is {name} clearly visible in this photo as a main person '
+        f'(face, helmet with his number, or kit clearly his)? If the photo shows a different identifiable person, answer no.\n'
+    )
+    prompt = LABEL_PROMPT.replace(
+        '  "caption": "Short caption up to 160 characters"',
+        f'{extra_field}  "caption": "Short caption up to 160 characters"',
+    )
+    prompt = prompt.replace(
+        "Output only valid JSON with no extra commentary or Markdown formatting.",
+        f"{extra_instruction}Output only valid JSON with no extra commentary or Markdown formatting.",
+    )
+    return prompt
+
+
 class LabelerError(Exception):
     """Client error or 4xx from labeler provider."""
     pass
@@ -259,16 +280,27 @@ def normalise_label_output(data: dict, keyword: str | None = None) -> dict:
         "quality": quality_dict,
         "caption": caption,
     }
+    raw_kpv = data.get("keyword_person_visible")
+    if isinstance(raw_kpv, str) and raw_kpv.strip().lower() in ("yes", "no", "unsure"):
+        keyword_person_visible = raw_kpv.strip().lower()
+    else:
+        keyword_person_visible = "unsure"
+
     keyword_mismatch = data.get("keyword_mismatch", False)
     if not isinstance(keyword_mismatch, bool):
         raise ValueError("keyword_mismatch must be a boolean")
+
+    if keyword_person_visible == "no":
+        keyword_mismatch = True
+
     people = data.get("people") if isinstance(data.get("people"), list) else []
-    if not people and not keyword_mismatch:
+    if not people and not keyword_mismatch and keyword_person_visible == "yes":
         name = keyword_name_from_gallery_keyword(keyword)
         if name:
             people = [{"name": name, "confidence": 0.8, "source": "keyword"}]
     result["people"] = people
     result["keyword_mismatch"] = keyword_mismatch
+    result["keyword_person_visible"] = keyword_person_visible
     if event_dict is not None:
         result["event"] = event_dict
     return result
@@ -302,12 +334,13 @@ def _apply_hints(result: dict, hints: dict | None) -> dict:
 def label_image(path: str, provider: str = "router", keyword: str | None = None, hints: dict | None = None) -> dict:
     """Label a local image file using provider ('router' or 'external')."""
     datauri = _image_to_datauri(path, max_dim=512)
+    prompt_text = build_label_prompt(keyword) + (_hint_prompt(hints) if hints else "")
 
     if provider == "router":
         from app.services.design_images import _vision_chat
 
         content = [
-            {"type": "text", "text": LABEL_PROMPT + (_hint_prompt(hints) if hints else "")},
+            {"type": "text", "text": prompt_text},
             {"type": "image_url", "image_url": {"url": datauri}},
         ]
         try:
@@ -337,7 +370,7 @@ def label_image(path: str, provider: str = "router", keyword: str | None = None,
                 {
                     "role": "user",
                     "content": [
-                         {"type": "text", "text": LABEL_PROMPT + (_hint_prompt(hints) if hints else "")},
+                        {"type": "text", "text": prompt_text},
                         {"type": "image_url", "image_url": {"url": datauri}},
                     ],
                 }
