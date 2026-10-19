@@ -434,3 +434,293 @@ def test_phone_runner_client_probe_device():
         res4 = c2.probe_device(device=dev)
         assert res4["success"] is False
         assert res4["status"] == "runner_unreachable"
+
+
+def test_retry_after_30_minutes_unhealthy(db_session):
+    device, _ = _seed_device_and_dest(db_session, device_status="available")
+
+    client = MagicMock(spec=PhoneRunnerClient)
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "portal_unready",
+        "adb_connected": True,
+        "portal_ready": False,
+    }
+    client.send_notification.return_value = (True, "sent")
+
+    # Tick 1: unhealthy, recover #1
+    check_phone_devices(client=client, db=db_session)
+    assert client.recover_device.call_count == 1
+
+    marker = (
+        db_session.query(OperationalNotification)
+        .filter_by(dedupe_key=f"phone_watchdog:{device.id}")
+        .first()
+    )
+    assert marker is not None
+    assert marker.attempt_count == 1
+
+    # Set marker.last_error to 35 min ago
+    old_time = (datetime.now(timezone.utc) - timedelta(minutes=35)).isoformat()
+    marker.last_error = old_time
+    db_session.commit()
+
+    # Tick 2: unhealthy -> recover #2, attempt_count 2
+    check_phone_devices(client=client, db=db_session)
+    assert client.recover_device.call_count == 2
+    db_session.refresh(marker)
+    assert marker.attempt_count == 2
+
+
+def test_no_retry_at_10_minutes_wait_retry_logged(db_session, caplog):
+    device, _ = _seed_device_and_dest(db_session, device_status="maintenance")
+    marker = OperationalNotification(
+        dedupe_key=f"phone_watchdog:{device.id}",
+        kind="phone_watchdog",
+        message="watchdog_maintenance:open",
+        state="open",
+        attempt_count=1,
+        last_error=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(),
+    )
+    db_session.add(marker)
+    db_session.commit()
+
+    client = MagicMock(spec=PhoneRunnerClient)
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "portal_unready",
+        "adb_connected": True,
+        "portal_ready": False,
+    }
+
+    with caplog.at_level(logging.INFO):
+        check_phone_devices(client=client, db=db_session)
+
+    assert client.recover_device.call_count == 0
+    assert any("action=wait_retry" in rec.message for rec in caplog.records)
+
+
+def test_future_last_error_treated_as_none_retry_happens(db_session):
+    device, _ = _seed_device_and_dest(db_session, device_status="maintenance")
+    marker = OperationalNotification(
+        dedupe_key=f"phone_watchdog:{device.id}",
+        kind="phone_watchdog",
+        message="watchdog_maintenance:open",
+        state="open",
+        attempt_count=1,
+        last_error=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    )
+    db_session.add(marker)
+    db_session.commit()
+
+    client = MagicMock(spec=PhoneRunnerClient)
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "portal_unready",
+        "adb_connected": True,
+        "portal_ready": False,
+    }
+
+    check_phone_devices(client=client, db=db_session)
+
+    assert client.recover_device.call_count == 1
+    db_session.refresh(marker)
+    assert marker.attempt_count == 2
+
+
+def test_unparsable_last_error_retry_happens(db_session):
+    device, _ = _seed_device_and_dest(db_session, device_status="maintenance")
+    marker = OperationalNotification(
+        dedupe_key=f"phone_watchdog:{device.id}",
+        kind="phone_watchdog",
+        message="watchdog_maintenance:open",
+        state="open",
+        attempt_count=1,
+        last_error="boom",
+    )
+    db_session.add(marker)
+    db_session.commit()
+
+    client = MagicMock(spec=PhoneRunnerClient)
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "portal_unready",
+        "adb_connected": True,
+        "portal_ready": False,
+    }
+
+    check_phone_devices(client=client, db=db_session)
+
+    assert client.recover_device.call_count == 1
+    db_session.refresh(marker)
+    assert marker.attempt_count == 2
+
+
+def test_naive_last_error_string_retry_happens(db_session):
+    device, _ = _seed_device_and_dest(db_session, device_status="maintenance")
+    naive_str = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=40)).isoformat()
+    marker = OperationalNotification(
+        dedupe_key=f"phone_watchdog:{device.id}",
+        kind="phone_watchdog",
+        message="watchdog_maintenance:open",
+        state="open",
+        attempt_count=1,
+        last_error=naive_str,
+    )
+    db_session.add(marker)
+    db_session.commit()
+
+    client = MagicMock(spec=PhoneRunnerClient)
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "portal_unready",
+        "adb_connected": True,
+        "portal_ready": False,
+    }
+
+    check_phone_devices(client=client, db=db_session)
+
+    assert client.recover_device.call_count == 1
+    db_session.refresh(marker)
+    assert marker.attempt_count == 2
+
+
+def test_last_seen_at_updated_on_adb_connected_not_on_unreachable(db_session):
+    device, _ = _seed_device_and_dest(db_session, device_status="available")
+    assert device.last_seen_at is None
+
+    client = MagicMock(spec=PhoneRunnerClient)
+
+    # 1. Healthy probe (adb_connected=True) -> last_seen_at updated
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "ready",
+        "adb_connected": True,
+        "portal_ready": True,
+    }
+    check_phone_devices(client=client, db=db_session)
+    db_session.refresh(device)
+    assert device.last_seen_at is not None
+
+    # 2. Unhealthy probe with adb_connected=True -> last_seen_at updated
+    device.last_seen_at = datetime(2025, 1, 1, 0, 0, 0)
+    db_session.commit()
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "portal_unready",
+        "adb_connected": True,
+        "portal_ready": False,
+    }
+    check_phone_devices(client=client, db=db_session)
+    db_session.refresh(device)
+    assert device.last_seen_at > datetime(2025, 1, 1, 0, 0, 0)
+
+    # 3. runner_unreachable -> last_seen_at NOT changed
+    pinned_time = datetime(2024, 6, 1, 12, 0, 0)
+    device.last_seen_at = pinned_time
+    db_session.commit()
+    client.probe_device.return_value = {
+        "success": False,
+        "status": "runner_unreachable",
+        "detail": "timeout",
+    }
+    check_phone_devices(client=client, db=db_session)
+    db_session.refresh(device)
+    assert device.last_seen_at == pinned_time
+
+
+def test_probe_device_called_with_timeout_45(db_session):
+    device, _ = _seed_device_and_dest(db_session, device_status="available")
+
+    client = MagicMock(spec=PhoneRunnerClient)
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "ready",
+        "adb_connected": True,
+        "portal_ready": True,
+    }
+
+    check_phone_devices(client=client, db=db_session)
+
+    assert client.probe_device.call_count >= 1
+    for call in client.probe_device.call_args_list:
+        assert call.kwargs.get("timeout") == 45.0
+
+
+def test_decision_log_line_per_tick_contains_action(db_session, caplog):
+    device, _ = _seed_device_and_dest(db_session, device_status="available")
+
+    client = MagicMock(spec=PhoneRunnerClient)
+    client.probe_device.return_value = {
+        "success": True,
+        "status": "ready",
+        "adb_connected": True,
+        "portal_ready": True,
+    }
+
+    # 1. Healthy tick -> action=healthy_noop
+    with caplog.at_level(logging.INFO):
+        check_phone_devices(client=client, db=db_session)
+
+    watchdog_logs = [r.message for r in caplog.records if r.message.startswith("Watchdog: device=")]
+    assert len(watchdog_logs) == 1
+    assert "action=healthy_noop" in watchdog_logs[0]
+    expected_pattern = f"Watchdog: device={device.id} status=available probe=ready adb=True portal=True marker=None last_attempt=None action=healthy_noop"
+    assert watchdog_logs[0] == expected_pattern
+
+    # 2. Skip busy tick -> action=skip_busy, probe fields None
+    caplog.clear()
+    lease = DeviceLease(
+        device_id=device.id,
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10),
+    )
+    db_session.add(lease)
+    db_session.commit()
+
+    with caplog.at_level(logging.INFO):
+        check_phone_devices(client=client, db=db_session)
+
+    watchdog_logs = [r.message for r in caplog.records if r.message.startswith("Watchdog: device=")]
+    assert len(watchdog_logs) == 1
+    assert "action=skip_busy" in watchdog_logs[0]
+    assert f"Watchdog: device={device.id} status=available probe=None adb=None portal=None marker=None last_attempt=None action=skip_busy" == watchdog_logs[0]
+
+
+def test_last_attempt_at_helper_unit():
+    from app.tasks.phone_watchdog import _last_attempt_at
+
+    assert _last_attempt_at(None) is None
+
+    m = MagicMock()
+    m.last_error = None
+    assert _last_attempt_at(m) is None
+
+    m.last_error = ""
+    assert _last_attempt_at(m) is None
+
+    m.last_error = "boom"
+    assert _last_attempt_at(m) is None
+
+    # Future > 5 min
+    m.last_error = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    assert _last_attempt_at(m) is None
+
+    # Future <= 5 min (returns datetime)
+    m.last_error = (datetime.now(timezone.utc) + timedelta(minutes=3)).isoformat()
+    assert _last_attempt_at(m) is not None
+
+    # Aware UTC
+    m.last_error = "2026-10-19T01:05:00+00:00"
+    res = _last_attempt_at(m)
+    assert res == datetime(2026, 10, 19, 1, 5, 0)
+    assert res.tzinfo is None
+
+    # Aware non-UTC (+07:00)
+    m.last_error = "2026-10-19T08:05:00+07:00"
+    res = _last_attempt_at(m)
+    assert res == datetime(2026, 10, 19, 1, 5, 0)
+
+    # Naive
+    m.last_error = "2026-10-19T01:05:00"
+    res = _last_attempt_at(m)
+    assert res == datetime(2026, 10, 19, 1, 5, 0)
