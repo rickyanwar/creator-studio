@@ -212,10 +212,11 @@ def test_visual_sourcing_whatif_picks():
 from app.services.visual_qa import evaluate
 
 def test_visual_qa():
+    # Owner rule 2026-10-19: aesthetic/content findings are notes and never block (one generation, no QA regen).
     qa = {"plain_whatif_suit": True}
     passed, problems = evaluate(qa, "inset", None, whatif_target_team="ferrari")
-    assert not passed
-    assert "plain_whatif_suit" in problems
+    assert passed
+    assert "note:plain_whatif_suit" in problems
 
     qa = {"invented_or_garbled_logos": ["some garbled logo"]}
     passed, problems = evaluate(qa, "inset", None)
@@ -224,8 +225,8 @@ def test_visual_qa():
 
     qa = {"inset_shows_hero": True}
     passed, problems = evaluate(qa, "inset", None, inset_modes=('asset',))
-    assert not passed
-    assert "inset_shows_hero" in problems
+    assert passed
+    assert "note:inset_shows_hero" in problems
 
     qa = {"source_branding_visible": True}
     passed, problems = evaluate(qa, "inset", None)
