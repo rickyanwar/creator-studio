@@ -259,7 +259,7 @@ def test_apply_system_look_maps_f1_red(db):
 
 def test_pick_livery_rotation_lru(db):
     template = video_templates.get_template("motorsport_tech_explainer")
-    all_liveries = video_templates.liveries(template)
+    all_liveries = video_templates.niche_liveries(template, "f1")  # MotoGP liveries rotate separately
     assert len(all_liveries) == 9
 
     fp = TargetFanpage(
@@ -302,7 +302,7 @@ def test_pick_livery_rotation_lru(db):
         db.flush()
 
     # With all except 1 used, pick_livery must return the unused one
-    assert ai_video_fill.pick_livery(db, fp.id, template) == unused
+    assert ai_video_fill.pick_livery(db, fp.id, template, "f1") == unused
 
     # When all were used, returns the least recently used one
     idea_last = VideoIdea(
@@ -330,7 +330,7 @@ def test_pick_livery_rotation_lru(db):
     db.add(job_last)
     db.flush()
 
-    assert ai_video_fill.pick_livery(db, fp.id, template) == used[1]
+    assert ai_video_fill.pick_livery(db, fp.id, template, "f1") == used[1]
 
 
 def test_brief_niche_presets_and_check_variant_accepts_f1_red(db):
