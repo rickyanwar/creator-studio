@@ -406,6 +406,27 @@ def test_13_codex_share_sqlite():
     assert codex_share(empty_session, window_jobs=10) == 0.0
 
 
+def test_13b_codex_share_counts_bare_plan_markers():
+    """visual_engine writes a bare "plan=overflow" when it has nothing else to add.
+    Production 2026-10-19: these were not counted, so the Codex share stayed at 0 and
+    overflow sent every daytime job to Codex while ChatGPT was never asked."""
+    engine = create_engine("sqlite:///:memory:")
+    AICopyEvent.__table__.create(engine)
+    session = sessionmaker(bind=engine)()
+    for message, provider in [
+        ("plan=overflow", "9router"),
+        ("plan=overflow", "9router"),
+        ("plan=gptcli_first", "gptcli"),
+        ("plan=share; ok", "9router"),
+        ("plan=night", "9router"),
+        ("plan=overflowing", "9router"),  # not a plan marker
+    ]:
+        session.add(AICopyEvent(context="image_gen", outcome="success", final_provider=provider, error_message=message))
+    session.commit()
+
+    assert codex_share(session, window_jobs=10) == 0.75
+
+
 def test_14_render_queue_for(mock_db):
     """14. render_queue_for: news on + applies -> 'visual'; news 'off' -> None; facebook; applies False -> None; exception -> None."""
     fanpage_news_on = SimpleNamespace(

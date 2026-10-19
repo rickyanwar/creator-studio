@@ -90,11 +90,24 @@ def codex_daily_used(db, now: datetime) -> int:
         return 0
 
 
+def _plan_is(message: str | None, reasons: tuple[str, ...]) -> bool:
+    """True when an event's text starts with one of the plan markers.
+
+    visual_engine writes "plan=<reason>" alone when it has nothing else to add,
+    or "plan=<reason>; ..." otherwise, so both shapes must count."""
+    if not message:
+        return False
+    return any(message == f"plan={r}" or message.startswith(f"plan={r};") for r in reasons)
+
+
 def codex_share(db, window_jobs: int) -> float:
     if db is None or window_jobs <= 0:
         return 0.0
     try:
-        filters = [AICopyEvent.error_message.like(f"plan={r};%") for r in CHOICE_REASONS]
+        filters = []
+        for r in CHOICE_REASONS:
+            filters.append(AICopyEvent.error_message == f"plan={r}")
+            filters.append(AICopyEvent.error_message.like(f"plan={r};%"))
         events = (
             db.query(AICopyEvent)
             .filter(
@@ -109,9 +122,7 @@ def codex_share(db, window_jobs: int) -> float:
             return 0.0
         match_count = sum(
             1 for ev in events
-            if ev.error_message
-            and any(ev.error_message.startswith(f"plan={r};") for r in SHARE_REASONS)
-            and ev.final_provider == "9router"
+            if _plan_is(ev.error_message, SHARE_REASONS) and ev.final_provider == "9router"
         )
         return match_count / len(events)
     except Exception as exc:
