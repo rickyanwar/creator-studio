@@ -13,6 +13,8 @@ from app.services.pro_poster.types import (
     Subject,
 )
 
+TEMPLATE_TEXT_ZONE_PCT = 42
+
 
 def _hero_subject(brief: PosterBrief) -> Subject | None:
     """Find the hero subject from the brief."""
@@ -179,41 +181,49 @@ def direct(
         )
     main_subject_str = hero_subj.name if hero_subj is not None else "the main subject"
     must_do_lines.append(
-        f"- House style, when it helps the story: {main_subject_str} large in the frame, plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). Never repeat the same person or pose in the inset."
+        f"- House style, when it helps the story: {main_subject_str} large in the frame, plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). Put the inset in the upper 40% of the image. Never repeat the same person or pose in the inset."
     )
+    words_placement = f" Place them in the upper {100 - TEMPLATE_TEXT_ZONE_PCT - 3}% of the image, beside the main subject (left or right side), never below {100 - TEMPLATE_TEXT_ZONE_PCT - 3}% of the height."
     if concept is not None:
         if concept.graphic_words:
             words_joined = ", ".join(f'"{w}"' for w in concept.graphic_words)
             must_do_lines.append(
-                f'- Graphic words: use exactly these and nothing else, each at most once: {words_joined}.'
+                f'- Graphic words: use exactly these and nothing else, each at most once: {words_joined}.{words_placement}'
             )
         else:
             must_do_lines.append("- Do not add any words or numbers.")
     else:
         must_do_lines.append(
-            "- You may add at most three short graphic words or numbers that come from the story (for example a finishing position, a race count or a record), spelled exactly. No other text."
+            f"- You may add at most three short graphic words or numbers that come from the story (for example a finishing position, a race count or a record), spelled exactly. No other text.{words_placement}"
         )
 
     realism_lines = [
         "Photographic realism (very important):",
         "- It must look like a real photograph by a professional sports photographer, then designed: realistic skin with pores and natural imperfections, real lens depth of field and motion, natural light and colour.",
+        "- Sharp and detailed like a high-resolution professional camera with a good lens: the face, eyes, hair, kit fabric, stitching, sponsor patches, carbon fibre and tyre rubber in crisp focus, with clean edges and fine natural texture.",
+        "- But keep it natural: no over-sharpening, no halos around edges, no HDR clarity, no hyper-detailed or crunchy AI texture, no plastic gloss. The background stays naturally soft from depth of field, and noise and grain stay as in a real photo.",
         "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen.",
         "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters.",
     ]
 
     template_lines = [
         "Space for the fan page template:",
-        "- Leave the bottom third calm and darker, without important detail, so the headline can be placed there.",
+        f"- The bottom {TEMPLATE_TEXT_ZONE_PCT}% of the image (everything below {100 - TEMPLATE_TEXT_ZONE_PCT}% of the height) will be covered by the fan page's own badge and headline. Keep that area a plain continuation of the photo that fades to near-black: no text, no graphic words, no numbers, no inset, no logos and no faces there.",
         "- Keep the very top edge free of graphics, so the page name fits.",
-        "- Never show an official series logo or wordmark (for example the F1, Formula 1, FIA, MotoGP, FIM, Dorna or UFC logo). Team, manufacturer and sponsor logos (Ferrari, Red Bull, Ducati, Mercedes, Monster and so on) are fine and must look real. No watermark.",
+    ]
+
+    avoid_lines = [
+        "Do NOT include anything below (very important):",
+        "- No official series logo or wordmark anywhere in the image: not on banners, screens, walls, the track, the octagon mat or fence, gloves, shorts or podium backdrops (for example F1, Formula 1, FIA, MotoGP, FIM, Dorna, UFC). Use plain unbranded surfaces there. Team, manufacturer and sponsor logos (Ferrari, Red Bull, Ducati, Mercedes, Monster and so on) are fine and must look real. No watermark.",
+        f"- Any text or graphic words in the bottom {TEMPLATE_TEXT_ZONE_PCT}% of the image.",
     ]
     for item in brief.must_avoid:
         cleaned = item.strip().rstrip(".")
         if cleaned.lower().startswith("do not show"):
             cleaned = cleaned[len("do not show"):].strip()
         if cleaned:
-            template_lines.append(f"- Do not show {cleaned}.")
-    template_lines.append("- Never mix in another series' cars, bikes or logos.")
+            avoid_lines.append(f"- Do not show {cleaned}.")
+    avoid_lines.append("- Never mix in another series' cars, bikes or logos.")
 
     blocks = [opening]
     if story_lines:
@@ -237,6 +247,7 @@ def direct(
     blocks.append("\n".join(must_do_lines))
     blocks.append("\n".join(realism_lines))
     blocks.append("\n".join(template_lines))
+    blocks.append("\n".join(avoid_lines))
 
     prompt = "\n\n".join(blocks)
     return ArtDirection(layout=layout, prompt=prompt, refs=refs, allowed_text=())

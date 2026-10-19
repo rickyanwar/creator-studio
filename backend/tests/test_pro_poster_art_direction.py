@@ -214,7 +214,7 @@ def test_hero_prompt_contents():
     assert 'Story text (from the source article):\n"""Nicolo Bulega claimed three race wins at Jerez. He is now fifth in all-time WorldSBK victories."""' in p
     assert "ONE strongest visual idea" in p
     assert "Tell THIS story" in p
-    assert "Leave the bottom third calm and darker" in p
+    assert "The bottom 42% of the image" in p
     assert "Keep the very top edge free of graphics" in p
     assert (
         "- Image 1: a real press photo of Nicolo Bulega (Aruba.it Racing Ducati). "
@@ -316,6 +316,7 @@ def test_house_style_inset_line_always_present():
         "- House style, when it helps the story: Max Verstappen large in the frame, "
         "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
         "or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). "
+        "Put the inset in the upper 40% of the image. "
         "Never repeat the same person or pose in the inset."
     ) in p_hero
 
@@ -326,6 +327,7 @@ def test_house_style_inset_line_always_present():
         "- House style, when it helps the story: the main subject large in the frame, "
         "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
         "or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). "
+        "Put the inset in the upper 40% of the image. "
         "Never repeat the same person or pose in the inset."
     ) in p_no_hero
 
@@ -344,14 +346,20 @@ def test_realism_and_template_space_sections_present():
     # Realism section
     assert "Photographic realism (very important):" in p
     assert "- It must look like a real photograph by a professional sports photographer, then designed: realistic skin with pores and natural imperfections, real lens depth of field and motion, natural light and colour." in p
+    assert "- Sharp and detailed like a high-resolution professional camera with a good lens: the face, eyes, hair, kit fabric, stitching, sponsor patches, carbon fibre and tyre rubber in crisp focus, with clean edges and fine natural texture." in p
+    assert "- But keep it natural: no over-sharpening, no halos around edges, no HDR clarity, no hyper-detailed or crunchy AI texture, no plastic gloss. The background stays naturally soft from depth of field, and noise and grain stay as in a real photo." in p
     assert "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen." in p
     assert "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters." in p
 
     # Template space section
     assert "Space for the fan page template:" in p
-    assert "- Leave the bottom third calm and darker, without important detail, so the headline can be placed there." in p
+    assert "- The bottom 42% of the image (everything below 58% of the height) will be covered by the fan page's own badge and headline. Keep that area a plain continuation of the photo that fades to near-black: no text, no graphic words, no numbers, no inset, no logos and no faces there." in p
     assert "- Keep the very top edge free of graphics, so the page name fits." in p
-    assert "Never show an official series logo" in p and "Team, manufacturer and sponsor logos" in p
+
+    # Avoid section
+    assert "Do NOT include anything below (very important):" in p
+    assert "No official series logo or wordmark anywhere in the image" in p and "Team, manufacturer and sponsor logos" in p
+    assert "- Any text or graphic words in the bottom 42% of the image." in p
     assert "- Do not show Formula 1 cars." in p
     assert "- Do not show Singapore night race." in p
     assert "- Do not show rain." in p
@@ -540,3 +548,45 @@ def test_concept_graphic_words_line_cases():
     assert generic_line in p_generic
     assert "- Graphic words: use exactly these" not in p_generic
     assert "- Do not add any words or numbers." not in p_generic
+
+
+def test_template_text_zone_and_graphic_words_placement():
+    """Verify bottom 42%, graphic words in upper 55%, and bottom-zone avoid line in final block."""
+    hero = _make_check(role="hero", path="/images/hero.jpg")
+    brief = _make_brief()
+    selection = PhotoSelection(hero=hero, context=())
+
+    concept_words = PosterConcept(
+        key_moment="Great race",
+        scene="Hero on track",
+        inset="none",
+        graphic_words=("WIN",),
+    )
+    p = direct(brief, selection, concept=concept_words).prompt
+
+    # Prompt contains "bottom 42%"
+    assert "bottom 42%" in p
+    # Graphic words line contains "upper 55%"
+    assert "upper 55%" in p
+    # Inset line mentions upper 40%
+    assert "Put the inset in the upper 40% of the image." in p
+
+    # Final block contains bottom-zone line
+    blocks = p.split("\n\n")
+    last_block = blocks[-1]
+    assert last_block.startswith("Do NOT include anything below (very important):")
+    assert "- Any text or graphic words in the bottom 42% of the image." in last_block
+
+
+def test_realism_sharp_and_natural_lines():
+    """Verify sharp/detailed line and keep-it-natural line in realism section."""
+    hero = _make_check(role="hero", path="/images/hero.jpg")
+    brief = _make_brief()
+    selection = PhotoSelection(hero=hero, context=())
+
+    p = direct(brief, selection).prompt
+    assert "- Sharp and detailed like a high-resolution professional camera with a good lens: the face, eyes, hair, kit fabric, stitching, sponsor patches, carbon fibre and tyre rubber in crisp focus, with clean edges and fine natural texture." in p
+    assert "- But keep it natural: no over-sharpening, no halos around edges, no HDR clarity, no hyper-detailed or crunchy AI texture, no plastic gloss. The background stays naturally soft from depth of field, and noise and grain stay as in a real photo." in p
+    # Existing realism lines still present
+    assert "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen." in p
+    assert "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters." in p

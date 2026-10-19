@@ -202,8 +202,8 @@ def test_renderer_pro_poster_qa_failed_falls_back_to_old_path(
 
     # Typographic background was NOT called
     mock_tb.assert_not_called()
-    # Old path speaker and candidate selectors were called
-    mock_speaker.assert_called_once()
+    # Speaker design was NOT called (spent AI attempt); template/gallery fallback path ran instead
+    mock_speaker.assert_not_called()
     mock_select.assert_called_once()
     # Info log emitted with exact wording
     mock_log_info.assert_any_call("Pro poster job %d fell back to the old path: %s", 203, "qa: event 2 < 4")
