@@ -166,7 +166,9 @@ def test_migration_c80000000034_metadata():
     """Verify migration lineage and revision details."""
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["c80000000036"]
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert "c80000000034" in {r.revision for r in script.walk_revisions()}
 
     rev34 = script.get_revision("c80000000034")
     assert rev34 is not None

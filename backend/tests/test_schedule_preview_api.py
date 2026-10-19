@@ -258,13 +258,16 @@ def test_schedule_preview_read_only(auth_client, sqlite_db_session):
     assert sqlite_db_session.query(SocialDestination).count() == dest_before
 
 
-def test_schedule_preview_respects_legacy_and_ledger_reservations(auth_client, sqlite_db_session):
+def test_schedule_preview_respects_legacy_and_ledger_reservations(auth_client, sqlite_db_session, monkeypatch):
     """Preview respects existing legacy PublishJobs and ledger deliveries when finding slots."""
+    import app.api.social_media as sm_api
+
     project = TargetFanpage(
         id=104,
         name="Legacy Fanpage",
         timezone="UTC",
         target_country="GB",
+        repliz_account_id="rep_104",
     )
     sqlite_db_session.add(project)
     sqlite_db_session.commit()
@@ -272,9 +275,10 @@ def test_schedule_preview_respects_legacy_and_ledger_reservations(auth_client, s
     dest = SocialDestination(
         id=204,
         content_project_id=104,
-        kind="facebook_profile",
+        kind="facebook_page",
         name="UTC Destination",
-        mode="phone",
+        mode="repliz",
+        repliz_account_id="rep_104",
         timezone="UTC",
         daily_target=2,
         min_gap_minutes=60,
@@ -283,16 +287,46 @@ def test_schedule_preview_respects_legacy_and_ledger_reservations(auth_client, s
     sqlite_db_session.add(dest)
     sqlite_db_session.commit()
 
+    # Freeze clock to fixed aware UTC datetime across API endpoint
+    fixed_now = datetime(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return fixed_now.astimezone(tz)
+            return fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(sm_api, "datetime", FrozenDatetime)
+
     # Add a legacy PublishJob reservation tomorrow at 12:00 UTC
-    now_utc = datetime.now(timezone.utc)
-    future_slot = (now_utc + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+    future_slot = (fixed_now + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
     legacy_job = PublishJob(
         id=501,
         fanpage_id=104,
         scheduled_for=future_slot.replace(tzinfo=None),
         status=PublishJobStatus.pending_publish,
+        is_deleted=False,
     )
     sqlite_db_session.add(legacy_job)
+
+    # Add a ledger PublishDelivery reservation on day 2 at 15:00 UTC
+    ledger_job = PublishJob(
+        id=502,
+        fanpage_id=104,
+        status=PublishJobStatus.pending_publish,
+        is_deleted=False,
+    )
+    sqlite_db_session.add(ledger_job)
+    ledger_slot = (fixed_now + timedelta(days=2)).replace(hour=15, minute=0, second=0, microsecond=0)
+    delivery = PublishDelivery(
+        id=601,
+        publish_job_id=502,
+        destination_id=dest.id,
+        scheduled_for=ledger_slot.replace(tzinfo=None),
+        state="scheduled",
+    )
+    sqlite_db_session.add(delivery)
     sqlite_db_session.commit()
 
     resp = auth_client.get(f"/social-media/destinations/{dest.id}/schedule-preview?limit=6")
@@ -300,10 +334,12 @@ def test_schedule_preview_respects_legacy_and_ledger_reservations(auth_client, s
     data = resp.json()
 
     slots_utc = [datetime.fromisoformat(s) for s in data["slots_utc"]]
-    # Every generated slot must be at least min_gap_minutes (60 min) away from future_slot
+    # Every generated slot must be at least min_gap_minutes (60 min) away from future_slot and ledger_slot
     for s in slots_utc:
-        diff_sec = abs((s - future_slot).total_seconds())
-        assert diff_sec >= 60 * 60, f"Slot {s} was too close to legacy reservation {future_slot}"
+        diff_legacy = abs((s - future_slot).total_seconds())
+        assert diff_legacy >= 60 * 60, f"Slot {s} was too close to legacy reservation {future_slot}"
+        diff_ledger = abs((s - ledger_slot).total_seconds())
+        assert diff_ledger >= 60 * 60, f"Slot {s} was too close to ledger delivery {ledger_slot}"
 
 
 def test_schedule_preview_exact_six_slots_parity_and_namespace_regression(auth_client, sqlite_db_session, monkeypatch):
