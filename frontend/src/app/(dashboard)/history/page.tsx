@@ -223,6 +223,7 @@ export default function HistoryPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [blurred, setBlurred] = useState(false);
   const [lightbox, setLightbox] = useState<{ jobIndex: number; imgIdx: number } | null>(null);
+  const [scheduledPreview, setScheduledPreview] = useState<{ delivery: DeliveryActivity; imgIdx: number } | null>(null);
 
   const { data: fanpages = [] } = useSWR<FanpageLite[]>(
     "history-fanpages",
@@ -694,6 +695,14 @@ export default function HistoryPage() {
                         row.state === "waiting_for_slot" ||
                         row.state === "waiting_for_device";
                       const isReplizScheduled = row.state === "repliz_scheduled";
+                      const thumb =
+                        row.thumbnail_url ||
+                        (row.media_urls && row.media_urls.length > 0 ? row.media_urls[0] : null);
+                      const isVideo = row.media_kind === "video";
+                      const isAlbum = row.media_kind === "album";
+                      const mediaCount = row.media_urls?.length ?? 0;
+                      const extraCount = isAlbum && mediaCount > 1 ? mediaCount - 1 : 0;
+                      const hasMedia = !!thumb || mediaCount > 0;
 
                       return (
                         <tr
@@ -702,22 +711,78 @@ export default function HistoryPage() {
                         >
                           {/* Post */}
                           <td className="p-3 pl-4 align-top max-w-[280px]">
-                            <div className="flex flex-col gap-0.5">
-                              <span
-                                className={`font-semibold text-text truncate ${blurClass}`}
+                            <div className="flex gap-3 items-center">
+                              <div
+                                role={hasMedia ? "button" : undefined}
+                                tabIndex={hasMedia ? 0 : undefined}
+                                onClick={
+                                  hasMedia
+                                    ? () => setScheduledPreview({ delivery: row, imgIdx: 0 })
+                                    : undefined
+                                }
+                                onKeyDown={
+                                  hasMedia
+                                    ? (e) => {
+                                        if (e.key === "Enter" || e.key === " ") {
+                                          setScheduledPreview({ delivery: row, imgIdx: 0 });
+                                        }
+                                      }
+                                    : undefined
+                                }
+                                className={`w-14 h-14 rounded-lg bg-surface2 border border-line flex-shrink-0 overflow-hidden relative ${
+                                  hasMedia ? "cursor-zoom-in" : ""
+                                } ${blurred ? "blur-sm" : ""}`}
                               >
-                                {title}
-                              </span>
-                              {row.caption_snapshot && (
+                                {thumb ? (
+                                  <>
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={thumb}
+                                      alt=""
+                                      className="w-full h-full object-cover"
+                                    />
+                                    {isVideo && (
+                                      <div className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center text-white pointer-events-none">
+                                        <Icon icon="solar:play-bold" width={9} />
+                                      </div>
+                                    )}
+                                    {isAlbum && extraCount > 0 && (
+                                      <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/70 text-white text-[9px] font-semibold leading-none pointer-events-none">
+                                        +{extraCount}
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-text2">
+                                    <Icon
+                                      icon={
+                                        isVideo
+                                          ? "solar:videocamera-bold-duotone"
+                                          : "solar:gallery-bold-duotone"
+                                      }
+                                      width={22}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex flex-col gap-0.5">
                                 <span
-                                  className={`text-[11px] text-text2 truncate ${blurClass}`}
+                                  className={`font-semibold text-text truncate ${blurClass}`}
                                 >
-                                  {row.caption_snapshot}
+                                  {title}
                                 </span>
-                              )}
-                              <span className="text-[10px] text-text2">
-                                Post #{row.publish_job_id}
-                              </span>
+                                {row.caption_snapshot && (
+                                  <span
+                                    className={`text-[11px] text-text2 truncate ${blurClass}`}
+                                  >
+                                    {row.caption_snapshot}
+                                  </span>
+                                )}
+                                <span className="text-[10px] text-text2">
+                                  Post #{row.publish_job_id}
+                                </span>
+                              </div>
                             </div>
                           </td>
 
@@ -1256,6 +1321,26 @@ export default function HistoryPage() {
         />
       )}
 
+      {/* Scheduled Delivery Preview Modal */}
+      {scheduledPreview && (
+        <ScheduledPreviewModal
+          delivery={scheduledPreview.delivery}
+          imgIdx={scheduledPreview.imgIdx}
+          blurred={blurred}
+          onClose={() => setScheduledPreview(null)}
+          onPrev={() =>
+            setScheduledPreview((p) => (p && p.imgIdx > 0 ? { ...p, imgIdx: p.imgIdx - 1 } : p))
+          }
+          onNext={() =>
+            setScheduledPreview((p) => {
+              if (!p) return null;
+              const count = p.delivery.media_urls?.length ?? 0;
+              return p.imgIdx < count - 1 ? { ...p, imgIdx: p.imgIdx + 1 } : p;
+            })
+          }
+        />
+      )}
+
       {/* Confirm Dialogs */}
       <ConfirmDialog
         open={!!confirmDeleteJob}
@@ -1504,6 +1589,161 @@ function HistoryLightbox({
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScheduledPreviewModal({
+  delivery,
+  imgIdx,
+  blurred,
+  onClose,
+  onPrev,
+  onNext,
+}: {
+  delivery: DeliveryActivity;
+  imgIdx: number;
+  blurred: boolean;
+  onClose: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const isVideo = delivery.media_kind === "video";
+  const urls = delivery.media_urls ?? [];
+  const total = urls.length;
+  const blurClass = blurred ? "blur-md select-none" : "";
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && !isVideo && total > 1) onPrev();
+      else if (e.key === "ArrowRight" && !isVideo && total > 1) onNext();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, onPrev, onNext, isVideo, total]);
+
+  const title = delivery.title_snapshot?.trim() || `Post #${delivery.publish_job_id}`;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 select-none"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        title="Close (Esc)"
+        className="absolute top-4 right-4 p-2 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors z-20 cursor-pointer"
+      >
+        <Icon icon="solar:close-circle-bold" width={28} />
+      </button>
+
+      {!isVideo && total > 1 && (
+        <div
+          className="absolute top-4 left-4 px-3 py-1.5 rounded-full bg-white/10 text-white text-xs font-semibold z-20"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {imgIdx + 1} / {total}
+        </div>
+      )}
+
+      {!isVideo && total > 1 && imgIdx > 0 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPrev();
+          }}
+          title="Previous (←)"
+          className="absolute left-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors z-20 cursor-pointer"
+        >
+          <Icon icon="solar:alt-arrow-left-bold" width={28} />
+        </button>
+      )}
+
+      {!isVideo && total > 1 && imgIdx < total - 1 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNext();
+          }}
+          title="Next (→)"
+          className="absolute right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors z-20 cursor-pointer"
+        >
+          <Icon icon="solar:alt-arrow-right-bold" width={28} />
+        </button>
+      )}
+
+      <div
+        className="max-w-[90vw] max-h-[90vh] flex flex-col items-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {isVideo ? (
+          urls[0] ? (
+            <video
+              controls
+              src={urls[0]}
+              poster={delivery.thumbnail_url ?? undefined}
+              className={`max-w-[90vw] max-h-[75vh] rounded-lg bg-black ${blurClass}`}
+              playsInline
+            />
+          ) : delivery.thumbnail_url ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={delivery.thumbnail_url}
+              alt={title}
+              className={`max-w-[90vw] max-h-[75vh] object-contain rounded-lg ${blurClass}`}
+            />
+          ) : (
+            <div className="w-80 h-80 rounded-lg bg-surface2 border border-line flex flex-col items-center justify-center gap-2 text-text2">
+              <Icon icon="solar:videocamera-bold-duotone" width={40} />
+              <p className="text-xs">No media preview</p>
+            </div>
+          )
+        ) : total > 0 ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={urls[imgIdx] || delivery.thumbnail_url || ""}
+            alt={title}
+            className={`max-w-[90vw] max-h-[75vh] object-contain rounded-lg ${blurClass}`}
+          />
+        ) : delivery.thumbnail_url ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={delivery.thumbnail_url}
+            alt={title}
+            className={`max-w-[90vw] max-h-[75vh] object-contain rounded-lg ${blurClass}`}
+          />
+        ) : (
+          <div className="w-80 h-80 rounded-lg bg-surface2 border border-line flex flex-col items-center justify-center gap-2 text-text2">
+            <Icon icon="solar:gallery-bold-duotone" width={40} />
+            <p className="text-xs">No media preview</p>
+          </div>
+        )}
+
+        <div className="mt-3 text-center text-white/80 text-xs max-w-xl">
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <span className={`font-semibold text-white ${blurred ? "blur-sm select-none" : ""}`}>
+              {delivery.destination_name || "Scheduled Post"}
+            </span>
+            {delivery.scheduled_for && (
+              <span className="text-white/60">
+                · {formatScheduledWib(delivery.scheduled_for)}
+              </span>
+            )}
+            <span className="text-white/60">· Post #{delivery.publish_job_id}</span>
+          </div>
+          {delivery.caption_snapshot && (
+            <p className={`mt-1 text-white/70 line-clamp-2 ${blurred ? "blur-sm select-none" : ""}`}>
+              {delivery.caption_snapshot}
+            </p>
+          )}
         </div>
       </div>
     </div>
