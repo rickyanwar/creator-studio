@@ -16,6 +16,7 @@ from app.services import codex_budget
 from app.services import engine_router
 from app.services import gptcli_client
 from app.services.nine_router import get_nine_router_config
+from app.services.prompt_rules import avoid_block, realism_block, text_zone_line
 from app.services.visual_style import treatment_clause
 
 class VisualEngineError(Exception):
@@ -77,11 +78,12 @@ def build_inset_prompt(
     prompt_lines.append(
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade across hero, inset and background; high micro-contrast on the face, rich true team colours, soft cool rim light on the hero's edge, clean separation from the background. Looks like a real photograph composited by a professional, not AI art.\n"
     )
+    prompt_lines.append(f"{realism_block()}\n")
     prompt_lines.append(
-        f"Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty (a headline is added later). Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."
+        f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."
     )
 
-    return ("\n".join(prompt_lines), refs)
+    return ("\n".join(prompt_lines) + "\n\n" + avoid_block(), refs)
 
 
 def build_solo_prompt(hero_desc: str, purpose: str, accent: str, sport: str = 'Formula 1', treatment: str = 'clean') -> str:
@@ -90,7 +92,9 @@ def build_solo_prompt(hero_desc: str, purpose: str, accent: str, sport: str = 'F
         f"HERO (image 1): {hero_desc}. Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 8-12% from the top edge, shoulders filling the card width, face large (about 40-45% of the card width), placed center, eyes in the upper third. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n\n"
         f"{treatment_clause(treatment, accent)}\n\n"
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade across hero and background; high micro-contrast on the face, rich true team colours, soft cool rim light on the hero's edge, clean separation from the background. Looks like a real photograph composited by a professional, not AI art.\n\n"
-        f"Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty (a headline is added later). Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."
+        f"{realism_block()}\n\n"
+        f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks.\n\n"
+        f"{avoid_block()}"
     )
 
 
@@ -100,7 +104,9 @@ def build_action_prompt(subject_desc: str, purpose: str, accent: str, sport: str
         f"HERO (image 1): {subject_desc}. One big action photo. Crop tight and bold. Keep the real identity, clothing and every logo exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n\n"
         f"{treatment_clause(treatment, accent)}\n\n"
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade; rich true team colours. Looks like a real photograph composited by a professional, not AI art.\n\n"
-        f"Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty (a headline is added later). Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."
+        f"{realism_block()}\n\n"
+        f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks.\n\n"
+        f"{avoid_block()}"
     )
 
 
@@ -146,11 +152,12 @@ def build_whatif_inset_prompt(
     prompt_lines.append(
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade across hero, inset and background; high micro-contrast on the face, rich true team colours, soft cool rim light on the hero's edge, clean separation from the background. Looks like a real photograph composited by a professional, not AI art.\n"
     )
+    prompt_lines.append(f"{realism_block()}\n")
     prompt_lines.append(
-        f"Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty (a headline is added later). Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."
+        f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."
     )
 
-    return ("\n".join(prompt_lines), refs)
+    return ("\n".join(prompt_lines) + "\n\n" + avoid_block(), refs)
 
 
 def build_team_radio_prompt(name: str, number: str, colour: str, logo_desc: str, team: str, person_desc: str, lines: list[tuple[str, str]], context: str, weather: str, second_car_desc: str | None = None) -> str:
@@ -173,7 +180,9 @@ def build_team_radio_prompt(name: str, number: str, colour: str, logo_desc: str,
         f'RADIO PANEL: inside the glass panel, follow the card format of image 4 exactly (it shows six example drivers; use the same layout for {name}): top-right the driver surname "{name}" in {colour}, below it "RADIO" in bold white; the big driver number "{number}" in {colour} on the left sitting on the stepped band in the team colour; {logo_desc} at the right under "RADIO"; then the radio conversation in the same wide uppercase F1-style font — driver lines in {colour} aligned right, engineer lines in white aligned left — exactly these lines in this order and nothing else:\n'
         f'{radio_lines}\n'
         f'Spell every word exactly as written, including punctuation. No other text anywhere on the card.\n\n'
-        f'PEOPLE & CAR: image 1 is {person_desc} — he is the large face on the center-right; keep his real face, natural skin, expression, hair and every logo on his clothing exactly as in image 1{weather_clause}. Image 2 is his real {team} car — place it racing across the bottom; keep its real livery, number and sponsor logos exactly.{second_car_clause} Mood and lighting should fit this moment: {context}. Never invent or alter a face, car or logo. Photorealistic.{dry_clause}'
+        f'PEOPLE & CAR: image 1 is {person_desc} — he is the large face on the center-right; keep his real face, natural skin, expression, hair and every logo on his clothing exactly as in image 1{weather_clause}. Image 2 is his real {team} car — place it racing across the bottom; keep its real livery, number and sponsor logos exactly.{second_car_clause} Mood and lighting should fit this moment: {context}.\n\n'
+        f'{realism_block()}\n\n'
+        f'Never invent or alter a face, car or logo. Photorealistic.{dry_clause}'
     )
 
 def _image_to_b64(path: str, max_side: int = 1536) -> str:

@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 
 from app.services import speaker_design
+from app.services.prompt_rules import avoid_block
 from app.services.visual_engine import GenerationResult
 
 
@@ -645,8 +646,8 @@ def test_speaker_framing_text(monkeypatch):
 
 
 def test_composition_band_line_present():
-    expected_line = "Keep every face, the inset circle and any important detail ABOVE the lower 37 percent band of the card; the bottom 37 percent may hold only the speaker's body/torso and background, because the headline text is placed there."
-    assert expected_line in speaker_design.COMMON
+    assert "Bottom 42% MUST" in speaker_design.COMMON
+    assert "(the fan page's badge and headline are added there later)." in speaker_design.COMMON
 
 
 def test_pick_bike_photos_race_number_priority(monkeypatch):
@@ -697,6 +698,9 @@ def test_prompt_uses_actual_photo_descriptions_and_reference_layout_wording():
     assert "TWO circles of different sizes" in prompt
     assert "real background from Image 1, extended to fill the card" in prompt
     assert "The light on the speaker's face matches Image 1" in prompt
+    assert "Bottom 42% MUST" in prompt
+    assert "Photographic realism (very important):" in prompt
+    assert prompt.endswith(avoid_block())
 
 
 def test_side_prompt_contains_depth_and_race_number():
@@ -710,6 +714,9 @@ def test_side_prompt_contains_depth_and_race_number():
     assert "The speaker's shoulder partly covers the near edge of the bike; the bike never covers the speaker" in prompt
     assert "race number 63" in prompt
     assert "Image 3 = a second real photo of the speaker" in prompt
+    assert "Bottom 42% MUST" in prompt
+    assert "Photographic realism (very important):" in prompt
+    assert prompt.endswith(avoid_block())
 
 
 def test_identity_score_matches_best_output_face(monkeypatch):
