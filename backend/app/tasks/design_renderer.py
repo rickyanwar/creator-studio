@@ -41,6 +41,7 @@ def _redis():
 
 
 _RENDER_QUEUE_LOCK_TTL = 1800
+NEWS_STALE_HOURS = 24
 
 
 def _acquire_queued_lock(job_id: int) -> bool:
@@ -585,6 +586,7 @@ def render_design(self, job_id: int):
         pro_poster_label = None
         pro_poster_engine = None
         pro_poster_engine_note = None
+        pro_poster_spent = False
 
         from app.services.visual_engine import VisualEngineDeferred
         from app.services.pro_poster.pipeline import compose_pro_poster, pro_poster_applies
@@ -592,6 +594,7 @@ def render_design(self, job_id: int):
         if pro_poster_applies(db, fanpage):
             try:
                 pp_res = compose_pro_poster(db, fanpage, job, article)
+                pro_poster_spent = bool(pp_res and pp_res.attempts >= 1 and not pp_res.image)
                 analysis = dict(job.design_analysis_json or {})
                 if pp_res.qa is not None:
                     analysis["pro_poster_qa"] = {
@@ -633,11 +636,15 @@ def render_design(self, job_id: int):
                 logger.exception("Pro poster compose failed for job %d, continuing: %s", job_id, exc)
 
         if not image_src:
-            try:
-                speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="news")
-            except VisualEngineDeferred as exc:
-                _defer_job(db, job, exc)
-                return
+            if pro_poster_spent:
+                logger.info("Pro poster job %d already used its AI generation; fallback uses the template card", job_id)
+                speaker_design = None
+            else:
+                try:
+                    speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="news")
+                except VisualEngineDeferred as exc:
+                    _defer_job(db, job, exc)
+                    return
             if speaker_design:
                 speaker_gallery_images = getattr(speaker_design, "used_gallery_images", [])
                 image_src = f"data:image/png;base64,{base64.b64encode(speaker_design).decode()}"
@@ -1508,6 +1515,7 @@ def render_pending_designs():
         from app.models.target_fanpages import TargetFanpage, PublishMode
 
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        stale_cutoff = now_naive - timedelta(hours=NEWS_STALE_HOURS)
         retry_cutoff = now_naive - timedelta(
             hours=_NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_HOURS
         )
@@ -1525,6 +1533,24 @@ def render_pending_designs():
             PublishJob.updated_at < retry_cutoff,
         )
 
+        stale_jobs = (
+            db.query(PublishJob)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_design,
+                PublishJob.content_type == ContentType.news_content,
+                TargetFanpage.mode2_publish_mode == PublishMode.auto,
+                PublishJob.created_at < stale_cutoff,
+            )
+            .all()
+        )
+        if stale_jobs:
+            for sj in stale_jobs:
+                sj.status = PublishJobStatus.skipped
+                sj.last_error = "stale: news older than 24 h, not rendered"
+            db.commit()
+            logger.info("Marked %d stale news jobs as skipped (older than %dh)", len(stale_jobs), NEWS_STALE_HOURS)
+
         jobs = (
             db.query(PublishJob.id)
             .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
@@ -1532,6 +1558,7 @@ def render_pending_designs():
                 PublishJob.status == PublishJobStatus.pending_design,
                 PublishJob.content_type == ContentType.news_content,
                 TargetFanpage.mode2_publish_mode == PublishMode.auto,
+                PublishJob.created_at >= stale_cutoff,
                 not_stuck_on_missing_image,
                 not_deferred,
             )
