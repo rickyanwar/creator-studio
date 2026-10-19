@@ -13,6 +13,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -81,6 +82,12 @@ class SocialDestination(Base):
         server_default=text("'[\"image\", \"album\", \"video\"]'::json"),
     )
     is_active = Column(Boolean, default=False, nullable=False, server_default="false")
+    mode_shares = Column(
+        JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),
+        nullable=True,
+    )
+    borrow_hours_before_sleep = Column(Integer, nullable=False, default=3, server_default="3")
+    news_stale_hours = Column(Integer, nullable=False, default=24, server_default="24")
     identity_verified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(
