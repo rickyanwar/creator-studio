@@ -11,6 +11,7 @@ from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language, language_name
 from app.services.video_templates import (
     _TEMPLATE_DIR,
+    fanpage_niche,
     get_narration_budget,
     get_template,
     liveries,
@@ -20,6 +21,7 @@ from app.services.video_templates import (
     required_variables,
     resolve_narrator,
     sanitize_channel_name,
+    uses_vehicle,
     vehicle_presets,
 )
 
@@ -48,41 +50,70 @@ def matching_mechanisms(text: str) -> list[dict]:
     return matches
 
 
-def build_fill_prompt(t, idea, fanpage, clips) -> str:
-    cs = caption_settings(fanpage)
-    lang = cs.language
-    lang_display = language_name(lang)
-    example = t.raw.get("example", {}).get("variables", {})
-    budgets = {f"narration_{i + 1}": get_narration_budget(c, lang) for i, c in enumerate(t.raw["clip_templates"][:clips])}
-    page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
-    niche_text = " ".join(str(value) for value in page_niches) + " " + getattr(fanpage, "name", "")
-    niche = fanpage_niche(fanpage)
-    available_presets = vehicle_presets(t)
-    if niche == "motogp":
-        presets = [p for p in available_presets if "motogp" in p] or available_presets
-    else:
-        # F1/car niche: prefer classic_gp or f1
-        presets = [p for p in available_presets if "motogp" not in p] or available_presets
-    title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
-    desc_max = getattr(fanpage, "ai_video_description_max_chars", None) or 600
-    matches = matching_mechanisms((idea.topic or "") + " " + (idea.angle or ""))
-    ref_line = f"Reference for this topic (follow it exactly): {json.dumps(matches)}\n" if matches else ""
-    prompt = f"""Fill this video template as strict JSON with keys variables, title, caption.
-Template rules: {json.dumps(t.raw.get('rules', t.raw.get('description', '')))}
-Format example variables: {json.dumps(example)}
-Required variables: {json.dumps(required_variables(t, clips))}; narration word budgets: {json.dumps(budgets)}
-Vehicle preset choices for this page: {json.dumps(presets)}.{" This is a MotoGP page: show a modern MotoGP prototype racing bike unless the story is clearly about another motorcycle." if niche == "motogp" else ""} Narration must be in {lang_display}.
-Title and caption must be in {lang}; title <= {title_max} chars, caption <= {desc_max} chars and <= {cs.hashtag_count} hashtags.
-The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
-Do not output livery or channel_name; the system sets them.
+MECHANICAL_ACCURACY = """Do not output livery or channel_name; the system sets them.
 Mechanical accuracy requirements:
 1. Physical placement: every visible component must be placed where it really is on the real vehicle (e.g. in F1, MGU-K is on the engine power unit driving the crankshaft, NOT inside wheel hubs; brake-by-wire hydraulic block is in the chassis/sidepod, brake calipers/discs are on wheel uprights).
 2. Mechanism action: mechanism_action must state exactly what moves, around which pivot/axis, in which direction, and what stays fixed (e.g. DRS: only the upper flap pivots up around its forward hinge; the main plane and vertical endplates stay completely rigid, horizontal, and level).
 3. Parts simplicity: mechanism_details and parts_list must contain only 3 to 4 major, large, clearly distinct components that can visibly separate in an exploded view (e.g. for rear wing: "fixed lower main plane, movable upper flap, central actuator cylinder, side endplates"; for brake-by-wire: "cockpit brake master cylinder, chassis electronic control unit, rear carbon brake disc, rear brake caliper"). Do NOT list tiny internal linkages or screws that an AI video model cannot separate cleanly.
 4. Grounded anatomy: prefer well-known, simple, mechanically correct anatomy over invented detail.
 5. moving_part names the ONE part that moves; fixed_parts lists the nearby parts that must stay completely still. Both are written into the video prompt.
-{ref_line}Use research_notes as the ONLY source of specific facts and numbers. If absent, explain the mechanism without specific numbers or season claims.
-Never name real teams, sponsors, or brands. Research notes: {idea.research_notes or '(none)'}
+"""
+# Templates without a vehicle (uses_vehicle false): accuracy rules per niche.
+NICHE_ACCURACY = {
+    "health": """Health accuracy requirements:
+1. Anatomy: every body part, organ, cell or device looks and sits where it really is (e.g. the eardrum is deep inside the ear canal, not at its opening); prefer well-known, simple, medically correct anatomy over invented detail.
+2. Mechanism: describe only well-established mechanisms that mainstream health references (NHS, Mayo Clinic, MedlinePlus) agree on; when unsure, leave the detail out.
+3. One subject: visual_subject names the ONE body part, device or product shown in every clip, with its look, so all clips match.
+4. Shots match the words: each shot slot is one sentence (at most 200 characters) with one clear image and one slow camera move, and it shows what its narration clause says.
+5. Safety: explain how something works; never give personal medical advice, a diagnosis or a dosage; no gore, no needle piercing skin in close-up.
+""",
+}
+NEVER_NAME = {
+    "vehicle": "Never name real teams, sponsors, or brands.",
+    "plain": "Never name real brands, companies or products.",
+}
+NO_NOTES_RULE = {
+    "vehicle": "If absent, explain the mechanism without specific numbers or season claims.",
+    "plain": "If absent, explain only well-established facts, without specific numbers or study results.",
+}
+
+
+def build_fill_prompt(t, idea, fanpage, clips) -> str:
+    cs = caption_settings(fanpage)
+    lang = cs.language
+    lang_display = language_name(lang)
+    example = t.raw.get("example", {}).get("variables", {})
+    budgets = {f"narration_{i + 1}": get_narration_budget(c, lang) for i, c in enumerate(t.raw["clip_templates"][:clips])}
+    title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
+    desc_max = getattr(fanpage, "ai_video_description_max_chars", None) or 600
+    if uses_vehicle(t):
+        kind = "vehicle"
+        niche = fanpage_niche(fanpage)
+        available_presets = vehicle_presets(t)
+        if niche == "motogp":
+            presets = [p for p in available_presets if "motogp" in p] or available_presets
+        else:
+            # F1/car niche: prefer classic_gp or f1
+            presets = [p for p in available_presets if "motogp" not in p] or available_presets
+        motogp_line = " This is a MotoGP page: show a modern MotoGP prototype racing bike unless the story is clearly about another motorcycle." if niche == "motogp" else ""
+        look_line = f"Vehicle preset choices for this page: {json.dumps(presets)}.{motogp_line} "
+        accuracy = MECHANICAL_ACCURACY
+        matches = matching_mechanisms((idea.topic or "") + " " + (idea.angle or ""))
+        ref_line = f"Reference for this topic (follow it exactly): {json.dumps(matches)}\n" if matches else ""
+    else:
+        kind = "plain"
+        look_line = ""
+        accuracy = next((NICHE_ACCURACY[n] for n in t.niches if n in NICHE_ACCURACY), "")
+        ref_line = ""
+    prompt = f"""Fill this video template as strict JSON with keys variables, title, caption.
+Template rules: {json.dumps(t.raw.get('rules', t.raw.get('description', '')))}
+Format example variables: {json.dumps(example)}
+Required variables: {json.dumps(required_variables(t, clips))}; narration word budgets: {json.dumps(budgets)}
+{look_line}Narration must be in {lang_display}.
+Title and caption must be in {lang}; title <= {title_max} chars, caption <= {desc_max} chars and <= {cs.hashtag_count} hashtags.
+The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
+{accuracy}{ref_line}Use research_notes as the ONLY source of specific facts and numbers. {NO_NOTES_RULE[kind]}
+{NEVER_NAME[kind]} Research notes: {idea.research_notes or '(none)'}
     Topic: {idea.topic}; angle: {idea.angle or '(none)'}
     """
     if idea.variables:
@@ -115,12 +146,6 @@ def _parse(raw: str, title_max: int = 100, desc_max: int = 600, hashtag_max: int
     return value
 
 
-def fanpage_niche(fanpage) -> str:
-    page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
-    niche_text = " ".join(str(value) for value in page_niches) + " " + (getattr(fanpage, "name", "") or "")
-    return "motogp" if re.search(r"moto\s*-?\s*gp", niche_text, re.I) else "f1"
-
-
 def pick_livery(db, fanpage_id, t, niche: str | None = None):
     """Next livery for this fanpage: one not used by its recent videos, else the least recently used."""
     options = niche_liveries(t, niche)
@@ -148,6 +173,11 @@ def apply_system_look(db, fanpage, template, variables):
     variables = dict(variables)
     if variables.get("narrator_preset") not in narrator_presets(template):
         variables["narrator_preset"] = resolve_narrator(fanpage, template)
+    if not uses_vehicle(template):
+        # No vehicle: nothing to paint or letter, so drop any vehicle slot the writer sent.
+        for key in ("vehicle_preset", "team_livery", "livery", "channel_name"):
+            variables.pop(key, None)
+        return variables
     preset = variables.get("vehicle_preset")
     niche = fanpage_niche(fanpage)
     presets = vehicle_presets(template)
@@ -201,7 +231,10 @@ def fill_from_research(db, idea, fanpage, clips):
     template = get_template(idea.template_key)
     raw = dict(idea.variables or {})
     base = dict(raw)
+    template_slots = set(required_variables(template, clips))
     for slot in LOCK_SLOTS:
+        if slot not in template_slots:
+            continue
         val = raw.get(slot)
         if not val or not str(val).strip():
             base[slot] = GENERIC_LOCK[slot]

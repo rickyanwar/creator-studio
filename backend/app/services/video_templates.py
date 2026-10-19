@@ -43,6 +43,10 @@ _CHANNEL_ALLOWED = re.compile(r"[^A-Z0-9 &' .-]")
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "video_templates"
 
 
+# Flow's prompt box silently refuses prompts past about 3,000 characters (trial 2026-10-20).
+MAX_PROMPT_CHARS = 2900
+
+
 @dataclass(frozen=True)
 class VideoTemplate:
     key: str
@@ -98,6 +102,36 @@ def allowed_video_templates(fanpage) -> list[str]:
     return []
 
 
+MOTORSPORT_NICHES = ("f1", "motogp")
+
+
+def uses_vehicle(t: VideoTemplate) -> bool:
+    """Motorsport templates build a vehicle from a preset; others (e.g. health) have no vehicle, livery or lettering."""
+    return bool(t.raw.get("uses_vehicle", True))
+
+
+def fanpage_niche(fanpage) -> str:
+    """Mode 8 niche of a fan page: motogp from its gallery niches or name, else a non-motorsport niche
+    (e.g. health) from its templates or name, else f1."""
+    page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
+    niche_text = " ".join(str(value) for value in page_niches) + " " + (getattr(fanpage, "name", "") or "")
+    if re.search(r"moto\s*-?\s*gp", niche_text, re.I):
+        return "motogp"
+    template_niches = []
+    for key in allowed_video_templates(fanpage):
+        try:
+            template_niches.extend(get_template(key).niches)
+        except ValueError:
+            continue
+    if template_niches and not set(template_niches) & set(MOTORSPORT_NICHES):
+        return template_niches[0]
+    other_niches = sorted({n for t in list_templates() for n in t.niches} - set(MOTORSPORT_NICHES))
+    for niche in other_niches:
+        if re.search(rf"\b{re.escape(niche)}", niche_text, re.I):
+            return niche
+    return "f1"
+
+
 def required_variables(t: VideoTemplate, clips: int) -> list[str]:
     names = []
     for clip in t.raw["clip_templates"][:clips]:
@@ -109,6 +143,8 @@ def required_variables(t: VideoTemplate, clips: int) -> list[str]:
         for name in _PLACEHOLDER.findall(preset_text):
             if name not in BLOCK_VARS and name not in {"livery", "livery_short", "lettering", "lettering_short"} and name not in names:
                 names.append(name)
+    if not uses_vehicle(t):
+        return names
     return names + ["vehicle_preset"]
 
 
@@ -135,14 +171,18 @@ def narrator_presets(t: VideoTemplate) -> list[str]:
 
 def resolve_narrator(fanpage, t: VideoTemplate) -> str:
     stored = getattr(fanpage, "ai_video_narrator", None)
-    if stored in narrator_presets(t):
+    available = narrator_presets(t)
+    if stored in available:
         return stored
     timezone = getattr(fanpage, "timezone", "") or ""
     if timezone.startswith("Australia/"):
-        return "EN-AUSSIE-ENG"
-    if timezone.startswith("America/"):
-        return "EN-US-ENG"
-    return ["EN-PADDOCK", "EN-SCOT", "EN-JOURNO-F", "EN-DOC"][fanpage.id % 4]
+        pick = "EN-AUSSIE-ENG"
+    elif timezone.startswith("America/"):
+        pick = "EN-US-ENG"
+    else:
+        pick = ["EN-PADDOCK", "EN-SCOT", "EN-JOURNO-F", "EN-DOC"][fanpage.id % 4]
+    # Templates with their own narrator (e.g. health) drop the motorsport voices; fall back to their default.
+    return pick if pick in available else "EN-DOC"
 
 
 def sanitize_channel_name(name: str) -> str | None:
@@ -172,6 +212,8 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
                 raise ValueError(f"invalid value for {name}: length or braces")
             if name.startswith("narration_") and '"' in value:
                 raise ValueError(f"{name} must not contain a double quote")
+    if not uses_vehicle(t):
+        return _render_plain(t, variables, clips, lang_code)
     preset = variables["vehicle_preset"]
     if preset not in vehicle_presets(t):
         raise ValueError(f"unknown vehicle_preset {preset}")
@@ -251,6 +293,33 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
             prompt = prompt.replace("The car keeps driving forward", "The motorcycle keeps riding forward").replace(
                 "for a car travelling forward", "for a motorcycle travelling forward"
             )
+        mode = {"t2v": "t2v", "i2v_from_previous_last_frame": "i2v"}[clip["mode"]]
+        rendered.append({"index": index, "mode": mode, "prompt": prompt})
+    return rendered
+
+
+def _render_plain(t: VideoTemplate, variables: dict, clips: int, lang_code: str | None) -> list[dict]:
+    """Templates without a vehicle (e.g. health explainers): style, audio, one identical narrator, the slots."""
+    blocks = t.raw["blocks"]
+    lang = lang_code or variables.get("language") or "en"
+    lang_display = language_name(lang)
+    narrator = blocks["narrator_en"]
+    if not (lang or "en").lower().startswith("en"):
+        narrator = narrator.replace("says in English:", f"speaking natural, native-sounding {lang_display}, says in {lang_display}:")
+    substitutions = dict(variables)
+    substitutions.update(style=blocks["style"], audio=blocks["audio"], narrator=narrator, narrator_followup=narrator)
+    rendered = []
+    for index, clip in enumerate(t.raw["clip_templates"][:clips], start=1):
+        narration = f"narration_{index}"
+        lo, hi = map(int, get_narration_budget(clip, lang).split("-"))
+        if not lo - 6 <= len(variables[narration].split()) <= hi:
+            raise ValueError(f"{narration} must contain {lo - 6}–{hi} words")
+        prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), clip["prompt"])
+        if "{" in prompt or "}" in prompt:
+            raise ValueError("a placeholder is left over")
+        prompt = re.sub(r"\s{2,}", " ", prompt).strip()
+        if len(prompt) > MAX_PROMPT_CHARS:
+            raise ValueError(f"clip {index} prompt is {len(prompt)} characters; Flow refuses prompts over {MAX_PROMPT_CHARS}")
         mode = {"t2v": "t2v", "i2v_from_previous_last_frame": "i2v"}[clip["mode"]]
         rendered.append({"index": index, "mode": mode, "prompt": prompt})
     return rendered

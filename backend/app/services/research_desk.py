@@ -25,7 +25,6 @@ from app.models.ai_video import VideoIdea
 from app.models.research import ResearchCall, ResearchFeedback
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
-from app.services.ai_video_idea_writer import fanpage_niche
 from app.services.ai_video_ideas import _normalized_topic
 from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language
@@ -33,19 +32,21 @@ from app.services.real_names import find_real_names
 from app.services.video_templates import (
     allowed_video_templates,
     clip_choices,
+    fanpage_niche,
     get_narration_budget,
     get_template,
     list_templates,
     liveries,
     render_clips,
     required_variables,
+    uses_vehicle,
     vehicle_presets,
 )
 
 SCHEMA_VERSION = 1
 DOCS_PATH = Path(__file__).resolve().parent.parent / "assets" / "research-desk-api.md"
 MODES = ("pilot", "live")
-NICHES = ("f1", "motogp")
+NICHES = ("f1", "motogp", "health")
 MAX_CHANNELS_PER_PACK = 10
 MAX_PACKS_PER_REQUEST = 3
 PILOT_CHANNELS_PER_NICHE = 10
@@ -91,6 +92,7 @@ DEFAULT_REFERENCES = {
         ],
     },
     "motogp": {"video_style": [], "topic_signals": []},
+    "health": {"video_style": [], "topic_signals": []},
 }
 
 STUDIO = ("Short vertical (9:16) motorsport explainer videos, 20-30 seconds, photorealistic 3D CGI, "
@@ -105,15 +107,19 @@ IDEA_SOURCES = [
     "Topics drawing unusually high engagement on the reference accounts (compared with each account's usual level).",
     "Evergreen engineering and history topics with strong curiosity, only when nothing timely fits.",
 ]
+RULE_FACTS_FROM_NOTES = "Every specific fact or number in narration, title or caption must come from research_notes."
+RULE_LANGUAGE = "Write narration, title and caption in the channel's audience language."
+RULE_SLOT_FORMAT = "Slot values: plain text, at most 600 characters, no curly braces; narration lines contain no double quotes."
+RULE_COPY_STYLE = "Copy the visual style of reference videos, never their footage, logos, watermarks or wording."
 GLOBAL_RULES = [
     "Never name real teams, constructors, manufacturers, riders, drivers, sponsors, brands or circuits in any slot, "
     "narration, title or caption; describe them instead (colour, era, corner type).",
-    "Every specific fact or number in narration, title or caption must come from research_notes.",
+    RULE_FACTS_FROM_NOTES,
     "Numbers need two independent sources; note the season or year of every rule-dependent claim; leave unverified claims out.",
     "Regulations change by season: check that the technology is still current, or frame it as history or as what replaced it.",
-    "Write narration, title and caption in the channel's audience language.",
-    "Slot values: plain text, at most 600 characters, no curly braces; narration lines contain no double quotes.",
-    "Copy the visual style of reference videos, never their footage, logos, watermarks or wording.",
+    RULE_LANGUAGE,
+    RULE_SLOT_FORMAT,
+    RULE_COPY_STYLE,
     "MotoGP channels (for example GP Racing) show a modern MotoGP prototype racing bike with a MotoGP team-style livery: "
     "choose a motogp vehicle_preset and describe that bike in your visual slots. Show another kind of motorcycle only "
     "when the story is clearly about that other bike, and say which kind in the slots.",
@@ -140,6 +146,49 @@ PACK_RULES = {
                     "described as moving anywhere; every component in mechanism_details and parts_list appears "
                     "in your research_notes; each component sits where it really is on the vehicle. Then set "
                     "qc.motion_checked to true and write what you checked in qc.motion_notes.",
+}
+# Niches whose videos are not motorsport: the niche's guide replaces the brief's top-level studio, idea_sources,
+# global_rules, research_defaults and pack_rules.motion_check for that niche's packs.
+NICHE_GUIDES = {
+    "health": {
+        "studio": ("Short vertical (9:16) everyday-health explainer videos, 40-50 seconds, soft photorealistic 3D "
+                   "medical animation, voice-over spoken inside the clips; every clip is three short shots with hard cuts."),
+        "idea_sources": [
+            "Everyday health questions people search for: how a body process, a common condition, a treatment or a "
+            "device works, or how to use something correctly.",
+            "Current public-health guidance and seasonal topics from official health services (for example NHS, CDC, "
+            "WHO): what it says and why.",
+            "Topics drawing unusually high engagement on the reference accounts (compared with each account's usual level).",
+            "Common myths and mistakes that official health sources correct.",
+        ],
+        "rules": [
+            "Never name real brands, companies, products, clinics, doctors or patients in any slot, narration, title or "
+            "caption; describe them generically (for example 'a nasal spray bottle').",
+            RULE_FACTS_FROM_NOTES,
+            "Numbers need two independent reputable health sources (official health services, clinical references or "
+            "peer-reviewed reviews); leave unverified claims out.",
+            "Explain how something works; never give personal medical advice, a diagnosis or a dosage, and never tell "
+            "the viewer to start or stop a treatment (say 'a doctor may...' instead).",
+            "Stay with mainstream medical consensus: no miracle cures, supplement hype, alternative-medicine claims or fear.",
+            RULE_LANGUAGE,
+            RULE_SLOT_FORMAT,
+            RULE_COPY_STYLE,
+        ],
+        "research_defaults": {
+            "source_priority": [
+                "official: NHS, CDC, WHO, national health services, medical society guidance",
+                "clinical references: Mayo Clinic, Cleveland Clinic, MedlinePlus, peer-reviewed reviews",
+                "news, social media and forums only as leads; re-verify elsewhere",
+            ],
+            "fact_rules": ["numbers need 2 independent reputable health sources",
+                           "prefer guidance updated in the last 5 years", "unverified -> leave out of narration"],
+        },
+        "motion_check": ("Before sending, write out every clip prompt from clip_prompts with your slot values and check: "
+                         "every shot shows what its narration clause says; visual_subject is the same body part, device "
+                         "or product in every clip; the anatomy is correct (each part sits where it really is); no shot "
+                         "needs text, labels, numbers, logos, gore or a needle piercing skin. Then set qc.motion_checked "
+                         "to true and write what you checked in qc.motion_notes."),
+    },
 }
 
 
@@ -230,12 +279,20 @@ def template_item(t, niches) -> dict:
         topics = {n: topics.get(n, []) for n in niches}
     blocks = raw["blocks"]
     presets = sorted({p for n in niches for p in niche_presets(t, n)})
+    placeholders = {
+        "style": blocks.get("style"),
+        "audio": blocks.get("audio"),
+        "narrator / narrator_followup": "voice-over line chosen by the studio; one consistent voice per video",
+    }
+    if uses_vehicle(t):
+        placeholders["vehicle / vehicle_short"] = "built from your vehicle_preset choice (see vehicle_presets)"
     return {
         "key": t.key,
         "name": t.name,
         "niches": [n for n in t.niches if n in niches],
         "usage": raw.get("usage") or raw.get("purpose") or raw.get("description") or "",
         "inspiration": raw.get("inspiration"),
+        "uses_vehicle": uses_vehicle(t),
         "clip_seconds": t.clip_seconds,
         "clip_options": list(t.clip_options),
         "slots_by_clips": {str(n): content_slots(t, n) for n in t.clip_options},
@@ -243,12 +300,7 @@ def template_item(t, niches) -> dict:
             {"index": i, "role": c.get("role"), "continues_previous_clip": c["mode"] != "t2v", "prompt": c["prompt"]}
             for i, c in enumerate(raw["clip_templates"], start=1)
         ],
-        "studio_filled_placeholders": {
-            "style": blocks.get("style"),
-            "audio": blocks.get("audio"),
-            "narrator / narrator_followup": "voice-over line chosen by the studio; one consistent voice per video",
-            "vehicle / vehicle_short": "built from your vehicle_preset choice (see vehicle_presets)",
-        },
+        "studio_filled_placeholders": placeholders,
         "vehicle_presets": {
             p: {"full": _neutral_vehicle_text(blocks["vehicle_presets"][p]),
                 "short": _neutral_vehicle_text(blocks["vehicle_presets"][p + "_short"])}
@@ -317,6 +369,8 @@ def research_channels(db: Session) -> dict[str, list]:
     ).order_by(TargetFanpage.id).all()
     for fp in fanpages:
         niche = fanpage_niche(fp)
+        if niche not in by_niche:
+            continue
         if len(by_niche[niche]) < PILOT_CHANNELS_PER_NICHE and channel_templates(fp, niche):
             by_niche[niche].append(fp)
     return by_niche
@@ -451,12 +505,15 @@ def build_brief(db: Session) -> dict:
         for c in channels:
             c.pop("_coverage")
         if channels:
-            niches.append({
+            entry = {
                 "niche": niche,
                 "packs_needed": packs_needed([c["ideas_needed"] for c in channels]),
                 "references": references.get(niche, {"video_style": [], "topic_signals": []}),
                 "channels": channels,
-            })
+            }
+            if niche in NICHE_GUIDES:
+                entry["guide"] = NICHE_GUIDES[niche]
+            niches.append(entry)
     if not niches:
         return _idle(db, "no channel needs ideas", row.muse_research_mode)
 
@@ -485,12 +542,16 @@ def pack_schema() -> dict:
     templates = list_templates()
     conditions = []
     for t in templates:
+        if uses_vehicle(t):
+            variables_rule = {"required": ["vehicle_preset"], "properties": {"vehicle_preset": {"enum": vehicle_presets(t)}}}
+        else:
+            variables_rule = {"not": {"anyOf": [{"required": ["vehicle_preset"]}, {"required": ["team_livery"]}]}}
         conditions.append({
             "if": {"properties": {"template_key": {"const": t.key}}, "required": ["template_key"]},
             "then": {"properties": {
                 "niche": {"enum": [n for n in NICHES if n in t.niches]},
                 "clips": {"enum": list(t.clip_options)},
-                "variants": {"items": {"properties": {"variables": {"properties": {"vehicle_preset": {"enum": vehicle_presets(t)}}}}}},
+                "variants": {"items": {"properties": {"variables": variables_rule}}},
             }},
         })
         for n in t.clip_options:
@@ -562,7 +623,7 @@ def pack_schema() -> dict:
                             "channel_id": {"type": "integer"},
                             "angle": {"type": "string", "minLength": 1, "maxLength": 2000},
                             "variables": {
-                                "type": "object", "required": ["vehicle_preset"],
+                                "type": "object",
                                 "properties": {"team_livery": {"type": "string"}},
                                 "propertyNames": {"not": {"enum": sorted(STUDIO_SLOTS)}},
                                 "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 600, "pattern": "^[^{}]*$"},
@@ -763,22 +824,31 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
             elif moving.lower() in fixed.lower():
                 errors.append("moving_part must not also be listed in fixed_parts")
         preset = variables.get("vehicle_preset")
-        allowed = list(niche_presets(template, niche))
-        extra_presets = ("f1_red",) if niche == "f1" else ("motogp",) if niche == "motogp" else ()
-        for extra in extra_presets:
-            if extra in vehicle_presets(template) and extra not in allowed:
-                allowed.append(extra)
-        if preset not in allowed:
-            errors.append(f"vehicle_preset must be one of {allowed}")
-        elif not missing and not sent_studio_slots:
-            render_vars = dict(variables)
-            if any("{livery" in template.raw["blocks"]["vehicle_presets"].get(p, "") for p in (preset, preset + "_short")):
-                render_vars["livery"] = liveries(template)[0]
-            try:
-                render_clips(template, render_vars, pack["clips"], lang_code=fanpage_language(fp))
-            except ValueError as exc:
-                errors.append(str(exc))
-        if "team_livery" in variables:
+        if not uses_vehicle(template):
+            if "vehicle_preset" in variables or "team_livery" in variables:
+                errors.append(f"template {template.key} has no vehicle: leave out vehicle_preset and team_livery")
+            elif not missing and not sent_studio_slots:
+                try:
+                    render_clips(template, variables, pack["clips"], lang_code=fanpage_language(fp))
+                except ValueError as exc:
+                    errors.append(str(exc))
+        else:
+            allowed = list(niche_presets(template, niche))
+            extra_presets = ("f1_red",) if niche == "f1" else ("motogp",) if niche == "motogp" else ()
+            for extra in extra_presets:
+                if extra in vehicle_presets(template) and extra not in allowed:
+                    allowed.append(extra)
+            if preset not in allowed:
+                errors.append(f"vehicle_preset must be one of {allowed}")
+            elif not missing and not sent_studio_slots:
+                render_vars = dict(variables)
+                if any("{livery" in template.raw["blocks"]["vehicle_presets"].get(p, "") for p in (preset, preset + "_short")):
+                    render_vars["livery"] = liveries(template)[0]
+                try:
+                    render_clips(template, render_vars, pack["clips"], lang_code=fanpage_language(fp))
+                except ValueError as exc:
+                    errors.append(str(exc))
+        if "team_livery" in variables and uses_vehicle(template):
             team_livery = variables.get("team_livery")
             if team_livery not in liveries(template):
                 errors.append(f"team_livery must be one of {liveries(template)}")
