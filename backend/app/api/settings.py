@@ -524,3 +524,73 @@ def ai_engine_status(db: DB, _: CurrentUser):
         "gptcli_enabled": gptcli_enabled,
         "gptcli_fanpage_ids": gptcli_fanpage_ids,
     }
+
+
+@router.get("/gptcli/status")
+def gptcli_status(db: DB, _: CurrentUser):
+    from app.services.gptcli_client import get_gptcli_config, serve_health
+
+    cfg = get_gptcli_config(db)
+    health = serve_health(cfg)
+
+    if not health or not isinstance(health, dict):
+        return {
+            "reachable": False,
+            "ok": False,
+            "sleeping": False,
+            "queue_len": 0,
+            "running": False,
+            "running_for_s": None,
+            "today_count": None,
+            "daily_cap": None,
+            "quota_until": None,
+            "logged_in": None,
+            "heartbeat_age_s": None,
+        }
+
+    profiles = health.get("profiles")
+    profile = {}
+    if isinstance(profiles, dict) and profiles:
+        first_val = next(iter(profiles.values()))
+        if isinstance(first_val, dict):
+            profile = first_val
+
+    running = bool(profile.get("running", False))
+
+    raw_running_s = profile.get("running_s")
+    if raw_running_s is None:
+        raw_running_s = profile.get("running_for_s")
+    running_for_s = float(raw_running_s) if raw_running_s is not None else None
+
+    raw_today = profile.get("today_count")
+    today_count = int(raw_today) if raw_today is not None else None
+
+    raw_cap = profile.get("soft_cap_daily")
+    if raw_cap is None:
+        raw_cap = profile.get("daily_cap")
+    daily_cap = int(raw_cap) if raw_cap is not None else None
+
+    raw_quota = profile.get("quota_until")
+    quota_until = str(raw_quota) if raw_quota is not None else None
+
+    raw_logged_in = profile.get("logged_in")
+    logged_in = bool(raw_logged_in) if raw_logged_in is not None else None
+
+    raw_hb = health.get("hb_age_s")
+    if raw_hb is None:
+        raw_hb = health.get("heartbeat_age_s")
+    heartbeat_age_s = float(raw_hb) if raw_hb is not None else None
+
+    return {
+        "reachable": True,
+        "ok": bool(health.get("ok", False)),
+        "sleeping": bool(health.get("sleeping", False)),
+        "queue_len": int(health.get("queue_len", 0)),
+        "running": running,
+        "running_for_s": running_for_s,
+        "today_count": today_count,
+        "daily_cap": daily_cap,
+        "quota_until": quota_until,
+        "logged_in": logged_in,
+        "heartbeat_age_s": heartbeat_age_s,
+    }
