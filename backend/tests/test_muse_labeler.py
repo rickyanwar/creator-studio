@@ -124,8 +124,14 @@ def test_normalise_result_fills_people_from_keyword_unless_mismatched():
 
 
 def test_stage_one_normaliser_fills_people_from_keyword():
-    result = normalise_label_output({"people": [], "keyword_mismatch": False}, keyword="max verstappen motogp")
+    result = normalise_label_output(
+        {"people": [], "keyword_mismatch": False, "keyword_person_visible": "yes"},
+        keyword="max verstappen motogp",
+    )
     assert result["people"] == [{"name": "Max Verstappen", "confidence": 0.8, "source": "keyword"}]
+
+    unverified = normalise_label_output({"people": [], "keyword_mismatch": False}, keyword="max verstappen motogp")
+    assert unverified["people"] == []
 
 
 def test_stage_one_normaliser_skips_generic_keyword():
