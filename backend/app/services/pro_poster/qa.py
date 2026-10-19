@@ -84,8 +84,9 @@ def check_safety(
         f"vehicle {vehicle_val}, circuit/venue {circuit_val}, headline \"{headline_val}\". "
         f"Must avoid: {must_avoid_val}. "
         "Does the image show a DIFFERENT series or a different type of vehicle than the brief, "
-        "an official series/league logo or wordmark (e.g. the F1, Formula 1, FIA, MotoGP, FIM, Dorna or UFC logo), "
+        "an official series/league logo or wordmark on banners, screens, walls, the track, the octagon mat or fence, podium backdrops or as an added graphic (e.g. the F1, Formula 1, FIA, MotoGP, FIM, Dorna or UFC logo), "
         "or anything from the must-avoid list? "
+        "A small series logo that is part of an athlete's real gear (gloves, fight shorts, race suit, helmet) is fine. "
         "Team, manufacturer and sponsor logos (e.g. Ferrari, Red Bull, Ducati, Mercedes, Monster) are fine and never make it wrong. "
         'Reply with ONLY strict JSON {"wrong_event": true|false, "reason": "<short>"}'
     )

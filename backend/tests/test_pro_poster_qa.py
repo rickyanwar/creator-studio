@@ -820,9 +820,36 @@ def test_check_safety_prompt_formatting(sample_brief: PosterBrief):
             'This is a designed sports news poster. Brief: series Formula 1, vehicle Formula 1 car, '
             'circuit/venue Monza, headline "Max Tops Friday". Must avoid: MotoGP bikes, night race. '
             'Does the image show a DIFFERENT series or a different type of vehicle than the brief, '
-            'an official series/league logo or wordmark (e.g. the F1, Formula 1, FIA, MotoGP, FIM, Dorna or UFC logo), '
+            'an official series/league logo or wordmark on banners, screens, walls, the track, the octagon mat or fence, podium backdrops or as an added graphic (e.g. the F1, Formula 1, FIA, MotoGP, FIM, Dorna or UFC logo), '
             'or anything from the must-avoid list? '
+            "A small series logo that is part of an athlete's real gear (gloves, fight shorts, race suit, helmet) is fine. "
             'Team, manufacturer and sponsor logos (e.g. Ferrari, Red Bull, Ducati, Mercedes, Monster) are fine and never make it wrong. '
             'Reply with ONLY strict JSON {"wrong_event": true|false, "reason": "<short>"}'
         )
         assert captured_prompt == expected_prompt
+
+
+def test_qa_event_check_allows_gear_logos_and_forbids_octagon_mat(sample_brief: PosterBrief):
+    """Event check prompt allows series logo on gear and forbids octagon mat or fence."""
+    captured_prompt = None
+
+    def fake_vision_chat(content, **kwargs):
+        nonlocal captured_prompt
+        captured_prompt = content[0]["text"]
+        return json.dumps({"wrong_event": False, "reason": "ok"})
+
+    with patch("app.services.identity_check.check_identity", return_value=IdentityResult(passed=True, sface=0.9, gemini="yes", reason="ok")), \
+         patch("app.services.design_images._vision_chat", side_effect=fake_vision_chat), \
+         patch("app.services.design_images._vision_datauri", return_value="data:image/jpeg;base64,abc"):
+        res = check_safety(
+            b"fake_image",
+            sample_brief,
+            hero_ref_bytes=b"hero",
+            headline="Max Tops Friday",
+        )
+        assert res.passed is True
+        assert captured_prompt is not None
+        assert "A small series logo that is part of an athlete's real gear (gloves, fight shorts, race suit, helmet) is fine." in captured_prompt
+        assert "octagon mat or fence" in captured_prompt
+        question_clause = captured_prompt.split("Does the image show")[1].split("?")[0]
+        assert "gloves" not in question_clause
