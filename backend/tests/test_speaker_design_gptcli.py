@@ -60,46 +60,24 @@ def test_gptcli_identity_ok_result_returned_and_finish_applied(speaker_setup, mo
     assert Image.open(BytesIO(res)).size == (1080, 1350)
 
 
-def test_gptcli_identity_failed_fallback_codex_identity_score_applies(speaker_setup, monkeypatch):
+def test_gptcli_identity_failed_no_fallback_returns_none(speaker_setup, monkeypatch):
     source = speaker_setup
     db = MagicMock()
     fanpage = SimpleNamespace(id=10)
 
-    gen_ex = MagicMock(side_effect=[
-        GenerationResult(source, "gptcli", {}, 1),
-        GenerationResult(source, "9router", {}, 2),
-    ])
+    gen_ex = MagicMock(return_value=GenerationResult(source, "gptcli", {}, 1))
     monkeypatch.setattr(speaker_design.visual_engine, "generate_ex", gen_ex)
 
     mock_id = MagicMock(return_value=IdentityResult(passed=False, sface=0.1, gemini="no", reason="mismatch"))
     monkeypatch.setattr("app.services.identity_check.check_identity", mock_id)
 
-    # Low score -> rejected by old check
-    monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.20)
-
-    res_fail = speaker_design.compose_speaker_design(
+    res = speaker_design.compose_speaker_design(
         db, fanpage, speaker="Marc Marquez", subjects=["Pecco Bagnaia"],
         article_text="Marc wins", sport="MotoGP",
         around=datetime.now(timezone.utc),
     )
-    assert res_fail is None
-    assert gen_ex.call_count == 2
-    assert gen_ex.call_args_list[1].kwargs["exclude"] == frozenset({"gptcli"})
-
-    # High score -> accepted
-    gen_ex.side_effect = [
-        GenerationResult(source, "gptcli", {}, 1),
-        GenerationResult(source, "9router", {}, 2),
-    ]
-    monkeypatch.setattr(speaker_design, "identity_score", lambda *_: 0.80)
-
-    res_pass = speaker_design.compose_speaker_design(
-        db, fanpage, speaker="Marc Marquez", subjects=["Pecco Bagnaia"],
-        article_text="Marc wins", sport="MotoGP",
-        around=datetime.now(timezone.utc),
-    )
-    assert res_pass is not None
-    assert Image.open(BytesIO(res_pass)).size == (1080, 1350)
+    assert res is None
+    assert gen_ex.call_count == 1
 
 
 def test_nine_router_old_behaviour(speaker_setup, monkeypatch):
@@ -225,20 +203,17 @@ def test_compose_speaker_design_engine_labels(speaker_setup, monkeypatch):
     assert isinstance(res_gptcli, bytes)
     assert bytes(res_gptcli) == res_gptcli.image_bytes
 
-    # 2. gpt-cli rejected by check_identity then Codex -> "codex_fallback", note f"ChatGPT rejected by face check ({idr.reason})"
-    gen_ex.side_effect = [
-        GenerationResult(source, "gptcli", {}, 1),
-        GenerationResult(source, "9router", {}, 2),
-    ]
+    # 2. gpt-cli rejected by check_identity -> returns None, single call
+    gen_ex.reset_mock()
+    gen_ex.side_effect = None
+    gen_ex.return_value = GenerationResult(source, "gptcli", {}, 1)
     mock_id.return_value = IdentityResult(passed=False, sface=0.1, gemini="no", reason="sface 0.1 < 0.25")
     res_rejected = speaker_design.compose_speaker_design(
         db, fanpage, speaker="Marc Marquez", subjects=[],
         article_text="win", sport="MotoGP", around=datetime.now(timezone.utc),
     )
-    assert res_rejected is not None
-    assert res_rejected.engine == "codex_fallback"
-    assert res_rejected.engine_note == "ChatGPT rejected by face check (sface 0.1 < 0.25)"
-    assert bytes(res_rejected) == res_rejected.image_bytes
+    assert res_rejected is None
+    assert gen_ex.call_count == 1
 
     # 3. Codex win with res.meta.get("fallback_from") == "gptcli" -> "codex_fallback", note f"ChatGPT {reason} → Codex"
     gen_ex.side_effect = None

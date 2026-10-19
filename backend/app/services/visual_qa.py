@@ -55,10 +55,9 @@ def evaluate(qa_dict: dict, layout: str, ocr_mismatch: str | None, inset_modes: 
         if qa_dict.get("identity_inset") is False:
             problems.append("identity_changed")
         if qa_dict.get("plain_whatif_suit"):
-            problems.append("plain_whatif_suit")
+            problems.append("note:plain_whatif_suit")
     else:
         # non-whatif inset identity
-        real_inset = False
         if not inset_modes and qa_dict.get("identity_inset") is False:
             problems.append("identity_changed")
         if inset_modes:
@@ -66,24 +65,25 @@ def evaluate(qa_dict: dict, layout: str, ocr_mismatch: str | None, inset_modes: 
                 if m == 'real' and qa_dict.get("identity_inset") is False:
                     problems.append("identity_changed")
                 if m in ('asset', 'imagined') and qa_dict.get("inset_shows_hero"):
-                    problems.append("inset_shows_hero")
+                    problems.append("note:inset_shows_hero")
                     
     if layout != "team_radio" and qa_dict.get("text_on_image"):
-        problems.append("text_present")
+        problems.append("note:text_present")
         
     if qa_dict.get("source_branding_visible"):
         problems.append("source_branding")
         
     if qa_dict.get("ai_look", 1) >= 4:
-        problems.append("looks_ai")
+        problems.append("note:looks_ai")
         
     if layout != "team_radio" and not qa_dict.get("bottom_area_empty", True):
-        problems.append("bottom_not_empty")
+        problems.append("note:bottom_not_empty")
         
     if layout == "team_radio" and ocr_mismatch is not None:
         problems.append(f"radio_text_mismatch:{ocr_mismatch}")
         
-    return len(problems) == 0, tuple(problems)
+    passed = not any(not p.startswith("note:") for p in problems)
+    return passed, tuple(problems)
 
 def check_generated(
     image_bytes: bytes,

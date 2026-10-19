@@ -73,9 +73,9 @@ def test_evaluate():
     qa_fail_logo_miss_2 = {**qa_pass, "missing_real_logos": ["one", "two"]}
     assert evaluate(qa_fail_logo_miss_2, "portrait", None) == (True, ())
     
-    # Fail text on image (non-radio)
+    # Non-blocking text on image (non-radio)
     qa_fail_text = {**qa_pass, "text_on_image": ["hello"]}
-    assert evaluate(qa_fail_text, "portrait", None) == (False, ("text_present",))
+    assert evaluate(qa_fail_text, "portrait", None) == (True, ("note:text_present",))
     
     # Text on image allowed for radio
     assert evaluate(qa_fail_text, "team_radio", None) == (True, ())
@@ -84,17 +84,61 @@ def test_evaluate():
     qa_fail_brand = {**qa_pass, "source_branding_visible": True}
     assert evaluate(qa_fail_brand, "portrait", None) == (False, ("source_branding",))
     
-    # Fail AI look
+    # Non-blocking AI look
     qa_fail_ai = {**qa_pass, "ai_look": 4}
-    assert evaluate(qa_fail_ai, "portrait", None) == (False, ("looks_ai",))
+    assert evaluate(qa_fail_ai, "portrait", None) == (True, ("note:looks_ai",))
     
-    # Fail bottom not empty (non-radio)
+    # Non-blocking bottom not empty (non-radio)
     qa_fail_bottom = {**qa_pass, "bottom_area_empty": False}
-    assert evaluate(qa_fail_bottom, "portrait", None) == (False, ("bottom_not_empty",))
+    assert evaluate(qa_fail_bottom, "portrait", None) == (True, ("note:bottom_not_empty",))
     assert evaluate(qa_fail_bottom, "team_radio", None) == (True, ())
     
     # Radio text mismatch
     assert evaluate(qa_pass, "team_radio", "'I am fast'") == (False, ("radio_text_mismatch:'I am fast'",))
+
+
+def test_evaluate_safety_vs_non_blocking_notes():
+    # ai_look 5 + bottom_not_empty + text present -> passed True with note: problems
+    qa_notes = {
+        "identity_hero": True,
+        "identity_inset": True,
+        "invented_or_garbled_logos": [],
+        "missing_real_logos": [],
+        "text_on_image": ["some text"],
+        "source_branding_visible": False,
+        "ai_look": 5,
+        "bottom_area_empty": False,
+    }
+    passed, problems = evaluate(qa_notes, "portrait", None)
+    assert passed is True
+    assert set(problems) == {"note:text_present", "note:looks_ai", "note:bottom_not_empty"}
+
+    # identity_hero False -> passed False
+    qa_id_fail = {**qa_notes, "identity_hero": False}
+    passed, problems = evaluate(qa_id_fail, "portrait", None)
+    assert passed is False
+    assert "identity_changed" in problems
+
+    # source_branding -> passed False
+    qa_branding_fail = {**qa_notes, "source_branding_visible": True}
+    passed, problems = evaluate(qa_branding_fail, "portrait", None)
+    assert passed is False
+    assert "source_branding" in problems
+
+    # radio mismatch -> passed False
+    qa_pass = {
+        "identity_hero": True,
+        "identity_inset": True,
+        "invented_or_garbled_logos": [],
+        "missing_real_logos": [],
+        "text_on_image": [],
+        "source_branding_visible": False,
+        "ai_look": 1,
+        "bottom_area_empty": True,
+    }
+    passed, problems = evaluate(qa_pass, "team_radio", "MISSING_TEXT")
+    assert passed is False
+    assert "radio_text_mismatch:MISSING_TEXT" in problems
 
 @patch("app.services.visual_qa._vision_chat")
 @patch("app.services.visual_qa._vision_datauri", return_value="data:image/png;base64,xxx")
