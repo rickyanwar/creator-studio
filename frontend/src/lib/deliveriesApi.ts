@@ -49,3 +49,9 @@ export const retryDelivery = (id: number): Promise<DeliveryCopy> =>
   api
     .post<DeliveryCopy>(`/social-media/deliveries/${id}/retry`)
     .then((r) => r.data);
+
+export const cancelDelivery = (id: number): Promise<DeliveryCopy> =>
+  api
+    .post<DeliveryCopy>(`/social-media/deliveries/${id}/cancel`)
+    .then((r) => r.data);
+

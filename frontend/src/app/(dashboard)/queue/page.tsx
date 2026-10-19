@@ -20,6 +20,31 @@ import Toast, { type ToastData } from "@/components/ui/Toast";
 import UndoToastStack, { type PendingAction } from "@/components/ui/UndoToast";
 import { useBrandFilter } from "@/contexts/BrandFilterContext";
 import { useFanpages } from "@/lib/useFanpages";
+import { getDeliveriesByJobIds, type DeliveryCopy } from "@/lib/deliveriesApi";
+
+function formatWibTime(dateStr: string): string {
+  const d = new Date(dateStr.endsWith("Z") || dateStr.includes("+") ? dateStr : dateStr + "Z");
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+  const dateWib = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+  const todayWib = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    month: "short",
+    day: "numeric",
+  }).format(new Date());
+  if (dateWib !== todayWib) {
+    return `${dateWib} ${time} WIB`;
+  }
+  return `${time} WIB`;
+}
 
 /* Review queue = IG Repost jobs awaiting caption approval + Mode 2 news jobs
    awaiting design (pending_design) or publish approval (pending_publish). */
@@ -239,6 +264,41 @@ export default function QueuePage() {
     ? captionDrafts[selectedJob.id] ?? selectedJob.ai_generated_caption ?? ""
     : "";
 
+  const pollPublishConfirmation = useCallback(async (jobId: number) => {
+    let deliveries: DeliveryCopy[] = [];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      try {
+        deliveries = await getDeliveriesByJobIds([jobId]);
+        if (deliveries.length > 0 && deliveries.some((d) => d.scheduled_for)) {
+          break;
+        }
+      } catch {
+        // continue polling
+      }
+    }
+
+    if (!deliveries.length) {
+      setToast({
+        message: "Publishing queued — it will appear under Activity → Scheduled.",
+        type: "success",
+      });
+      return;
+    }
+
+    const parts = deliveries.map((d) => {
+      const destName = d.destination_name || "Channel";
+      const kind = d.destination_kind || d.kind || "channel";
+      const timeStr = d.scheduled_for ? formatWibTime(d.scheduled_for) : "queued";
+      return `${destName} (${kind}) ${timeStr}`;
+    });
+
+    setToast({
+      message: `Scheduled: ${parts.join(" · ")}`,
+      type: "success",
+    });
+  }, []);
+
   const executePendingAction = useCallback(
     async (jobId: number) => {
       const item = pendingActionsRef.current.get(jobId);
@@ -251,6 +311,7 @@ export default function QueuePage() {
       try {
         if (item.action.type === "publish") {
           await publishJob(jobId);
+          pollPublishConfirmation(jobId);
         } else {
           await skipJob(jobId);
         }
@@ -267,7 +328,7 @@ export default function QueuePage() {
         mutate();
       }
     },
-    [mutate]
+    [mutate, pollPublishConfirmation]
   );
 
   const handleUndo = useCallback((jobId: number) => {

@@ -1501,6 +1501,87 @@ def mark_delivery_not_posted(
     return _serialize_delivery_copy(delivery)
 
 
+@router.post("/deliveries/{id}/cancel", response_model=DeliveryCopyOut)
+def cancel_scheduled_delivery(
+    id: int,
+    db: DB,
+    _: CurrentUser,
+):
+    """Cancel a scheduled delivery copy before it starts posting."""
+    delivery = (
+        db.query(PublishDelivery)
+        .options(
+            joinedload(PublishDelivery.destination),
+            joinedload(PublishDelivery.device),
+        )
+        .filter(PublishDelivery.id == id)
+        .populate_existing()
+        .with_for_update(of=PublishDelivery)
+        .first()
+    )
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery copy not found")
+
+    if delivery.state not in ("scheduled", "waiting_for_slot", "waiting_for_device"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel a delivery in state '{delivery.state}'",
+        )
+
+    if delivery.claimed_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot cancel a delivery that is already claimed",
+        )
+
+    if delivery.facebook_post_id is not None or delivery.repliz_schedule_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot cancel a delivery that already has an external post ID or schedule ID",
+        )
+
+    prev_state = delivery.state
+    delivery.state = "skipped"
+    delivery.last_error = "Cancelled by hand before posting"
+
+    event = DeliveryEvent(
+        delivery_id=delivery.id,
+        event_type="manual_override",
+        details={
+            "actor": "owner",
+            "note": "Cancelled before posting",
+            "previous_state": prev_state,
+            "new_state": "skipped",
+        },
+    )
+    db.add(event)
+
+    all_deliveries = (
+        db.query(PublishDelivery)
+        .filter(PublishDelivery.publish_job_id == delivery.publish_job_id)
+        .all()
+    )
+    active_states = {
+        "scheduled",
+        "waiting_for_slot",
+        "waiting_for_device",
+        "publishing",
+        "uncertain",
+        "needs_human",
+        "repliz_scheduled",
+    }
+    has_active = any(d.state in active_states for d in all_deliveries)
+    has_published = any(d.state == "published" for d in all_deliveries)
+    if not has_active and not has_published:
+        job = db.query(PublishJob).filter(PublishJob.id == delivery.publish_job_id).first()
+        if job:
+            job.status = PublishJobStatus.skipped
+
+    db.commit()
+    db.refresh(delivery)
+    return _serialize_delivery_copy(delivery)
+
+
 @router.post("/deliveries/{id}/retry", response_model=DeliveryCopyOut)
 def retry_delivery(
     id: int,
