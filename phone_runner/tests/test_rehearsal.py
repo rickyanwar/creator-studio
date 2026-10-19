@@ -422,7 +422,7 @@ def test_time_budget_pre_share_exceeded(monkeypatch):
         rehearsal=False,
     )
 
-    assert res["status"] == "failed"
+    assert res["status"] == "waiting_for_device"
     assert res["error_code"] == "time_budget_exceeded"
     assert res["publish_may_have_started"] is False
     assert res["evidence"]["pre_share_seconds"] > PRE_SHARE_MAX_SECONDS
