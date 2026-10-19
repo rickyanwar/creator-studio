@@ -8,7 +8,7 @@ from typing import Optional
 import zoneinfo
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func
+from sqlalchemy import String, cast, func
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import CurrentUser, DB
@@ -424,7 +424,7 @@ def _build_brand_summary(
         deliv_rows = (
             db.query(
                 func.coalesce(
-                    PublishDelivery.content_type_snapshot, PublishJob.content_type
+                    PublishDelivery.content_type_snapshot, cast(PublishJob.content_type, String)
                 ),
                 func.count(PublishDelivery.id),
             )
@@ -438,7 +438,7 @@ def _build_brand_summary(
             )
             .group_by(
                 func.coalesce(
-                    PublishDelivery.content_type_snapshot, PublishJob.content_type
+                    PublishDelivery.content_type_snapshot, cast(PublishJob.content_type, String)
                 )
             )
             .all()
