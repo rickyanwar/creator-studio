@@ -463,7 +463,7 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
     db = SessionLocal()
     try:
         from app.models.gallery import GalleryKeyword, GalleryImage
-        from app.services.image_downloader import download_images, keyword_slug
+        from app.services.image_downloader import NICHE_SEARCH_HINT, download_images, keyword_slug
 
         kw = db.query(GalleryKeyword).filter_by(id=keyword_id).first()
         if not kw or not kw.is_active:
@@ -506,6 +506,7 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
                 skip_urls=skip_urls,
                 max_pages=kw.max_pages,
                 allow_topup=allow_topup,
+                search_hint=NICHE_SEARCH_HINT.get(kw.niche or "", kw.niche or None),
             )
         except Exception as exc:
             kw.last_download_error = str(exc)[:512]

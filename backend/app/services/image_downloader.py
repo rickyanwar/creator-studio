@@ -64,6 +64,16 @@ def keyword_slug(keyword: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", keyword.lower()).strip("_") or "keyword"
 
 
+NICHE_SEARCH_HINT: dict[str, str] = {
+    "F1": "Formula 1",
+    "MotoGP": "MotoGP",
+    "WorldSBK": "WorldSBK",
+    "UFC": "UFC",
+    "Boxing": "boxing",
+    "NBA": "NBA",
+}
+
+
 def download_images(
     keyword: str,
     dest_dir: str | Path,
@@ -73,6 +83,7 @@ def download_images(
     skip_urls: set[str] | frozenset[str] = frozenset(),
     max_pages: int | None = None,
     allow_topup: bool = True,
+    search_hint: str | None = None,
 ) -> list[DownloadedImage]:
     """Collect image URLs for a keyword via 9Router web-fetch and download the
     ones that pass dedup (skip_urls) and min-size validation.
@@ -83,7 +94,9 @@ def download_images(
     downloader passes False for quiet-tier keywords (see
     gallery_downloader.download_keyword); an explicit "Download Now" leaves
     the default True."""
-    urls, captured_dates = _collect_urls_9router(keyword, max_num * 2, skip_urls, max_pages, allow_topup)
+    urls, captured_dates = _collect_urls_9router(
+        keyword, max_num * 2, skip_urls, max_pages, allow_topup, search_hint=search_hint,
+    )
 
     if not urls:
         logger.info("Gallery: no new image URLs for keyword %r (all already downloaded)", keyword)
@@ -329,10 +342,11 @@ def _collect_urls_9router(
     skip_urls: set[str] | frozenset[str] = frozenset(),
     max_pages: int | None = None,
     allow_topup: bool = True,
+    search_hint: str | None = None,
 ) -> tuple[list[str], dict[str, date]]:
     """Collect NEW candidate image URLs for a keyword, trying the bare keyword
-    first and only spending extra web/fetch calls on the "{keyword} press"
-    variant if the bare search didn't find enough — see _TOPUP_QUERY_SUFFIX.
+    (or keyword + search_hint) first and only spending extra web/fetch calls on the
+    "{keyword} press" variant if the bare search didn't find enough — see _TOPUP_QUERY_SUFFIX.
     `allow_topup=False` skips that second call outright.
 
     Returns (urls, captured_dates) — captured_dates maps each URL's dedup key
@@ -344,10 +358,16 @@ def _collect_urls_9router(
     seen_keys: set[str] = set()  # shared across phrases this run
     captured_dates: dict[str, date] = {}
 
-    collected = _collect_urls_for_phrase(keyword, max_num, skip_urls, seen_keys, pages, captured_dates)
+    hint = search_hint.strip() if search_hint else None
+    if hint and hint.lower() not in keyword.lower():
+        first_phrase = f"{keyword} {hint}"
+    else:
+        first_phrase = keyword
+
+    collected = _collect_urls_for_phrase(first_phrase, max_num, skip_urls, seen_keys, pages, captured_dates)
 
     if allow_topup and len(collected) < max_num and _TOPUP_QUERY_SUFFIX:
-        topup_phrase = f"{keyword} {_TOPUP_QUERY_SUFFIX}"
+        topup_phrase = f"{first_phrase} {_TOPUP_QUERY_SUFFIX}"
         remaining = max_num - len(collected)
         topup = _collect_urls_for_phrase(topup_phrase, remaining, skip_urls, seen_keys, pages, captured_dates)
         if topup:
