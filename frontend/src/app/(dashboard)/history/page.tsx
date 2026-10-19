@@ -20,6 +20,10 @@ import { getThumbUrl } from "@/lib/thumb";
 import { Icon } from "@iconify/react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ModeChip } from "@/components/ui/ModeChip";
+import { MediaThumb } from "@/components/activity/MediaThumb";
+import { ChannelChip } from "@/components/activity/ChannelChip";
+import { CopyId } from "@/components/activity/CopyId";
+import { isVideoUrl, getJobMediaInfo } from "@/components/activity/mediaUtils";
 import {
   getDeliveriesByJobIds,
   markDeliveryPosted,
@@ -84,7 +88,11 @@ function avatarColor(name: string) {
 
 function resolveUrls(job: PublishJob): string[] {
   if (job.content_type === "youtube_clip" || job.content_type === "ai_video") {
-    return job.video_thumbnail_url ? [job.video_thumbnail_url] : [];
+    return job.video_thumbnail_url
+      ? [job.video_thumbnail_url]
+      : job.video_url
+      ? [job.video_url]
+      : [];
   }
   if (
     job.content_type === "news_content" ||
@@ -98,7 +106,10 @@ function resolveUrls(job: PublishJob): string[] {
   const pub = job.image_public_urls ?? [];
   const src = (job as unknown as Record<string, string[]>).image_source_urls ?? [];
   if (pub.length && pub[0].includes("localhost") && src.length) return src;
-  return pub;
+  if (pub.length > 0) return pub;
+  if (job.video_url) return [job.video_url];
+  if (job.video_thumbnail_url) return [job.video_thumbnail_url];
+  return [];
 }
 
 function sourceLink(job: PublishJob): { url: string; label: string; icon: string } | null {
@@ -616,45 +627,46 @@ export default function HistoryPage() {
         aria-label="Posts"
         className="bg-surface border border-line rounded-xl overflow-hidden"
       >
-        <div className="overflow-x-auto">
+        {/* Desktop Table View (>= 768px) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full min-w-[800px] border-collapse text-left text-xs">
             <thead>
               {activeStatus === "scheduled" ? (
                 <tr className="border-b border-line bg-surface text-text2 font-semibold text-[11px]">
-                  <th scope="col" className="p-3 pl-4">
+                  <th scope="col" className="py-3 pl-4 pr-3">
                     Post
                   </th>
-                  <th scope="col" className="p-3">
-                    Destination
+                  <th scope="col" className="py-3 px-3">
+                    Channel
                   </th>
-                  <th scope="col" className="p-3">
+                  <th scope="col" className="py-3 px-3">
                     Method
                   </th>
-                  <th scope="col" className="p-3">
+                  <th scope="col" className="py-3 px-3">
                     Scheduled for
                   </th>
-                  <th scope="col" className="p-3">
+                  <th scope="col" className="py-3 px-3">
                     Status
                   </th>
-                  <th scope="col" className="p-3 pr-4 text-right">
+                  <th scope="col" className="py-3 pl-3 pr-4 text-right">
                     Actions
                   </th>
                 </tr>
               ) : (
                 <tr className="border-b border-line bg-surface text-text2 font-semibold text-[11px]">
-                  <th scope="col" className="p-3 pl-4">
+                  <th scope="col" className="py-3 pl-4 pr-3">
                     Post
                   </th>
-                  <th scope="col" className="p-3">
+                  <th scope="col" className="py-3 px-3">
                     Type
                   </th>
-                  <th scope="col" className="p-3">
+                  <th scope="col" className="py-3 px-3">
                     Made by
                   </th>
-                  <th scope="col" className="p-3">
+                  <th scope="col" className="py-3 px-3">
                     Channel copies
                   </th>
-                  <th scope="col" className="p-3 pr-4 text-right">
+                  <th scope="col" className="py-3 pl-3 pr-4 text-right">
                     Actions
                   </th>
                 </tr>
@@ -698,11 +710,17 @@ export default function HistoryPage() {
                       const thumb =
                         row.thumbnail_url ||
                         (row.media_urls && row.media_urls.length > 0 ? row.media_urls[0] : null);
-                      const isVideo = row.media_kind === "video";
+                      const isVideo =
+                        row.media_kind === "video" ||
+                        isVideoUrl(thumb) ||
+                        (row.media_urls ?? []).some((u) => isVideoUrl(u));
                       const isAlbum = row.media_kind === "album";
                       const mediaCount = row.media_urls?.length ?? 0;
                       const extraCount = isAlbum && mediaCount > 1 ? mediaCount - 1 : 0;
                       const hasMedia = !!thumb || mediaCount > 0;
+                      const videoSrc =
+                        (row.media_urls ?? []).find((u) => isVideoUrl(u)) ||
+                        (isVideo ? thumb : null);
 
                       return (
                         <tr
@@ -710,105 +728,65 @@ export default function HistoryPage() {
                           className="hover:bg-surface2/50 transition-colors"
                         >
                           {/* Post */}
-                          <td className="p-3 pl-4 align-top max-w-[280px]">
-                            <div className="flex gap-3 items-center">
-                              <div
-                                role={hasMedia ? "button" : undefined}
-                                tabIndex={hasMedia ? 0 : undefined}
+                          <td className="py-4 pl-4 pr-3 align-top min-w-[320px] max-w-[440px]">
+                            <div className="flex gap-3.5 items-start">
+                              <MediaThumb
+                                thumbUrl={thumb}
+                                videoUrl={videoSrc}
+                                isVideo={isVideo}
+                                isAlbum={isAlbum}
+                                extraCount={extraCount}
+                                blurred={blurred}
                                 onClick={
                                   hasMedia
                                     ? () => setScheduledPreview({ delivery: row, imgIdx: 0 })
                                     : undefined
                                 }
-                                onKeyDown={
-                                  hasMedia
-                                    ? (e) => {
-                                        if (e.key === "Enter" || e.key === " ") {
-                                          setScheduledPreview({ delivery: row, imgIdx: 0 });
-                                        }
-                                      }
-                                    : undefined
-                                }
-                                className={`w-14 h-14 rounded-lg bg-surface2 border border-line flex-shrink-0 overflow-hidden relative ${
-                                  hasMedia ? "cursor-zoom-in" : ""
-                                } ${blurred ? "blur-sm" : ""}`}
-                              >
-                                {thumb ? (
-                                  <>
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                      src={thumb}
-                                      alt=""
-                                      className="w-full h-full object-cover"
-                                    />
-                                    {isVideo && (
-                                      <div className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center text-white pointer-events-none">
-                                        <Icon icon="solar:play-bold" width={9} />
-                                      </div>
-                                    )}
-                                    {isAlbum && extraCount > 0 && (
-                                      <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/70 text-white text-[9px] font-semibold leading-none pointer-events-none">
-                                        +{extraCount}
-                                      </div>
-                                    )}
-                                  </>
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-text2">
-                                    <Icon
-                                      icon={
-                                        isVideo
-                                          ? "solar:videocamera-bold-duotone"
-                                          : "solar:gallery-bold-duotone"
-                                      }
-                                      width={22}
-                                    />
-                                  </div>
-                                )}
-                              </div>
+                              />
 
-                              <div className="min-w-0 flex flex-col gap-0.5">
-                                <span
-                                  className={`font-semibold text-text truncate ${blurClass}`}
+                              <div className="min-w-0 flex-1 flex flex-col gap-1">
+                                <h3
+                                  className={`text-[15px] font-semibold text-text line-clamp-2 leading-snug ${blurClass}`}
                                 >
                                   {title}
-                                </span>
+                                </h3>
                                 {row.caption_snapshot && (
-                                  <span
-                                    className={`text-[11px] text-text2 truncate ${blurClass}`}
+                                  <p
+                                    className={`text-xs text-text2 line-clamp-2 leading-normal ${blurClass}`}
                                   >
                                     {row.caption_snapshot}
-                                  </span>
+                                  </p>
                                 )}
-                                <span className="text-[10px] text-text2">
+                                <span className="text-[11px] text-text2">
                                   Post #{row.publish_job_id}
                                 </span>
                               </div>
                             </div>
                           </td>
 
-                          {/* Destination */}
-                          <td className="p-3 align-top whitespace-nowrap">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className={`font-semibold text-text ${blurClass}`}>
-                                {row.destination_name || "—"}
-                              </span>
-                              {row.destination_kind && (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface2 border border-line text-text2 uppercase tracking-wider">
-                                  {row.destination_kind}
-                                </span>
-                              )}
-                            </div>
+                          {/* Destination / Channel */}
+                          <td className="py-4 px-3 align-top min-w-[200px]">
+                            <ChannelChip
+                              destinationName={row.destination_name || "—"}
+                              actualMethod={row.actual_method}
+                              intendedMethod={row.intended_method}
+                              replizScheduleId={row.repliz_schedule_id}
+                              facebookPermalink={row.facebook_permalink}
+                              facebookPostId={row.facebook_post_id}
+                              lastError={row.last_error}
+                              blurred={blurred}
+                            />
                           </td>
 
                           {/* Method */}
-                          <td className="p-3 align-top whitespace-nowrap">
+                          <td className="py-4 px-3 align-top whitespace-nowrap">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-line bg-surface text-text text-[11px] font-medium">
                               {isPhone ? "Phone" : "Repliz"}
                             </span>
                           </td>
 
                           {/* Scheduled for */}
-                          <td className="p-3 align-top whitespace-nowrap">
+                          <td className="py-4 px-3 align-top whitespace-nowrap">
                             <div className="flex flex-col gap-0.5">
                               <span className="font-medium text-text">
                                 {row.scheduled_for
@@ -824,12 +802,12 @@ export default function HistoryPage() {
                           </td>
 
                           {/* Status */}
-                          <td className="p-3 align-top whitespace-nowrap">
+                          <td className="py-4 px-3 align-top whitespace-nowrap">
                             <StatusBadge status={row.state} />
                           </td>
 
                           {/* Actions */}
-                          <td className="p-3 pr-4 align-top text-right whitespace-nowrap">
+                          <td className="py-4 pl-3 pr-4 align-top text-right whitespace-nowrap">
                             {isReplizScheduled ? (
                               <span className="text-xs text-text2 font-medium">
                                 Scheduled on Repliz
@@ -841,7 +819,7 @@ export default function HistoryPage() {
                                     type="button"
                                     disabled={cancelingId === row.id}
                                     onClick={() => handleCancelDelivery(row.id)}
-                                    className="h-7 px-2.5 rounded-lg border border-bad/30 bg-bad-soft hover:bg-bad-soft/80 text-bad text-xs font-semibold transition-colors inline-flex items-center gap-1 disabled:opacity-50"
+                                    className="h-7 px-2.5 rounded-lg border border-bad/30 bg-bad-soft hover:bg-bad-soft/80 text-bad text-xs font-semibold transition-colors inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                                   >
                                     {cancelingId === row.id && (
                                       <Icon
@@ -855,7 +833,7 @@ export default function HistoryPage() {
                                     type="button"
                                     disabled={cancelingId === row.id}
                                     onClick={() => setConfirmingCancelId(null)}
-                                    className="h-7 px-2 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors disabled:opacity-50"
+                                    className="h-7 px-2 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer"
                                   >
                                     Keep
                                   </button>
@@ -864,7 +842,7 @@ export default function HistoryPage() {
                                 <button
                                   type="button"
                                   onClick={() => setConfirmingCancelId(row.id)}
-                                  className="h-7 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft hover:text-bad text-text text-xs font-medium transition-colors"
+                                  className="h-7 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft hover:text-bad text-text text-xs font-medium transition-colors cursor-pointer"
                                 >
                                   Cancel
                                 </button>
@@ -901,13 +879,12 @@ export default function HistoryPage() {
                   {!isLoading &&
                     jobs.map((job, idx) => {
                       const urls = resolveUrls(job);
-                      const fullUrl = urls[0];
-                      const thumb = getThumbUrl(fullUrl, 240) || fullUrl;
+                      const media = getJobMediaInfo(job, urls);
                       const fanpage = job.fanpage_name ?? "Unknown Brand";
                       const caption = job.ai_generated_caption ?? "";
                       const title =
                         job.design_title ??
-                        (caption ? caption.slice(0, 45) : `@${job.ig_username}`);
+                        (caption ? caption.slice(0, 70) : `@${job.ig_username}`);
                       const { queuedDate, scheduledDate, isPendingLive } =
                         jobTimes(job);
                       const canReedit =
@@ -915,6 +892,17 @@ export default function HistoryPage() {
                         job.status === "published";
                       const src = sourceLink(job);
                       const blurClass = blurred ? "blur-sm select-none" : "";
+                      const copies = deliveriesByJob[job.id] || [];
+
+                      const timeLabel = job.published_at
+                        ? `Went live ${formatScheduledWib(job.published_at)}`
+                        : job.scheduled_for
+                        ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
+                            job.scheduled_for
+                          )}`
+                        : queuedDate
+                        ? formatScheduledWib(job.created_at || queuedDate.toISOString())
+                        : null;
 
                       return (
                         <tr
@@ -922,61 +910,65 @@ export default function HistoryPage() {
                           className="hover:bg-surface2/50 transition-colors"
                         >
                           {/* Post column */}
-                          <td className="p-3 pl-4 align-top max-w-[280px]">
-                            <div className="flex gap-3 items-center">
-                              <div
-                                role="button"
-                                tabIndex={0}
+                          <td className="py-4 pl-4 pr-3 align-top min-w-[340px] max-w-[460px]">
+                            <div className="flex gap-3.5 items-start">
+                              <MediaThumb
+                                thumbUrl={media.thumbUrl}
+                                videoUrl={media.videoSrc}
+                                isVideo={media.isVideo}
+                                isAlbum={media.isAlbum}
+                                extraCount={media.extraCount}
+                                blurred={blurred}
                                 onClick={() =>
                                   setLightbox({ jobIndex: idx, imgIdx: 0 })
                                 }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" || e.key === " ") {
-                                    setLightbox({ jobIndex: idx, imgIdx: 0 });
-                                  }
-                                }}
-                                className={`w-11 h-14 rounded-lg bg-surface2 border border-line flex-shrink-0 overflow-hidden cursor-zoom-in ${
-                                  blurred ? "blur-sm" : ""
-                                }`}
-                              >
-                                {thumb ? (
-                                  <img
-                                    src={thumb}
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-text2 text-[10px]">
-                                    {job.content_type === "youtube_clip" ||
-                                    job.content_type === "ai_video"
-                                      ? "video"
-                                      : "card"}
-                                  </div>
-                                )}
-                              </div>
+                              />
 
-                              <div className="min-w-0 flex flex-col gap-0.5">
-                                <span
-                                  className={`font-semibold text-text truncate ${blurClass}`}
-                                >
-                                  {fanpage}
-                                </span>
-                                <span
-                                  className={`text-[11px] text-text2 truncate ${blurClass}`}
+                              <div className="min-w-0 flex-1 flex flex-col gap-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span
+                                    className={`font-semibold text-xs text-text ${blurClass}`}
+                                  >
+                                    {fanpage}
+                                  </span>
+                                  {src && !blurred && (
+                                    <a
+                                      href={src.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-[11px] text-pri hover:underline inline-flex items-center gap-1"
+                                    >
+                                      <Icon icon={src.icon} width={11} />
+                                      {src.label}
+                                    </a>
+                                  )}
+                                </div>
+
+                                <h3
+                                  className={`text-[15px] font-semibold text-text line-clamp-2 leading-snug ${blurClass}`}
                                 >
                                   {title}
-                                </span>
-                                <span className="text-[10px] text-text2">
-                                  {queuedDate
-                                    ? format(queuedDate, "MMM d, HH:mm")
-                                    : `@${job.ig_username}`}
-                                </span>
+                                </h3>
+
+                                {caption && (
+                                  <p
+                                    className={`text-xs text-text2 line-clamp-2 leading-normal ${blurClass}`}
+                                  >
+                                    {caption}
+                                  </p>
+                                )}
+
+                                {timeLabel && (
+                                  <span className="text-[11px] text-text2 mt-0.5">
+                                    {timeLabel}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </td>
 
                           {/* Type column */}
-                          <td className="p-3 align-top whitespace-nowrap">
+                          <td className="py-4 px-3 align-top whitespace-nowrap">
                             <ModeChip
                               mode={job.content_type || "repost"}
                               size="sm"
@@ -984,7 +976,7 @@ export default function HistoryPage() {
                           </td>
 
                           {/* Made by */}
-                          <td className="p-3 align-top whitespace-nowrap">
+                          <td className="py-4 px-3 align-top whitespace-nowrap">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-line bg-surface text-text text-[11px] font-medium">
                               {ENGINE_LABELS[job.design_engine ?? ""] ??
                                 (job.content_type === "youtube_clip"
@@ -995,251 +987,63 @@ export default function HistoryPage() {
                             </span>
                           </td>
 
-                          {/* Channel copies / status */}
-                          <td className="p-3 align-top">
-                            {(() => {
-                              const copies = deliveriesByJob[job.id] || [];
-                              if (copies.length > 0) {
-                                return (
-                                  <div className="flex flex-col gap-2 min-w-[220px]">
-                                    <ul className="list-none m-0 p-0 flex flex-col">
-                                      {copies.map((c, i) => {
-                                        const isPhone =
-                                          c.method === "phone" ||
-                                          c.actual_method === "phone" ||
-                                          c.intended_method === "phone";
-                                        const channelName =
-                                          c.destination_name || fanpage;
-
-                                        return (
-                                          <li
-                                            key={c.id}
-                                            className={`flex flex-col gap-1 py-1.5 ${
-                                              i > 0 ? "border-t border-line/60" : ""
-                                            }`}
-                                          >
-                                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                              <div className="flex flex-col min-w-0">
-                                                <span
-                                                  className={`font-semibold text-xs text-text ${blurClass}`}
-                                                >
-                                                  {channelName}
-                                                </span>
-                                                <span className="text-[11px] text-text2">
-                                                  {isPhone
-                                                    ? `Phone · ${channelName}`
-                                                    : c.method === "repliz"
-                                                    ? "Repliz"
-                                                    : c.actual_method ||
-                                                      c.intended_method ||
-                                                      "Direct"}
-                                                  {c.published_at
-                                                    ? ` · Went live ${format(
-                                                        parseUtc(c.published_at),
-                                                        "MMM d, HH:mm"
-                                                      )}`
-                                                    : c.scheduled_for
-                                                    ? ` · ${
-                                                        parseUtc(
-                                                          c.scheduled_for
-                                                        ).getTime() >
-                                                        Date.now() + 60_000
-                                                          ? "Goes live"
-                                                          : "Scheduled"
-                                                      } ${format(
-                                                        parseUtc(
-                                                          c.scheduled_for
-                                                        ),
-                                                        "MMM d, HH:mm"
-                                                      )}`
-                                                    : null}
-                                                </span>
-                                              </div>
-                                              <StatusBadge status={c.state} />
-                                            </div>
-
-                                            {c.last_error && (
-                                              <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded leading-snug">
-                                                {c.last_error}
-                                              </p>
-                                            )}
-
-                                            {c.facebook_permalink &&
-                                              !blurred &&
-                                              c.state !== "uncertain" && (
-                                                <div className="mt-0.5">
-                                                  <a
-                                                    href={c.facebook_permalink}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="text-[11px] text-pri hover:underline inline-flex items-center gap-1"
-                                                  >
-                                                    <Icon
-                                                      icon="solar:link-circle-bold-duotone"
-                                                      width={12}
-                                                    />
-                                                    View on Facebook
-                                                  </a>
-                                                </div>
-                                              )}
-
-                                            {c.state === "uncertain" && (
-                                              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                                                {(c.facebook_permalink ||
-                                                  c.facebook_post_id) &&
-                                                  !blurred && (
-                                                    <a
-                                                      href={
-                                                        c.facebook_permalink ||
-                                                        `https://facebook.com/${c.facebook_post_id}`
-                                                      }
-                                                      target="_blank"
-                                                      rel="noreferrer"
-                                                      className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text inline-flex items-center gap-1 transition-colors"
-                                                    >
-                                                      <Icon
-                                                        icon="solar:link-circle-bold-duotone"
-                                                        width={12}
-                                                      />
-                                                      View on Facebook
-                                                    </a>
-                                                  )}
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    setConfirmDeliveryAction({
-                                                      delivery: c,
-                                                      action: "mark-posted",
-                                                    })
-                                                  }
-                                                  className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text transition-colors"
-                                                >
-                                                  Mark posted
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    setConfirmDeliveryAction({
-                                                      delivery: c,
-                                                      action: "mark-not-posted",
-                                                    })
-                                                  }
-                                                  className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-bad-soft text-bad transition-colors"
-                                                >
-                                                  Mark not posted
-                                                </button>
-                                              </div>
-                                            )}
-
-                                            {c.state === "failed" &&
-                                              !c.repliz_schedule_id &&
-                                              !c.facebook_post_id && (
-                                                <div className="flex items-center gap-1.5 mt-0.5">
-                                                  <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                      setConfirmDeliveryAction({
-                                                        delivery: c,
-                                                        action: "retry",
-                                                      })
-                                                    }
-                                                    className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-pri transition-colors inline-flex items-center gap-1"
-                                                  >
-                                                    <Icon
-                                                      icon="solar:restart-bold"
-                                                      width={11}
-                                                    />
-                                                    Retry this copy
-                                                  </button>
-                                                </div>
-                                              )}
-                                          </li>
-                                        );
-                                      })}
-                                    </ul>
-
-                                    {src && !blurred && (
-                                      <a
-                                        href={src.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
-                                      >
-                                        <Icon icon={src.icon} width={11} />
-                                        {src.label}
-                                      </a>
-                                    )}
-                                  </div>
-                                );
-                              }
-
-                              return (
-                                <div className="flex flex-col gap-1 min-w-[200px]">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span
-                                      className={`font-semibold text-text ${blurClass}`}
-                                    >
-                                      {fanpage}
-                                    </span>
-                                    {job.status === "published" && isPendingLive ? (
-                                      <StatusBadge status="scheduled" />
-                                    ) : (
-                                      <StatusBadge status={job.status} />
-                                    )}
-                                  </div>
-
-                                  <div className="text-[11px] text-text2 flex items-center gap-1.5 flex-wrap">
-                                    <span>
-                                      {job.repliz_schedule_id ? (
-                                        <span className="inline-flex items-center gap-1">
-                                          Via Repliz
-                                          <span className="font-mono text-text2">
-                                            ({job.repliz_schedule_id.slice(-8)})
-                                          </span>
-                                        </span>
-                                      ) : (
-                                        "Direct"
-                                      )}
-                                    </span>
-                                    {scheduledDate && (
-                                      <span>
-                                        ·{" "}
-                                        {isPendingLive ? "Goes live" : "Went live"}{" "}
-                                        {format(scheduledDate, "MMM d, HH:mm")}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {job.last_error && (
-                                    <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded mt-0.5 leading-snug">
-                                      {job.last_error}
-                                    </p>
-                                  )}
-
-                                  {src && !blurred && (
-                                    <a
-                                      href={src.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
-                                    >
-                                      <Icon icon={src.icon} width={11} />
-                                      {src.label}
-                                    </a>
-                                  )}
-                                </div>
-                              );
-                            })()}
+                          {/* Channel copies */}
+                          <td className="py-4 px-3 align-top min-w-[240px]">
+                            {copies.length > 0 ? (
+                              <div className="flex flex-col gap-1.5">
+                                {copies.map((c) => (
+                                  <ChannelChip
+                                    key={c.id}
+                                    destinationName={c.destination_name || fanpage}
+                                    actualMethod={c.actual_method}
+                                    intendedMethod={c.intended_method}
+                                    method={c.method}
+                                    state={c.state}
+                                    replizScheduleId={c.repliz_schedule_id}
+                                    facebookPermalink={c.facebook_permalink}
+                                    facebookPostId={c.facebook_post_id}
+                                    lastError={c.last_error}
+                                    blurred={blurred}
+                                    onAction={(action) =>
+                                      setConfirmDeliveryAction({
+                                        delivery: c,
+                                        action,
+                                      })
+                                    }
+                                  />
+                                ))}
+                              </div>
+                            ) : job.repliz_schedule_id ? (
+                              <ChannelChip
+                                destinationName={fanpage}
+                                method="Repliz"
+                                state={job.status}
+                                replizScheduleId={job.repliz_schedule_id}
+                                blurred={blurred}
+                              />
+                            ) : (
+                              <ChannelChip
+                                destinationName={fanpage}
+                                method="Direct"
+                                state={job.status}
+                                blurred={blurred}
+                              />
+                            )}
+                            {job.last_error && copies.length === 0 && (
+                              <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded mt-1 leading-snug">
+                                {job.last_error}
+                              </p>
+                            )}
                           </td>
 
                           {/* Actions */}
-                          <td className="p-3 pr-4 align-top text-right whitespace-nowrap">
+                          <td className="py-4 pl-3 pr-4 align-top text-right whitespace-nowrap">
                             <div className="inline-flex items-center gap-1.5">
                               {canReedit && (
                                 <button
                                   type="button"
                                   onClick={() => setConfirmReeditJob(job)}
-                                  className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors"
+                                  className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors cursor-pointer"
                                 >
                                   Re-edit
                                 </button>
@@ -1247,7 +1051,7 @@ export default function HistoryPage() {
                               <button
                                 type="button"
                                 onClick={() => setConfirmDeleteJob(job)}
-                                className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-medium transition-colors"
+                                className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-medium transition-colors cursor-pointer"
                               >
                                 Delete
                               </button>
@@ -1260,6 +1064,351 @@ export default function HistoryPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile Stacked Card View (< 768px) */}
+        <div className="md:hidden divide-y divide-line">
+          {activeStatus === "scheduled" ? (
+            <>
+              {isScheduledLoading && (
+                <div className="p-8 text-center text-text2">
+                  Loading scheduled deliveries…
+                </div>
+              )}
+
+              {!isScheduledLoading && filteredScheduledDeliveries.length === 0 && (
+                <div className="p-12 text-center text-text2">
+                  <Icon
+                    icon="solar:calendar-bold-duotone"
+                    width={36}
+                    className="mx-auto opacity-30 mb-2"
+                  />
+                  Nothing scheduled. Approved posts wait here until their time slot.
+                </div>
+              )}
+
+              {!isScheduledLoading &&
+                filteredScheduledDeliveries.map((row) => {
+                  const title =
+                    row.title_snapshot?.trim() || `Post #${row.publish_job_id}`;
+                  const isPhone = row.intended_method === "phone";
+                  const blurClass = blurred ? "blur-sm select-none" : "";
+                  const canCancel =
+                    row.state === "scheduled" ||
+                    row.state === "waiting_for_slot" ||
+                    row.state === "waiting_for_device";
+                  const isReplizScheduled = row.state === "repliz_scheduled";
+                  const thumb =
+                    row.thumbnail_url ||
+                    (row.media_urls && row.media_urls.length > 0 ? row.media_urls[0] : null);
+                  const isVideo =
+                    row.media_kind === "video" ||
+                    isVideoUrl(thumb) ||
+                    (row.media_urls ?? []).some((u) => isVideoUrl(u));
+                  const isAlbum = row.media_kind === "album";
+                  const mediaCount = row.media_urls?.length ?? 0;
+                  const extraCount = isAlbum && mediaCount > 1 ? mediaCount - 1 : 0;
+                  const hasMedia = !!thumb || mediaCount > 0;
+                  const videoSrc =
+                    (row.media_urls ?? []).find((u) => isVideoUrl(u)) ||
+                    (isVideo ? thumb : null);
+
+                  return (
+                    <div
+                      key={row.id}
+                      className="p-4 flex gap-3.5 items-start hover:bg-surface2/30 transition-colors"
+                    >
+                      <MediaThumb
+                        thumbUrl={thumb}
+                        videoUrl={videoSrc}
+                        isVideo={isVideo}
+                        isAlbum={isAlbum}
+                        extraCount={extraCount}
+                        blurred={blurred}
+                        onClick={
+                          hasMedia
+                            ? () => setScheduledPreview({ delivery: row, imgIdx: 0 })
+                            : undefined
+                        }
+                      />
+
+                      <div className="min-w-0 flex-1 flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-[11px] text-text2 font-medium">
+                            Post #{row.publish_job_id}
+                          </span>
+                          <StatusBadge status={row.state} />
+                        </div>
+
+                        <h3
+                          className={`text-[15px] font-semibold text-text line-clamp-2 leading-snug ${blurClass}`}
+                        >
+                          {title}
+                        </h3>
+
+                        {row.caption_snapshot && (
+                          <p
+                            className={`text-xs text-text2 line-clamp-2 leading-normal ${blurClass}`}
+                          >
+                            {row.caption_snapshot}
+                          </p>
+                        )}
+
+                        <ChannelChip
+                          destinationName={row.destination_name || "Scheduled Post"}
+                          actualMethod={row.actual_method}
+                          intendedMethod={row.intended_method}
+                          replizScheduleId={row.repliz_schedule_id}
+                          facebookPermalink={row.facebook_permalink}
+                          facebookPostId={row.facebook_post_id}
+                          lastError={row.last_error}
+                          blurred={blurred}
+                        />
+
+                        <div className="text-[11px] text-text2 mt-0.5">
+                          {row.scheduled_for ? (
+                            <span>
+                              {formatScheduledWib(row.scheduled_for)} ·{" "}
+                              {formatRelativeHint(row.scheduled_for)}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+
+                        {canCancel && (
+                          <div className="pt-2 border-t border-line/60 flex justify-end">
+                            {confirmingCancelId === row.id ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={cancelingId === row.id}
+                                  onClick={() => handleCancelDelivery(row.id)}
+                                  className="h-7 px-2.5 rounded-lg border border-bad/30 bg-bad-soft hover:bg-bad-soft/80 text-bad text-xs font-semibold transition-colors inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
+                                >
+                                  {cancelingId === row.id && (
+                                    <Icon
+                                      icon="svg-spinners:180-ring"
+                                      width={12}
+                                    />
+                                  )}
+                                  Cancel post
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={cancelingId === row.id}
+                                  onClick={() => setConfirmingCancelId(null)}
+                                  className="h-7 px-2 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                                >
+                                  Keep
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingCancelId(row.id)}
+                                className="h-7 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft hover:text-bad text-text text-xs font-medium transition-colors cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </>
+          ) : (
+            <>
+              {isLoading && (
+                <div className="p-8 text-center text-text2">
+                  Loading activity…
+                </div>
+              )}
+
+              {!isLoading && jobs.length === 0 && (
+                <div className="p-12 text-center text-text2">
+                  <Icon
+                    icon="solar:history-bold-duotone"
+                    width={36}
+                    className="mx-auto opacity-30 mb-2"
+                  />
+                  No activity found for this filter.
+                </div>
+              )}
+
+              {!isLoading &&
+                jobs.map((job, idx) => {
+                  const urls = resolveUrls(job);
+                  const media = getJobMediaInfo(job, urls);
+                  const fanpage = job.fanpage_name ?? "Unknown Brand";
+                  const caption = job.ai_generated_caption ?? "";
+                  const title =
+                    job.design_title ??
+                    (caption ? caption.slice(0, 70) : `@${job.ig_username}`);
+                  const { queuedDate, scheduledDate, isPendingLive } =
+                    jobTimes(job);
+                  const canReedit =
+                    job.content_type === "news_content" &&
+                    job.status === "published";
+                  const src = sourceLink(job);
+                  const blurClass = blurred ? "blur-sm select-none" : "";
+                  const copies = deliveriesByJob[job.id] || [];
+
+                  const timeLabel = job.published_at
+                    ? `Went live ${formatScheduledWib(job.published_at)}`
+                    : job.scheduled_for
+                    ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
+                        job.scheduled_for
+                      )}`
+                    : queuedDate
+                    ? formatScheduledWib(job.created_at || queuedDate.toISOString())
+                    : null;
+
+                  return (
+                    <div
+                      key={job.id}
+                      className="p-4 flex gap-3.5 items-start hover:bg-surface2/30 transition-colors"
+                    >
+                      <MediaThumb
+                        thumbUrl={media.thumbUrl}
+                        videoUrl={media.videoSrc}
+                        isVideo={media.isVideo}
+                        isAlbum={media.isAlbum}
+                        extraCount={media.extraCount}
+                        blurred={blurred}
+                        onClick={() =>
+                          setLightbox({ jobIndex: idx, imgIdx: 0 })
+                        }
+                      />
+
+                      <div className="min-w-0 flex-1 flex flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`font-semibold text-xs text-text ${blurClass}`}
+                          >
+                            {fanpage}
+                          </span>
+                          <ModeChip
+                            mode={job.content_type || "repost"}
+                            size="sm"
+                          />
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface2 border border-line text-text2">
+                            {ENGINE_LABELS[job.design_engine ?? ""] ??
+                              (job.content_type === "youtube_clip"
+                                ? "Video clip"
+                                : job.content_type === "ai_video"
+                                ? "Google Flow"
+                                : "Template")}
+                          </span>
+                        </div>
+
+                        <h3
+                          className={`text-[15px] font-semibold text-text line-clamp-2 leading-snug ${blurClass}`}
+                        >
+                          {title}
+                        </h3>
+
+                        {caption && (
+                          <p
+                            className={`text-xs text-text2 line-clamp-2 leading-normal ${blurClass}`}
+                          >
+                            {caption}
+                          </p>
+                        )}
+
+                        <div className="flex flex-col gap-1.5 mt-0.5">
+                          {copies.length > 0 ? (
+                            copies.map((c) => (
+                              <ChannelChip
+                                key={c.id}
+                                destinationName={c.destination_name || fanpage}
+                                actualMethod={c.actual_method}
+                                intendedMethod={c.intended_method}
+                                method={c.method}
+                                state={c.state}
+                                replizScheduleId={c.repliz_schedule_id}
+                                facebookPermalink={c.facebook_permalink}
+                                facebookPostId={c.facebook_post_id}
+                                lastError={c.last_error}
+                                blurred={blurred}
+                                onAction={(action) =>
+                                  setConfirmDeliveryAction({
+                                    delivery: c,
+                                    action,
+                                  })
+                                }
+                              />
+                            ))
+                          ) : job.repliz_schedule_id ? (
+                            <ChannelChip
+                              destinationName={fanpage}
+                              method="Repliz"
+                              state={job.status}
+                              replizScheduleId={job.repliz_schedule_id}
+                              blurred={blurred}
+                            />
+                          ) : (
+                            <ChannelChip
+                              destinationName={fanpage}
+                              method="Direct"
+                              state={job.status}
+                              blurred={blurred}
+                            />
+                          )}
+                          {timeLabel && (
+                            <span className="text-[11px] text-text2">
+                              {timeLabel}
+                            </span>
+                          )}
+                        </div>
+
+                        {job.last_error && copies.length === 0 && (
+                          <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded leading-snug">
+                            {job.last_error}
+                          </p>
+                        )}
+
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-line/60 mt-1">
+                          {src && !blurred ? (
+                            <a
+                              href={src.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] text-pri hover:underline inline-flex items-center gap-1"
+                            >
+                              <Icon icon={src.icon} width={11} />
+                              {src.label}
+                            </a>
+                          ) : (
+                            <div />
+                          )}
+                          <div className="inline-flex items-center gap-1.5">
+                            {canReedit && (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmReeditJob(job)}
+                                className="h-7 px-2.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors cursor-pointer"
+                              >
+                                Re-edit
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteJob(job)}
+                              className="h-7 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-medium transition-colors cursor-pointer"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </>
+          )}
         </div>
 
         {/* Infinite-scroll sentinel */}
@@ -1307,6 +1456,10 @@ export default function HistoryPage() {
             hasMore: !reachedEnd,
           }}
           blurred={blurred}
+          copies={deliveriesByJob[lightboxJobData.id] || []}
+          onDeliveryAction={(delivery, action) =>
+            setConfirmDeliveryAction({ delivery, action })
+          }
           onClose={() => setLightbox(null)}
           onPrev={() =>
             setLightbox((l) => (l && l.imgIdx > 0 ? { ...l, imgIdx: l.imgIdx - 1 } : l))
@@ -1414,6 +1567,8 @@ function HistoryLightbox({
   state,
   postPosition,
   blurred,
+  copies = [],
+  onDeliveryAction,
   onClose,
   onPrev,
   onNext,
@@ -1423,6 +1578,11 @@ function HistoryLightbox({
   state: { job: PublishJob; urls: string[]; idx: number };
   postPosition: { index: number; total: number; hasMore: boolean };
   blurred: boolean;
+  copies?: DeliveryCopy[];
+  onDeliveryAction?: (
+    delivery: DeliveryCopy,
+    action: "mark-posted" | "mark-not-posted" | "retry"
+  ) => void;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -1433,11 +1593,42 @@ function HistoryLightbox({
   const fanpage = job.fanpage_name ?? "Unknown Fanpage";
   const caption = job.ai_generated_caption ?? "";
   const total = urls.length;
-  const { queuedDate, scheduledDate, isPendingLive } = jobTimes(job);
+  const currentUrl = urls[idx];
+  const { queuedDate, isPendingLive } = jobTimes(job);
   const src = sourceLink(job);
   const canReedit = job.content_type === "news_content" && job.status === "published";
-  const isClip = job.content_type === "youtube_clip" || job.content_type === "ai_video";
+
+  const isClip =
+    job.content_type === "youtube_clip" || job.content_type === "ai_video";
+  const isVideo =
+    isClip ||
+    isVideoUrl(currentUrl) ||
+    (job.video_url && isVideoUrl(job.video_url)) ||
+    (urls.length > 0 && isVideoUrl(urls[0]));
+
+  const videoSrc = (isClip && job.video_url)
+    ? job.video_url
+    : isVideoUrl(currentUrl)
+    ? currentUrl
+    : (job.video_url && isVideoUrl(job.video_url))
+    ? job.video_url
+    : urls.find((u) => isVideoUrl(u)) || (isVideo ? currentUrl || job.video_url : null);
+
+  const poster =
+    job.video_thumbnail_url ||
+    (urls[0] && !isVideoUrl(urls[0]) ? urls[0] : undefined);
+
   const blurClass = blurred ? "blur-md select-none" : "";
+
+  const timeWibStr = job.published_at
+    ? `Went live ${formatScheduledWib(job.published_at)}`
+    : job.scheduled_for
+    ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
+        job.scheduled_for
+      )}`
+    : queuedDate
+    ? formatScheduledWib(job.created_at || queuedDate.toISOString())
+    : null;
 
   return (
     <div
@@ -1447,106 +1638,187 @@ function HistoryLightbox({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-surface border border-line"
+        className="relative w-full max-w-2xl max-h-[92vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-surface border border-line"
         onClick={(e) => e.stopPropagation()}
       >
-        <div
-          className={`relative bg-black ${
-            isClip && job.video_url ? "aspect-[9/16]" : "aspect-[4/3]"
-          } flex-shrink-0`}
-        >
-          {isClip && job.video_url ? (
-            <ClipPlayer
-              src={job.video_url}
-              poster={urls[0]}
-              className={`absolute inset-0 w-full h-full object-contain ${blurClass}`}
-            />
-          ) : total > 0 ? (
-            <img
-              src={urls[idx]}
-              alt=""
-              className={`absolute inset-0 w-full h-full object-contain ${blurClass}`}
-            />
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text2 opacity-40">
-              <Icon icon="solar:gallery-bold-duotone" width={36} />
-              <p className="text-xs">No media preview</p>
+        {isVideo ? (
+          <div className="relative w-full bg-black flex items-center justify-center flex-shrink-0">
+            <div
+              className="relative h-[58vh] max-h-[58vh] sm:h-[64vh] sm:max-h-[64vh] aspect-[9/16] mx-auto bg-black flex items-center justify-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {videoSrc ? (
+                <ClipPlayer
+                  src={videoSrc}
+                  poster={poster}
+                  preload="metadata"
+                  className={`w-full h-full object-contain ${blurClass}`}
+                />
+              ) : poster ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={poster}
+                  alt=""
+                  className={`w-full h-full object-contain ${blurClass}`}
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-text2 opacity-40">
+                  <Icon icon="solar:videocamera-bold-duotone" width={36} />
+                  <p className="text-xs">No video preview</p>
+                </div>
+              )}
             </div>
-          )}
 
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full z-10">
-            {postPosition.index + 1} / {postPosition.total}
-            {postPosition.hasMore ? "+" : ""}
+            <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full z-10 pointer-events-none">
+              {postPosition.index + 1} / {postPosition.total}
+              {postPosition.hasMore ? "+" : ""}
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10 cursor-pointer"
+            >
+              <Icon icon="solar:close-bold" width={16} />
+            </button>
           </div>
+        ) : (
+          <div className="relative bg-black aspect-[4/3] w-full flex-shrink-0 flex items-center justify-center">
+            {total > 0 ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={urls[idx]}
+                alt=""
+                className={`absolute inset-0 w-full h-full object-contain ${blurClass}`}
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text2 opacity-40">
+                <Icon icon="solar:gallery-bold-duotone" width={36} />
+                <p className="text-xs">No media preview</p>
+              </div>
+            )}
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
-          >
-            <Icon icon="solar:close-bold" width={16} />
-          </button>
+            <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-semibold px-3 py-1 rounded-full z-10 pointer-events-none">
+              {postPosition.index + 1} / {postPosition.total}
+              {postPosition.hasMore ? "+" : ""}
+            </div>
 
-          {!isClip && total > 1 && idx > 0 && (
             <button
               type="button"
-              onClick={onPrev}
-              aria-label="Previous image"
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
+              onClick={onClose}
+              aria-label="Close"
+              className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10 cursor-pointer"
             >
-              <Icon icon="solar:alt-arrow-left-bold-duotone" width={18} />
+              <Icon icon="solar:close-bold" width={16} />
             </button>
-          )}
-          {!isClip && total > 1 && idx < total - 1 && (
-            <button
-              type="button"
-              onClick={onNext}
-              aria-label="Next image"
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10"
-            >
-              <Icon icon="solar:alt-arrow-right-bold-duotone" width={18} />
-            </button>
-          )}
-        </div>
+
+            {!isClip && total > 1 && idx > 0 && (
+              <button
+                type="button"
+                onClick={onPrev}
+                aria-label="Previous image"
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10 cursor-pointer"
+              >
+                <Icon icon="solar:alt-arrow-left-bold-duotone" width={18} />
+              </button>
+            )}
+            {!isClip && total > 1 && idx < total - 1 && (
+              <button
+                type="button"
+                onClick={onNext}
+                aria-label="Next image"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-10 cursor-pointer"
+              >
+                <Icon icon="solar:alt-arrow-right-bold-duotone" width={18} />
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Details Panel */}
-        <div className="p-4 flex flex-col gap-3 overflow-y-auto">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className={`text-sm font-semibold text-text ${blurred ? "blur-sm" : ""}`}>
+        <div className="p-4 flex flex-col gap-3 overflow-y-auto flex-1 min-h-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p
+                className={`text-sm font-semibold text-text ${
+                  blurred ? "blur-sm" : ""
+                }`}
+              >
                 {fanpage}
               </p>
-              <p className={`text-xs text-text2 ${blurred ? "blur-sm" : ""}`}>
-                @{job.ig_username}
-                {queuedDate ? ` · ${format(queuedDate, "MMM d, yyyy HH:mm")}` : ""}
-                {scheduledDate && (
-                  <span>
-                    {" "}· {isPendingLive ? "Goes live" : "Went live"}{" "}
-                    {format(scheduledDate, "MMM d, HH:mm")}
-                  </span>
-                )}
-                {job.repliz_schedule_id && (
-                  <span>
-                    {" "}· Repliz ID:{" "}
-                    <span className="font-mono text-text">
-                      {job.repliz_schedule_id.slice(-8)}
-                    </span>
-                  </span>
-                )}
+              <p
+                className={`text-xs text-text2 flex items-center gap-1.5 flex-wrap ${
+                  blurred ? "blur-sm" : ""
+                }`}
+              >
+                <span>@{job.ig_username}</span>
+                {timeWibStr && <span>· {timeWibStr}</span>}
               </p>
             </div>
             <StatusBadge status={job.status} />
           </div>
 
+          {/* Channels with Repliz ID copy / Open post link */}
+          <div className="flex flex-col gap-1 border-t border-line/60 pt-2">
+            <span className="text-[11px] font-semibold text-text2 uppercase tracking-wider">
+              Channels
+            </span>
+            <div className="flex flex-col gap-1.5">
+              {copies.length > 0 ? (
+                copies.map((c) => (
+                  <ChannelChip
+                    key={c.id}
+                    destinationName={c.destination_name || fanpage}
+                    actualMethod={c.actual_method}
+                    intendedMethod={c.intended_method}
+                    method={c.method}
+                    state={c.state}
+                    replizScheduleId={c.repliz_schedule_id}
+                    facebookPermalink={c.facebook_permalink}
+                    facebookPostId={c.facebook_post_id}
+                    lastError={c.last_error}
+                    blurred={blurred}
+                    onAction={
+                      onDeliveryAction
+                        ? (action) => onDeliveryAction(c, action)
+                        : undefined
+                    }
+                  />
+                ))
+              ) : job.repliz_schedule_id ? (
+                <ChannelChip
+                  destinationName={fanpage}
+                  method="Repliz"
+                  state={job.status}
+                  replizScheduleId={job.repliz_schedule_id}
+                  blurred={blurred}
+                />
+              ) : (
+                <ChannelChip
+                  destinationName={fanpage}
+                  method="Direct"
+                  state={job.status}
+                  blurred={blurred}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Caption in scrollable box with max-h-40 */}
           {caption && (
-            <p
-              className={`text-xs text-text2 leading-relaxed whitespace-pre-line bg-surface2 p-3 rounded-lg border border-line ${
-                blurred ? "blur-sm select-none" : ""
-              }`}
-            >
-              {caption}
-            </p>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-text2 uppercase tracking-wider">
+                Caption
+              </span>
+              <div
+                className={`text-xs text-text2 leading-relaxed whitespace-pre-line bg-surface2 p-3 rounded-lg border border-line max-h-40 overflow-y-auto ${
+                  blurred ? "blur-sm select-none" : ""
+                }`}
+              >
+                {caption}
+              </div>
+            </div>
           )}
 
           {job.last_error && (
@@ -1575,7 +1847,7 @@ function HistoryLightbox({
                 <button
                   type="button"
                   onClick={onReedit}
-                  className="h-8 px-3 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-semibold"
+                  className="h-8 px-3 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-semibold cursor-pointer"
                 >
                   Re-edit
                 </button>
@@ -1583,7 +1855,7 @@ function HistoryLightbox({
               <button
                 type="button"
                 onClick={onDelete}
-                className="h-8 px-3 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-semibold"
+                className="h-8 px-3 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-semibold cursor-pointer"
               >
                 Delete
               </button>
@@ -1610,10 +1882,26 @@ function ScheduledPreviewModal({
   onPrev: () => void;
   onNext: () => void;
 }) {
-  const isVideo = delivery.media_kind === "video";
   const urls = delivery.media_urls ?? [];
   const total = urls.length;
   const blurClass = blurred ? "blur-md select-none" : "";
+
+  const isVideo =
+    delivery.media_kind === "video" ||
+    isVideoUrl(delivery.thumbnail_url) ||
+    urls.some((u) => isVideoUrl(u));
+
+  const videoSrc =
+    urls.find((u) => isVideoUrl(u)) ||
+    (delivery.media_kind === "video" ? urls[0] : null) ||
+    (isVideoUrl(delivery.thumbnail_url) ? delivery.thumbnail_url : null);
+
+  const posterSrc =
+    delivery.thumbnail_url && !isVideoUrl(delivery.thumbnail_url)
+      ? delivery.thumbnail_url
+      : urls[0] && !isVideoUrl(urls[0])
+      ? urls[0]
+      : undefined;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1625,7 +1913,8 @@ function ScheduledPreviewModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, onPrev, onNext, isVideo, total]);
 
-  const title = delivery.title_snapshot?.trim() || `Post #${delivery.publish_job_id}`;
+  const title =
+    delivery.title_snapshot?.trim() || `Post #${delivery.publish_job_id}`;
 
   return (
     <div
@@ -1685,27 +1974,34 @@ function ScheduledPreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         {isVideo ? (
-          urls[0] ? (
-            <video
-              controls
-              src={urls[0]}
-              poster={delivery.thumbnail_url ?? undefined}
-              className={`max-w-[90vw] max-h-[75vh] rounded-lg bg-black ${blurClass}`}
-              playsInline
-            />
-          ) : delivery.thumbnail_url ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={delivery.thumbnail_url}
-              alt={title}
-              className={`max-w-[90vw] max-h-[75vh] object-contain rounded-lg ${blurClass}`}
-            />
-          ) : (
-            <div className="w-80 h-80 rounded-lg bg-surface2 border border-line flex flex-col items-center justify-center gap-2 text-text2">
-              <Icon icon="solar:videocamera-bold-duotone" width={40} />
-              <p className="text-xs">No media preview</p>
-            </div>
-          )
+          <div
+            className="relative h-[65vh] max-h-[65vh] aspect-[9/16] mx-auto bg-black rounded-xl overflow-hidden flex items-center justify-center shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {videoSrc ? (
+              <video
+                controls
+                src={videoSrc}
+                poster={posterSrc}
+                playsInline
+                preload="metadata"
+                className={`w-full h-full object-contain bg-black ${blurClass}`}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : posterSrc ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={posterSrc}
+                alt={title}
+                className={`w-full h-full object-contain ${blurClass}`}
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-text2">
+                <Icon icon="solar:videocamera-bold-duotone" width={40} />
+                <p className="text-xs">No media preview</p>
+              </div>
+            )}
+          </div>
         ) : total > 0 ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
@@ -1729,7 +2025,11 @@ function ScheduledPreviewModal({
 
         <div className="mt-3 text-center text-white/80 text-xs max-w-xl">
           <div className="flex items-center justify-center gap-2 flex-wrap">
-            <span className={`font-semibold text-white ${blurred ? "blur-sm select-none" : ""}`}>
+            <span
+              className={`font-semibold text-white ${
+                blurred ? "blur-sm select-none" : ""
+              }`}
+            >
               {delivery.destination_name || "Scheduled Post"}
             </span>
             {delivery.scheduled_for && (
@@ -1737,10 +2037,33 @@ function ScheduledPreviewModal({
                 · {formatScheduledWib(delivery.scheduled_for)}
               </span>
             )}
-            <span className="text-white/60">· Post #{delivery.publish_job_id}</span>
+            <span className="text-white/60">
+              · Post #{delivery.publish_job_id}
+            </span>
+            {delivery.repliz_schedule_id && (
+              <CopyId
+                id={delivery.repliz_schedule_id}
+                className="text-white bg-white/10 border-white/20"
+              />
+            )}
+            {delivery.facebook_permalink && (
+              <a
+                href={delivery.facebook_permalink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-pri hover:underline inline-flex items-center gap-1 font-medium ml-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Open post ↗
+              </a>
+            )}
           </div>
           {delivery.caption_snapshot && (
-            <p className={`mt-1 text-white/70 line-clamp-2 ${blurred ? "blur-sm select-none" : ""}`}>
+            <p
+              className={`mt-1 text-white/70 line-clamp-2 ${
+                blurred ? "blur-sm select-none" : ""
+              }`}
+            >
               {delivery.caption_snapshot}
             </p>
           )}

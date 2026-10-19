@@ -48,6 +48,7 @@ export default function ClipPlayer({ src, poster, preload = "metadata", classNam
       playsInline
       preload={preload}
       className={`w-full bg-black ${className}`}
+      onClick={(e) => e.stopPropagation()}
       /* Prevent any absolutely-positioned overlay from catching pointer
          events on top of the native video controls. Each call site is
          responsible for marking its own overlay divs pointer-events-none
