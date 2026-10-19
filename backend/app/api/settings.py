@@ -152,10 +152,13 @@ def get_settings(db: DB, _: CurrentUser):
         codex_night_min_gap_s=getattr(row, "codex_night_min_gap_s", 240) if getattr(row, "codex_night_min_gap_s", None) is not None else 240,
         codex_night_gap_jitter_s=getattr(row, "codex_night_gap_jitter_s", 60) if getattr(row, "codex_night_gap_jitter_s", None) is not None else 60,
         codex_usage_url=getattr(row, "codex_usage_url", None),
+        pro_poster_enabled=getattr(row, "pro_poster_enabled", False) or False,
+        pro_poster_fanpage_ids=list(getattr(row, "pro_poster_fanpage_ids", None) or []),
     )
 
 
 @router.put("", response_model=SettingsOut)
+@router.patch("", response_model=SettingsOut)
 def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
     from app.services.encryption import encrypt
 
@@ -231,6 +234,13 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
     if "gptcli_fanpage_ids" in data:
         raw_ids = data["gptcli_fanpage_ids"] or []
         data["gptcli_fanpage_ids"] = sorted(set(int(i) for i in raw_ids))
+
+    if "pro_poster_fanpage_ids" in data:
+        raw_ids = data["pro_poster_fanpage_ids"] or []
+        try:
+            data["pro_poster_fanpage_ids"] = sorted(set(int(i) for i in raw_ids))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="pro_poster_fanpage_ids must be a list of integers")
 
     for field, value in data.items():
         setattr(row, field, value)
