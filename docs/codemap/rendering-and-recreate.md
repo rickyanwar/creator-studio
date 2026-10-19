@@ -268,6 +268,24 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
   - Uses OpenCV SFace model (`cv2.FaceRecognizerSF_create`, model `face_recognition_sface_2021dec.onnx`).
   - Computes cosine similarity `identity_score(speaker_bytes, generated)`.
   - Rejection threshold: If score `< IDENTITY_THRESHOLD` (`0.40`), rejects and returns `None` (falling back to standard image cascade).
+- Prompt text shared with the redesign prompts comes from `services/prompt_rules.py` (`realism_block`, `text_zone_line`, `avoid_block`).
+
+## 5a. Pro poster (Mode 2 news, live since 2026-10-19, 8baa04f)
+
+Switch: `Settings.pro_poster_enabled` + `pro_poster_fanpage_ids` (`[]` = every fan page), checked by `pipeline.pro_poster_applies`. Settings UI: `ProPosterSettingsCard` (Settings > Image). It runs **before** speaker design in `tasks/design_renderer.py` (~590).
+
+`pipeline.compose_pro_poster(db, fanpage, job, article, dry_run=False)`:
+1. **Brief** (`brief.build_brief`, text AI): subjects, event, story type, mood, badge label, accent colours, visual ideas, `must_avoid`, decided from the article text only. Cached in `job.design_analysis_json["pro_poster_brief"]`. Parse errors fail closed (`BriefError`).
+2. **Story photo**: `story_photo.fetch_story_photo` → `storage/designs/pro_poster_story_<job>.{png,jpg}`.
+3. **Photos** (`photos.select_photos`, at most 24 checks): candidates from the story photo + gallery (Getty slug = trusted caption). One strict-JSON Gemini check per photo (`check_photo`: person, event match, obstruction, watermark, `face_frontal`, `story_fit`, quality). Picks `hero` (sorted by face_frontal, story_fit, quality), `context`, a front-facing `portrait` when the hero is not frontal, or `face_ref`.
+4. **Concept** (`concept.build_concept`, Gemini): key moment, scene, inset, palette, mood, graphic words. Optional; errors → no concept.
+5. **Art direction** (`art_direction.direct`): layout `hero_with_context` / `hero_solo` / `face_ref_scene` / `action_full_bleed` / `typographic` (no verified photo). Designer-brief prompt v4: house style = white-ring inset with a different context, front-facing face reference, no invented faces, series logos banned.
+6. **One generation**: `visual_engine.generate_ex(..., engines=("gptcli",))`, so ChatGPT only (never Codex). `VisualEngineDeferred` propagates (the job is deferred); engine errors → fallback.
+7. **Safety QA only** (`qa.check_safety`): identity via `identity_check` (SFace, reject < 0.25, then Gemini), `gear_identity` (helmet, number, kit, livery) when no face is found, plus the event check. No aesthetic scores, no retry.
+
+Results in `design_renderer`: image → `image_marker="pro_poster"`, `design_engine` = the engine; `fallback_reason == "no verified photo"` → `typo_background.make_typographic_background` (Pillow + numpy, brand colour) and `pro_poster_typo`; anything else → the old path, and if the AI generation was already used (`pro_poster_spent`) speaker design is skipped, so there is never a second AI image. QA result is stored in `design_analysis_json["pro_poster_qa"]`.
+
+Eval: `python -m app.scripts.pro_poster_eval --jobs <ids> --run <name> [--pace s] [--fresh-brief]` runs dry, writes `storage/pro_poster_eval/<run>/` (`index.json`, `<job>_new.png`, attempts). On the VPS run it with `docker run` on the prod image, not `compose run`.
 
 ---
 
