@@ -20,7 +20,7 @@ RECENT_TOPIC_LIMIT = 60
 def fanpage_niche(fanpage) -> str:
     page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
     niche_text = " ".join(str(value) for value in page_niches) + " " + getattr(fanpage, "name", "")
-    return "motogp" if "motogp" in niche_text.lower() else "f1"
+    return "motogp" if re.search(r"moto\s*-?\s*gp", niche_text, re.I) else "f1"
 
 
 def writer_templates(fanpage) -> list:

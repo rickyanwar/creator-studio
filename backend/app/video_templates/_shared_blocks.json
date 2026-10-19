@@ -4,25 +4,80 @@
   "narrator_en": "Voice-over: a confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
   "narrator_en_followup": "Voice-over: the same confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
   "liveries": {
-    "scarlet": {"full": "deep glossy red with white accents on the nose, sidepods and rear wing, a black floor and a black halo", "short": "glossy red"},
-    "navy_red_yellow": {"full": "matte dark navy blue with red and yellow accents along the sidepods and engine cover and a yellow nose tip", "short": "matte navy blue"},
-    "papaya": {"full": "bright papaya orange with black accents on the sidepods, nose and rear wing", "short": "papaya orange"},
-    "silver_teal": {"full": "metallic silver and gloss black with thin teal accent lines", "short": "silver-and-black"},
-    "racing_green": {"full": "metallic British racing green with bright lime green accents", "short": "racing green"},
-    "blue_pink": {"full": "bright blue with pink accents and black details", "short": "blue-and-pink"},
-    "royal_blue": {"full": "dark royal blue with white and light blue accents", "short": "royal blue"},
-    "white_red": {"full": "glossy white with bold red and black accents", "short": "white-and-red"},
-    "titanium": {"full": "titanium silver and black with bright red accents", "short": "titanium-and-black"}
+    "scarlet": {
+      "full": "deep glossy red with white accents on the nose, sidepods and rear wing, a black floor and a black halo",
+      "short": "glossy red"
+    },
+    "navy_red_yellow": {
+      "full": "matte dark navy blue with red and yellow accents along the sidepods and engine cover and a yellow nose tip",
+      "short": "matte navy blue"
+    },
+    "papaya": {
+      "full": "bright papaya orange with black accents on the sidepods, nose and rear wing",
+      "short": "papaya orange"
+    },
+    "silver_teal": {
+      "full": "metallic silver and gloss black with thin teal accent lines",
+      "short": "silver-and-black"
+    },
+    "racing_green": {
+      "full": "metallic British racing green with bright lime green accents",
+      "short": "racing green"
+    },
+    "blue_pink": {
+      "full": "bright blue with pink accents and black details",
+      "short": "blue-and-pink"
+    },
+    "royal_blue": {
+      "full": "dark royal blue with white and light blue accents",
+      "short": "royal blue"
+    },
+    "white_red": {
+      "full": "glossy white with bold red and black accents",
+      "short": "white-and-red"
+    },
+    "titanium": {
+      "full": "titanium silver and black with bright red accents",
+      "short": "titanium-and-black"
+    },
+    "moto_red_grey": {
+      "full": "deep glossy red with dark grey and black lower fairing, a white stripe along the tank and red winglets",
+      "short": "glossy red and grey",
+      "niches": [
+        "motogp"
+      ]
+    },
+    "moto_black_purple": {
+      "full": "matte black with violet and red accents on the fairing, purple winglets and a black tail",
+      "short": "matte black and purple",
+      "niches": [
+        "motogp"
+      ]
+    },
+    "moto_orange_navy": {
+      "full": "bright orange side fairings over a dark navy blue base with orange winglets and white tail accents",
+      "short": "orange and navy",
+      "niches": [
+        "motogp"
+      ]
+    },
+    "moto_blue_white": {
+      "full": "deep metallic blue with white and black accents on the fairing, blue winglets and a white tail section",
+      "short": "metallic blue and white",
+      "niches": [
+        "motogp"
+      ]
+    }
   },
   "vehicle_presets": {
     "f1_red": "A modern Formula 1 car in glossy racing red with white accents, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "f1_red_short": "glossy red Formula 1 car with white accents, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
-    "motogp": "A modern MotoGP racing motorcycle in glossy racing red with white accents and a rider in a plain red leather suit and plain helmet, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
-    "motogp_short": "glossy red MotoGP motorcycle with white accents and the same plain-suited rider, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp": "A modern MotoGP prototype racing motorcycle (full carbon aero fairing with front winglets, slick racing tyres, rider tucked low behind the screen) in glossy racing red with white accents and a rider in a plain red leather suit and plain helmet, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp_short": "glossy red MotoGP prototype motorcycle with white accents and the same plain-suited rider, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "f1": "A modern open-wheel single-seater Grand Prix race car in a {livery} livery{lettering}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "f1_short": "{livery_short} open-wheel single-seater Grand Prix race car{lettering_short}, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
-    "motogp_livery": "A modern MotoGP racing motorcycle in a {livery} livery{lettering} and a rider in a plain leather suit and plain helmet in matching colours, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
-    "motogp_livery_short": "{livery_short} MotoGP motorcycle{lettering_short} and the same plain-suited rider, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner"
+    "motogp_livery": "A modern MotoGP prototype racing motorcycle (full carbon aero fairing with front winglets, slick racing tyres, rider tucked low behind the screen) in a {livery} livery{lettering} and a rider in a plain leather suit and plain helmet in matching colours, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp_livery_short": "{livery_short} MotoGP prototype motorcycle{lettering_short} and the same plain-suited rider, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner"
   },
   "narrator_presets": {
     "EN-PADDOCK": "a relaxed British male motorsport commentator in his forties with a slightly raspy, natural voice, speaking conversationally in English with small natural pauses and breaths, like chatting to a friend in the paddock, not a polished announcer, not a movie-trailer voice, says:",

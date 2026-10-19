@@ -114,6 +114,9 @@ GLOBAL_RULES = [
     "Write narration, title and caption in the channel's audience language.",
     "Slot values: plain text, at most 600 characters, no curly braces; narration lines contain no double quotes.",
     "Copy the visual style of reference videos, never their footage, logos, watermarks or wording.",
+    "MotoGP channels (for example GP Racing) show a modern MotoGP prototype racing bike with a MotoGP team-style livery: "
+    "choose a motogp vehicle_preset and describe that bike in your visual slots. Show another kind of motorcycle only "
+    "when the story is clearly about that other bike, and say which kind in the slots.",
 ]
 RESEARCH_DEFAULTS = {
     "source_priority": [

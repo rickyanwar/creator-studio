@@ -120,6 +120,15 @@ def liveries(t: VideoTemplate) -> list[str]:
     return list(t.raw["blocks"].get("liveries", {}))
 
 
+def niche_liveries(t: VideoTemplate, niche: str | None) -> list[str]:
+    """Liveries for a niche: entries marked "niches" belong to those niches only; unmarked ones are F1 colourways."""
+    blocks = t.raw["blocks"].get("liveries", {})
+    if not niche:
+        return list(blocks)
+    matching = [key for key, value in blocks.items() if niche in (value.get("niches") or ["f1"])]
+    return matching or list(blocks)
+
+
 def narrator_presets(t: VideoTemplate) -> list[str]:
     return ["EN-DOC"] + list(t.raw["blocks"]["narrator_presets"])
 
@@ -237,6 +246,11 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
         prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), clip["prompt"])
         if "{" in prompt or "}" in prompt:
             raise ValueError("a placeholder is left over")
+        if "motogp" in preset:
+            # The clip texts were written for cars; a MotoGP video must say motorcycle, not car.
+            prompt = prompt.replace("The car keeps driving forward", "The motorcycle keeps riding forward").replace(
+                "for a car travelling forward", "for a motorcycle travelling forward"
+            )
         mode = {"t2v": "t2v", "i2v_from_previous_last_frame": "i2v"}[clip["mode"]]
         rendered.append({"index": index, "mode": mode, "prompt": prompt})
     return rendered

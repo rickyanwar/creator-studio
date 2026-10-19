@@ -209,7 +209,7 @@ def test_fill_idea_sets_and_overwrites_system_look(monkeypatch):
         return parse(json.dumps(generated)), "mock"
 
     monkeypatch.setattr(ai_video_fill.news_copywriter, "_generate_with_fallback", fake_generate)
-    monkeypatch.setattr(ai_video_fill, "pick_livery", lambda db, fanpage_id, t: "scarlet")
+    monkeypatch.setattr(ai_video_fill, "pick_livery", lambda db, fanpage_id, t, niche=None: "scarlet")
     variables, *_ = ai_video_fill.fill_idea(None, idea, fanpage, 2)
 
     assert variables["livery"] == "scarlet"
@@ -227,7 +227,7 @@ def test_fill_idea_overwrites_invalid_llm_narrator(monkeypatch):
         return parse(json.dumps(generated)), "mock"
 
     monkeypatch.setattr(ai_video_fill.news_copywriter, "_generate_with_fallback", fake_generate)
-    monkeypatch.setattr(ai_video_fill, "pick_livery", lambda db, fanpage_id, t: "scarlet")
+    monkeypatch.setattr(ai_video_fill, "pick_livery", lambda db, fanpage_id, t, niche=None: "scarlet")
     variables, *_ = ai_video_fill.fill_idea(None, idea, fanpage, 2)
 
     assert variables["narrator_preset"] == "EN-US-ENG"

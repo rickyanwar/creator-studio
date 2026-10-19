@@ -1,6 +1,7 @@
 """LLM-backed variable filling for approved video ideas."""
 from functools import lru_cache
 import json
+import logging
 import random
 import re
 
@@ -13,6 +14,7 @@ from app.services.video_templates import (
     get_narration_budget,
     get_template,
     liveries,
+    niche_liveries,
     narrator_presets,
     render_clips,
     required_variables,
@@ -20,6 +22,8 @@ from app.services.video_templates import (
     sanitize_channel_name,
     vehicle_presets,
 )
+
+logger = logging.getLogger(__name__)
 
 # Fixed-colour presets are mapped to their rotating-livery twin so every video gets a new livery.
 FIXED_COLOUR_PRESETS = {"f1_red": "f1", "motogp": "motogp_livery"}
@@ -52,7 +56,7 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
     budgets = {f"narration_{i + 1}": get_narration_budget(c, lang) for i, c in enumerate(t.raw["clip_templates"][:clips])}
     page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
     niche_text = " ".join(str(value) for value in page_niches) + " " + getattr(fanpage, "name", "")
-    niche = "motogp" if "motogp" in niche_text.lower() else "f1"
+    niche = fanpage_niche(fanpage)
     available_presets = vehicle_presets(t)
     if niche == "motogp":
         presets = [p for p in available_presets if "motogp" in p] or available_presets
@@ -67,7 +71,7 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
 Template rules: {json.dumps(t.raw.get('rules', t.raw.get('description', '')))}
 Format example variables: {json.dumps(example)}
 Required variables: {json.dumps(required_variables(t, clips))}; narration word budgets: {json.dumps(budgets)}
-Vehicle preset choices for this page: {json.dumps(presets)}. Narration must be in {lang_display}.
+Vehicle preset choices for this page: {json.dumps(presets)}.{" This is a MotoGP page: show a modern MotoGP prototype racing bike unless the story is clearly about another motorcycle." if niche == "motogp" else ""} Narration must be in {lang_display}.
 Title and caption must be in {lang}; title <= {title_max} chars, caption <= {desc_max} chars and <= {cs.hashtag_count} hashtags.
 The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
 Do not output livery or channel_name; the system sets them.
@@ -111,9 +115,15 @@ def _parse(raw: str, title_max: int = 100, desc_max: int = 600, hashtag_max: int
     return value
 
 
-def pick_livery(db, fanpage_id, t):
+def fanpage_niche(fanpage) -> str:
+    page_niches = getattr(fanpage, "mode2_gallery_niches", None) or []
+    niche_text = " ".join(str(value) for value in page_niches) + " " + (getattr(fanpage, "name", "") or "")
+    return "motogp" if re.search(r"moto\s*-?\s*gp", niche_text, re.I) else "f1"
+
+
+def pick_livery(db, fanpage_id, t, niche: str | None = None):
     """Next livery for this fanpage: one not used by its recent videos, else the least recently used."""
-    options = liveries(t)
+    options = niche_liveries(t, niche)
     rows = (
         db.query(VideoIdea.variables)
         .join(VideoJob, VideoJob.idea_id == VideoIdea.id)
@@ -139,14 +149,26 @@ def apply_system_look(db, fanpage, template, variables):
     if variables.get("narrator_preset") not in narrator_presets(template):
         variables["narrator_preset"] = resolve_narrator(fanpage, template)
     preset = variables.get("vehicle_preset")
+    niche = fanpage_niche(fanpage)
+    presets = vehicle_presets(template)
+    # A MotoGP page always shows a MotoGP bike, an F1 page never does (the LLM preset choice is only a hint).
+    if niche == "motogp" and preset in presets and "motogp" not in preset and "motogp_livery" in presets:
+        logger.info("Mode 8: preset %s replaced by motogp_livery for MotoGP page %s", preset, getattr(fanpage, "id", None))
+        preset = "motogp_livery"
+        variables["vehicle_preset"] = preset
+    elif niche == "f1" and preset and "motogp" in preset and "f1" in presets:
+        logger.info("Mode 8: preset %s replaced by f1 for F1 page %s", preset, getattr(fanpage, "id", None))
+        preset = "f1"
+        variables["vehicle_preset"] = preset
     if preset in FIXED_COLOUR_PRESETS and FIXED_COLOUR_PRESETS[preset] in vehicle_presets(template):
         preset = FIXED_COLOUR_PRESETS[preset]
         variables["vehicle_preset"] = preset
     if preset in {"f1", "classic_gp", "motogp_livery"}:
-        if variables.get("team_livery") in liveries(template):
+        kind_liveries = niche_liveries(template, "motogp" if "motogp" in preset else "f1")
+        if variables.get("team_livery") in kind_liveries:
             variables["livery"] = variables["team_livery"]
-        if variables.get("livery") not in liveries(template):
-            variables["livery"] = pick_livery(db, fanpage.id, template)
+        if variables.get("livery") not in kind_liveries:
+            variables["livery"] = pick_livery(db, fanpage.id, template, "motogp" if "motogp" in preset else "f1")
         channel_name = sanitize_channel_name(fanpage.name)
         if channel_name is None:
             variables.pop("channel_name", None)
