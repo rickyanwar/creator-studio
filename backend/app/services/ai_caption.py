@@ -106,7 +106,7 @@ def _eff(source, fanpage, field: str):
 
 def build_caption_prompt(
     fanpage, source_username: str, original_caption: str, source=None, quote_text: str | None = None,
-    with_attribution: bool = True,
+    with_attribution: bool = True, image_description: dict | None = None,
 ) -> str:
     """Build the AI prompt from fanpage criteria + source context. When `source`
     (an IGSource) has its own caption criteria set, those override the fanpage's.
@@ -149,22 +149,56 @@ def build_caption_prompt(
         if quote_text else ""
     )
 
+    image_block = ""
+    meme_line = ""
+    if image_description:
+        vis_text = image_description.get("visible_text") or ""
+        desc = image_description.get("description") or ""
+        people_raw = image_description.get("people") or []
+        people_names = []
+        if isinstance(people_raw, list):
+            for p in people_raw:
+                if isinstance(p, dict):
+                    name = p.get("name")
+                    conf = p.get("confidence", 0)
+                    if name and isinstance(conf, (int, float)) and conf >= 0.8:
+                        people_names.append(name)
+                elif isinstance(p, str) and p.strip():
+                    people_names.append(p.strip())
+        people_str = ", ".join(people_names) if people_names else "not identified"
+
+        image_block = (
+            f"\n\nIMAGE DESCRIPTION (from a vision check of the post image):\n"
+            f'- Visible text: "{vis_text}"\n'
+            f"- What is visible: {desc}\n"
+            f"- People: {people_str}"
+        )
+        if image_description.get("is_meme"):
+            meme_line = (
+                "- This is a meme or joke post: write a short, light caption that reacts to the joke. "
+                "Repeat the visible text if helpful. Do not turn it into a news story.\n"
+            )
+
+    attribution_part = f"{attribution_line}\n" if attribution_line else ""
+
     return f"""You are a social media copywriter for the Facebook Fanpage "{fanpage.name}".
 
 ORIGINAL POST CONTEXT (from Instagram @{source_username}):
-"{original_caption}"
+"{original_caption}"{image_block}
 
 TASK: Rewrite the caption for the Facebook Fanpage above with these criteria:
 - Language: {language}
 - Tone: {tone}
 - Maximum length: {max_length} characters
 - The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
+- "{fanpage.name}" is only the name of this Facebook page. It is NOT the topic. Never write about it as a place, person or thing.
+- Use ONLY facts stated in the ORIGINAL POST CONTEXT (and the IMAGE DESCRIPTION if one is given). Never invent people, places, numbers, dates, results or events. If something is not stated, leave it out.
+- The source account @{source_username} is only credited. Do not treat its name as a person in the story.
 - Must include keywords: {must_include}
 - Must avoid words: {must_avoid}
 - Include {hashtag_count} relevant hashtags at the end
 - End with call-to-action: {cta_text if cta_text else "none"}
-{attribution_line}
-{quote_line}- Additional notes: {custom_prompt if custom_prompt else "none"}
+{attribution_part}{quote_line}{meme_line}- Additional notes: {custom_prompt if custom_prompt else "none"}
 
 OUTPUT: only the final caption, no explanation, no quote marks."""
 
