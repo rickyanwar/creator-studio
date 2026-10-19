@@ -268,7 +268,8 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
             prompt = build_caption_prompt(
                 fanpage, niche, caption_context, source=ig_source,
                 quote_text=None if (decision and ctype in ("quote", "team_radio")) else (design_title if ctype in ("quote", "team_radio") else None),
-                with_attribution=False if decision else True
+                with_attribution=False if decision else True,
+                image_description=None,
             )
             if decision:
                 if ctype in ("quote", "team_radio"):

@@ -29,11 +29,76 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
         ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
 
+        from app.services.caption_grounding import has_usable_caption, describe_image_for_caption
+        from app.services.fanpage_caption import caption_settings
+
+        image_description = None
+        orig_caption = post.original_caption or ""
+
+        if not has_usable_caption(orig_caption):
+            niches = getattr(fanpage, "mode2_gallery_niches", None) or []
+            niche_hint = niches[0] if (niches and len(niches) > 0) else None
+
+            img_input = None
+            local_paths = getattr(post, "image_local_paths", None) or []
+            if local_paths and len(local_paths) > 0 and local_paths[0]:
+                import os
+                if os.path.isfile(local_paths[0]):
+                    img_input = local_paths[0]
+
+            if img_input is None:
+                public_urls = getattr(post, "image_public_urls", None) or []
+                if public_urls and len(public_urls) > 0 and public_urls[0]:
+                    try:
+                        import httpx
+                        resp = httpx.get(public_urls[0], timeout=20.0)
+                        if resp.status_code == 200:
+                            img_input = resp.content
+                    except Exception as exc:
+                        logger.warning("Job %d: failed to download image %s: %s", job.id, public_urls[0], exc)
+
+            if img_input:
+                image_description = describe_image_for_caption(img_input, niche_hint=niche_hint)
+
+            if image_description is None:
+                cs = caption_settings(fanpage)
+                source_username = ig_source.ig_username if ig_source else ""
+                parts = []
+                if cs.use_attribution and source_username:
+                    attr_line = cs.attribution_template.format(source_username=source_username)
+                    parts.append(attr_line)
+
+                tags = []
+                for kw in (cs.must_include or []):
+                    if kw:
+                        t = kw if kw.startswith("#") else f"#{kw.replace(' ', '')}"
+                        if t not in tags:
+                            tags.append(t)
+                if niche_hint:
+                    nt = f"#{niche_hint.replace(' ', '')}"
+                    if nt not in tags:
+                        tags.append(nt)
+
+                if tags and cs.hashtag_count > 0:
+                    tags_str = " ".join(tags[:cs.hashtag_count])
+                    parts.append(tags_str)
+
+                job.ai_generated_caption = "\n\n".join(parts) if parts else ""
+                job.status = PublishJobStatus.pending_review
+                job.last_error = "caption needs review: source caption empty and image check failed"
+                db.commit()
+                logger.warning(
+                    "Job %d: vision check failed for empty source caption — forced to pending_review",
+                    job.id,
+                )
+                return
+
         prompt = build_caption_prompt(
             fanpage=fanpage,
             source_username=ig_source.ig_username,
-            original_caption=post.original_caption or "",
+            original_caption=orig_caption,
             source=ig_source,
+            image_description=image_description,
         )
 
         caption, provider_used = generate_caption(prompt, force_provider=force_provider)

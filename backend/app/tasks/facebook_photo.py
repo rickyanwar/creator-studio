@@ -167,6 +167,7 @@ def _consume_one(db, fanpage) -> bool:
             build_caption_prompt(
                 fanpage, fanpage.name, context, source=None,
                 quote_text=quote_text, with_attribution=False,
+                image_description=None,
             ),
         )
     except Exception as exc:
