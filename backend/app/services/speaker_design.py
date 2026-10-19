@@ -20,6 +20,7 @@ from sqlalchemy import String, cast, func, or_
 from app.models.gallery import GalleryImage
 from app.services.gallery_filters import not_keyword_mismatch
 from app.services import design_images, visual_engine
+from app.services.prompt_rules import avoid_block, realism_block, text_zone_line
 from app.services.visual_engine import GenerationRequest, VisualEngineError
 from app.services.visual_sourcing import get_name_variants
 
@@ -435,12 +436,13 @@ def plan_layout(moment_photos: list, bike_photos: list) -> str | None:
 
 
 ASIS = "Real photos used inside insets or behind the speaker must be used AS IS: only crop, scale, place and softly blur them. Never redraw, re-render, sharpen, enhance or add detail to any motorcycle, rider or helmet; keep their original photographic softness, grain and motion blur, exactly like a real press photo."
-COMMON = ASIS + '''
+COMMON = ASIS + f'''
 Keep every real sponsor logo, patch, number and printed text on the clothing, caps, suits, helmets and motorcycles exactly as in the photos; never remove, blur or simplify them; do not add any new text or logo. If an official MotoGP logo appears in a background, leave it out.
 Lighting and colour: natural neutral light with true-to-life colours like a real Getty press photo composited by a professional designer. NO golden hour, NO yellow or orange tint, NO haze, NO glow, NO lens flare, NO dramatic grading. The light on the speaker's face matches Image 1.
-Keep every face, the inset circle and any important detail ABOVE the lower 37 percent band of the card; the bottom 37 percent may hold only the speaker's body/torso and background, because the headline text is placed there.
-The bottom 30 percent fades to deep navy almost black and stays empty for text.
-Do not invent or change any person, face, clothing, bike or pose; no extra people beyond those in the photos; natural skin texture with visible pores and subtle film grain; no HDR look, no over-sharpening, no beauty filter. NO text at all.'''
+{text_zone_line()}
+Do not invent or change any person, face, clothing, bike or pose; no extra people beyond those in the photos; natural skin texture with visible pores and subtle film grain; no HDR look, no over-sharpening, no beauty filter. NO text at all.
+
+{realism_block()}'''
 def _photo_description(row, fallback: str) -> str:
     attrs = getattr(row, "attributes", None) or {}
     caption = attrs.get("caption") if isinstance(attrs, dict) else None
@@ -486,7 +488,7 @@ def _build_prompt(layout: str, speaker: str, side: str, sport: str, moment_photo
             speaker_line += f" {edit_line}"
         lines = [f"Design a premium vertical 4:5 {sport} social media graphic, the quality a senior graphic designer produces in Photoshop. Use only the REAL people and objects from the reference photos.", speaker_line, f"Image 2 = the real photo of {_photo_description(bike, 'the rider')} riding (race number {_race_number(bike)}). Use this photo AS IS as the back layer on the {other} side behind the speaker: crop and scale it so the rider and motorcycle are large in the upper {other} area, the rest of that photo's own track scene softly blurred to fill the background. The speaker's shoulder partly covers the near edge of the bike; the bike never covers the speaker.", "Image 3 = a second real photo of the speaker, only to confirm his identity."]
     lines.append(COMMON)
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n\n" + avoid_block()
 
 
 def _prompt(layout: str, speaker: str, subjects: list[str], side: str, sport: str, moment_photos=None, bike_photos=None, framing: str = HEAD_AND_SHOULDERS_FRAMING, speaker_photo: GalleryImage | None = None, mood: str = "any") -> str:

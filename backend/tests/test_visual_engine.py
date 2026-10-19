@@ -15,9 +15,11 @@ from app.services.visual_engine import (
     build_inset_prompt,
     build_solo_prompt,
     build_action_prompt,
+    build_whatif_inset_prompt,
     build_team_radio_prompt,
     generate,
 )
+from app.services.prompt_rules import avoid_block, realism_block
 from app.services.nine_router import NineRouterConfig
 
 
@@ -145,6 +147,9 @@ def test_build_team_radio_prompt():
     assert "Dry conditions: no rain, no wet track, no water spray or wet effects anywhere on the card." in prompt
     assert "follow the card format of image 4 exactly (it shows six example drivers; use the same layout for VERSTAPPEN)" in prompt
     assert "Image 5 is the McLaren car racing alongside; keep its real livery, number and sponsor logos exactly." in prompt
+    assert realism_block() in prompt
+    assert "Bottom 42%" not in prompt
+    assert "Do NOT include anything below" not in prompt
 
 
 def test_build_team_radio_prompt_rain():
@@ -161,6 +166,9 @@ def test_build_team_radio_prompt_rain():
     )
     assert "no rain or water effects" not in prompt
     assert "Dry conditions:" not in prompt
+    assert realism_block() in prompt
+    assert "Bottom 42%" not in prompt
+    assert "Do NOT include anything below" not in prompt
 
 
 def test_build_inset_prompt():
@@ -169,12 +177,17 @@ def test_build_inset_prompt():
     assert "INSET 1 (Image 2): REAL PHOTO. inset" in prompt
     assert "MotoGP social media graphic" in prompt
     assert "best MotoGP media pages" in prompt
-    assert "Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert realism_block() in prompt
+    assert prompt.endswith(avoid_block())
+
 
 def test_build_solo_prompt():
     prompt = build_solo_prompt("hero", "purpose", "blue", sport="MotoGP")
     assert "HERO (image 1): hero" in prompt
-    assert "Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert realism_block() in prompt
+    assert prompt.endswith(avoid_block())
 
 
 def test_build_action_prompt():
@@ -183,7 +196,27 @@ def test_build_action_prompt():
     assert "One big action photo" in prompt
     assert "UFC social media graphic" in prompt
     assert "best UFC media pages" in prompt
-    assert "Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert realism_block() in prompt
+    assert prompt.endswith(avoid_block())
+
+
+def test_build_whatif_inset_prompt():
+    prompt, refs = build_whatif_inset_prompt(
+        hero_desc="hero",
+        target_team="ferrari",
+        target_team_color="red",
+        target_team_logo_desc="prancing horse",
+        accent="blue",
+        hero_path="hero.jpg",
+        alt_path=None,
+        kit_path=None,
+        sport="Formula 1",
+    )
+    assert "HERO (Image 1): hero" in prompt
+    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert realism_block() in prompt
+    assert prompt.endswith(avoid_block())
 
 
 def test_build_team_radio_prompt_from_f1_driver_columns():
