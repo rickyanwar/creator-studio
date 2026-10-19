@@ -20,9 +20,14 @@ import redis
 from app.models.settings import Settings
 from app.services.gptcli_client import (
     DEFAULT_UNAVAILABLE_S,
+    FOLLOW_POLL_S,
+    MAX_WAIT_S,
+    POST_WAIT_S,
+    RUN_LIMIT_S,
     TEMPORARY_TYPES,
     UNAVAILABLE_KEY,
     UNAVAILABLE_REASON_KEY,
+    UNAVAILABLE_STREAK_KEY,
     WIB,
     GptcliConfig,
     GptcliError,
@@ -31,9 +36,11 @@ from app.services.gptcli_client import (
     get_gptcli_config,
     gptcli_applies,
     gptcli_unavailable_until,
+    job_status,
     job_timeout_s,
     mark_gptcli_unavailable,
     request_id_for,
+    serve_health,
 )
 
 
@@ -56,6 +63,15 @@ class _FakeRedis:
         for k in keys:
             self._data.pop(k, None)
             self._ttl.pop(k, None)
+
+    def incr(self, key: str, amount: int = 1) -> int:
+        val = int(self._data.get(key, 0)) + amount
+        self._data[key] = str(val)
+        return val
+
+    def expire(self, key: str, seconds: int):
+        self._ttl[key] = seconds
+        return True
 
 
 def _make_png_bytes(width: int = 8, height: int = 8, color: tuple = (255, 0, 0)) -> bytes:
@@ -85,14 +101,16 @@ def test_generate_image_success_decodes_png_and_returns_meta():
         "chat_url": "https://chatgpt.com/c/abc",
     }
     resp = httpx.Response(200, json={"data": [{"b64_json": b64_str}], "gptcli": meta})
+    fake = _FakeRedis()
 
-    with patch("app.services.gptcli_client.httpx.post", return_value=resp) as mock_post:
-        result = generate_image(
-            cfg,
-            prompt="A racing bike",
-            images=["data:image/jpeg;base64,aaa"],
-            request_id="cs-req-001",
-        )
+    with patch("app.services.gptcli_client._redis", return_value=fake):
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp) as mock_post:
+            result = generate_image(
+                cfg,
+                prompt="A racing bike",
+                images=["data:image/jpeg;base64,aaa"],
+                request_id="cs-req-001",
+            )
 
     assert isinstance(result, GptcliResult)
     assert result.png == png_bytes
@@ -110,7 +128,7 @@ def test_generate_image_success_decodes_png_and_returns_meta():
     assert kwargs["headers"]["Authorization"] == "Bearer test-secret-token"
     assert kwargs["headers"]["X-Request-Id"] == "cs-req-001"
     assert kwargs["headers"]["Content-Type"] == "application/json"
-    assert kwargs["timeout"] == 300 + 120  # job_timeout_s(1) + HTTP_MARGIN_S
+    assert kwargs["timeout"] == httpx.Timeout(POST_WAIT_S, connect=10.0)
 
 
 # ── 2. Error types from Section 3 ───────────────────────────────────────────
@@ -230,7 +248,8 @@ def test_generate_image_transport_exceptions_mapped():
             assert exc.value.type == "unreachable"
 
         # ReadTimeout -> timeout
-        with patch("app.services.gptcli_client.httpx.post", side_effect=httpx.ReadTimeout("read timeout")):
+        with patch("app.services.gptcli_client.httpx.post", side_effect=httpx.ReadTimeout("read timeout")), \
+             patch("app.services.gptcli_client.job_status", return_value=None):
             with pytest.raises(GptcliError) as exc:
                 generate_image(cfg, "p", [], request_id="cs-readto")
             assert exc.value.type == "timeout"
@@ -533,3 +552,634 @@ def test_mark_gptcli_unavailable_redis_error_returns_datetime():
     with patch("app.services.gptcli_client._redis", return_value=raising_redis):
         until = mark_gptcli_unavailable("quota", 3600, now=now_utc, day_start="05:30")
         assert until == now_utc + timedelta(seconds=3600)
+
+
+# ── 12. Timeout configuration (MAX_WAIT_S & max_wait_s keyword) ──────────────
+
+def test_generate_image_timeout_configuration():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    png_bytes = _make_png_bytes(8, 8)
+    b64_str = base64.b64encode(png_bytes).decode("ascii")
+    resp = httpx.Response(200, json={"data": [{"b64_json": b64_str}]})
+    fake = _FakeRedis()
+
+    with patch("app.services.gptcli_client._redis", return_value=fake):
+        # 1. Initial POST timeout is always POST_WAIT_S (90 s)
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp) as mock_post:
+            generate_image(cfg, "p", ["img1"], request_id="cs-to-1")
+            assert mock_post.call_args.kwargs["timeout"] == httpx.Timeout(POST_WAIT_S, connect=10.0)
+
+        # 2. Re-POST timeout uses MAX_WAIT_S (1800 s) by default
+        with patch("app.services.gptcli_client.httpx.post", side_effect=[httpx.ReadTimeout("slow"), resp]) as mock_post, \
+             patch("app.services.gptcli_client.job_status", return_value=None):
+            generate_image(cfg, "p", ["img1"], request_id="cs-to-fb-1")
+            assert mock_post.call_args_list[0].kwargs["timeout"] == httpx.Timeout(POST_WAIT_S, connect=10.0)
+            assert mock_post.call_args_list[1].kwargs["timeout"] == httpx.Timeout(1800, connect=10.0)
+
+        # 3. max_wait_s given and larger than job timeout (2000 > 420): equals max_wait_s
+        with patch("app.services.gptcli_client.httpx.post", side_effect=[httpx.ReadTimeout("slow"), resp]) as mock_post, \
+             patch("app.services.gptcli_client.job_status", return_value=None):
+            generate_image(cfg, "p", ["img1"], request_id="cs-to-fb-2", max_wait_s=2000.0)
+            assert mock_post.call_args_list[1].kwargs["timeout"] == httpx.Timeout(2000.0, connect=10.0)
+
+        # 4. max_wait_s smaller than job timeout for 3 images (job_timeout 600 + 120 = 720, max_wait_s 500): takes job timeout
+        with patch("app.services.gptcli_client.httpx.post", side_effect=[httpx.ReadTimeout("slow"), resp]) as mock_post, \
+             patch("app.services.gptcli_client.job_status", return_value=None):
+            generate_image(cfg, "p", ["img1", "img2", "img3"], request_id="cs-to-fb-3", max_wait_s=500.0)
+            assert mock_post.call_args_list[1].kwargs["timeout"] == httpx.Timeout(720, connect=10.0)
+
+
+# ── 13. Single "unavailable" does NOT call mark_gptcli_unavailable ───────────
+
+def test_unavailable_single_failure_does_not_mark_unavailable():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+    resp = httpx.Response(503, json={"error": {"type": "unavailable", "message": "browser closed"}})
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.mark_gptcli_unavailable") as mock_mark:
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp):
+            with pytest.raises(GptcliError) as exc_info:
+                generate_image(cfg, "p", [], request_id="cs-unavail-1")
+            assert exc_info.value.type == "unavailable"
+
+        mock_mark.assert_not_called()
+        assert fake.get(UNAVAILABLE_KEY) is None
+        assert fake.get(UNAVAILABLE_STREAK_KEY) == "1"
+        assert fake._ttl.get(UNAVAILABLE_STREAK_KEY) == 900
+
+
+# ── 14. 3rd consecutive "unavailable" DOES call mark_gptcli_unavailable ──────
+
+def test_unavailable_third_consecutive_failure_marks_unavailable():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+    resp = httpx.Response(503, json={"error": {"type": "unavailable", "message": "browser closed"}})
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.mark_gptcli_unavailable", wraps=mark_gptcli_unavailable) as mock_mark:
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp):
+            # 1st failure
+            with pytest.raises(GptcliError):
+                generate_image(cfg, "p", [], request_id="cs-unavail-1")
+            assert mock_mark.call_count == 0
+            assert fake.get(UNAVAILABLE_KEY) is None
+            assert fake.get(UNAVAILABLE_STREAK_KEY) == "1"
+
+            # 2nd failure
+            with pytest.raises(GptcliError):
+                generate_image(cfg, "p", [], request_id="cs-unavail-2")
+            assert mock_mark.call_count == 0
+            assert fake.get(UNAVAILABLE_KEY) is None
+            assert fake.get(UNAVAILABLE_STREAK_KEY) == "2"
+
+            # 3rd consecutive failure -> triggers cooldown
+            with pytest.raises(GptcliError):
+                generate_image(cfg, "p", [], request_id="cs-unavail-3")
+            assert mock_mark.call_count == 1
+            assert fake.get(UNAVAILABLE_KEY) is not None
+            assert fake.get(UNAVAILABLE_REASON_KEY) == "unavailable"
+            assert fake.get(UNAVAILABLE_STREAK_KEY) == "3"
+
+
+# ── 15. Success between failures resets the streak ───────────────────────────
+
+def test_success_between_failures_resets_streak():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+    resp_err = httpx.Response(503, json={"error": {"type": "unavailable", "message": "browser closed"}})
+    png_bytes = _make_png_bytes(8, 8)
+    b64_str = base64.b64encode(png_bytes).decode("ascii")
+    resp_ok = httpx.Response(200, json={"data": [{"b64_json": b64_str}]})
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.mark_gptcli_unavailable") as mock_mark:
+        # Failure 1
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_err):
+            with pytest.raises(GptcliError):
+                generate_image(cfg, "p", [], request_id="cs-streak-1")
+        assert fake.get(UNAVAILABLE_STREAK_KEY) == "1"
+        assert mock_mark.call_count == 0
+
+        # Success resets streak
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_ok):
+            res = generate_image(cfg, "p", [], request_id="cs-streak-ok")
+            assert isinstance(res, GptcliResult)
+        assert fake.get(UNAVAILABLE_STREAK_KEY) is None
+
+        # Failure 2 (streak restarted from 1)
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_err):
+            with pytest.raises(GptcliError):
+                generate_image(cfg, "p", [], request_id="cs-streak-2")
+        assert fake.get(UNAVAILABLE_STREAK_KEY) == "1"
+        assert mock_mark.call_count == 0
+
+        # Failure 3 (streak reaches 2, still no mark)
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_err):
+            with pytest.raises(GptcliError):
+                generate_image(cfg, "p", [], request_id="cs-streak-3")
+        assert fake.get(UNAVAILABLE_STREAK_KEY) == "2"
+        assert mock_mark.call_count == 0
+
+
+# ── 16. "quota" and "logged_out" still mark immediately ──────────────────────
+
+def test_quota_and_logged_out_mark_immediately():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+    with patch("app.services.gptcli_client._redis", return_value=fake):
+        # quota marks immediately
+        resp_quota = httpx.Response(429, json={"error": {"type": "quota", "message": "rate limit"}})
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_quota):
+            with pytest.raises(GptcliError) as exc_info:
+                generate_image(cfg, "p", [], request_id="cs-q")
+            assert exc_info.value.type == "quota"
+        assert fake.get(UNAVAILABLE_KEY) is not None
+        assert fake.get(UNAVAILABLE_REASON_KEY) == "quota"
+        assert fake.get(UNAVAILABLE_STREAK_KEY) is None
+
+        fake.delete(UNAVAILABLE_KEY, UNAVAILABLE_REASON_KEY)
+
+        # logged_out marks immediately
+        resp_logout = httpx.Response(503, json={"error": {"type": "logged_out", "message": "session expired"}})
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_logout):
+            with pytest.raises(GptcliError) as exc_info:
+                generate_image(cfg, "p", [], request_id="cs-lo")
+            assert exc_info.value.type == "logged_out"
+        assert fake.get(UNAVAILABLE_KEY) is not None
+        assert fake.get(UNAVAILABLE_REASON_KEY) == "logged_out"
+        assert fake.get(UNAVAILABLE_STREAK_KEY) is None
+
+
+# ── 17. "timeout" (httpx.TimeoutException) does not mark ─────────────────────
+
+def test_timeout_does_not_mark_unavailable():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.mark_gptcli_unavailable") as mock_mark:
+        with patch("app.services.gptcli_client.httpx.post", side_effect=httpx.ReadTimeout("read timed out")), \
+             patch("app.services.gptcli_client.job_status", return_value=None):
+            with pytest.raises(GptcliError) as exc_info:
+                generate_image(cfg, "p", [], request_id="cs-to")
+            assert exc_info.value.type == "timeout"
+        mock_mark.assert_not_called()
+        assert fake.get(UNAVAILABLE_KEY) is None
+        assert fake.get(UNAVAILABLE_STREAK_KEY) is None
+
+
+# ── 18. Redis failure in streak logic does not raise ─────────────────────────
+
+def test_redis_failure_in_streak_logic_does_not_raise():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+
+    # 1. Failure tracking Redis error -> raises GptcliError, not RedisError
+    raising_redis = MagicMock()
+    raising_redis.incr.side_effect = redis.RedisError("redis connection died")
+    resp_err = httpx.Response(503, json={"error": {"type": "unavailable", "message": "closed"}})
+
+    with patch("app.services.gptcli_client._redis", return_value=raising_redis):
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_err):
+            with pytest.raises(GptcliError) as exc_info:
+                generate_image(cfg, "p", [], request_id="cs-redis-fail")
+            assert exc_info.value.type == "unavailable"
+
+    # 2. Success delete Redis error -> returns GptcliResult, not RedisError
+    raising_delete = MagicMock()
+    raising_delete.delete.side_effect = redis.RedisError("redis connection died")
+    png_bytes = _make_png_bytes(8, 8)
+    b64_str = base64.b64encode(png_bytes).decode("ascii")
+    resp_ok = httpx.Response(200, json={"data": [{"b64_json": b64_str}]})
+
+    with patch("app.services.gptcli_client._redis", return_value=raising_delete):
+        with patch("app.services.gptcli_client.httpx.post", return_value=resp_ok):
+            res = generate_image(cfg, "p", [], request_id="cs-redis-del-fail")
+            assert isinstance(res, GptcliResult)
+            assert res.png == png_bytes
+
+
+# ── 19. GC2: job_status and serve_health helpers ────────────────────────────
+
+def test_job_status_success_and_headers():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099/",
+        token="tok-123",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    job_payload = {
+        "request_id": "cs-test-job",
+        "state": "running",
+        "queue_position": 0,
+        "running_s": 42.5,
+    }
+    resp = httpx.Response(200, json=job_payload)
+    with patch("app.services.gptcli_client.httpx.get", return_value=resp) as mock_get:
+        st = job_status(cfg, "cs-test-job")
+        assert st == job_payload
+        mock_get.assert_called_once()
+        args, kwargs = mock_get.call_args
+        assert args[0] == "http://172.17.0.1:8099/v1/jobs/cs-test-job"
+        assert kwargs["headers"]["Authorization"] == "Bearer tok-123"
+        assert kwargs["timeout"] == 10.0
+
+
+def test_job_status_404_and_errors_return_none():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok-123",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    # 404 (e.g. old gpt serve)
+    with patch("app.services.gptcli_client.httpx.get", return_value=httpx.Response(404, text="Not Found")):
+        assert job_status(cfg, "cs-404") is None
+
+    # 500 error
+    with patch("app.services.gptcli_client.httpx.get", return_value=httpx.Response(500, text="Server Error")):
+        assert job_status(cfg, "cs-500") is None
+
+    # Network exception
+    with patch("app.services.gptcli_client.httpx.get", side_effect=httpx.ConnectError("refused")):
+        assert job_status(cfg, "cs-err") is None
+
+
+def test_serve_health_success_and_headers():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099/",
+        token="tok-123",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    health_payload = {
+        "ok": True,
+        "sleeping": False,
+        "queue_len": 1,
+        "hb_age_s": 2.1,
+        "profiles": {
+            "utama": {
+                "running": True,
+                "running_request_id": "cs-running-1",
+                "today_count": 12,
+                "soft_cap_daily": 80,
+                "quota_until": None,
+                "logged_in": True,
+            }
+        },
+    }
+    resp = httpx.Response(200, json=health_payload)
+    with patch("app.services.gptcli_client.httpx.get", return_value=resp) as mock_get:
+        res = serve_health(cfg)
+        assert res == health_payload
+        mock_get.assert_called_once()
+        args, kwargs = mock_get.call_args
+        assert args[0] == "http://172.17.0.1:8099/health"
+        assert kwargs["headers"]["Authorization"] == "Bearer tok-123"
+        assert kwargs["timeout"] == 10.0
+
+
+def test_serve_health_errors_return_none():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok-123",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    with patch("app.services.gptcli_client.httpx.get", return_value=httpx.Response(500)):
+        assert serve_health(cfg) is None
+
+    with patch("app.services.gptcli_client.httpx.get", side_effect=httpx.ConnectTimeout("timeout")):
+        assert serve_health(cfg) is None
+
+
+# ── 20. GC2: Follow loop in generate_image ──────────────────────────────────
+
+def test_follow_loop_post_returns_in_time_no_polling():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    png_bytes = _make_png_bytes(8, 8)
+    b64_str = base64.b64encode(png_bytes).decode("ascii")
+    resp = httpx.Response(200, json={"data": [{"b64_json": b64_str}]})
+    fake = _FakeRedis()
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", return_value=resp) as mock_post, \
+         patch("app.services.gptcli_client.job_status") as mock_status:
+        res = generate_image(cfg, "prompt", [], request_id="cs-in-time")
+        assert isinstance(res, GptcliResult)
+        assert res.png == png_bytes
+        mock_post.assert_called_once()
+        mock_status.assert_not_called()
+
+
+def test_follow_loop_read_timeout_queued_running_done():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    png_bytes = _make_png_bytes(8, 8)
+    b64_str = base64.b64encode(png_bytes).decode("ascii")
+    resp_done = httpx.Response(200, json={"data": [{"b64_json": b64_str}], "gptcli": {"cached": True}})
+    fake = _FakeRedis()
+
+    job_responses = [
+        {"request_id": "cs-f1", "state": "queued", "queue_position": 2, "running_s": 0},
+        {"request_id": "cs-f1", "state": "running", "queue_position": 0, "running_s": 45},
+        {"request_id": "cs-f1", "state": "done", "queue_position": 0, "running_s": 85},
+    ]
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=[httpx.ReadTimeout("read timeout"), resp_done]) as mock_post, \
+         patch("app.services.gptcli_client.job_status", side_effect=job_responses) as mock_status, \
+         patch("app.services.gptcli_client.time.sleep") as mock_sleep:
+        res = generate_image(cfg, "prompt", [], request_id="cs-f1")
+        assert isinstance(res, GptcliResult)
+        assert res.png == png_bytes
+        assert res.meta.get("cached") is True
+
+        assert mock_post.call_count == 2
+        # Initial post had POST_WAIT_S
+        assert mock_post.call_args_list[0].kwargs["timeout"] == httpx.Timeout(POST_WAIT_S, connect=10.0)
+        # Re-post had normal GC1 timeout
+        assert mock_post.call_args_list[1].kwargs["timeout"] == httpx.Timeout(MAX_WAIT_S, connect=10.0)
+        # Follow polled 3 times
+        assert mock_status.call_count == 3
+        # Slept twice between polls
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_called_with(FOLLOW_POLL_S)
+
+
+def test_follow_loop_failed_reposts_and_handles_error():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    resp_failed = httpx.Response(
+        502,
+        json={"error": {"type": "refused", "message": "content policy violation"}},
+    )
+    fake = _FakeRedis()
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=[httpx.ReadTimeout("read timeout"), resp_failed]) as mock_post, \
+         patch("app.services.gptcli_client.job_status", return_value={"state": "failed", "queue_position": 0}):
+        with pytest.raises(GptcliError) as exc_info:
+            generate_image(cfg, "prompt", [], request_id="cs-fail-1")
+        assert exc_info.value.type == "refused"
+        assert exc_info.value.status == 502
+        assert mock_post.call_count == 2
+
+
+def test_follow_loop_unknown_twice_timeout():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+
+    job_responses = [
+        {"request_id": "cs-unk", "state": "unknown"},
+        {"request_id": "cs-unk", "state": "unknown"},
+    ]
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=httpx.ReadTimeout("read timeout")), \
+         patch("app.services.gptcli_client.job_status", side_effect=job_responses), \
+         patch("app.services.gptcli_client.time.sleep") as mock_sleep:
+        with pytest.raises(GptcliError) as exc_info:
+            generate_image(cfg, "prompt", [], request_id="cs-unk")
+        assert exc_info.value.type == "timeout"
+        assert "gpt serve lost the job" in exc_info.value.message
+        assert mock_sleep.call_count == 1
+
+
+def test_follow_loop_none_four_times_timeout():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+
+    # First call returns a valid dict (so not old gpt serve fallback), followed by 4 None responses
+    job_responses = [
+        {"request_id": "cs-n4", "state": "queued"},
+        None,
+        None,
+        None,
+        None,
+    ]
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=httpx.ReadTimeout("read timeout")), \
+         patch("app.services.gptcli_client.job_status", side_effect=job_responses), \
+         patch("app.services.gptcli_client.time.sleep"):
+        with pytest.raises(GptcliError) as exc_info:
+            generate_image(cfg, "prompt", [], request_id="cs-n4")
+        assert exc_info.value.type == "timeout"
+        assert "gpt serve lost the job" in exc_info.value.message
+
+
+def test_follow_loop_running_s_exceeds_600s_timeout():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=httpx.ReadTimeout("read timeout")), \
+         patch("app.services.gptcli_client.job_status", return_value={"state": "running", "running_s": 601}):
+        with pytest.raises(GptcliError) as exc_info:
+            generate_image(cfg, "prompt", [], request_id="cs-r600")
+        assert exc_info.value.type == "timeout"
+        assert "job ran longer than 600 s" in exc_info.value.message
+
+
+def test_follow_loop_total_wait_exceeds_max_wait_s():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    fake = _FakeRedis()
+
+    # Simulate time advancing beyond MAX_WAIT_S (1800)
+    monotonic_vals = [0.0, 1801.0]
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=httpx.ReadTimeout("read timeout")), \
+         patch("app.services.gptcli_client.time.monotonic", side_effect=monotonic_vals):
+        with pytest.raises(GptcliError) as exc_info:
+            generate_image(cfg, "prompt", [], request_id="cs-waited")
+        assert exc_info.value.type == "timeout"
+        assert "waited 1800 s" in exc_info.value.message
+
+
+def test_follow_loop_old_gpt_serve_fallback():
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token="tok",
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    png_bytes = _make_png_bytes(8, 8)
+    b64_str = base64.b64encode(png_bytes).decode("ascii")
+    resp_fallback_ok = httpx.Response(200, json={"data": [{"b64_json": b64_str}], "gptcli": {"old": True}})
+    fake = _FakeRedis()
+
+    with patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=[httpx.ReadTimeout("read timeout"), resp_fallback_ok]) as mock_post, \
+         patch("app.services.gptcli_client.job_status", return_value=None) as mock_status:
+        res = generate_image(cfg, "prompt", [], request_id="cs-old")
+        assert isinstance(res, GptcliResult)
+        assert res.png == png_bytes
+        # 1st call to status was None -> triggered fallback
+        assert mock_status.call_count == 1
+        assert mock_post.call_count == 2
+        assert mock_post.call_args_list[1].kwargs["timeout"] == httpx.Timeout(MAX_WAIT_S, connect=10.0)
+
+
+def test_follow_loop_no_prompt_or_token_in_logs(caplog):
+    import logging
+
+    secret_prompt = "TOP_SECRET_PROMPT_MOTORCYCLE_CRASH"
+    secret_token = "SUPER_SECRET_GPTCLI_TOKEN_999"
+
+    cfg = GptcliConfig(
+        enabled=True,
+        base_url="http://172.17.0.1:8099",
+        token=secret_token,
+        fanpage_ids=(),
+        thread="studio",
+        size="1080x1350",
+        day_start="05:30",
+    )
+    png_bytes = _make_png_bytes(8, 8)
+    b64_str = base64.b64encode(png_bytes).decode("ascii")
+    resp_ok = httpx.Response(200, json={"data": [{"b64_json": b64_str}]})
+    fake = _FakeRedis()
+
+    job_responses = [
+        {"request_id": "cs-log-1", "state": "queued", "queue_position": 1, "running_s": 0},
+        {"request_id": "cs-log-1", "state": "done", "queue_position": 0, "running_s": 30},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="app.services.gptcli_client"), \
+         patch("app.services.gptcli_client._redis", return_value=fake), \
+         patch("app.services.gptcli_client.httpx.post", side_effect=[httpx.ReadTimeout("read timeout"), resp_ok]), \
+         patch("app.services.gptcli_client.job_status", side_effect=job_responses), \
+         patch("app.services.gptcli_client.time.sleep"):
+        res = generate_image(cfg, secret_prompt, [], request_id="cs-log-1")
+        assert isinstance(res, GptcliResult)
+
+    all_logs = caplog.text
+    assert secret_prompt not in all_logs
+    assert secret_token not in all_logs
+    assert "gptcli: job cs-log-1 queued" in all_logs
