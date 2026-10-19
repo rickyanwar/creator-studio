@@ -13,6 +13,7 @@ from phone_runner.adb import (
     is_device_secure_locked,
     launch_facebook_feed,
     launch_facebook_own_profile,
+    parse_screen_state,
     ping_portal,
     put_to_sleep,
     query_activity_state,
@@ -70,7 +71,32 @@ PRE_SHARE_MAX_SECONDS = 300.0
 PHOTO_REVEAL_SWIPES = 3
 PHOTO_REFLOW_CHECKS = 3
 PHOTO_SWIPE_MAX_START_Y = 2050
+WAKE_ATTEMPTS = 3
+WAKE_SETTLE_SECONDS = 1.5
 
+
+def _screen_state(serial: str) -> str:
+    out = run_adb(["shell", "dumpsys", "power"], serial=serial).stdout
+    return parse_screen_state(out) if isinstance(out, str) else "unknown"
+
+
+def _screen_awake_after_wake(serial: str) -> bool:
+    """False only when the screen still reads asleep after a few wake tries (an unreadable state is not proof)."""
+    for _ in range(WAKE_ATTEMPTS):
+        if _screen_state(serial) != "asleep":
+            return True
+        # A wake key sent while the phone sleeps deeply is sometimes ignored (delivery 372, 2026-10-19).
+        wake_and_unlock(serial)
+        time.sleep(WAKE_SETTLE_SECONDS)
+    return _screen_state(serial) != "asleep"
+
+
+def _pre_share_vision_failure(v_ev: dict) -> tuple[str, str]:
+    """Status and error code for a vision gate that failed before SHARE: no answer at all (models down,
+    screenshot failed) waits for a retry; a real "no" from the model stays a failure."""
+    if v_ev.get("answer") is None:
+        return "waiting_for_device", "vision_unavailable"
+    return "failed", "vision_gate_failed"
 
 
 def _query_device_capture_with_retry(
@@ -703,6 +729,24 @@ def execute_publish(
         if was_asleep:
             time.sleep(2.0)
 
+        if not _screen_awake_after_wake(serial):
+            stages.append({
+                "stage": "wake",
+                "passed": False,
+                "detail": f"Screen stayed asleep after {WAKE_ATTEMPTS} wake attempts; nothing was posted",
+            })
+            return {
+                "status": "waiting_for_device",
+                "facebook_post_id": None,
+                "permalink": None,
+                "actor_id": expected_target_id,
+                "publish_may_have_started": False,
+                "error_code": "device_asleep",
+                "evidence": evidence,
+                "stages": stages,
+                "checked_at": checked_at,
+            }
+
         ui_cand_res, act_cand_res = _query_device_capture_with_retry(serial)
 
         if ui_cand_res.returncode != 0 or act_cand_res.returncode != 0:
@@ -1248,13 +1292,14 @@ def execute_publish(
                     "passed": False,
                     "detail": f"Vision gate composer_before_typing failed: {v_ev.get('detail')}",
                 })
+                gate_status, gate_error = _pre_share_vision_failure(v_ev)
                 return {
-                    "status": "failed",
+                    "status": gate_status,
                     "facebook_post_id": None,
                     "permalink": None,
                     "actor_id": expected_target_id,
                     "publish_may_have_started": False,
-                    "error_code": "vision_gate_failed",
+                    "error_code": gate_error,
                     "evidence": evidence,
                     "stages": stages,
                     "checked_at": checked_at,
@@ -1364,13 +1409,14 @@ def execute_publish(
                     "passed": False,
                     "detail": f"Vision gate composer_after_typing failed: {v_ev.get('detail')}",
                 })
+                gate_status, gate_error = _pre_share_vision_failure(v_ev)
                 return {
-                    "status": "failed",
+                    "status": gate_status,
                     "facebook_post_id": None,
                     "permalink": None,
                     "actor_id": expected_target_id,
                     "publish_may_have_started": False,
-                    "error_code": "vision_gate_failed",
+                    "error_code": gate_error,
                     "evidence": evidence,
                     "stages": stages,
                     "checked_at": checked_at,
@@ -1627,13 +1673,14 @@ def execute_publish(
                     "passed": False,
                     "detail": f"Vision gate {gate_name} failed: {v_ev.get('detail')}",
                 })
+                gate_status, gate_error = _pre_share_vision_failure(v_ev)
                 return {
-                    "status": "failed",
+                    "status": gate_status,
                     "facebook_post_id": None,
                     "permalink": None,
                     "actor_id": expected_target_id,
                     "publish_may_have_started": False,
-                    "error_code": "vision_gate_failed",
+                    "error_code": gate_error,
                     "evidence": evidence,
                     "stages": stages,
                     "checked_at": checked_at,
