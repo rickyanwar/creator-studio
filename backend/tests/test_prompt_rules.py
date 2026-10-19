@@ -48,3 +48,10 @@ def test_avoid_block_extras():
     assert "- custom item." in block
     assert "- another item." in block
     assert ".." not in block
+
+
+def test_series_logo_line_allows_gear_and_forbids_octagon_mat():
+    """SERIES_LOGO_LINE allows series logo on gear and forbids octagon mat or fence."""
+    assert "A small series logo that is part of an athlete's real gear (gloves, fight shorts, race suit, helmet) is fine." in SERIES_LOGO_LINE
+    assert "octagon mat or fence" in SERIES_LOGO_LINE
+    assert "gloves" not in SERIES_LOGO_LINE.split("(for example")[0]

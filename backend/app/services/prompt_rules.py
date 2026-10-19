@@ -21,9 +21,10 @@ def text_zone_line() -> str:
 
 SERIES_LOGO_LINE = (
     "- No official series logo or wordmark anywhere in the image: not on banners, screens, walls, "
-    "the track, the octagon mat or fence, gloves, shorts or podium backdrops (for example F1, Formula 1, "
-    "FIA, MotoGP, FIM, Dorna, UFC). Use plain unbranded surfaces there. Team, manufacturer and sponsor logos "
-    "(Ferrari, Red Bull, Ducati, Mercedes, Monster and so on) are fine and must stay exactly as real."
+    "the track, the octagon mat or fence, or podium backdrops (for example F1, Formula 1, "
+    "FIA, MotoGP, FIM, Dorna, UFC). Use plain unbranded surfaces there. A small series logo that is "
+    "part of an athlete's real gear (gloves, fight shorts, race suit, helmet) is fine. Team, manufacturer "
+    "and sponsor logos (Ferrari, Red Bull, Ducati, Mercedes, Monster and so on) are fine and must stay exactly as real."
 )
 
 

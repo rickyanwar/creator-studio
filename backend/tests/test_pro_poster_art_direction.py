@@ -366,6 +366,26 @@ def test_realism_and_template_space_sections_present():
     assert "- Never mix in another series' cars, bikes or logos." in p
 
 
+def test_art_direction_allows_gear_logos_and_forbids_octagon_mat():
+    """Art direction avoid block allows series logo on gear and forbids octagon mat or fence."""
+    brief = _make_brief(
+        series="UFC",
+        vehicle="",
+        circuit="T-Mobile Arena",
+        subjects=(Subject(name="Jon Jones", role="hero"),),
+    )
+    hero = _make_check(role="hero", path="/images/jones.jpg")
+    selection = PhotoSelection(hero=hero, context=())
+    direction = direct(brief, selection)
+    p = direction.prompt
+
+    assert "A small series logo that is part of an athlete's real gear (gloves, fight shorts, race suit, helmet) is fine." in p
+    assert "octagon mat or fence" in p
+    avoid_section = p.split("Do NOT include anything below")[1]
+    series_line = [line for line in avoid_section.splitlines() if "No official series logo" in line][0]
+    assert "gloves" not in series_line.split("(for example")[0]
+
+
 def test_context_lines_numbered_after_hero():
     """Context photos are numbered after the hero photo, and refs follow that order."""
     brief = _make_brief(
