@@ -1650,3 +1650,116 @@ def test_keyboard_that_never_closes_fails_without_swipe_or_share(monkeypatch):
     assert not [c for c in cmds if "swipe" in c]
     assert cmds.count(["shell", "input", "keyevent", "4"]) == 3
     assert (811, 125, 1026, 233) not in taps
+
+
+# ── Transient pre-publish problems wait for a retry instead of failing (deliveries 349 and 372) ──
+
+ASLEEP_POWER = "Power Manager State:\n  mWakefulness=Asleep\n"
+AWAKE_POWER = "Power Manager State:\n  mWakefulness=Awake\n"
+
+
+def _power_adb(power_outputs):
+    outputs = iter(power_outputs)
+    commands = []
+
+    def fake_run_adb(args, serial=None, **kwargs):
+        commands.append(args)
+        if args == ["shell", "dumpsys", "power"]:
+            return AdbResult(0, next(outputs, power_outputs[-1]), "")
+        return AdbResult(0, "OK", "")
+
+    return fake_run_adb, commands
+
+
+def test_screen_that_stays_asleep_waits_for_device_without_posting(monkeypatch):
+    fake_run_adb, _ = _power_adb([ASLEEP_POWER])
+    wake = mock.Mock(return_value=AdbResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: dict(FAKE_PROBE_READY, screen="asleep"))
+    monkeypatch.setattr("phone_runner.publish.run_adb", fake_run_adb)
+    monkeypatch.setattr("phone_runner.publish.wake_and_unlock", wake)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    capture = mock.Mock()
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", capture)
+    put_to_sleep = mock.Mock()
+    monkeypatch.setattr("phone_runner.publish.put_to_sleep", put_to_sleep)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Post",
+    )
+
+    assert res["status"] == "waiting_for_device"
+    assert res["error_code"] == "device_asleep"
+    assert res["publish_may_have_started"] is False
+    assert res["stages"][-1]["stage"] == "wake" and res["stages"][-1]["passed"] is False
+    assert wake.call_count == 1 + 3  # the normal wake plus three retries
+    capture.assert_not_called()
+    put_to_sleep.assert_called_with(TEST_SERIAL)
+
+
+def test_screen_that_wakes_on_a_retry_continues_to_the_identity_gate(monkeypatch):
+    fake_run_adb, _ = _power_adb([ASLEEP_POWER, AWAKE_POWER])
+    wake = mock.Mock(return_value=AdbResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: dict(FAKE_PROBE_READY, screen="asleep"))
+    monkeypatch.setattr("phone_runner.publish.run_adb", fake_run_adb)
+    monkeypatch.setattr("phone_runner.publish.wake_and_unlock", wake)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: AdbResult(1, "", "fail"))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    monkeypatch.setattr("phone_runner.publish.launch_facebook_own_profile", lambda s: AdbResult(0, "OK", ""))
+    monkeypatch.setattr("phone_runner.publish.put_to_sleep", lambda s: AdbResult(0, "OK", ""))
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Post",
+    )
+
+    assert wake.call_count == 2
+    assert res["error_code"] != "device_asleep"
+    assert any(s["stage"] == "identity_gate" for s in res["stages"])
+
+
+def test_vision_models_down_before_typing_waits_for_device(monkeypatch):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+    taps = []
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda s, b, **k: taps.append(b))
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+    ui_iter = iter([AdbResult(0, MODERN_FEED_DUMP, ""), AdbResult(0, EMPTY_PROOF_COMPOSER_XML, "")])
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a, **kw: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    mock_type = mock.Mock()
+    monkeypatch.setattr("phone_runner.publish.type_text", mock_type)
+
+    def models_down(serial, gate, **kw):
+        return False, {"gate": gate, "model": "", "ok": False,
+                       "detail": "all vision models failed; last detail: model ag/gemini-3.8-flash-high error: HTTPError",
+                       "answer": None}
+
+    monkeypatch.setattr("phone_runner.publish.verify_gate", models_down)
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "waiting_for_device"
+    assert res["error_code"] == "vision_unavailable"
+    assert res["publish_may_have_started"] is False
+    mock_type.assert_not_called()
+    assert (811, 125, 1026, 233) not in taps
