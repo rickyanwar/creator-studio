@@ -1702,8 +1702,9 @@ def execute_publish(
                     "passed": False,
                     "detail": f"pre-SHARE time budget exceeded ({round(elapsed, 1)} s)",
                 })
+                # Nothing was posted (the composer is discarded): a slow run waits for a retry (delivery 381).
                 return {
-                    "status": "failed",
+                    "status": "waiting_for_device",
                     "facebook_post_id": None,
                     "permalink": None,
                     "actor_id": expected_target_id,
@@ -2021,8 +2022,9 @@ def execute_publish(
                     "passed": False,
                     "detail": f"pre-SHARE time budget exceeded ({round(elapsed, 1)} s)",
                 })
+                # Nothing was posted (the composer is discarded): a slow run waits for a retry (delivery 381).
                 return {
-                    "status": "failed",
+                    "status": "waiting_for_device",
                     "facebook_post_id": None,
                     "permalink": None,
                     "actor_id": expected_target_id,
