@@ -1229,6 +1229,7 @@ def list_activity(
         .options(
             joinedload(PublishDelivery.destination),
             joinedload(PublishDelivery.device),
+            joinedload(PublishDelivery.publish_job),
             selectinload(PublishDelivery.events),
         )
     )
@@ -1252,6 +1253,20 @@ def list_activity(
     for d in deliveries:
         dest = d.destination
         dev = d.device
+        job = d.publish_job
+        media_urls: list[str] = (
+            list(d.media_snapshot)
+            if isinstance(d.media_snapshot, list) and all(isinstance(x, str) for x in d.media_snapshot)
+            else []
+        )
+        media_kind = (d.media_kind or "").lower()
+        if media_kind == "video":
+            thumbnail_url = job.video_thumbnail_url if job else None
+        elif media_kind in ("image", "album"):
+            thumbnail_url = media_urls[0] if media_urls else None
+        else:
+            thumbnail_url = None
+
         results.append(
             DeliveryActivityOut(
                 id=d.id,
@@ -1277,6 +1292,8 @@ def list_activity(
                 uncertain_since=d.uncertain_since,
                 last_error=d.last_error,
                 published_at=d.published_at,
+                media_urls=media_urls,
+                thumbnail_url=thumbnail_url,
                 created_at=d.created_at,
                 updated_at=d.updated_at,
                 events=d.events or [],

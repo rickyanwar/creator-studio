@@ -1137,6 +1137,8 @@ export interface DeliveryActivity {
   uncertain_since: string | null;
   last_error: string | null;
   published_at: string | null;
+  media_urls?: string[];
+  thumbnail_url?: string | null;
   created_at: string;
   updated_at: string;
   events: DeliveryEvent[];

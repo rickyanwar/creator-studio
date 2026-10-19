@@ -8,6 +8,7 @@ import {
   triggerCrawl,
   triggerFanpageSync,
   restartBeat,
+  listFanpages,
 } from "@/lib/api";
 import {
   getDashboardStats,
@@ -15,11 +16,14 @@ import {
   type BrandToday,
   type LatestPost,
 } from "@/lib/dashboardApi";
-import type { CrawlerHealth } from "@/lib/types";
+import { listReplizAccounts, type ReplizAccountsOut } from "@/lib/socialBrandsApi";
+import type { CrawlerHealth, Fanpage } from "@/lib/types";
 import { Icon } from "@iconify/react";
 import { ModeChip } from "@/components/ui/ModeChip";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useBrandFilter } from "@/contexts/BrandFilterContext";
+import { BrandAvatar } from "@/components/dashboard/BrandAvatar";
+import { PostLightbox } from "@/components/dashboard/PostLightbox";
 
 const BRAND_PALETTES = [
   "#C62828",
@@ -78,7 +82,37 @@ export default function DashboardPage() {
   const { data: health, mutate: mutateHealth } = useSWR("crawler-health", healthFetcher, {
     refreshInterval: 30000,
   });
+  const { data: fanpages } = useSWR<Fanpage[]>(
+    "fanpages",
+    () => listFanpages().then((r) => (Array.isArray(r.data) ? (r.data as Fanpage[]) : []))
+  );
+  const { data: replizData } = useSWR<ReplizAccountsOut>(
+    "repliz-accounts",
+    listReplizAccounts
+  );
   const { selectedBrandId } = useBrandFilter();
+
+  const [avatarErrors, setAvatarErrors] = useState<Set<number>>(new Set());
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+
+  const brandPictures = useMemo(() => {
+    const map = new Map<number, string>();
+    if (!fanpages || !replizData?.accounts) return map;
+
+    const replizPics = new Map<string, string>();
+    for (const acc of replizData.accounts) {
+      if (acc.picture) {
+        replizPics.set(acc.id, acc.picture);
+      }
+    }
+
+    for (const fp of fanpages) {
+      if (fp.repliz_account_id && replizPics.has(fp.repliz_account_id)) {
+        map.set(fp.id, replizPics.get(fp.repliz_account_id)!);
+      }
+    }
+    return map;
+  }, [fanpages, replizData]);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -741,13 +775,24 @@ export default function DashboardPage() {
                           href="/brands"
                           className="flex items-center gap-2.5 text-text hover:text-pri transition-colors group"
                         >
-                          <span
-                            aria-hidden="true"
-                            className="w-[30px] h-[30px] rounded-lg text-white flex items-center justify-center text-xs font-bold shrink-0"
-                            style={{ background: getBrandColor(brand.fanpage_id) }}
-                          >
-                            {brand.initials || "FP"}
-                          </span>
+                          <BrandAvatar
+                            name={brand.name}
+                            initials={brand.initials}
+                            color={getBrandColor(brand.fanpage_id)}
+                            pictureUrl={
+                              avatarErrors.has(brand.fanpage_id)
+                                ? null
+                                : brandPictures.get(brand.fanpage_id)
+                            }
+                            onError={() => {
+                              setAvatarErrors((prev) => {
+                                if (prev.has(brand.fanpage_id)) return prev;
+                                const next = new Set(prev);
+                                next.add(brand.fanpage_id);
+                                return next;
+                              });
+                            }}
+                          />
                           <span className="flex flex-col min-w-0">
                             <span className="font-semibold text-sm leading-tight truncate group-hover:text-pri">
                               {brand.name}
@@ -831,46 +876,63 @@ export default function DashboardPage() {
               <p className="text-xs text-text2 py-6 text-center">No published posts yet.</p>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                {data.latest_posts.map((post: LatestPost) => (
-                  <Link
+                {data.latest_posts.map((post: LatestPost, idx: number) => (
+                  <div
                     key={post.id}
-                    href="/history"
                     className="flex flex-col gap-1.5 text-text group min-w-0"
                   >
-                    <span
-                      aria-hidden="true"
-                      className="aspect-[4/5] rounded-[10px] bg-surface2 border border-line relative overflow-hidden flex items-center justify-center shrink-0"
-                    >
-                      {post.thumbnail_url ? (
+                    {post.thumbnail_url ? (
+                      <button
+                        type="button"
+                        onClick={() => setLightboxIdx(idx)}
+                        className="aspect-[4/5] rounded-[10px] bg-surface2 border border-line relative overflow-hidden flex items-center justify-center shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-pri/50 text-left"
+                        title="View image"
+                      >
                         <img
                           src={post.thumbnail_url}
                           alt={post.title || post.fanpage_name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                         />
-                      ) : (
+                        <span className="absolute left-1.5 bottom-1.5 pointer-events-none">
+                          <StatusBadge
+                            status="published"
+                            className="shadow-sm !text-[10px] !px-2 !py-0.5"
+                          />
+                        </span>
+                      </button>
+                    ) : (
+                      <span
+                        aria-hidden="true"
+                        className="aspect-[4/5] rounded-[10px] bg-surface2 border border-line relative overflow-hidden flex items-center justify-center shrink-0"
+                      >
                         <Icon
                           icon="solar:gallery-bold-duotone"
                           width={28}
                           className="text-text2/40"
                         />
-                      )}
-                      <span className="absolute left-1.5 bottom-1.5">
-                        <StatusBadge
-                          status="published"
-                          className="shadow-sm !text-[10px] !px-2 !py-0.5"
-                        />
+                        <span className="absolute left-1.5 bottom-1.5">
+                          <StatusBadge
+                            status="published"
+                            className="shadow-sm !text-[10px] !px-2 !py-0.5"
+                          />
+                        </span>
                       </span>
-                    </span>
-                    <span className="text-xs font-semibold text-text truncate group-hover:text-pri transition-colors">
-                      {post.fanpage_name}
-                    </span>
-                    <span className="text-[11px] text-text2 line-clamp-2 leading-tight">
-                      {post.title || post.content_type}
-                    </span>
-                    <span className="text-[10px] text-text2/70 mt-auto" suppressHydrationWarning>
-                      {mounted ? fmtTimeAgo(post.published_at) : ""}
-                    </span>
-                  </Link>
+                    )}
+                    <Link
+                      href="/history"
+                      className="flex flex-col gap-1.5 flex-1 min-w-0"
+                    >
+                      <span className="text-xs font-semibold text-text truncate group-hover:text-pri transition-colors">
+                        {post.fanpage_name}
+                      </span>
+                      <span className="text-[11px] text-text2 line-clamp-2 leading-tight">
+                        {post.title || post.content_type}
+                      </span>
+                      <span className="text-[10px] text-text2/70 mt-auto" suppressHydrationWarning>
+                        {mounted ? fmtTimeAgo(post.published_at) : ""}
+                      </span>
+                    </Link>
+                  </div>
                 ))}
               </div>
             )}
@@ -1017,6 +1079,15 @@ export default function DashboardPage() {
           Studio runs automated publishing to Facebook Pages & channels.
         </p>
       </section>
+
+      {data?.latest_posts && (
+        <PostLightbox
+          posts={data.latest_posts}
+          index={lightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+          onIndexChange={(i) => setLightboxIdx(i)}
+        />
+      )}
     </div>
   );
 }

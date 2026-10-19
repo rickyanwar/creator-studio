@@ -682,6 +682,8 @@ class DeliveryActivityOut(BaseModel):
     uncertain_since: Optional[datetime] = None
     last_error: Optional[str] = None
     published_at: Optional[datetime] = None
+    media_urls: list[str] = []
+    thumbnail_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     events: list[DeliveryEventOut] = []
