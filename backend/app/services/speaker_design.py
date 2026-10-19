@@ -610,10 +610,8 @@ def compose_speaker_design(
             from app.services.identity_check import check_identity
             idr = check_identity(speaker_bytes, res.image, subject=speaker, context=content_kind, fanpage_id=fanpage_id)
             if not idr.passed:
-                logger.info("speaker design: gpt-cli image rejected by face check (%s); trying Codex", idr.reason)
-                gptcli_rejected = True
-                gptcli_reject_reason = f"ChatGPT rejected by face check ({idr.reason})"
-                res = visual_engine.generate_ex(db, request, fanpage_id=fanpage_id, exclude=frozenset({"gptcli"}))
+                logger.info("speaker design: gpt-cli image rejected by face check (%s)", idr.reason)
+                return None
         generated = res.image
         if res.engine == "9router" and identity_score(speaker_bytes, generated) < IDENTITY_THRESHOLD:
             logger.warning("speaker design rejected: identity score below threshold")

@@ -8,6 +8,7 @@ import hashlib
 import io
 import logging
 import math
+import time
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -41,6 +42,13 @@ DEFAULT_UNAVAILABLE_S = {
     "unreachable": 300,
 }
 HTTP_MARGIN_S = 120
+MAX_WAIT_S = 1800  # gpt serve runs one job at a time; the wait includes the queue
+POST_WAIT_S = 90
+FOLLOW_POLL_S = 15
+RUN_LIMIT_S = 600
+UNAVAILABLE_STREAK_KEY = "gptcli:unavailable_streak"
+UNAVAILABLE_STREAK_THRESHOLD = 3
+UNAVAILABLE_STREAK_EXPIRE_S = 900
 
 
 @dataclass(frozen=True)
@@ -162,6 +170,38 @@ def job_timeout_s(n_images: int) -> int:
     return 600
 
 
+def job_status(cfg: GptcliConfig, request_id: str) -> dict | None:
+    url = f"{cfg.base_url.rstrip('/')}/v1/jobs/{request_id}"
+    headers = {
+        "Authorization": f"Bearer {cfg.token}",
+    }
+    try:
+        resp = httpx.get(url, headers=headers, timeout=10.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                return data
+        return None
+    except Exception as e:
+        logger.debug("job_status error for %s: %s", request_id, e)
+        return None
+
+
+def serve_health(cfg: GptcliConfig) -> dict | None:
+    url = f"{cfg.base_url.rstrip('/')}/health"
+    headers = {"Authorization": f"Bearer {cfg.token}"} if cfg and cfg.token else {}
+    try:
+        resp = httpx.get(url, headers=headers, timeout=10.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                return data
+        return None
+    except Exception as e:
+        logger.debug("serve_health error: %s", e)
+        return None
+
+
 def gptcli_unavailable_until(now: datetime | None = None) -> datetime | None:
     try:
         r = _redis()
@@ -231,6 +271,7 @@ def generate_image(
     images: list[str],
     *,
     request_id: str,
+    max_wait_s: float | None = None,
 ) -> GptcliResult:
     url = f"{cfg.base_url.rstrip('/')}/v1/images/generations"
     payload = {
@@ -244,7 +285,10 @@ def generate_image(
         "Content-Type": "application/json",
         "X-Request-Id": request_id,
     }
-    timeout = job_timeout_s(len(images)) + HTTP_MARGIN_S
+    effective_max_wait = max_wait_s if max_wait_s is not None else MAX_WAIT_S
+    gc1_total = max(job_timeout_s(len(images)) + HTTP_MARGIN_S, effective_max_wait)
+    gc1_timeout = httpx.Timeout(gc1_total, connect=10.0)
+    initial_timeout = httpx.Timeout(POST_WAIT_S, connect=10.0)
 
     def _fail(
         type_: str,
@@ -254,7 +298,20 @@ def generate_image(
         retry_after_s: int | None = None,
         extra: dict | None = None,
     ):
-        if type_ in TEMPORARY_TYPES:
+        should_mark = False
+        if type_ == "unavailable":
+            try:
+                r = _redis()
+                streak = r.incr(UNAVAILABLE_STREAK_KEY)
+                r.expire(UNAVAILABLE_STREAK_KEY, UNAVAILABLE_STREAK_EXPIRE_S)
+                if streak >= UNAVAILABLE_STREAK_THRESHOLD:
+                    should_mark = True
+            except Exception as e:
+                logger.warning("Redis error tracking %s: %s", UNAVAILABLE_STREAK_KEY, e)
+        elif type_ in TEMPORARY_TYPES:
+            should_mark = True
+
+        if should_mark:
             mark_gptcli_unavailable(
                 type_,
                 retry_after_s,
@@ -277,56 +334,144 @@ def generate_image(
             extra=clean_extra,
         )
 
+    def _handle_response(resp: httpx.Response) -> GptcliResult:
+        if resp.status_code == 200:
+            try:
+                body = resp.json()
+                data = body.get("data")
+                if not isinstance(data, list) or not data:
+                    raise ValueError("Response missing data list")
+                b64 = data[0].get("b64_json")
+                if not b64 or not isinstance(b64, str):
+                    raise ValueError("Response missing b64_json")
+                png = base64.b64decode(b64)
+                im = Image.open(io.BytesIO(png))
+                im.verify()
+            except Exception as e:
+                _fail("bad_response", f"Invalid image response: {e}", status=200)
+
+            try:
+                r = _redis()
+                r.delete(UNAVAILABLE_STREAK_KEY)
+            except Exception as e:
+                logger.warning("Redis error deleting %s: %s", UNAVAILABLE_STREAK_KEY, e)
+
+            meta = dict(body.get("gptcli") or {})
+            return GptcliResult(png=png, meta=meta)
+
+        # non-200
+        try:
+            body = resp.json()
+            error_obj = body.get("error") if isinstance(body, dict) else {}
+            error = error_obj if isinstance(error_obj, dict) else {}
+        except Exception:
+            error = {}
+
+        type_ = error.get("type") or f"http_{resp.status_code}"
+        message = error.get("message") or resp.text[:500]
+
+        retry_after_s = None
+        if "Retry-After" in resp.headers:
+            try:
+                retry_after_s = int(resp.headers["Retry-After"])
+            except (ValueError, TypeError):
+                retry_after_s = None
+
+        extra = {k: v for k, v in error.items() if k not in ("type", "message")}
+        _fail(
+            type_,
+            message,
+            status=resp.status_code,
+            retry_after_s=retry_after_s,
+            extra=extra,
+        )
+
+    def _repost_and_return() -> GptcliResult:
+        try:
+            re_resp = httpx.post(url, json=payload, headers=headers, timeout=gc1_timeout)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as ce:
+            _fail("unreachable", f"Connect error: {ce}")
+        except httpx.TimeoutException as te:
+            _fail("timeout", f"Timeout: {te}")
+        except httpx.HTTPError as he:
+            _fail("transport", f"Transport error: {he}")
+        return _handle_response(re_resp)
+
+    t_start = time.monotonic()
     try:
-        resp = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+        resp = httpx.post(url, json=payload, headers=headers, timeout=initial_timeout)
+        return _handle_response(resp)
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
         _fail("unreachable", f"Connect error: {e}")
+    except httpx.ReadTimeout:
+        pass
     except httpx.TimeoutException as e:
         _fail("timeout", f"Timeout: {e}")
     except httpx.HTTPError as e:
         _fail("transport", f"Transport error: {e}")
 
-    if resp.status_code == 200:
-        try:
-            body = resp.json()
-            data = body.get("data")
-            if not isinstance(data, list) or not data:
-                raise ValueError("Response missing data list")
-            b64 = data[0].get("b64_json")
-            if not b64 or not isinstance(b64, str):
-                raise ValueError("Response missing b64_json")
-            png = base64.b64decode(b64)
-            im = Image.open(io.BytesIO(png))
-            im.verify()
-        except Exception as e:
-            _fail("bad_response", f"Invalid image response: {e}", status=200)
+    # Follow loop on ReadTimeout
+    first_poll = True
+    none_streak = 0
+    unknown_streak = 0
+    last_log_s: float | None = None
 
-        meta = dict(body.get("gptcli") or {})
-        return GptcliResult(png=png, meta=meta)
+    while True:
+        now = time.monotonic()
+        if now - t_start > effective_max_wait:
+            _fail("timeout", f"waited {int(effective_max_wait)} s")
 
-    # non-200
-    try:
-        body = resp.json()
-        error_obj = body.get("error") if isinstance(body, dict) else {}
-        error = error_obj if isinstance(error_obj, dict) else {}
-    except Exception:
-        error = {}
+        st = job_status(cfg, request_id)
+        if st is None:
+            if first_poll:
+                return _repost_and_return()
+            none_streak += 1
+            if none_streak >= 4:
+                _fail("timeout", "gpt serve lost the job")
+            time.sleep(FOLLOW_POLL_S)
+            continue
 
-    type_ = error.get("type") or f"http_{resp.status_code}"
-    message = error.get("message") or resp.text[:500]
+        first_poll = False
+        none_streak = 0
+        state = st.get("state")
 
-    retry_after_s = None
-    if "Retry-After" in resp.headers:
-        try:
-            retry_after_s = int(resp.headers["Retry-After"])
-        except (ValueError, TypeError):
-            retry_after_s = None
+        if state == "unknown":
+            unknown_streak += 1
+            if unknown_streak >= 2:
+                _fail("timeout", "gpt serve lost the job")
+            time.sleep(FOLLOW_POLL_S)
+            continue
+        else:
+            unknown_streak = 0
 
-    extra = {k: v for k, v in error.items() if k not in ("type", "message")}
-    _fail(
-        type_,
-        message,
-        status=resp.status_code,
-        retry_after_s=retry_after_s,
-        extra=extra,
-    )
+        if state in ("done", "failed"):
+            return _repost_and_return()
+
+        if state in ("queued", "running"):
+            running_s = st.get("running_s")
+            if running_s is not None:
+                try:
+                    if float(running_s) > RUN_LIMIT_S:
+                        _fail("timeout", f"job ran longer than {RUN_LIMIT_S} s")
+                except (ValueError, TypeError):
+                    pass
+
+            now = time.monotonic()
+            if last_log_s is None or (now - last_log_s) >= 60.0:
+                queue_pos = st.get("queue_position")
+                logger.info(
+                    "gptcli: job %s %s (queue_position=%s, running_s=%s)",
+                    request_id,
+                    state,
+                    queue_pos,
+                    running_s,
+                )
+                last_log_s = now
+
+            time.sleep(FOLLOW_POLL_S)
+            continue
+
+        unknown_streak += 1
+        if unknown_streak >= 2:
+            _fail("timeout", "gpt serve lost the job")
+        time.sleep(FOLLOW_POLL_S)

@@ -9,8 +9,9 @@ import {
   deletePublishJob,
   reeditJob,
   getJobStats,
+  listSocialMediaActivity,
 } from "@/lib/api";
-import type { PublishJob, PublishJobStatus } from "@/lib/types";
+import type { PublishJob, PublishJobStatus, DeliveryActivity } from "@/lib/types";
 import { format } from "date-fns";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Toast, { type ToastData } from "@/components/ui/Toast";
@@ -24,6 +25,7 @@ import {
   markDeliveryPosted,
   markDeliveryNotPosted,
   retryDelivery,
+  cancelDelivery,
   type DeliveryCopy,
 } from "@/lib/deliveriesApi";
 import { useBrandFilter } from "@/contexts/BrandFilterContext";
@@ -47,11 +49,14 @@ function jobTimes(job: PublishJob) {
   return { queuedDate, scheduledDate, isPendingLive, differs };
 }
 
-const STATUS_TABS: { value: PublishJobStatus; label: string }[] = [
+const STATUS_TABS = [
+  { value: "scheduled", label: "Scheduled" },
   { value: "published", label: "Published" },
   { value: "failed", label: "Failed" },
   { value: "skipped", label: "Skipped" },
-];
+] as const;
+
+type ActivityTab = (typeof STATUS_TABS)[number]["value"];
 
 const ENGINE_LABELS: Record<string, string> = {
   chatgpt: "ChatGPT",
@@ -134,8 +139,85 @@ function sourceLink(job: PublishJob): { url: string; label: string; icon: string
 
 const PAGE_SIZE = 30;
 
+const SCHEDULED_STATES = [
+  "scheduled",
+  "waiting_for_slot",
+  "waiting_for_device",
+  "repliz_scheduled",
+] as const;
+
+async function fetchScheduledDeliveries(): Promise<DeliveryActivity[]> {
+  const responses = await Promise.all(
+    SCHEDULED_STATES.map((state) =>
+      listSocialMediaActivity({ state, limit: 200 })
+    )
+  );
+  const all: DeliveryActivity[] = [];
+  const seen = new Set<number>();
+  for (const res of responses) {
+    const list = res.data ?? [];
+    for (const item of list) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        all.push(item);
+      }
+    }
+  }
+  return all.sort((a, b) => {
+    if (!a.scheduled_for && !b.scheduled_for) return 0;
+    if (!a.scheduled_for) return 1;
+    if (!b.scheduled_for) return -1;
+    return new Date(a.scheduled_for).getTime() - new Date(b.scheduled_for).getTime();
+  });
+}
+
+function formatScheduledWib(isoString: string): string {
+  const d = parseUtc(isoString);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    weekday: "short",
+  }).format(d);
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    day: "numeric",
+  }).format(d);
+  const month = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    month: "short",
+  }).format(d);
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+  return `${weekday} ${day} ${month}, ${time} WIB`;
+}
+
+function formatRelativeHint(isoString: string): string {
+  const d = parseUtc(isoString);
+  const diffMs = d.getTime() - Date.now();
+  if (diffMs <= 0) return "due now";
+  const totalMin = Math.round(diffMs / 60000);
+  if (totalMin < 1) return "in < 1 min";
+  const days = Math.floor(totalMin / (60 * 24));
+  const remMinutes = totalMin % (60 * 24);
+  const hours = Math.floor(remMinutes / 60);
+  const mins = remMinutes % 60;
+  if (days > 0) {
+    return hours > 0 ? `in ${days} d ${hours} h` : `in ${days} d`;
+  }
+  if (hours > 0 && mins > 0) {
+    return `in ${hours} h ${mins} min`;
+  }
+  if (hours > 0) {
+    return `in ${hours} h`;
+  }
+  return `in ${mins} min`;
+}
+
 export default function HistoryPage() {
-  const [activeStatus, setActiveStatus] = useState<PublishJobStatus>("published");
+  const [activeStatus, setActiveStatus] = useState<ActivityTab>("published");
   const { selectedBrandId, setSelectedBrandId } = useBrandFilter();
   const fanpageFilter = selectedBrandId !== null ? String(selectedBrandId) : "";
   const [searchQuery, setSearchQuery] = useState("");
@@ -171,6 +253,7 @@ export default function HistoryPage() {
     isValidating,
   } = useSWRInfinite<PublishJob[]>(
     (index, prev: PublishJob[] | null) => {
+      if (activeStatus === "scheduled") return null;
       if (prev && prev.length < PAGE_SIZE) return null;
       return ["history-jobs", activeStatus, fanpageFilter, index] as const;
     },
@@ -189,10 +272,38 @@ export default function HistoryPage() {
   const postIdsKey = postIds.join(",");
 
   const { data: deliveries = [], mutate: mutateDeliveries } = useSWR(
-    postIds.length > 0 ? ["deliveries", postIdsKey] : null,
+    postIds.length > 0 && activeStatus !== "scheduled" ? ["deliveries", postIdsKey] : null,
     () => getDeliveriesByJobIds(postIds),
     { refreshInterval: 60000 }
   );
+
+  const {
+    data: scheduledDeliveries = [],
+    mutate: mutateScheduled,
+    isLoading: isScheduledLoading,
+  } = useSWR<DeliveryActivity[]>(
+    activeStatus === "scheduled" ? "history-scheduled-deliveries" : null,
+    fetchScheduledDeliveries,
+    { refreshInterval: 60000 }
+  );
+
+  const filteredScheduledDeliveries = useMemo(() => {
+    let list = scheduledDeliveries;
+    if (selectedBrandId !== null) {
+      list = list.filter((d) => d.content_project_id === selectedBrandId);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((d) => {
+        const title = (d.title_snapshot ?? "").toLowerCase();
+        const dest = (d.destination_name ?? "").toLowerCase();
+        const cap = (d.caption_snapshot ?? "").toLowerCase();
+        const idStr = String(d.publish_job_id);
+        return title.includes(q) || dest.includes(q) || cap.includes(q) || idStr.includes(q);
+      });
+    }
+    return list;
+  }, [scheduledDeliveries, selectedBrandId, searchQuery]);
 
   const deliveriesByJob = useMemo(() => {
     const map: Record<number, DeliveryCopy[]> = {};
@@ -210,7 +321,9 @@ export default function HistoryPage() {
   const isLoading = !pages;
 
   useEffect(() => {
-    setSize(1);
+    if (activeStatus !== "scheduled") {
+      setSize(1);
+    }
   }, [activeStatus, fanpageFilter, setSize]);
 
   // Client-side search filtering on loaded posts
@@ -230,7 +343,7 @@ export default function HistoryPage() {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || reachedEnd) return;
+    if (!el || reachedEnd || activeStatus === "scheduled") return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && !loadingMore) setSize((s) => s + 1);
@@ -239,7 +352,7 @@ export default function HistoryPage() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [reachedEnd, loadingMore, setSize]);
+  }, [reachedEnd, loadingMore, setSize, activeStatus]);
 
   const lightboxJobData = lightbox ? jobs[lightbox.jobIndex] ?? null : null;
   const lightboxUrls = lightboxJobData ? resolveUrls(lightboxJobData) : [];
@@ -273,8 +386,44 @@ export default function HistoryPage() {
     action: "mark-posted" | "mark-not-posted" | "retry";
   } | null>(null);
   const [deliveryActionLoading, setDeliveryActionLoading] = useState(false);
+  const [confirmingCancelId, setConfirmingCancelId] = useState<number | null>(null);
+  const [cancelingId, setCancelingId] = useState<number | null>(null);
   const [toast, setToast] = useState<ToastData | null>(null);
   const notify = (message: string, type?: ToastData["type"]) => setToast({ message, type });
+
+  async function handleCancelDelivery(id: number) {
+    setCancelingId(id);
+    try {
+      await cancelDelivery(id);
+      mutateScheduled(
+        (current) => (current ? current.filter((d) => d.id !== id) : []),
+        false
+      );
+      notify("Post cancelled", "success");
+      setConfirmingCancelId(null);
+    } catch (err: unknown) {
+      let errorDetail = "Failed to cancel post";
+      if (err && typeof err === "object" && "response" in err) {
+        const res = (err as { response?: { data?: { detail?: unknown } } }).response;
+        if (res?.data?.detail) {
+          if (typeof res.data.detail === "string") {
+            errorDetail = res.data.detail;
+          } else if (Array.isArray(res.data.detail)) {
+            errorDetail = res.data.detail
+              .map((d: { msg?: string }) => d.msg || JSON.stringify(d))
+              .join(", ");
+          } else {
+            errorDetail = JSON.stringify(res.data.detail);
+          }
+        }
+      } else if (err instanceof Error) {
+        errorDetail = err.message;
+      }
+      notify(errorDetail, "error");
+    } finally {
+      setCancelingId(null);
+    }
+  }
 
   async function handleDeliveryActionConfirm() {
     if (!confirmDeliveryAction) return;
@@ -469,369 +618,612 @@ export default function HistoryPage() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[800px] border-collapse text-left text-xs">
             <thead>
-              <tr className="border-b border-line bg-surface text-text2 font-semibold text-[11px]">
-                <th scope="col" className="p-3 pl-4">
-                  Post
-                </th>
-                <th scope="col" className="p-3">
-                  Type
-                </th>
-                <th scope="col" className="p-3">
-                  Made by
-                </th>
-                <th scope="col" className="p-3">
-                  Channel copies
-                </th>
-                <th scope="col" className="p-3 pr-4 text-right">
-                  Actions
-                </th>
-              </tr>
+              {activeStatus === "scheduled" ? (
+                <tr className="border-b border-line bg-surface text-text2 font-semibold text-[11px]">
+                  <th scope="col" className="p-3 pl-4">
+                    Post
+                  </th>
+                  <th scope="col" className="p-3">
+                    Destination
+                  </th>
+                  <th scope="col" className="p-3">
+                    Method
+                  </th>
+                  <th scope="col" className="p-3">
+                    Scheduled for
+                  </th>
+                  <th scope="col" className="p-3">
+                    Status
+                  </th>
+                  <th scope="col" className="p-3 pr-4 text-right">
+                    Actions
+                  </th>
+                </tr>
+              ) : (
+                <tr className="border-b border-line bg-surface text-text2 font-semibold text-[11px]">
+                  <th scope="col" className="p-3 pl-4">
+                    Post
+                  </th>
+                  <th scope="col" className="p-3">
+                    Type
+                  </th>
+                  <th scope="col" className="p-3">
+                    Made by
+                  </th>
+                  <th scope="col" className="p-3">
+                    Channel copies
+                  </th>
+                  <th scope="col" className="p-3 pr-4 text-right">
+                    Actions
+                  </th>
+                </tr>
+              )}
             </thead>
             <tbody className="divide-y divide-line">
-              {isLoading && (
-                <tr>
-                  <td colSpan={5} className="p-8 text-center text-text2">
-                    Loading activity…
-                  </td>
-                </tr>
-              )}
-
-              {!isLoading && jobs.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="p-12 text-center text-text2">
-                    <Icon
-                      icon="solar:history-bold-duotone"
-                      width={36}
-                      className="mx-auto opacity-30 mb-2"
-                    />
-                    No activity found for this filter.
-                  </td>
-                </tr>
-              )}
-
-              {!isLoading &&
-                jobs.map((job, idx) => {
-                  const urls = resolveUrls(job);
-                  const fullUrl = urls[0];
-                  const thumb = getThumbUrl(fullUrl, 240) || fullUrl;
-                  const fanpage = job.fanpage_name ?? "Unknown Brand";
-                  const caption = job.ai_generated_caption ?? "";
-                  const title =
-                    job.design_title ?? (caption ? caption.slice(0, 45) : `@${job.ig_username}`);
-                  const { queuedDate, scheduledDate, isPendingLive } = jobTimes(job);
-                  const canReedit =
-                    job.content_type === "news_content" && job.status === "published";
-                  const src = sourceLink(job);
-                  const blurClass = blurred ? "blur-sm select-none" : "";
-
-                  return (
-                    <tr key={job.id} className="hover:bg-surface2/50 transition-colors">
-                      {/* Post column */}
-                      <td className="p-3 pl-4 align-top max-w-[280px]">
-                        <div className="flex gap-3 items-center">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setLightbox({ jobIndex: idx, imgIdx: 0 })}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                setLightbox({ jobIndex: idx, imgIdx: 0 });
-                              }
-                            }}
-                            className={`w-11 h-14 rounded-lg bg-surface2 border border-line flex-shrink-0 overflow-hidden cursor-zoom-in ${
-                              blurred ? "blur-sm" : ""
-                            }`}
-                          >
-                            {thumb ? (
-                              <img
-                                src={thumb}
-                                alt=""
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-text2 text-[10px]">
-                                {job.content_type === "youtube_clip" ||
-                                job.content_type === "ai_video"
-                                  ? "video"
-                                  : "card"}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="min-w-0 flex flex-col gap-0.5">
-                            <span
-                              className={`font-semibold text-text truncate ${blurClass}`}
-                            >
-                              {fanpage}
-                            </span>
-                            <span
-                              className={`text-[11px] text-text2 truncate ${blurClass}`}
-                            >
-                              {title}
-                            </span>
-                            <span className="text-[10px] text-text2">
-                              {queuedDate
-                                ? format(queuedDate, "MMM d, HH:mm")
-                                : `@${job.ig_username}`}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Type column */}
-                      <td className="p-3 align-top whitespace-nowrap">
-                        <ModeChip mode={job.content_type || "repost"} size="sm" />
-                      </td>
-
-                      {/* Made by */}
-                      <td className="p-3 align-top whitespace-nowrap">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-line bg-surface text-text text-[11px] font-medium">
-                          {ENGINE_LABELS[job.design_engine ?? ""] ??
-                            (job.content_type === "youtube_clip"
-                              ? "Video clip"
-                              : job.content_type === "ai_video"
-                              ? "Google Flow"
-                              : "Template")}
-                        </span>
-                      </td>
-
-                      {/* Channel copies / status */}
-                      <td className="p-3 align-top">
-                        {(() => {
-                          const copies = deliveriesByJob[job.id] || [];
-                          if (copies.length > 0) {
-                            return (
-                              <div className="flex flex-col gap-2 min-w-[220px]">
-                                <ul className="list-none m-0 p-0 flex flex-col">
-                                  {copies.map((c, i) => {
-                                    const isPhone =
-                                      c.method === "phone" ||
-                                      c.actual_method === "phone" ||
-                                      c.intended_method === "phone";
-                                    const channelName = c.destination_name || fanpage;
-
-                                    return (
-                                      <li
-                                        key={c.id}
-                                        className={`flex flex-col gap-1 py-1.5 ${
-                                          i > 0 ? "border-t border-line/60" : ""
-                                        }`}
-                                      >
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                          <div className="flex flex-col min-w-0">
-                                            <span className={`font-semibold text-xs text-text ${blurClass}`}>
-                                              {channelName}
-                                            </span>
-                                            <span className="text-[11px] text-text2">
-                                              {isPhone
-                                                ? `Phone · ${channelName}`
-                                                : c.method === "repliz"
-                                                ? "Repliz"
-                                                : (c.actual_method || c.intended_method || "Direct")}
-                                              {c.published_at ? (
-                                                ` · Went live ${format(parseUtc(c.published_at), "MMM d, HH:mm")}`
-                                              ) : c.scheduled_for ? (
-                                                ` · ${
-                                                  parseUtc(c.scheduled_for).getTime() > Date.now() + 60_000
-                                                    ? "Goes live"
-                                                    : "Scheduled"
-                                                } ${format(parseUtc(c.scheduled_for), "MMM d, HH:mm")}`
-                                              ) : null}
-                                            </span>
-                                          </div>
-                                          <StatusBadge status={c.state} />
-                                        </div>
-
-                                        {c.last_error && (
-                                          <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded leading-snug">
-                                            {c.last_error}
-                                          </p>
-                                        )}
-
-                                        {c.facebook_permalink && !blurred && c.state !== "uncertain" && (
-                                          <div className="mt-0.5">
-                                            <a
-                                              href={c.facebook_permalink}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              className="text-[11px] text-pri hover:underline inline-flex items-center gap-1"
-                                            >
-                                              <Icon icon="solar:link-circle-bold-duotone" width={12} />
-                                              View on Facebook
-                                            </a>
-                                          </div>
-                                        )}
-
-                                        {c.state === "uncertain" && (
-                                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                                            {(c.facebook_permalink || c.facebook_post_id) && !blurred && (
-                                              <a
-                                                href={c.facebook_permalink || `https://facebook.com/${c.facebook_post_id}`}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text inline-flex items-center gap-1 transition-colors"
-                                              >
-                                                <Icon icon="solar:link-circle-bold-duotone" width={12} />
-                                                View on Facebook
-                                              </a>
-                                            )}
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setConfirmDeliveryAction({ delivery: c, action: "mark-posted" })
-                                              }
-                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text transition-colors"
-                                            >
-                                              Mark posted
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setConfirmDeliveryAction({ delivery: c, action: "mark-not-posted" })
-                                              }
-                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-bad-soft text-bad transition-colors"
-                                            >
-                                              Mark not posted
-                                            </button>
-                                          </div>
-                                        )}
-
-                                        {c.state === "failed" && !c.repliz_schedule_id && !c.facebook_post_id && (
-                                          <div className="flex items-center gap-1.5 mt-0.5">
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setConfirmDeliveryAction({ delivery: c, action: "retry" })
-                                              }
-                                              className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-pri transition-colors inline-flex items-center gap-1"
-                                            >
-                                              <Icon icon="solar:restart-bold" width={11} />
-                                              Retry this copy
-                                            </button>
-                                          </div>
-                                        )}
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-
-                                {src && !blurred && (
-                                  <a
-                                    href={src.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
-                                  >
-                                    <Icon icon={src.icon} width={11} />
-                                    {src.label}
-                                  </a>
-                                )}
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <div className="flex flex-col gap-1 min-w-[200px]">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className={`font-semibold text-text ${blurClass}`}>
-                                  {fanpage}
-                                </span>
-                                {job.status === "published" && isPendingLive ? (
-                                  <StatusBadge status="scheduled" />
-                                ) : (
-                                  <StatusBadge status={job.status} />
-                                )}
-                              </div>
-
-                              <div className="text-[11px] text-text2 flex items-center gap-1.5 flex-wrap">
-                                <span>
-                                  {job.repliz_schedule_id ? (
-                                    <span className="inline-flex items-center gap-1">
-                                      Via Repliz
-                                      <span className="font-mono text-text2">
-                                        ({job.repliz_schedule_id.slice(-8)})
-                                      </span>
-                                    </span>
-                                  ) : (
-                                    "Direct"
-                                  )}
-                                </span>
-                                {scheduledDate && (
-                                  <span>
-                                    · {isPendingLive ? "Goes live" : "Went live"}{" "}
-                                    {format(scheduledDate, "MMM d, HH:mm")}
-                                  </span>
-                                )}
-                              </div>
-
-                              {job.last_error && (
-                                <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded mt-0.5 leading-snug">
-                                  {job.last_error}
-                                </p>
-                              )}
-
-                              {src && !blurred && (
-                                <a
-                                  href={src.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
-                                >
-                                  <Icon icon={src.icon} width={11} />
-                                  {src.label}
-                                </a>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </td>
-
-                      {/* Actions */}
-                      <td className="p-3 pr-4 align-top text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
-                          {canReedit && (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmReeditJob(job)}
-                              className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors"
-                            >
-                              Re-edit
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteJob(job)}
-                            className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-medium transition-colors"
-                          >
-                            Delete
-                          </button>
-                        </div>
+              {activeStatus === "scheduled" ? (
+                <>
+                  {isScheduledLoading && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-text2">
+                        Loading scheduled deliveries…
                       </td>
                     </tr>
-                  );
-                })}
+                  )}
+
+                  {!isScheduledLoading && filteredScheduledDeliveries.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-12 text-center text-text2">
+                        <Icon
+                          icon="solar:calendar-bold-duotone"
+                          width={36}
+                          className="mx-auto opacity-30 mb-2"
+                        />
+                        Nothing scheduled. Approved posts wait here until their time slot.
+                      </td>
+                    </tr>
+                  )}
+
+                  {!isScheduledLoading &&
+                    filteredScheduledDeliveries.map((row) => {
+                      const title =
+                        row.title_snapshot?.trim() || `Post #${row.publish_job_id}`;
+                      const isPhone = row.intended_method === "phone";
+                      const blurClass = blurred ? "blur-sm select-none" : "";
+                      const canCancel =
+                        row.state === "scheduled" ||
+                        row.state === "waiting_for_slot" ||
+                        row.state === "waiting_for_device";
+                      const isReplizScheduled = row.state === "repliz_scheduled";
+
+                      return (
+                        <tr
+                          key={row.id}
+                          className="hover:bg-surface2/50 transition-colors"
+                        >
+                          {/* Post */}
+                          <td className="p-3 pl-4 align-top max-w-[280px]">
+                            <div className="flex flex-col gap-0.5">
+                              <span
+                                className={`font-semibold text-text truncate ${blurClass}`}
+                              >
+                                {title}
+                              </span>
+                              {row.caption_snapshot && (
+                                <span
+                                  className={`text-[11px] text-text2 truncate ${blurClass}`}
+                                >
+                                  {row.caption_snapshot}
+                                </span>
+                              )}
+                              <span className="text-[10px] text-text2">
+                                Post #{row.publish_job_id}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Destination */}
+                          <td className="p-3 align-top whitespace-nowrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`font-semibold text-text ${blurClass}`}>
+                                {row.destination_name || "—"}
+                              </span>
+                              {row.destination_kind && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface2 border border-line text-text2 uppercase tracking-wider">
+                                  {row.destination_kind}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Method */}
+                          <td className="p-3 align-top whitespace-nowrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-line bg-surface text-text text-[11px] font-medium">
+                              {isPhone ? "Phone" : "Repliz"}
+                            </span>
+                          </td>
+
+                          {/* Scheduled for */}
+                          <td className="p-3 align-top whitespace-nowrap">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-medium text-text">
+                                {row.scheduled_for
+                                  ? formatScheduledWib(row.scheduled_for)
+                                  : "—"}
+                              </span>
+                              {row.scheduled_for && (
+                                <span className="text-[11px] text-text2">
+                                  {formatRelativeHint(row.scheduled_for)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Status */}
+                          <td className="p-3 align-top whitespace-nowrap">
+                            <StatusBadge status={row.state} />
+                          </td>
+
+                          {/* Actions */}
+                          <td className="p-3 pr-4 align-top text-right whitespace-nowrap">
+                            {isReplizScheduled ? (
+                              <span className="text-xs text-text2 font-medium">
+                                Scheduled on Repliz
+                              </span>
+                            ) : canCancel ? (
+                              confirmingCancelId === row.id ? (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={cancelingId === row.id}
+                                    onClick={() => handleCancelDelivery(row.id)}
+                                    className="h-7 px-2.5 rounded-lg border border-bad/30 bg-bad-soft hover:bg-bad-soft/80 text-bad text-xs font-semibold transition-colors inline-flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    {cancelingId === row.id && (
+                                      <Icon
+                                        icon="svg-spinners:180-ring"
+                                        width={12}
+                                      />
+                                    )}
+                                    Cancel post
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={cancelingId === row.id}
+                                    onClick={() => setConfirmingCancelId(null)}
+                                    className="h-7 px-2 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors disabled:opacity-50"
+                                  >
+                                    Keep
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmingCancelId(row.id)}
+                                  className="h-7 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft hover:text-bad text-text text-xs font-medium transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              )
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </>
+              ) : (
+                <>
+                  {isLoading && (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-text2">
+                        Loading activity…
+                      </td>
+                    </tr>
+                  )}
+
+                  {!isLoading && jobs.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-12 text-center text-text2">
+                        <Icon
+                          icon="solar:history-bold-duotone"
+                          width={36}
+                          className="mx-auto opacity-30 mb-2"
+                        />
+                        No activity found for this filter.
+                      </td>
+                    </tr>
+                  )}
+
+                  {!isLoading &&
+                    jobs.map((job, idx) => {
+                      const urls = resolveUrls(job);
+                      const fullUrl = urls[0];
+                      const thumb = getThumbUrl(fullUrl, 240) || fullUrl;
+                      const fanpage = job.fanpage_name ?? "Unknown Brand";
+                      const caption = job.ai_generated_caption ?? "";
+                      const title =
+                        job.design_title ??
+                        (caption ? caption.slice(0, 45) : `@${job.ig_username}`);
+                      const { queuedDate, scheduledDate, isPendingLive } =
+                        jobTimes(job);
+                      const canReedit =
+                        job.content_type === "news_content" &&
+                        job.status === "published";
+                      const src = sourceLink(job);
+                      const blurClass = blurred ? "blur-sm select-none" : "";
+
+                      return (
+                        <tr
+                          key={job.id}
+                          className="hover:bg-surface2/50 transition-colors"
+                        >
+                          {/* Post column */}
+                          <td className="p-3 pl-4 align-top max-w-[280px]">
+                            <div className="flex gap-3 items-center">
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() =>
+                                  setLightbox({ jobIndex: idx, imgIdx: 0 })
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    setLightbox({ jobIndex: idx, imgIdx: 0 });
+                                  }
+                                }}
+                                className={`w-11 h-14 rounded-lg bg-surface2 border border-line flex-shrink-0 overflow-hidden cursor-zoom-in ${
+                                  blurred ? "blur-sm" : ""
+                                }`}
+                              >
+                                {thumb ? (
+                                  <img
+                                    src={thumb}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-text2 text-[10px]">
+                                    {job.content_type === "youtube_clip" ||
+                                    job.content_type === "ai_video"
+                                      ? "video"
+                                      : "card"}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex flex-col gap-0.5">
+                                <span
+                                  className={`font-semibold text-text truncate ${blurClass}`}
+                                >
+                                  {fanpage}
+                                </span>
+                                <span
+                                  className={`text-[11px] text-text2 truncate ${blurClass}`}
+                                >
+                                  {title}
+                                </span>
+                                <span className="text-[10px] text-text2">
+                                  {queuedDate
+                                    ? format(queuedDate, "MMM d, HH:mm")
+                                    : `@${job.ig_username}`}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Type column */}
+                          <td className="p-3 align-top whitespace-nowrap">
+                            <ModeChip
+                              mode={job.content_type || "repost"}
+                              size="sm"
+                            />
+                          </td>
+
+                          {/* Made by */}
+                          <td className="p-3 align-top whitespace-nowrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-line bg-surface text-text text-[11px] font-medium">
+                              {ENGINE_LABELS[job.design_engine ?? ""] ??
+                                (job.content_type === "youtube_clip"
+                                  ? "Video clip"
+                                  : job.content_type === "ai_video"
+                                  ? "Google Flow"
+                                  : "Template")}
+                            </span>
+                          </td>
+
+                          {/* Channel copies / status */}
+                          <td className="p-3 align-top">
+                            {(() => {
+                              const copies = deliveriesByJob[job.id] || [];
+                              if (copies.length > 0) {
+                                return (
+                                  <div className="flex flex-col gap-2 min-w-[220px]">
+                                    <ul className="list-none m-0 p-0 flex flex-col">
+                                      {copies.map((c, i) => {
+                                        const isPhone =
+                                          c.method === "phone" ||
+                                          c.actual_method === "phone" ||
+                                          c.intended_method === "phone";
+                                        const channelName =
+                                          c.destination_name || fanpage;
+
+                                        return (
+                                          <li
+                                            key={c.id}
+                                            className={`flex flex-col gap-1 py-1.5 ${
+                                              i > 0 ? "border-t border-line/60" : ""
+                                            }`}
+                                          >
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <div className="flex flex-col min-w-0">
+                                                <span
+                                                  className={`font-semibold text-xs text-text ${blurClass}`}
+                                                >
+                                                  {channelName}
+                                                </span>
+                                                <span className="text-[11px] text-text2">
+                                                  {isPhone
+                                                    ? `Phone · ${channelName}`
+                                                    : c.method === "repliz"
+                                                    ? "Repliz"
+                                                    : c.actual_method ||
+                                                      c.intended_method ||
+                                                      "Direct"}
+                                                  {c.published_at
+                                                    ? ` · Went live ${format(
+                                                        parseUtc(c.published_at),
+                                                        "MMM d, HH:mm"
+                                                      )}`
+                                                    : c.scheduled_for
+                                                    ? ` · ${
+                                                        parseUtc(
+                                                          c.scheduled_for
+                                                        ).getTime() >
+                                                        Date.now() + 60_000
+                                                          ? "Goes live"
+                                                          : "Scheduled"
+                                                      } ${format(
+                                                        parseUtc(
+                                                          c.scheduled_for
+                                                        ),
+                                                        "MMM d, HH:mm"
+                                                      )}`
+                                                    : null}
+                                                </span>
+                                              </div>
+                                              <StatusBadge status={c.state} />
+                                            </div>
+
+                                            {c.last_error && (
+                                              <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded leading-snug">
+                                                {c.last_error}
+                                              </p>
+                                            )}
+
+                                            {c.facebook_permalink &&
+                                              !blurred &&
+                                              c.state !== "uncertain" && (
+                                                <div className="mt-0.5">
+                                                  <a
+                                                    href={c.facebook_permalink}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="text-[11px] text-pri hover:underline inline-flex items-center gap-1"
+                                                  >
+                                                    <Icon
+                                                      icon="solar:link-circle-bold-duotone"
+                                                      width={12}
+                                                    />
+                                                    View on Facebook
+                                                  </a>
+                                                </div>
+                                              )}
+
+                                            {c.state === "uncertain" && (
+                                              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                                {(c.facebook_permalink ||
+                                                  c.facebook_post_id) &&
+                                                  !blurred && (
+                                                    <a
+                                                      href={
+                                                        c.facebook_permalink ||
+                                                        `https://facebook.com/${c.facebook_post_id}`
+                                                      }
+                                                      target="_blank"
+                                                      rel="noreferrer"
+                                                      className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text inline-flex items-center gap-1 transition-colors"
+                                                    >
+                                                      <Icon
+                                                        icon="solar:link-circle-bold-duotone"
+                                                        width={12}
+                                                      />
+                                                      View on Facebook
+                                                    </a>
+                                                  )}
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setConfirmDeliveryAction({
+                                                      delivery: c,
+                                                      action: "mark-posted",
+                                                    })
+                                                  }
+                                                  className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-text transition-colors"
+                                                >
+                                                  Mark posted
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setConfirmDeliveryAction({
+                                                      delivery: c,
+                                                      action: "mark-not-posted",
+                                                    })
+                                                  }
+                                                  className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-bad-soft text-bad transition-colors"
+                                                >
+                                                  Mark not posted
+                                                </button>
+                                              </div>
+                                            )}
+
+                                            {c.state === "failed" &&
+                                              !c.repliz_schedule_id &&
+                                              !c.facebook_post_id && (
+                                                <div className="flex items-center gap-1.5 mt-0.5">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      setConfirmDeliveryAction({
+                                                        delivery: c,
+                                                        action: "retry",
+                                                      })
+                                                    }
+                                                    className="h-6 px-2 text-[11px] font-medium rounded border border-line bg-surface hover:bg-surface2 text-pri transition-colors inline-flex items-center gap-1"
+                                                  >
+                                                    <Icon
+                                                      icon="solar:restart-bold"
+                                                      width={11}
+                                                    />
+                                                    Retry this copy
+                                                  </button>
+                                                </div>
+                                              )}
+                                          </li>
+                                        );
+                                      })}
+                                    </ul>
+
+                                    {src && !blurred && (
+                                      <a
+                                        href={src.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
+                                      >
+                                        <Icon icon={src.icon} width={11} />
+                                        {src.label}
+                                      </a>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div className="flex flex-col gap-1 min-w-[200px]">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span
+                                      className={`font-semibold text-text ${blurClass}`}
+                                    >
+                                      {fanpage}
+                                    </span>
+                                    {job.status === "published" && isPendingLive ? (
+                                      <StatusBadge status="scheduled" />
+                                    ) : (
+                                      <StatusBadge status={job.status} />
+                                    )}
+                                  </div>
+
+                                  <div className="text-[11px] text-text2 flex items-center gap-1.5 flex-wrap">
+                                    <span>
+                                      {job.repliz_schedule_id ? (
+                                        <span className="inline-flex items-center gap-1">
+                                          Via Repliz
+                                          <span className="font-mono text-text2">
+                                            ({job.repliz_schedule_id.slice(-8)})
+                                          </span>
+                                        </span>
+                                      ) : (
+                                        "Direct"
+                                      )}
+                                    </span>
+                                    {scheduledDate && (
+                                      <span>
+                                        ·{" "}
+                                        {isPendingLive ? "Goes live" : "Went live"}{" "}
+                                        {format(scheduledDate, "MMM d, HH:mm")}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {job.last_error && (
+                                    <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded mt-0.5 leading-snug">
+                                      {job.last_error}
+                                    </p>
+                                  )}
+
+                                  {src && !blurred && (
+                                    <a
+                                      href={src.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-[11px] text-pri hover:underline inline-flex items-center gap-1 mt-0.5"
+                                    >
+                                      <Icon icon={src.icon} width={11} />
+                                      {src.label}
+                                    </a>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="p-3 pr-4 align-top text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5">
+                              {canReedit && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmReeditJob(job)}
+                                  className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors"
+                                >
+                                  Re-edit
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteJob(job)}
+                                className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-bad text-xs font-medium transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </>
+              )}
             </tbody>
           </table>
         </div>
 
         {/* Infinite-scroll sentinel */}
-        <div ref={sentinelRef} className="h-4" />
+        {activeStatus !== "scheduled" && <div ref={sentinelRef} className="h-4" />}
 
         {/* Pagination footer */}
         <div className="flex justify-between items-center p-3 px-4 border-t border-line text-xs text-text2 bg-surface">
-          <span>
-            Showing {jobs.length} post{jobs.length !== 1 ? "s" : ""}
-          </span>
-          {!reachedEnd && (
-            <button
-              type="button"
-              disabled={loadingMore}
-              onClick={() => setSize((s) => s + 1)}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors"
-            >
-              {loadingMore && <Icon icon="svg-spinners:180-ring" width={14} />}
-              Load 30 more
-            </button>
+          {activeStatus === "scheduled" ? (
+            <span>
+              Showing {filteredScheduledDeliveries.length} scheduled item
+              {filteredScheduledDeliveries.length !== 1 ? "s" : ""}
+            </span>
+          ) : (
+            <>
+              <span>
+                Showing {jobs.length} post{jobs.length !== 1 ? "s" : ""}
+              </span>
+              {!reachedEnd && (
+                <button
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() => setSize((s) => s + 1)}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors"
+                >
+                  {loadingMore && <Icon icon="svg-spinners:180-ring" width={14} />}
+                  Load 30 more
+                </button>
+              )}
+            </>
           )}
         </div>
       </section>

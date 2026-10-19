@@ -162,6 +162,15 @@ const ALL_MODES = [
   { key: "radar", label: "Viral Radar" },
 ];
 
+// Content mode keys sent by GET /social-brands (CONTENT_MODES_SPEC) that differ from ALL_MODES keys.
+const API_MODE_KEY: Record<string, string> = {
+  ig_repost: "ig",
+  ig_recreate: "ig",
+  facebook_photo: "facebook",
+  yt_clip: "youtube",
+  ai_video: "aivideo",
+};
+
 interface AttentionItemWithBrand {
   brandId: number;
   brandName: string;
@@ -825,8 +834,10 @@ export default function BrandsPage() {
 
             const nextPostInfo = formatNextPost(b.next_post_at, b.timezone);
 
-            // Enabled vs disabled modes
-            const enabledModeKeys = new Set(b.content?.filter((m) => m.enabled).map((m) => m.key) || []);
+            // Enabled vs disabled modes (API keys → ALL_MODES keys; both IG modes count as Instagram)
+            const enabledModeKeys = new Set(
+              b.content?.filter((m) => m.enabled).map((m) => API_MODE_KEY[m.key] ?? m.key) || []
+            );
             const modesOn = ALL_MODES.filter((m) => enabledModeKeys.has(m.key));
             const modesOff = ALL_MODES.filter((m) => !enabledModeKeys.has(m.key));
             const isOffExpanded = Boolean(offOpenMap[b.id]);

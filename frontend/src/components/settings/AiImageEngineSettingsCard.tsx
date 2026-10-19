@@ -4,6 +4,16 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import type { AppSettings, AiEngineStatus, Fanpage } from "@/lib/types";
 import { updateSettings, listFanpages, getAiEngineStatus } from "@/lib/api";
+import { getGptcliStatus, type GptcliStatus } from "@/lib/gptcliStatusApi";
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null || seconds < 0) return "0s";
+  const s = Math.round(seconds);
+  const m = Math.floor(s / 60);
+  const remS = s % 60;
+  if (m === 0) return `${remS}s`;
+  return `${m}m ${remS}s`;
+}
 
 function formatTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -192,6 +202,12 @@ export function AiImageEngineSettingsCard({
     { refreshInterval: 60000 }
   );
 
+  const { data: gptcliStatus } = useSWR<GptcliStatus>(
+    "gptcli-status",
+    () => getGptcliStatus().then((r) => r.data),
+    { refreshInterval: 20000 }
+  );
+
   async function update(key: string, value: unknown) {
     setError(null);
     try {
@@ -229,6 +245,61 @@ export function AiImageEngineSettingsCard({
           {error}
         </p>
       )}
+
+      {/* ChatGPT status */}
+      <div className="bg-surface2 border border-line rounded-lg p-3 text-xs">
+        <div className="text-[11px] font-semibold text-text2 uppercase tracking-wider mb-1.5">
+          ChatGPT status
+        </div>
+        {!gptcliStatus ? (
+          <p className="text-text2 italic">Loading status…</p>
+        ) : !gptcliStatus.reachable ? (
+          <div className="flex items-center gap-2 text-bad">
+            <span className="inline-block w-2 h-2 rounded-full bg-bad" />
+            <span className="font-medium">Not reachable</span>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  gptcliStatus.running ? "bg-good animate-pulse" : "bg-text2/40"
+                }`}
+              />
+              <span className="font-medium">
+                {gptcliStatus.running
+                  ? `Running for ${formatDuration(gptcliStatus.running_for_s)}`
+                  : "Idle"}
+              </span>
+            </div>
+            <span className="text-line">•</span>
+            <span className="text-text2">
+              <strong className="text-text font-semibold">{gptcliStatus.queue_len}</strong> waiting
+            </span>
+            <span className="text-line">•</span>
+            <span className="text-text2">
+              <strong className="text-text font-semibold">{gptcliStatus.today_count ?? 0}</strong>/
+              {gptcliStatus.daily_cap ?? "—"} today
+            </span>
+            {gptcliStatus.sleeping && (
+              <>
+                <span className="text-line">•</span>
+                <span className="text-warn font-medium">
+                  Sleeping (00:00–{settings?.ai_day_start || "05:30"})
+                </span>
+              </>
+            )}
+            {gptcliStatus.quota_until && (
+              <>
+                <span className="text-line">•</span>
+                <span className="text-warn font-medium">
+                  Quota pause until {formatTime(gptcliStatus.quota_until) || gptcliStatus.quota_until}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Toggle */}
       <div>

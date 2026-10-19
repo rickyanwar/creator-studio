@@ -321,12 +321,11 @@ def redesign_card(
                 gptcli_rejected = True
                 gptcli_reject_note = (f"ChatGPT rejected: {idr.reason}" + (f"; {radio_note}" if radio_note else ""))[:200]
                 notes.append(f"engine=gptcli rejected: {idr.reason}; {radio_note}".strip("; "))
-                try:
-                    res = generate_ex(db, req, timeout=300, fanpage_id=fanpage.id, exclude=frozenset({"gptcli"}))
-                except VisualEngineError as e:
-                    problems.append(f"VisualEngineError: {str(e)}")
-                    return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
-                gen_bytes = res.image
+                if not idr.passed:
+                    problems.append("identity")
+                if not radio_ok:
+                    problems.append(f"radio_text_mismatch:{radio_note}" if radio_note else "radio_text_mismatch")
+                return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
         if res.engine == "9router":
             notes.append("engine=9router")
 
