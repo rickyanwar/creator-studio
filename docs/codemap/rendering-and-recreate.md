@@ -232,7 +232,7 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
 - **Night deferral**: `VisualEngineDeferred` propagates out of `redesign_card` / `compose_speaker_design`. The tasks call `design_renderer._defer_job`, which sets `pending_design` plus `publish_jobs.design_not_before`, with no Celery retry and no long ETA.
   - `render_pending_designs` skips jobs whose `design_not_before` is in the future, and re-dispatches deferred `ig_recreate` jobs (queue `visual`) once the time passes.
   - A manual IG preview fails fast instead of waiting.
-- **Queue**: `engine_router.render_queue_for(db, fanpage, "news"|"facebook"|"instagram")` returns `"visual"` when gpt-cli applies and the content toggle is `chatgpt`. Every News/FB dispatch site uses it; otherwise the old queue is kept.
+- **Queue**: `engine_router.render_queue_for(db, fanpage, "news"|"facebook"|"instagram")` returns `"visual"` when gpt-cli applies and the content toggle is `chatgpt`. Every News/FB dispatch site uses it; otherwise the old queue is kept (visual-routed news is dispatched by the fair queue §5b rather than direct enqueue).
 
 ### AI Card Redesign Pipeline (`services/redesign_pipeline.py`)
 
@@ -277,15 +277,36 @@ Switch: `Settings.pro_poster_enabled` + `pro_poster_fanpage_ids` (`[]` = every f
 `pipeline.compose_pro_poster(db, fanpage, job, article, dry_run=False)`:
 1. **Brief** (`brief.build_brief`, text AI): subjects, event, story type, mood, badge label, accent colours, visual ideas, `must_avoid`, decided from the article text only. Cached in `job.design_analysis_json["pro_poster_brief"]`. Parse errors fail closed (`BriefError`).
 2. **Story photo**: `story_photo.fetch_story_photo` → `storage/designs/pro_poster_story_<job>.{png,jpg}`.
-3. **Photos** (`photos.select_photos`, at most 24 checks): candidates from the story photo + gallery (Getty slug = trusted caption). One strict-JSON Gemini check per photo (`check_photo`: person, event match, obstruction, watermark, `face_frontal`, `story_fit`, quality). Picks `hero` (sorted by face_frontal, story_fit, quality), `context`, a front-facing `portrait` when the hero is not frontal, or `face_ref`.
+3. **Photos** (`photos.select_photos`, at most 12 checks, 3 in parallel per batch, early stop once a strong hero (or hero + frontal portrait) and 2 story-fitting context photos are found): candidates from the story photo + gallery (Getty slug = trusted caption). One strict-JSON Gemini check per photo (`check_photo`: person, event match, obstruction, watermark, `face_frontal`, `story_fit`, quality). Picks `hero` (sorted by face_frontal, story_fit, quality), `context`, a front-facing `portrait` when the hero is not frontal, or `face_ref`.
 4. **Concept** (`concept.build_concept`, Gemini): key moment, scene, inset, palette, mood, graphic words. Optional; errors → no concept.
-5. **Art direction** (`art_direction.direct`): layout `hero_with_context` / `hero_solo` / `face_ref_scene` / `action_full_bleed` / `typographic` (no verified photo). Designer-brief prompt v4: house style = white-ring inset with a different context, front-facing face reference, no invented faces, series logos banned.
-6. **One generation**: `visual_engine.generate_ex(..., engines=("gptcli",))`, so ChatGPT only (never Codex). `VisualEngineDeferred` propagates (the job is deferred); engine errors → fallback.
+5. **Art direction** (`art_direction.direct`): layout `hero_with_context` / `hero_solo` / `face_ref_scene` / `action_full_bleed` / `typographic` (no verified photo). Designer-brief prompt v4: house style = white-ring inset with a different context, front-facing face reference, no invented faces, series logos banned. The text zone is the bottom 35% (`prompt_rules.TEMPLATE_TEXT_ZONE_PCT`). The wording says "covered later by text, keep it plain, not dark".
+6. **One generation**: follows `engine_router.plan_engines` (no longer ChatGPT-only): the Codex share `settings.codex_share_percent` = 20, plus night and ChatGPT cooldown. Calls `visual_engine.generate_ex(db, req, fanpage_id=fanpage_id)`. `VisualEngineDeferred` propagates (the job is deferred); engine errors → fallback.
 7. **Safety QA only** (`qa.check_safety`): identity via `identity_check` (SFace, reject < 0.25, then Gemini), `gear_identity` (helmet, number, kit, livery) when no face is found, plus the event check. No aesthetic scores, no retry.
 
-Results in `design_renderer`: image → `image_marker="pro_poster"`, `design_engine` = the engine; `fallback_reason == "no verified photo"` → `typo_background.make_typographic_background` (Pillow + numpy, brand colour) and `pro_poster_typo`; anything else → the old path, and if the AI generation was already used (`pro_poster_spent`) speaker design is skipped, so there is never a second AI image. QA result is stored in `design_analysis_json["pro_poster_qa"]`.
+Results in `design_renderer`: image → `image_marker="pro_poster"`, `design_engine` labels: gptcli → `chatgpt`, 9router → `codex`; `fallback_reason == "no verified photo"` → `typo_background.make_typographic_background` (Pillow + numpy, brand colour) and `pro_poster_typo`; anything else → the old path, and if the AI generation was already used (`pro_poster_spent`) speaker design is skipped, so there is never a second AI image. QA result is stored in `design_analysis_json["pro_poster_qa"]`.
 
 Eval: `python -m app.scripts.pro_poster_eval --jobs <ids> --run <name> [--pace s] [--fresh-brief]` runs dry, writes `storage/pro_poster_eval/<run>/` (`index.json`, `<job>_new.png`, attempts). On the VPS run it with `docker run` on the prod image, not `compose run`.
+
+## 5b. Fair ChatGPT queue (2026-10-20)
+
+- **Service**: `backend/app/services/visual_fair_queue.py` (`pick_next_news_job`, `news_job_waiting`, `served_today`, `mark_served`, `LAST_JOB_KEY`).
+- **Beat Dispatch**: `backend/app/tasks/design_renderer.py` `dispatch_fair_visual_news`: beat every 30 s (`celery_app.py` "dispatch-fair-visual-news").
+- **How it behaves**:
+  - It keeps at most one news render waiting in the visual queue (`LAST_JOB_KEY` + `render_design:queued:<job_id>` check in `news_job_waiting`).
+  - Breaking news goes first, then the fan page with the fewest ChatGPT renders today (a Redis counter per WIB day: `served_today`, `visual_fair:news:<YYYY-MM-DD>:<fanpage_id>`).
+  - It keeps working when only one page has jobs (work-conserving).
+  - `news_copywriter` and `render_pending_designs` no longer enqueue visual-routed news (`render_queue_for(db, fp, "news") == "visual"`).
+- **Pre-render stale skip**: `_has_news_slot(db, job, now_utc)` checks `social_delivery_planner.news_slot_available`. Jobs with no News slot within 24 h are skipped BEFORE rendering, with `last_error` "stale: no News slot within 24 h, AI poster not rendered".
+- **Just-in-time design (JIT, branch slot-first)**: a non-breaking job is rendered only when its page's next free slot (`social_delivery_planner.next_news_slot_utc`) is ≤ `JIT_LEAD_MINUTES` (90) away.
+  - The newest job of that page is picked.
+  - On dispatch, the page is claimed (`visual_fair:news:claim:<fanpage_id>`, TTL until the slot + 10 min), so one slot gets one design.
+  - Jobs that never get a near slot stay `pending_design` and are retired by the 24 h stale sweep without being rendered.
+  - Breaking news bypasses JIT.
+- **Stale-only jobs leave the queue**: `publisher.publish_job` sets a job to `skipped` when ALL its deliveries are `skipped` with a "stale:" error (before, they stayed `pending_publish` = "Ready to publish" forever).
+- **Reuse finished designs (one-off)**: `python -m app.scripts.replan_stale_designs [--apply] [--hours 24] [--fanpage-id N]`.
+  - Dry-run by default.
+  - It replans fresh stale-skipped designs newest first into free slots, and marks the rest skipped.
+  - It never calls Repliz itself.
 
 ---
 

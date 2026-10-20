@@ -10,6 +10,7 @@ import json
 import logging
 import string
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 PREFERRED_SHOT_TYPES = frozenset(
     {"car_on_track", "athlete_in_action", "podium", "pitlane"}
 )
+CHECK_BATCH = 3
 
 
 def gallery_caption(row: Any) -> str | None:
@@ -703,16 +705,58 @@ def select_photos(
     """
     candidates = gather_candidates(db, brief, story_photo_path=story_photo_path)
     checked: list[PhotoCheck] = []
-    total_checked = 0
-    max_checks = 24
+    max_checks = 12
+    cand_idx = 0
+    num_candidates = len(candidates)
+    has_hero = any(s.role == "hero" for s in brief.subjects) and any(c.role == "hero" for c in candidates)
+    hero_done = not has_hero
 
-    for cand in candidates:
-        if total_checked >= max_checks:
+    while cand_idx < num_candidates and len(checked) < max_checks:
+        batch: list[PhotoCandidate] = []
+        batch_limit = min(CHECK_BATCH, max_checks - len(checked))
+        while cand_idx < num_candidates and len(batch) < batch_limit:
+            cand = candidates[cand_idx]
+            cand_idx += 1
+            if hero_done and cand.role == "hero" and cand.source != "story":
+                continue
+            batch.append(cand)
+
+        if not batch:
             break
 
-        check = check_photo(cand, brief, story=story)
-        checked.append(check)
-        total_checked += 1
+        with ThreadPoolExecutor(max_workers=CHECK_BATCH) as pool:
+            results = list(pool.map(lambda c: check_photo(c, brief, story=story), batch))
+        checked.extend(results)
+
+        hero_done = (
+            not has_hero
+            or any(c.usable_as_hero and c.face_frontal and c.story_fit >= 4 for c in checked)
+            or any(
+                i != j
+                for i, c in enumerate(checked) if c.usable_as_hero
+                for j, p in enumerate(checked) if p.person == "yes" and p.face_frontal and not p.watermark and p.quality >= 3
+            )
+        )
+        current_hero = (
+            max((c for c in checked if c.usable_as_hero), key=lambda c: (c.face_frontal, c.story_fit, c.quality))
+            if any(c.usable_as_hero for c in checked)
+            else None
+        )
+        context_done = (
+            sum(
+                1
+                for c in checked
+                if c.usable_as_context
+                and c.story_fit >= 3
+                and (c.candidate.role == "context" or c.candidate.source == "story")
+                and (current_hero is None or c is not current_hero)
+                and not (current_hero is not None and current_hero.shows and _similar(c.shows, current_hero.shows))
+            )
+            >= 2
+        )
+
+        if (hero_done and context_done) or len(checked) >= max_checks:
+            break
 
     usable_heroes = [c for c in checked if c.usable_as_hero]
     hero = (

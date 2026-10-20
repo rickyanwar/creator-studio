@@ -64,6 +64,8 @@ Defined in `backend/app/models/social_publishing.py:215-219` (`ck_publish_delive
 | `failed` | Deterministic unrecoverable error (e.g. 4xx, bad auth) | `publishing`, `repliz_scheduled` | _Terminal_ | `social_delivery_dispatch.py:415, 429, 528, 1346, 1455`, `status_sync.py:168, 237` |
 | `skipped` | Administrative bypass or unroutable destination | `scheduled`, `waiting_for_slot` | _Terminal_ | Database constraint supported |
 
+> **IMPORTANT Gotcha (`published_at`)**: For Repliz deliveries, `published_at` is the HAND-OFF time to Repliz (`social_delivery_dispatch.py` ~L642), not the live time. The live time is `scheduled_for`. For phone deliveries, `published_at` is the real live time (~L1565).
+
 ---
 
 ## 3. Claim, Lease, and Locking Protocol
@@ -147,6 +149,12 @@ Implemented in `backend/app/services/publishing_schedule.py`.
 ### 4.5 Untouched Stale Replan (`replan_stale_scheduled_deliveries`, lines 1612-1751)
 - Trigger: Delivery in `scheduled` state with `attempt_count == 0`, no external IDs, `scheduled_for < now - 10 min`.
 - Action: Serialized under destination row lock; recomputes `scheduled_for` using `compute_audience_slot` to prevent immediate burst execution after worker downtime. Synchronizes parent `PublishJob.scheduled_for`.
+
+### 4.6 Pre-Render Slot Availability (`news_slot_available`)
+- `social_delivery_planner.news_slot_available(db, job, now_utc)` and `_plan_slot()`:
+  - Shared slot math between pre-render stale check and `ensure_deliveries`.
+  - Read-only (no row locks, no database writes) and fail-open (returns `True` on missing fan page, no active destinations, or unexpected errors).
+  - Inspects all active destinations for the fan page: returns `True` if at least one destination can schedule the news job within `destination.news_stale_hours` (default 24 h) from job creation. Used by `visual_fair_queue` to skip dead news jobs before generating images.
 
 ---
 

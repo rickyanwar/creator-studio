@@ -137,13 +137,17 @@ Defined in `backend/app/models/ai_video.py:88` (`VideoJob.status`).
 Implemented in `ai_video_dispatch.py:151-317`:
 1. **Worker Pause Check**: Fails if `GflowWorker.paused_until > now` or last claim was `< 10 minutes` ago (`MIN_CLAIM_GAP_MINUTES = 10`, lines 179-189).
 2. **Account Candidate Pool**: Accounts for worker with `enabled=True`, `authenticated=True`, `status="ok"`, credits known, and not present in any other `claimed` or `generating` job (`get_candidate_accounts`, line 41).
-3. **Step 1 - Pinned Jobs**: Jobs in `queued` with non-null `account_id` matching an available candidate and `not_before <= now`. Remaining cost = `(len(clips) - len(clips_done)) * 15`. Selected if `account.credits - credit_reserve >= remaining_cost`.
+3. **Step 1 - Pinned Jobs**: Jobs in `queued` with non-null `account_id` matching an available candidate and `not_before <= now`.
+   - Remaining cost = `(len(clips) - len(clips_done)) * credits_per_clip`.
+   - `ai_video_dispatch.effective_credits(db, acc)`: the credits minus the clips made on this account since `credits_checked_at`.
+   - Selected if `effective_credits - credit_reserve >= remaining_cost`.
+   - A pinned job whose account cannot pay for the remaining clips is restarted on another account (`generation += 1`, `clips_done = []`, `account_id = None`, `status = "queued"`; `restarts` is not incremented).
 4. **Step 2 - Unpinned Jobs (Fair Share)**:
    - Sorted by fanpage whose previous job started longest ago: `last_started = max(VideoJob.started_at) group by fanpage_id` (`ai_video_dispatch.py:267-273`).
 5. **Step 3 - Sticky Account Selection (`acc_sort_key`, line 288)**:
-   - Filters candidates where `credits - credit_reserve >= credits_estimate`.
+   - Filters candidates where `effective_credits - credit_reserve >= credits_estimate`.
    - Sort key: `(0, -last_used_at.timestamp(), -credits)` for previously used accounts; `(1, 0.0, -credits)` for fresh accounts.
-   - Prevents Google anti-fraud flags triggered when a single worker IP rapidly hops between multiple accounts.
+   - The sticky account choice is intentional (Google flags hosts that hop between accounts).
 6. **Step 4 - Concurrency Lock**:
    - `SELECT ... FOR UPDATE SKIP LOCKED` on `VideoJob` row.
    - Sets `status="claimed"`, `lease_until=now + 20m`, `worker_id=W`, `account_id=acc.id`, `last_progress_at=now`.
@@ -201,6 +205,7 @@ Implemented in `gflow_worker/probe_credits.py`:
 - Dismisses overlays (close buttons, onboarding dialogs like "Got it", "Mengerti", "Start Creating").
 - Regex extraction (`CREDITS: <number>`) supports English ("credits") and Indonesian ("kredit"), explicitly skipping non-balance phrases like "refund credits" (`probe_credits.py:31`).
 - Transient toleration: If probe returns unknown but previous balance existed, tolerates 1 failure before clearing credits in heartbeat (`gflow_worker/main.py:86-93`).
+- `gflow_worker` `runner.credits_stale`: after a "no YhhmEf/eb1hJf/MZZa6b/nprQif reply … of clicking submit" failure (`gflow_worker/runner.py:SUBMIT_NO_REPLY`), the runner sets `runner.credits_stale = True`. On the next idle tick (when no jobs are running), `gflow_worker/main.py` refreshes credits immediately (`last_refresh = None`). That message usually means the account ran out of credits.
 
 ---
 
