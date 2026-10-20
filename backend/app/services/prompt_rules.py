@@ -1,10 +1,9 @@
-TEMPLATE_TEXT_ZONE_PCT = 42
+TEMPLATE_TEXT_ZONE_PCT = 35
 
 REALISM_LINES = (
     "Photographic realism (very important):",
     "- It must look like a real photograph by a professional sports photographer: realistic skin with pores and natural imperfections, real lens depth of field and motion, natural light and colour.",
-    "- Sharp and detailed like a high-resolution professional camera with a good lens: the face, eyes, hair, kit fabric, stitching, sponsor patches, carbon fibre and tyre rubber in crisp focus, with clean edges and fine natural texture.",
-    "- But keep it natural: no over-sharpening, no halos around edges, no HDR clarity, no hyper-detailed or crunchy AI texture, no plastic gloss, no airbrushed or waxy skin, no AI sheen. The background stays naturally soft from depth of field, and noise and grain stay as in a real photo.",
+    "- Keep it natural: no over-sharpening, no halos around edges, no HDR clarity, no hyper-detailed or crunchy AI texture, no plastic gloss, no airbrushed or waxy skin, no AI sheen. The background stays naturally soft from depth of field, and noise and grain stay as in a real photo.",
 )
 
 
@@ -14,8 +13,8 @@ def realism_block() -> str:
 
 def text_zone_line() -> str:
     return (
-        f"Bottom {TEMPLATE_TEXT_ZONE_PCT}% MUST be a smooth dark gradient with no faces, "
-        "no bodies, no objects, completely empty (the fan page's badge and headline are added there later)."
+        f"The bottom {TEMPLATE_TEXT_ZONE_PCT}% will be covered later by the fan page's badge and headline text, "
+        "so keep it simple and calm (a plain background or soft out-of-focus scenery) with no faces, no text and no important detail; it does not need to be dark."
     )
 
 

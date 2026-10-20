@@ -377,14 +377,14 @@ def test_art_direction_prompt_avoid_block_last_and_template_clean():
     last_block = blocks[-1]
     assert last_block.startswith("Do NOT include anything below (very important):")
     assert "- No official series logo or wordmark anywhere in the image: not on banners, screens, walls, the track, the octagon mat or fence, or podium backdrops (for example F1, Formula 1, FIA, MotoGP, FIM, Dorna, UFC)." in last_block
-    assert "- Any text or graphic words in the bottom 42% of the image." in last_block
+    assert "- Any text or graphic words in the bottom 35% of the image." in last_block
     assert "- Do not show chequered finish flag." in last_block
     assert "- Do not show UFC official wordmark." in last_block
     assert "- Never mix in another series' cars, bikes or logos." in last_block
 
-    # Template block does not contain series logo line, but contains bottom 42% text zone
+    # Template block does not contain series logo line, but contains bottom 35% text zone
     template_block = next(b for b in blocks if b.startswith("Space for the fan page template:"))
     assert "Never show an official series logo" not in template_block
     assert "No official series logo" not in template_block
     assert "Do not show" not in template_block
-    assert "The bottom 42% of the image" in template_block
+    assert "The bottom 35% of the image will be covered later" in template_block

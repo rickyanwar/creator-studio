@@ -177,7 +177,7 @@ def test_build_inset_prompt():
     assert "INSET 1 (Image 2): REAL PHOTO. inset" in prompt
     assert "MotoGP social media graphic" in prompt
     assert "best MotoGP media pages" in prompt
-    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert "The bottom 35% will be covered later by the fan page's badge and headline text" in prompt
     assert realism_block() in prompt
     assert prompt.endswith(avoid_block())
 
@@ -185,7 +185,7 @@ def test_build_inset_prompt():
 def test_build_solo_prompt():
     prompt = build_solo_prompt("hero", "purpose", "blue", sport="MotoGP")
     assert "HERO (image 1): hero" in prompt
-    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert "The bottom 35% will be covered later by the fan page's badge and headline text" in prompt
     assert realism_block() in prompt
     assert prompt.endswith(avoid_block())
 
@@ -196,7 +196,7 @@ def test_build_action_prompt():
     assert "One big action photo" in prompt
     assert "UFC social media graphic" in prompt
     assert "best UFC media pages" in prompt
-    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert "The bottom 35% will be covered later by the fan page's badge and headline text" in prompt
     assert realism_block() in prompt
     assert prompt.endswith(avoid_block())
 
@@ -214,7 +214,7 @@ def test_build_whatif_inset_prompt():
         sport="Formula 1",
     )
     assert "HERO (Image 1): hero" in prompt
-    assert "Bottom 42% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty" in prompt
+    assert "The bottom 35% will be covered later by the fan page's badge and headline text" in prompt
     assert realism_block() in prompt
     assert prompt.endswith(avoid_block())
 
