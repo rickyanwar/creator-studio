@@ -42,6 +42,7 @@ from app.services.pro_poster.types import (
 from app.services.visual_engine import (
     GenerationRequest,
     GenerationResult,
+    NoAllowedEngine,
     VisualEngineDeferred,
     VisualEngineError,
 )
@@ -237,6 +238,29 @@ def test_compose_engine_error_fallback(mock_gen, mock_direct, mock_select):
         result2 = compose_pro_poster(db, fanpage, job, article)
 
     assert result2.fallback_reason == "engine: timeout"
+
+
+@patch("app.services.pro_poster.photos.select_photos")
+@patch("app.services.pro_poster.art_direction.direct")
+@patch("app.services.pro_poster.pipeline.generate_ex")
+def test_compose_no_allowed_engine_counts_as_no_attempt(mock_gen, mock_direct, mock_select):
+    """ChatGPT asleep or cooling down: nothing was generated, so attempts stays 0."""
+    db = MagicMock()
+    fanpage = MagicMock(id=10)
+    job = MagicMock(id=106, design_analysis_json={})
+    article = MagicMock(id=206)
+
+    mock_select.return_value = _make_selection(has_hero=True)
+    mock_direct.return_value = _make_direction("hero_with_context")
+    mock_gen.side_effect = NoAllowedEngine()
+
+    with patch("app.services.pro_poster.pipeline.build_brief", return_value=_make_brief(106)), \
+         patch("app.services.story_photo.fetch_story_photo", return_value=None):
+        result = compose_pro_poster(db, fanpage, job, article)
+
+    assert result.image is None
+    assert result.attempts == 0
+    assert result.fallback_reason == "engine: chatgpt not available"
 
 
 @patch("app.services.pro_poster.photos.select_photos")

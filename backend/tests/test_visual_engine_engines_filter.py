@@ -10,6 +10,7 @@ from app.services.gptcli_client import GptcliResult
 from app.services.visual_engine import (
     GenerationRequest,
     GenerationResult,
+    NoAllowedEngine,
     VisualEngineDeferred,
     VisualEngineError,
     generate_ex,
@@ -91,6 +92,7 @@ def test_engines_filter_no_allowed_engine_raises_visual_engine_error(
         generate_ex(mock_db, req, engines=("gptcli",))
 
     assert exc_info.value.kind == "quota"
+    assert isinstance(exc_info.value, NoAllowedEngine)
     assert "no allowed engine available" in str(exc_info.value)
     mock_nine_router.assert_not_called()
     mock_gen_img.assert_not_called()
@@ -119,6 +121,7 @@ def test_night_plan_defer_with_gptcli_filter_raises_visual_engine_error_not_defe
 
     assert not issubclass(VisualEngineError, VisualEngineDeferred)
     assert exc_info.value.kind == "quota"
+    assert isinstance(exc_info.value, NoAllowedEngine)
     assert "no allowed engine available" in str(exc_info.value)
     mock_nine_router.assert_not_called()
     mock_gen_img.assert_not_called()
@@ -146,6 +149,7 @@ def test_gptcli_off_with_gptcli_filter_raises_visual_engine_error_no_legacy(
         generate_ex(mock_db, req, engines=("gptcli",))
 
     assert exc_info.value.kind == "quota"
+    assert isinstance(exc_info.value, NoAllowedEngine)
     assert "no allowed engine available" in str(exc_info.value)
     mock_legacy.assert_not_called()
     mock_nine_router.assert_not_called()

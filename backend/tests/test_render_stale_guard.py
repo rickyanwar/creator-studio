@@ -207,6 +207,84 @@ def test_render_design_pro_poster_spent_skips_speaker_design(
 @patch("app.tasks.design_renderer.render_card_png")
 @patch("app.services.design_images.resolve_template")
 @patch("app.tasks.design_renderer.SessionLocal")
+def test_render_design_pro_poster_engine_unavailable_calls_speaker_design(
+    mock_session_cls,
+    mock_resolve_template,
+    mock_render_card_png,
+    mock_select_image,
+    mock_speaker,
+    mock_compose,
+    mock_applies,
+):
+    """ChatGPT never ran (night or cooldown): the speaker design (Codex) still runs."""
+    db = MagicMock()
+    mock_session_cls.return_value = db
+
+    job = MagicMock(
+        id=501,
+        fanpage_id=1,
+        design_template_id=1,
+        source_article_id=1,
+        design_analysis_json={},
+        last_image_marker=None,
+    )
+    fanpage = MagicMock(id=1, accent_color="#FF0000", news_visual_engine="chatgpt")
+    article = MagicMock(id=1, scraped_title="Article Title")
+    template = MagicMock(
+        id=1,
+        template_json={"objects": []},
+        canvas_width=1080,
+        canvas_height=1350,
+        category="news",
+    )
+
+    def fake_query(model):
+        m = MagicMock()
+        name = getattr(model, "__name__", str(model))
+        if "PublishJob" in name:
+            m.filter_by.return_value.first.return_value = job
+            m.filter.return_value.update.return_value = 1
+        elif "TargetFanpage" in name:
+            m.filter_by.return_value.first.return_value = fanpage
+        elif "ScrapedArticle" in name:
+            m.filter_by.return_value.first.return_value = article
+        elif "DesignTemplate" in name:
+            m.filter_by.return_value.first.return_value = template
+        return m
+
+    db.query.side_effect = fake_query
+    mock_resolve_template.return_value = template
+    mock_applies.return_value = True
+
+    # attempts == 0 -> nothing was spent
+    pp_res = MagicMock(
+        attempts=0,
+        image=None,
+        qa=None,
+        fallback_reason="engine: chatgpt not available",
+        brief=MagicMock(badge_label="F1"),
+    )
+    mock_compose.return_value = pp_res
+    mock_select_image.return_value = ("data:image/png;base64,AAAA", None, "marker_1")
+    mock_render_card_png.return_value = b"fakepng"
+    mock_speaker.return_value = None
+
+    with patch("app.services.design_images.single_photo_face_fits", return_value=True), \
+         patch("app.tasks.design_renderer._release_queued_lock"), \
+         patch("pathlib.Path.mkdir"), \
+         patch("pathlib.Path.write_bytes"):
+        render_design(501)
+
+    mock_speaker.assert_called_once()
+
+
+@patch("app.services.pro_poster.pipeline.pro_poster_applies")
+@patch("app.services.pro_poster.pipeline.compose_pro_poster")
+@patch("app.tasks.design_renderer._maybe_compose_speaker_design")
+@patch("app.tasks.design_renderer.select_image_for_job")
+@patch("app.tasks.design_renderer.render_card_png")
+@patch("app.services.design_images.resolve_template")
+@patch("app.tasks.design_renderer.SessionLocal")
 def test_render_design_pro_poster_off_calls_speaker_design(
     mock_session_cls,
     mock_resolve_template,
