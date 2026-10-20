@@ -388,3 +388,159 @@ def test_art_direction_prompt_avoid_block_last_and_template_clean():
     assert "No official series logo" not in template_block
     assert "Do not show" not in template_block
     assert "The bottom 42% of the image" in template_block
+
+
+@patch("app.services.pro_poster.pipeline.pro_poster_applies")
+@patch("app.services.pro_poster.pipeline.compose_pro_poster")
+@patch("app.tasks.design_renderer._maybe_compose_speaker_design")
+@patch("app.tasks.design_renderer.select_image_for_job")
+@patch("app.tasks.design_renderer.render_card_png")
+@patch("app.services.design_images.resolve_template")
+@patch("app.tasks.design_renderer.SessionLocal")
+def test_render_design_pro_poster_codex_engine_recorded_as_codex(
+    mock_session_cls,
+    mock_resolve_template,
+    mock_render_card_png,
+    mock_select_image,
+    mock_speaker,
+    mock_compose,
+    mock_applies,
+):
+    """When compose_pro_poster returns engine='9router' and an image, job ends with design_engine=='codex'."""
+    db = MagicMock()
+    mock_session_cls.return_value = db
+
+    job = MagicMock(
+        id=503,
+        fanpage_id=1,
+        design_template_id=1,
+        source_article_id=1,
+        design_analysis_json={},
+        last_image_marker=None,
+        design_engine=None,
+    )
+    fanpage = MagicMock(id=1, accent_color="#FF0000", news_visual_engine="chatgpt")
+    article = MagicMock(id=1, scraped_title="Article Title")
+    template = MagicMock(
+        id=1,
+        template_json={"objects": []},
+        canvas_width=1080,
+        canvas_height=1350,
+        category="news",
+    )
+
+    def fake_query(model):
+        m = MagicMock()
+        name = getattr(model, "__name__", str(model))
+        if "PublishJob" in name:
+            m.filter_by.return_value.first.return_value = job
+            m.filter.return_value.update.return_value = 1
+        elif "TargetFanpage" in name:
+            m.filter_by.return_value.first.return_value = fanpage
+        elif "ScrapedArticle" in name:
+            m.filter_by.return_value.first.return_value = article
+        elif "DesignTemplate" in name:
+            m.filter_by.return_value.first.return_value = template
+        return m
+
+    db.query.side_effect = fake_query
+    mock_resolve_template.return_value = template
+    mock_applies.return_value = True
+
+    pp_res = MagicMock(
+        attempts=1,
+        image=b"valid_raw_image_bytes",
+        engine="9router",
+        qa=MagicMock(scores={"event": 5, "ai_look": 5}),
+        fallback_reason=None,
+        brief=MagicMock(badge_label="F1"),
+    )
+    mock_compose.return_value = pp_res
+    mock_render_card_png.return_value = b"fakepng"
+
+    with patch("app.services.design_images.single_photo_face_fits", return_value=True), \
+         patch("app.tasks.design_renderer._release_queued_lock"), \
+         patch("pathlib.Path.mkdir"), \
+         patch("pathlib.Path.write_bytes"):
+        render_design(503)
+
+    assert job.design_engine == "codex"
+    assert job.last_image_marker == "pro_poster"
+
+
+@patch("app.services.pro_poster.pipeline.pro_poster_applies")
+@patch("app.services.pro_poster.pipeline.compose_pro_poster")
+@patch("app.tasks.design_renderer._maybe_compose_speaker_design")
+@patch("app.tasks.design_renderer.select_image_for_job")
+@patch("app.tasks.design_renderer.render_card_png")
+@patch("app.services.design_images.resolve_template")
+@patch("app.tasks.design_renderer.SessionLocal")
+def test_render_design_pro_poster_gptcli_engine_recorded_as_chatgpt(
+    mock_session_cls,
+    mock_resolve_template,
+    mock_render_card_png,
+    mock_select_image,
+    mock_speaker,
+    mock_compose,
+    mock_applies,
+):
+    """When compose_pro_poster returns engine='gptcli' and an image, job ends with design_engine=='chatgpt'."""
+    db = MagicMock()
+    mock_session_cls.return_value = db
+
+    job = MagicMock(
+        id=504,
+        fanpage_id=1,
+        design_template_id=1,
+        source_article_id=1,
+        design_analysis_json={},
+        last_image_marker=None,
+        design_engine=None,
+    )
+    fanpage = MagicMock(id=1, accent_color="#FF0000", news_visual_engine="chatgpt")
+    article = MagicMock(id=1, scraped_title="Article Title")
+    template = MagicMock(
+        id=1,
+        template_json={"objects": []},
+        canvas_width=1080,
+        canvas_height=1350,
+        category="news",
+    )
+
+    def fake_query(model):
+        m = MagicMock()
+        name = getattr(model, "__name__", str(model))
+        if "PublishJob" in name:
+            m.filter_by.return_value.first.return_value = job
+            m.filter.return_value.update.return_value = 1
+        elif "TargetFanpage" in name:
+            m.filter_by.return_value.first.return_value = fanpage
+        elif "ScrapedArticle" in name:
+            m.filter_by.return_value.first.return_value = article
+        elif "DesignTemplate" in name:
+            m.filter_by.return_value.first.return_value = template
+        return m
+
+    db.query.side_effect = fake_query
+    mock_resolve_template.return_value = template
+    mock_applies.return_value = True
+
+    pp_res = MagicMock(
+        attempts=1,
+        image=b"valid_raw_image_bytes",
+        engine="gptcli",
+        qa=MagicMock(scores={"event": 5, "ai_look": 5}),
+        fallback_reason=None,
+        brief=MagicMock(badge_label="F1"),
+    )
+    mock_compose.return_value = pp_res
+    mock_render_card_png.return_value = b"fakepng"
+
+    with patch("app.services.design_images.single_photo_face_fits", return_value=True), \
+         patch("app.tasks.design_renderer._release_queued_lock"), \
+         patch("pathlib.Path.mkdir"), \
+         patch("pathlib.Path.write_bytes"):
+        render_design(504)
+
+    assert job.design_engine == "chatgpt"
+    assert job.last_image_marker == "pro_poster"

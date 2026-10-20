@@ -609,7 +609,7 @@ def render_design(self, job_id: int):
                 if pp_res.image:
                     image_src = f"data:image/png;base64,{base64.b64encode(pp_res.image).decode()}"
                     image_marker = "pro_poster"
-                    pro_poster_engine = pp_res.engine
+                    pro_poster_engine = {"9router": "codex", "gptcli": "chatgpt"}.get(pp_res.engine, pp_res.engine)
                     scores_str = " ".join(f"{k}:{v}" for k, v in pp_res.qa.scores.items()) if (pp_res.qa and pp_res.qa.scores) else ""
                     note_text = f"pro poster · qa {scores_str}".strip()
                     pro_poster_engine_note = note_text[:200]
@@ -1551,17 +1551,24 @@ def render_pending_designs():
             db.commit()
             logger.info("Marked %d stale news jobs as skipped (older than %dh)", len(stale_jobs), NEWS_STALE_HOURS)
 
+        from app.services.visual_fair_queue import visual_news_fanpage_ids
+        visual_ids = visual_news_fanpage_ids(db)
+
+        jobs_filter = [
+            PublishJob.status == PublishJobStatus.pending_design,
+            PublishJob.content_type == ContentType.news_content,
+            TargetFanpage.mode2_publish_mode == PublishMode.auto,
+            PublishJob.created_at >= stale_cutoff,
+            not_stuck_on_missing_image,
+            not_deferred,
+        ]
+        if visual_ids:
+            jobs_filter.append(~PublishJob.fanpage_id.in_(visual_ids))
+
         jobs = (
             db.query(PublishJob.id)
             .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
-            .filter(
-                PublishJob.status == PublishJobStatus.pending_design,
-                PublishJob.content_type == ContentType.news_content,
-                TargetFanpage.mode2_publish_mode == PublishMode.auto,
-                PublishJob.created_at >= stale_cutoff,
-                not_stuck_on_missing_image,
-                not_deferred,
-            )
+            .filter(*jobs_filter)
             .limit(10)
             .all()
         )
@@ -1667,6 +1674,39 @@ def render_pending_designs():
                 "Design sweep: dispatched %d news + %d discussion + %d pinterest + %d facebook-photo + %d ig-recreate renders",
                 len(jobs), len(djobs), len(pjobs), len(fjobs), len(ijobs),
             )
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.design_renderer.dispatch_fair_visual_news")
+def dispatch_fair_visual_news():
+    """Fair gpt-cli dispatch: one ChatGPT-routed news job at a time, least-served fan page first (owner 2026-10-20)."""
+    from datetime import datetime, timezone
+    from app.services.visual_fair_queue import (
+        LAST_JOB_KEY,
+        mark_served,
+        news_job_waiting,
+        pick_next_news_job,
+    )
+
+    db = SessionLocal()
+    try:
+        r = _redis()
+        if news_job_waiting(db, r):
+            return "busy"
+        now = datetime.now(timezone.utc)
+        job = pick_next_news_job(db, r, now)
+        if not job:
+            return "idle"
+        if not _acquire_queued_lock(job.id):
+            return "locked"
+        render_design.apply_async(args=[job.id], queue="visual", expires=1800)
+        try:
+            r.set(LAST_JOB_KEY, job.id, ex=1800)
+        except Exception as exc:
+            logger.warning("fair dispatch: could not record last job %s: %s", job.id, exc)
+        mark_served(r, job.fanpage_id, now)
+        return f"dispatched {job.id}"
     finally:
         db.close()
 

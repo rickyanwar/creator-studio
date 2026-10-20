@@ -165,7 +165,9 @@ def copywrite_article(self, article_id: int):
                 from app.services.engine_router import render_queue_for
                 stagger = _fanpage_stagger(slot, breaking=copy.is_breaking)
                 q = render_queue_for(db, fp, "news")
-                if q:
+                if q == "visual":
+                    pass  # Fair visual dispatcher picks it up one at a time
+                elif q:
                     render_design.apply_async(args=[job.id], countdown=stagger, queue=q)
                 else:
                     render_design.apply_async(args=[job.id], countdown=stagger)

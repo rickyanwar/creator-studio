@@ -117,7 +117,7 @@ def test_renderer_pro_poster_passed_uses_pro_poster_marker(
         render_design(203)
 
     assert job.last_image_marker == "pro_poster"
-    assert job.design_engine == "gptcli"
+    assert job.design_engine == "chatgpt"
     assert "pro poster · qa event:5 ai_look:5" in job.design_engine_note
     assert job.design_analysis_json["pro_poster_qa"]["passed"] is True
 
