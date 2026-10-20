@@ -148,6 +148,64 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
     }
 
 
+def effective_credits(db: Session, acc: GflowAccount) -> int | None:
+    """Account credits minus clips made on it since the last credit probe (the probe runs ~every 30 min)."""
+    if acc.credits is None:
+        return None
+    if acc.credits_checked_at is None:
+        return acc.credits
+
+    checked_at = acc.credits_checked_at
+    if isinstance(checked_at, str):
+        try:
+            checked_at = datetime.fromisoformat(checked_at)
+        except (ValueError, TypeError):
+            return acc.credits
+    if checked_at.tzinfo is not None:
+        checked_at = checked_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+    jobs = (
+        db.query(VideoJob)
+        .filter(
+            VideoJob.account_id == acc.id,
+            VideoJob.status.in_(("claimed", "generating", "queued", "done")),
+        )
+        .all()
+    )
+
+    spent = 0
+    for job in jobs:
+        clips_done = job.clips_done
+        if not clips_done or not isinstance(clips_done, list):
+            continue
+        c_per_clip = job.credits_per_clip or 0
+        count = 0
+        for entry in clips_done:
+            if not isinstance(entry, dict):
+                continue
+            at_val = entry.get("at")
+            if not at_val:
+                continue
+            try:
+                if isinstance(at_val, str):
+                    dt = datetime.fromisoformat(at_val)
+                elif isinstance(at_val, datetime):
+                    dt = at_val
+                else:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+            if dt > checked_at:
+                count += 1
+        spent += count * c_per_clip
+
+    return max(0, acc.credits - spent)
+
+
 def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAccount]]:
     """
     Claim a job for worker_id.
@@ -228,7 +286,8 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         clips_done_count = len(cand_job.clips_done) if cand_job.clips_done else 0
         rem_clips = max(0, clips_count - clips_done_count)
         remaining_cost = rem_clips * cand_job.credits_per_clip
-        if (acc.credits - credit_reserve) >= remaining_cost:
+        eff = effective_credits(db, acc)
+        if eff is not None and (eff - credit_reserve) >= remaining_cost:
             # Lock row
             locked_job = (
                 db.query(VideoJob)
@@ -250,6 +309,27 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
             db.refresh(locked_job)
             db.refresh(acc)
             return locked_job, acc
+        elif eff is not None and (eff - credit_reserve) < remaining_cost and acc.credits is not None:
+            locked_job = (
+                db.query(VideoJob)
+                .filter(VideoJob.id == cand_job.id, VideoJob.status == "queued")
+                .with_for_update(skip_locked=True)
+                .first()
+            )
+            if not locked_job:
+                continue
+
+            locked_job.generation += 1
+            locked_job.clips_done = []
+            locked_job.clip_attempts = 0
+            locked_job.account_id = None
+            locked_job.flow_project_id = None
+            locked_job.worker_id = None
+            locked_job.lease_until = None
+            locked_job.status = "queued"
+            locked_job.error = f"restarted on another account: {acc.profile} has {eff} credits, needs {remaining_cost}"
+            db.commit()
+            continue
 
     # 2. Unpinned queued jobs
     unpinned_jobs = (
@@ -277,7 +357,9 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         # Ties: least recently used (acc.last_used_at is None or older)
         matching_accounts = [
             acc for acc in candidates
-            if acc.id not in busy_account_ids and (acc.credits - credit_reserve) >= cand_job.credits_estimate
+            if acc.id not in busy_account_ids
+            and (eff := effective_credits(db, acc)) is not None
+            and (eff - credit_reserve) >= cand_job.credits_estimate
         ]
         if not matching_accounts:
             continue

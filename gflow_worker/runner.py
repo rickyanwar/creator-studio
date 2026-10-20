@@ -8,13 +8,22 @@ from .state import JobState
 
 log = logging.getLogger(__name__)
 
+SUBMIT_NO_REPLY = "of clicking submit"
+
 
 class JobRunner:
     def __init__(self, cfg, api, gflow, media):
         self.cfg, self.api, self.gflow, self.media = cfg, api, gflow, media
         self.cancel_ids = set()
         self.busy_profiles = set()
+        self.credits_stale = False
         self.lock = threading.Lock()
+
+    def _fail(self, jid, generation, result):
+        """Report a failed CLI step; a submit that got no usable reply often means the account ran out of credits."""
+        if SUBMIT_NO_REPLY in (result.message or ""):
+            self.credits_stale = True
+        self.api.fail(jid, generation, classify(result), result.message)
 
     def apply_cancels(self, ids):
         with self.lock:
@@ -75,7 +84,7 @@ class JobRunner:
         if not project:
             result = self.gflow.create_project(job["account"]["profile"], job["project_name"])
             if not result.ok:
-                self.api.fail(jid, generation, classify(result), result.message)
+                self._fail(jid, generation, result)
                 return
             project = result.payload["project_id"]
         state.data["project_id"] = project
@@ -105,7 +114,7 @@ class JobRunner:
                         return
                     result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
                 if not result.ok:
-                    self.api.fail(jid, generation, classify(result), result.message)
+                    self._fail(jid, generation, result)
                     return
                 path = Path(result.payload.get("local_path") or out)
                 if not path.is_absolute():

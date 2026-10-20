@@ -123,6 +123,9 @@ class Worker:
 
     def tick(self):
         self.jobs = {jid: entry for jid, entry in self.jobs.items() if not entry[1].done()}
+        if self.runner.credits_stale and not self.jobs:
+            self.runner.credits_stale = False
+            self.last_refresh = None  # refresh now: a submit got no reply, the balance may be empty
         now = time.monotonic()
         if (self.last_refresh is None or now - self.last_refresh >= self.cfg.credits_refresh_minutes * 60) and memory.can_start(self.cfg, len(self.jobs)):
             # credits list inspects ALL profiles; avoid opening a second browser on a busy profile.
