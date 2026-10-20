@@ -358,6 +358,56 @@ def news_slot_available(
         return True
 
 
+def next_news_slot_utc(
+    db: Session,
+    job: PublishJob,
+    now_utc: datetime | None = None,
+) -> datetime | None:
+    """Earliest next slot (aware UTC) over the job's fan page's active destinations. Read-only; None when there are no destinations or on error."""
+    try:
+        fanpage_id = getattr(job, "fanpage_id", None)
+        if fanpage_id is None:
+            return None
+
+        destinations = (
+            db.query(SocialDestination)
+            .filter(
+                SocialDestination.content_project_id == fanpage_id,
+                SocialDestination.is_active.is_(True),
+            )
+            .order_by(SocialDestination.id)
+            .all()
+        )
+        if not destinations:
+            return None
+
+        sleep_start, sleep_end = _resolve_sleep_window(db, job)
+        aware_now = _resolve_aware_now(now_utc)
+
+        slots: list[datetime] = []
+        for destination in destinations:
+            next_slot_utc, _, _, _ = _plan_slot(
+                db=db,
+                destination=destination,
+                job=job,
+                aware_now=aware_now,
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
+            )
+            if next_slot_utc is not None:
+                slots.append(next_slot_utc)
+
+        return min(slots) if slots else None
+    except Exception as exc:
+        job_id = getattr(job, "id", None)
+        logger.warning(
+            "next_news_slot_utc failed for job id=%s: %s",
+            job_id,
+            exc,
+        )
+        return None
+
+
 def ensure_deliveries(
     db: Session,
     job: PublishJob,
