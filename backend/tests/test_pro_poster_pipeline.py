@@ -504,7 +504,7 @@ def test_render_design_switch_on_image_success(mock_resolve, mock_session, mock_
     payload = mock_post.call_args[1]["json"]
     assert payload.get("label") == "WORLDSBK NEWS"
     assert job.last_image_marker == "pro_poster"
-    assert job.design_engine == "gptcli"
+    assert job.design_engine == "chatgpt"
     assert "pro poster · qa" in job.design_engine_note
     assert job.design_analysis_json.get("pro_poster_qa") == {
         "scores": {"event": 5, "ai_look": 5},
@@ -979,10 +979,10 @@ def test_compose_uses_face_ref_when_hero_is_none(mock_finish, mock_gen, mock_sel
 @patch("app.services.pro_poster.qa.check_safety")
 @patch("app.services.pro_poster.pipeline.generate_ex")
 @patch("app.services.speaker_design._finish", return_value=b"finished_png")
-def test_compose_pro_poster_passes_engines_gptcli_to_generate_ex(
+def test_compose_pro_poster_lets_router_choose_engine(
     mock_finish, mock_gen, mock_safety, mock_direct, mock_select
 ):
-    """compose_pro_poster passes engines=('gptcli',) to generate_ex on its single call."""
+    """compose_pro_poster does not pass engines to generate_ex, letting router decide."""
     db = MagicMock()
     fanpage = MagicMock(id=10)
     job = MagicMock(id=701, design_analysis_json={})
@@ -1003,7 +1003,40 @@ def test_compose_pro_poster_passes_engines_gptcli_to_generate_ex(
 
     assert res.image == b"finished_png"
     assert mock_gen.call_count == 1
-    assert mock_gen.call_args_list[0].kwargs.get("engines") == ("gptcli",)
+    assert "engines" not in mock_gen.call_args.kwargs
+
+
+@patch("app.services.pro_poster.photos.select_photos")
+@patch("app.services.pro_poster.art_direction.direct")
+@patch("app.services.pro_poster.qa.check_safety")
+@patch("app.services.pro_poster.pipeline.generate_ex")
+@patch("app.services.speaker_design._finish", return_value=b"finished_png")
+def test_compose_pro_poster_codex_result_passes_safety(
+    mock_finish, mock_gen, mock_safety, mock_direct, mock_select
+):
+    """generate_ex returns 9router (Codex) and safety passes -> res.image set, res.engine=='9router', attempts==1."""
+    db = MagicMock()
+    fanpage = MagicMock(id=10)
+    job = MagicMock(id=701, design_analysis_json={})
+    article = MagicMock(id=801)
+
+    brief = _make_brief(701)
+    selection = _make_selection(has_hero=True)
+    direction = _make_direction("hero_with_context")
+
+    mock_select.return_value = selection
+    mock_direct.return_value = direction
+    mock_gen.return_value = GenerationResult(image=b"raw1", engine="9router", meta={}, event_id=None)
+    mock_safety.return_value = QAResult(passed=True, issues=())
+
+    with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
+         patch("app.services.story_photo.fetch_story_photo", return_value=None):
+        res = compose_pro_poster(db, fanpage, job, article)
+
+    assert res.image is not None
+    assert res.image == b"finished_png"
+    assert res.engine == "9router"
+    assert res.attempts == 1
 
 
 @patch("app.services.pro_poster.photos.select_photos")

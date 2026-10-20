@@ -154,6 +154,12 @@ celery_app.conf.beat_schedule = {
         "schedule": 120,
         "options": {"expires": 110},
     },
+    # Fair gpt-cli dispatch: one ChatGPT news render at a time, least-served fan page first.
+    "dispatch-fair-visual-news": {
+        "task": "app.tasks.design_renderer.dispatch_fair_visual_news",
+        "schedule": 30,
+        "options": {"expires": 25},
+    },
     # Mode 4 discussion content: ticks every 30 min — self-throttles per fanpage
     # to discussion_daily_count, paced across the 08:00–22:00 WIB window.
     "generate-discussion-content": {

@@ -21,7 +21,7 @@ SQLiteTypeCompiler.visit_ARRAY = lambda self, type_, **kw: "TEXT"
 
 
 def test_news_copywriter_dispatch_queue():
-    """1. news copywriter dispatch: q 'visual' -> apply_async(..., queue='visual'); q None -> apply_async(...) without queue."""
+    """1. news copywriter dispatch: q 'visual' -> no direct enqueue (fair dispatcher picks it up); q None -> apply_async(...) without queue."""
     def make_article():
         a = MagicMock()
         a.id = 10
@@ -54,8 +54,7 @@ def test_news_copywriter_dispatch_queue():
         db.query().filter_by().first.side_effect = [make_article(), None]
         copywrite_article(10)
 
-        assert mock_render.called
-        assert mock_render.call_args.kwargs.get("queue") == "visual"
+        assert not mock_render.called
 
     # Case B: q = None
     with patch("app.tasks.news_copywriter.SessionLocal") as mock_session_cls, \
@@ -115,7 +114,8 @@ def test_facebook_photo_dispatch_queue():
 
 
 def test_render_pending_designs_routing():
-    """3. render_pending_designs: news and facebook jobs with q 'visual' -> apply_async with queue; with None -> .delay."""
+    """3. render_pending_designs: news and facebook jobs with q 'visual' -> apply_async with queue; with None -> .delay.
+    visual-routed news is left to dispatch_fair_visual_news."""
     engine = create_engine("sqlite:///:memory:")
     PublishJob.__table__.create(bind=engine)
     TargetFanpage.__table__.create(bind=engine)
@@ -141,15 +141,17 @@ def test_render_pending_designs_routing():
     session.commit()
 
     # Case A: q = "visual"
+    import app.services.visual_fair_queue  # ensure imported before patch
     with patch("app.tasks.design_renderer.SessionLocal", return_value=session), \
          patch("app.services.engine_router.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
          patch("app.tasks.design_renderer.render_design.apply_async") as mock_news_async, \
          patch("app.tasks.design_renderer.render_design.delay") as mock_news_delay, \
          patch("app.tasks.design_renderer.render_facebook_photo.apply_async") as mock_fb_async, \
          patch("app.tasks.design_renderer.render_facebook_photo.delay") as mock_fb_delay:
         render_pending_designs()
 
-        mock_news_async.assert_called_once_with(args=[101], queue="visual", expires=1800)
+        mock_news_async.assert_not_called()
         mock_news_delay.assert_not_called()
         mock_fb_async.assert_called_once_with(args=[102], queue="visual", expires=1800)
         mock_fb_delay.assert_not_called()

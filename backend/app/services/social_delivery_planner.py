@@ -26,6 +26,7 @@ from app.models.social_publishing import (
     PublishDelivery,
     SocialDestination,
 )
+from app.models.target_fanpages import TargetFanpage
 from app.services.social_delivery_policy import (
     choose_method_for_slot,
     compute_next_slot,
@@ -228,6 +229,135 @@ def build_delivery_payload(
     )
 
 
+def _resolve_aware_now(now_utc: datetime | None) -> datetime:
+    if now_utc is None:
+        return datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        return now_utc.replace(tzinfo=timezone.utc)
+    return now_utc.astimezone(timezone.utc)
+
+
+def _resolve_sleep_window(db: Session, job: PublishJob) -> tuple[int | None, int | None]:
+    fanpage = getattr(job, "fanpage", None)
+    if fanpage is None and getattr(job, "fanpage_id", None):
+        fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+
+    sleep_start = None
+    sleep_end = None
+    if (
+        fanpage
+        and fanpage.publish_sleep_start_hour is not None
+        and fanpage.publish_sleep_end_hour is not None
+    ):
+        sleep_start = fanpage.publish_sleep_start_hour
+        sleep_end = fanpage.publish_sleep_end_hour
+    return sleep_start, sleep_end
+
+
+def _plan_slot(
+    db: Session,
+    destination: SocialDestination,
+    job: PublishJob,
+    aware_now: datetime,
+    sleep_start: int | None,
+    sleep_end: int | None,
+) -> tuple[datetime, bool, int, list[datetime]]:
+    """Next slot for job on destination, whether that slot makes the news stale, and the stale limit in hours."""
+    from app.services.content_groups import group_of
+    from app.services.mode_quota import pick_slot
+    from app.services.publishing_schedule import get_destination_reservations_utc
+
+    existing_slots_utc = get_destination_reservations_utc(db, destination)
+
+    dest_fanpage = getattr(destination, "content_project", None)
+    if dest_fanpage is None and destination.content_project_id:
+        dest_fanpage = db.query(TargetFanpage).filter_by(id=destination.content_project_id).first()
+    dest_hour_weights = getattr(dest_fanpage, "publish_hour_weights", None) if dest_fanpage else None
+
+    next_slot_utc = pick_slot(
+        db=db,
+        destination=destination,
+        job=job,
+        fanpage=dest_fanpage,
+        now_utc=aware_now,
+        all_reservations=existing_slots_utc,
+        hour_weights=dest_hour_weights,
+        sleep_start=sleep_start,
+        sleep_end=sleep_end,
+    )
+
+    job_created_at = getattr(job, "created_at", None)
+    if job_created_at is None:
+        job_created_at_utc = aware_now
+    elif job_created_at.tzinfo is None:
+        job_created_at_utc = job_created_at.replace(tzinfo=timezone.utc)
+    else:
+        job_created_at_utc = job_created_at.astimezone(timezone.utc)
+
+    news_stale_hours = getattr(destination, "news_stale_hours", 24)
+    if news_stale_hours is None:
+        news_stale_hours = 24
+
+    is_stale_news = (
+        group_of(job.content_type) == "news"
+        and (next_slot_utc - job_created_at_utc) > timedelta(hours=news_stale_hours)
+    )
+
+    return next_slot_utc, is_stale_news, news_stale_hours, existing_slots_utc
+
+
+def news_slot_available(
+    db: Session,
+    job: PublishJob,
+    now_utc: datetime | None = None,
+) -> bool:
+    """True when at least one active destination of the job's fan page can post this news job within its news_stale_hours.
+
+    Read-only (no row locks, no writes). True when the fan page has no active destinations or on any error (the old behaviour then applies).
+    """
+    try:
+        fanpage_id = getattr(job, "fanpage_id", None)
+        if fanpage_id is None:
+            return True
+
+        destinations = (
+            db.query(SocialDestination)
+            .filter(
+                SocialDestination.content_project_id == fanpage_id,
+                SocialDestination.is_active.is_(True),
+            )
+            .order_by(SocialDestination.id)
+            .all()
+        )
+        if not destinations:
+            return True
+
+        sleep_start, sleep_end = _resolve_sleep_window(db, job)
+        aware_now = _resolve_aware_now(now_utc)
+
+        for destination in destinations:
+            _, is_stale_news, _, _ = _plan_slot(
+                db=db,
+                destination=destination,
+                job=job,
+                aware_now=aware_now,
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
+            )
+            if not is_stale_news:
+                return True
+
+        return False
+    except Exception as exc:
+        job_id = getattr(job, "id", None)
+        logger.warning(
+            "news_slot_available failed for job id=%s: %s",
+            job_id,
+            exc,
+        )
+        return True
+
+
 def ensure_deliveries(
     db: Session,
     job: PublishJob,
@@ -244,26 +374,8 @@ def ensure_deliveries(
 
     payload = build_delivery_payload(job, post=post)
 
-    fanpage = getattr(job, "fanpage", None)
-    if fanpage is None and getattr(job, "fanpage_id", None):
-        fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
-
-    sleep_start = None
-    sleep_end = None
-    if (
-        fanpage
-        and fanpage.publish_sleep_start_hour is not None
-        and fanpage.publish_sleep_end_hour is not None
-    ):
-        sleep_start = fanpage.publish_sleep_start_hour
-        sleep_end = fanpage.publish_sleep_end_hour
-
-    if now_utc is None:
-        aware_now = datetime.now(timezone.utc)
-    elif now_utc.tzinfo is None:
-        aware_now = now_utc.replace(tzinfo=timezone.utc)
-    else:
-        aware_now = now_utc.astimezone(timezone.utc)
+    sleep_start, sleep_end = _resolve_sleep_window(db, job)
+    aware_now = _resolve_aware_now(now_utc)
 
     # Row lock active destinations to ensure serialized slot allocation per destination
     destinations = (
@@ -301,44 +413,18 @@ def ensure_deliveries(
                 supported = [supported]
         is_supported = payload.media_kind in supported
 
-        from app.services.content_groups import group_of
-        from app.services.mode_quota import pick_slot
-        from app.services.publishing_schedule import get_destination_reservations_utc
-
-        existing_slots_utc = get_destination_reservations_utc(db, destination)
-
-        dest_fanpage = getattr(destination, "content_project", None)
-        if dest_fanpage is None and destination.content_project_id:
-            dest_fanpage = db.query(TargetFanpage).filter_by(id=destination.content_project_id).first()
-        dest_hour_weights = getattr(dest_fanpage, "publish_hour_weights", None) if dest_fanpage else None
-
-        next_slot_utc = pick_slot(
+        (
+            next_slot_utc,
+            is_stale_news,
+            news_stale_hours,
+            existing_slots_utc,
+        ) = _plan_slot(
             db=db,
             destination=destination,
             job=job,
-            fanpage=dest_fanpage,
-            now_utc=aware_now,
-            all_reservations=existing_slots_utc,
-            hour_weights=dest_hour_weights,
+            aware_now=aware_now,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
-        )
-
-        job_created_at = getattr(job, "created_at", None)
-        if job_created_at is None:
-            job_created_at_utc = aware_now
-        elif job_created_at.tzinfo is None:
-            job_created_at_utc = job_created_at.replace(tzinfo=timezone.utc)
-        else:
-            job_created_at_utc = job_created_at.astimezone(timezone.utc)
-
-        news_stale_hours = getattr(destination, "news_stale_hours", 24)
-        if news_stale_hours is None:
-            news_stale_hours = 24
-
-        is_stale_news = (
-            group_of(job.content_type) == "news"
-            and (next_slot_utc - job_created_at_utc) > timedelta(hours=news_stale_hours)
         )
 
         naive_scheduled_for = next_slot_utc.astimezone(timezone.utc).replace(

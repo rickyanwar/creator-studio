@@ -255,10 +255,10 @@ def compose_pro_poster(
 
     # Let VisualEngineDeferred propagate to caller
     try:
-        gen_res = generate_ex(db, req, fanpage_id=fanpage_id, engines=("gptcli",))
+        gen_res = generate_ex(db, req, fanpage_id=fanpage_id)
     except NoAllowedEngine:
-        # ChatGPT is asleep or cooling down, so nothing was generated. attempts=0
-        # lets the caller fall back to the regular speaker design (Codex).
+        # No engine could run (ChatGPT and Codex both unavailable), so nothing
+        # was generated. attempts=0 lets the caller fall back to the regular speaker design.
         res = ProPosterResult(
             image=None,
             brief=brief,
