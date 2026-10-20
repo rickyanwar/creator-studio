@@ -855,4 +855,69 @@ def test_credits_list_fails_discovers_profiles_and_probes(cfg, studio, monkeypat
         worker.executor.shutdown()
 
 
+@pytest.fixture(autouse=True)
+def _mock_proxy_guard(monkeypatch):
+    import gflow_worker.proxy_guard as pg
+    monkeypatch.setattr(pg, "is_proxy_reachable", lambda *a, **kw: True)
+
+
+def test_submit_no_reply_marks_credits_stale(cfg, studio, runner, monkeypatch):
+    msg = (
+        "migrated host: no YhhmEf/eb1hJf/MZZa6b/nprQif reply within 60s of clicking submit "
+        "(rpcs seen: YhhmEf)"
+    )
+    fake_result = GflowResult(ok=False, payload={}, exit_code=9, error_class="TransportError", retryable=True, message=msg)
+    monkeypatch.setattr(runner.gflow, "t2v", lambda *a, **kw: fake_result)
+
+    assert runner.credits_stale is False
+    runner.run_job(payload())
+
+    assert runner.credits_stale is True
+    fail_events = studio.events("/fail")
+    assert len(fail_events) == 1
+    assert fail_events[0]["reason"] == classify(fake_result)
+    assert fail_events[0]["reason"] == "transient"
+    assert fail_events[0]["message"] == msg
+
+
+def test_other_failure_keeps_credits_fresh(cfg, studio, runner, monkeypatch):
+    msg = "some other network error"
+    fake_result = GflowResult(ok=False, payload={}, exit_code=9, error_class="TransportError", retryable=True, message=msg)
+    monkeypatch.setattr(runner.gflow, "t2v", lambda *a, **kw: fake_result)
+
+    assert runner.credits_stale is False
+    runner.run_job(payload())
+
+    assert runner.credits_stale is False
+    fail_events = studio.events("/fail")
+    assert len(fail_events) == 1
+    assert fail_events[0]["reason"] == classify(fake_result)
+    assert fail_events[0]["reason"] == "transient"
+    assert fail_events[0]["message"] == msg
+
+
+def test_tick_refreshes_stale_credits_when_idle_only(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    worker = Worker(cfg, studio.api)
+    refresh_calls = []
+    monkeypatch.setattr(worker, "_refresh_accounts", lambda: refresh_calls.append(True))
+
+    worker.runner.credits_stale = True
+    worker.last_refresh = time.monotonic()
+    future = Future()
+    worker.jobs[1] = (payload(), future)
+    try:
+        worker.tick()
+        assert worker.runner.credits_stale is True
+        assert len(refresh_calls) == 0
+
+        worker.jobs.clear()
+        worker.tick()
+        assert worker.runner.credits_stale is False
+        assert len(refresh_calls) == 1
+    finally:
+        worker.executor.shutdown()
+
+
+
 
