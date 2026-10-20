@@ -9,6 +9,9 @@ import {
   getDeliveryStateBadge,
 } from "./channelUtils";
 
+const parseUtc = (s: string) =>
+  new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
+
 interface Props {
   deliveries: RecentDeliveryOut[];
   targetTz: string;
@@ -107,7 +110,24 @@ export function HistoryTab({
               </thead>
               <tbody className="divide-y divide-line bg-surface">
                 {filteredDeliveries.map((del) => {
-                  const timeDate = del.published_at || del.scheduled_for;
+                  const method = (
+                    (del as unknown as { actual_method?: string | null }).actual_method ||
+                    del.method ||
+                    ""
+                  ).toLowerCase();
+                  const isRepliz =
+                    (del.state || "").toLowerCase() === "repliz_scheduled" ||
+                    method.includes("repliz");
+
+                  let timeDate = del.published_at || del.scheduled_for;
+                  let replizLabel: string | null = null;
+
+                  if (isRepliz && del.scheduled_for) {
+                    timeDate = del.scheduled_for;
+                    const isFuture = parseUtc(del.scheduled_for).getTime() > Date.now();
+                    replizLabel = isFuture ? "Scheduled in Repliz" : "Live via Repliz";
+                  }
+
                   const { main, wib } = formatDualTime(timeDate, targetTz);
                   const eng = getDesignEngineBadge(del.design_engine);
                   const stateBadge = getDeliveryStateBadge(del.state);
@@ -119,6 +139,11 @@ export function HistoryTab({
                       <td className="p-3.5 whitespace-nowrap text-text2 tabular-nums">
                         <span className="font-medium text-text block">{main}</span>
                         <span className="text-[11px] text-text2 block">{wib}</span>
+                        {replizLabel && (
+                          <span className="text-[11px] text-text2 block">
+                            {replizLabel}
+                          </span>
+                        )}
                       </td>
 
                       {/* Post */}
