@@ -214,7 +214,8 @@ def test_hero_prompt_contents():
     assert 'Story text (from the source article):\n"""Nicolo Bulega claimed three race wins at Jerez. He is now fifth in all-time WorldSBK victories."""' in p
     assert "ONE strongest visual idea" in p
     assert "Tell THIS story" in p
-    assert "The bottom 42% of the image" in p
+    assert "- The bottom 35% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork." in p
+    assert "bottom 42%" not in p
     assert "Keep the very top edge free of graphics" in p
     assert (
         "- Image 1: a real press photo of Nicolo Bulega (Aruba.it Racing Ducati). "
@@ -316,9 +317,9 @@ def test_house_style_inset_line_always_present():
         "- House style, when it helps the story: Max Verstappen large in the frame, "
         "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
         "or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). "
-        "Put the inset in the upper 40% of the image. "
         "Never repeat the same person or pose in the inset."
     ) in p_hero
+    assert "Put the inset in the upper 40%" not in p_hero
 
     # Without hero subject
     brief_no_hero = _make_brief(subjects=())
@@ -327,9 +328,9 @@ def test_house_style_inset_line_always_present():
         "- House style, when it helps the story: the main subject large in the frame, "
         "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
         "or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). "
-        "Put the inset in the upper 40% of the image. "
         "Never repeat the same person or pose in the inset."
     ) in p_no_hero
+    assert "Put the inset in the upper 40%" not in p_no_hero
 
 
 def test_realism_and_template_space_sections_present():
@@ -346,20 +347,21 @@ def test_realism_and_template_space_sections_present():
     # Realism section
     assert "Photographic realism (very important):" in p
     assert "- It must look like a real photograph by a professional sports photographer, then designed: realistic skin with pores and natural imperfections, real lens depth of field and motion, natural light and colour." in p
-    assert "- Sharp and detailed like a high-resolution professional camera with a good lens: the face, eyes, hair, kit fabric, stitching, sponsor patches, carbon fibre and tyre rubber in crisp focus, with clean edges and fine natural texture." in p
-    assert "- But keep it natural: no over-sharpening, no halos around edges, no HDR clarity, no hyper-detailed or crunchy AI texture, no plastic gloss. The background stays naturally soft from depth of field, and noise and grain stay as in a real photo." in p
+    assert "Sharp and detailed" not in p
+    assert "- But keep it natural" not in p
     assert "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen." in p
     assert "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters." in p
 
     # Template space section
     assert "Space for the fan page template:" in p
-    assert "- The bottom 42% of the image (everything below 58% of the height) will be covered by the fan page's own badge and headline. Keep that area a plain continuation of the photo that fades to near-black: no text, no graphic words, no numbers, no inset, no logos and no faces there." in p
+    assert "- The bottom 35% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork." in p
+    assert "bottom 42%" not in p
     assert "- Keep the very top edge free of graphics, so the page name fits." in p
 
     # Avoid section
     assert "Do NOT include anything below (very important):" in p
     assert "No official series logo or wordmark anywhere in the image" in p and "Team, manufacturer and sponsor logos" in p
-    assert "- Any text or graphic words in the bottom 42% of the image." in p
+    assert "- Any text or graphic words in the bottom 35% of the image." in p
     assert "- Do not show Formula 1 cars." in p
     assert "- Do not show Singapore night race." in p
     assert "- Do not show rain." in p
@@ -549,7 +551,10 @@ def test_concept_graphic_words_line_cases():
         graphic_words=("P9", "2X"),
     )
     p_words = direct(brief, selection, concept=concept_words).prompt
-    assert '- Graphic words: use exactly these and nothing else, each at most once: "P9", "2X".' in p_words
+    assert (
+        '- Graphic words: use exactly these and nothing else, each at most once, spelled exactly letter by letter: "P9", "2X". '
+        'Place them in the upper half of the image, well above the bottom 35% (the page badge sits just above that area).'
+    ) in p_words
     assert generic_line not in p_words
 
     # 2. Without graphic words (empty tuple)
@@ -570,8 +575,8 @@ def test_concept_graphic_words_line_cases():
     assert "- Do not add any words or numbers." not in p_generic
 
 
-def test_template_text_zone_and_graphic_words_placement():
-    """Verify bottom 42%, graphic words in upper 55%, and bottom-zone avoid line in final block."""
+def test_bottom_third_template_line_and_no_placement_rules():
+    """Verify bottom 35% template line is present, and placement rules are absent."""
     hero = _make_check(role="hero", path="/images/hero.jpg")
     brief = _make_brief()
     selection = PhotoSelection(hero=hero, context=())
@@ -584,29 +589,30 @@ def test_template_text_zone_and_graphic_words_placement():
     )
     p = direct(brief, selection, concept=concept_words).prompt
 
-    # Prompt contains "bottom 42%"
-    assert "bottom 42%" in p
-    # Graphic words line contains "upper 55%"
-    assert "upper 55%" in p
-    # Inset line mentions upper 40%
-    assert "Put the inset in the upper 40% of the image." in p
+    # Restored line is present
+    assert "- The bottom 35% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork." in p
+    # Placement rules and bottom 42% are absent
+    assert "bottom 42%" not in p
+    assert "upper 55%" not in p
+    assert "Put the inset in the upper 40%" not in p
 
-    # Final block contains bottom-zone line
+    # Final block does not contain bottom-zone avoid line
     blocks = p.split("\n\n")
     last_block = blocks[-1]
     assert last_block.startswith("Do NOT include anything below (very important):")
-    assert "- Any text or graphic words in the bottom 42% of the image." in last_block
+    assert "- Any text or graphic words in the bottom 35% of the image." in last_block
 
 
-def test_realism_sharp_and_natural_lines():
-    """Verify sharp/detailed line and keep-it-natural line in realism section."""
+def test_realism_lines_have_no_sharpness_push():
+    """Verify realism section has no sharpness push lines and keeps baseline realism."""
     hero = _make_check(role="hero", path="/images/hero.jpg")
     brief = _make_brief()
     selection = PhotoSelection(hero=hero, context=())
 
     p = direct(brief, selection).prompt
-    assert "- Sharp and detailed like a high-resolution professional camera with a good lens: the face, eyes, hair, kit fabric, stitching, sponsor patches, carbon fibre and tyre rubber in crisp focus, with clean edges and fine natural texture." in p
-    assert "- But keep it natural: no over-sharpening, no halos around edges, no HDR clarity, no hyper-detailed or crunchy AI texture, no plastic gloss. The background stays naturally soft from depth of field, and noise and grain stay as in a real photo." in p
+    assert "Sharp and detailed" not in p
+    assert "- But keep it natural" not in p
     # Existing realism lines still present
+    assert "- It must look like a real photograph by a professional sports photographer, then designed: realistic skin with pores and natural imperfections, real lens depth of field and motion, natural light and colour." in p
     assert "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen." in p
     assert "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters." in p

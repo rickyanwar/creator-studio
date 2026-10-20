@@ -20,7 +20,7 @@ from sqlalchemy import String, cast, func, or_
 from app.models.gallery import GalleryImage
 from app.services.gallery_filters import not_keyword_mismatch
 from app.services import design_images, visual_engine
-from app.services.prompt_rules import avoid_block, realism_block, text_zone_line
+from app.services.prompt_rules import avoid_block
 from app.services.visual_engine import GenerationRequest, VisualEngineError
 from app.services.visual_sourcing import get_name_variants
 
@@ -436,13 +436,12 @@ def plan_layout(moment_photos: list, bike_photos: list) -> str | None:
 
 
 ASIS = "Real photos used inside insets or behind the speaker must be used AS IS: only crop, scale, place and softly blur them. Never redraw, re-render, sharpen, enhance or add detail to any motorcycle, rider or helmet; keep their original photographic softness, grain and motion blur, exactly like a real press photo."
-COMMON = ASIS + f'''
+COMMON = ASIS + '''
 Keep every real sponsor logo, patch, number and printed text on the clothing, caps, suits, helmets and motorcycles exactly as in the photos; never remove, blur or simplify them; do not add any new text or logo. If an official MotoGP logo appears in a background, leave it out.
 Lighting and colour: natural neutral light with true-to-life colours like a real Getty press photo composited by a professional designer. NO golden hour, NO yellow or orange tint, NO haze, NO glow, NO lens flare, NO dramatic grading. The light on the speaker's face matches Image 1.
-{text_zone_line()}
-Do not invent or change any person, face, clothing, bike or pose; no extra people beyond those in the photos; natural skin texture with visible pores and subtle film grain; no HDR look, no over-sharpening, no beauty filter. NO text at all.
-
-{realism_block()}'''
+Keep every face, the inset circle and any important detail ABOVE the bottom 35 percent of the card.
+The bottom 35 percent will be covered later by the headline text: keep it simple and calm (a plain background or soft out-of-focus scenery; the speaker's body/torso may continue into it), with no faces, text or important detail. It does not need to be dark.
+Do not invent or change any person, face, clothing, bike or pose; no extra people beyond those in the photos; natural skin texture with visible pores and subtle film grain; no HDR look, no over-sharpening, no beauty filter. NO text at all.'''
 def _photo_description(row, fallback: str) -> str:
     attrs = getattr(row, "attributes", None) or {}
     caption = attrs.get("caption") if isinstance(attrs, dict) else None

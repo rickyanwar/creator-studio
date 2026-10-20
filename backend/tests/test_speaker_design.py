@@ -646,8 +646,10 @@ def test_speaker_framing_text(monkeypatch):
 
 
 def test_composition_band_line_present():
-    assert "Bottom 42% MUST" in speaker_design.COMMON
-    assert "(the fan page's badge and headline are added there later)." in speaker_design.COMMON
+    assert "Keep every face, the inset circle and any important detail ABOVE the bottom 35 percent of the card." in speaker_design.COMMON
+    assert "The bottom 35 percent will be covered later by the headline text: keep it simple and calm (a plain background or soft out-of-focus scenery; the speaker's body/torso may continue into it), with no faces, text or important detail. It does not need to be dark." in speaker_design.COMMON
+    assert "The bottom 35% will be covered later" not in speaker_design.COMMON
+    assert "Bottom 42% MUST" not in speaker_design.COMMON
 
 
 def test_pick_bike_photos_race_number_priority(monkeypatch):
@@ -698,8 +700,9 @@ def test_prompt_uses_actual_photo_descriptions_and_reference_layout_wording():
     assert "TWO circles of different sizes" in prompt
     assert "real background from Image 1, extended to fill the card" in prompt
     assert "The light on the speaker's face matches Image 1" in prompt
-    assert "Bottom 42% MUST" in prompt
-    assert "Photographic realism (very important):" in prompt
+    assert "Bottom 42% MUST" not in prompt
+    assert "The bottom 35% will be covered later" not in prompt
+    assert "Photographic realism (very important):" not in prompt
     assert prompt.endswith(avoid_block())
 
 
@@ -714,8 +717,9 @@ def test_side_prompt_contains_depth_and_race_number():
     assert "The speaker's shoulder partly covers the near edge of the bike; the bike never covers the speaker" in prompt
     assert "race number 63" in prompt
     assert "Image 3 = a second real photo of the speaker" in prompt
-    assert "Bottom 42% MUST" in prompt
-    assert "Photographic realism (very important):" in prompt
+    assert "Bottom 42% MUST" not in prompt
+    assert "The bottom 35% will be covered later" not in prompt
+    assert "Photographic realism (very important):" not in prompt
     assert prompt.endswith(avoid_block())
 
 

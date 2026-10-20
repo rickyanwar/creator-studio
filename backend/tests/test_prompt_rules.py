@@ -9,8 +9,8 @@ from app.services.prompt_rules import (
 
 
 def test_constants():
-    assert TEMPLATE_TEXT_ZONE_PCT == 42
-    assert len(REALISM_LINES) == 4
+    assert TEMPLATE_TEXT_ZONE_PCT == 35
+    assert len(REALISM_LINES) == 3
     assert REALISM_LINES[0].startswith("Photographic realism")
 
 
@@ -23,8 +23,8 @@ def test_realism_block():
 
 def test_text_zone_line():
     line = text_zone_line()
-    assert "Bottom 42% MUST be a smooth dark gradient" in line
-    assert "(the fan page's badge and headline are added there later)." in line
+    assert "The bottom 35% will be covered later by the fan page's badge and headline text" in line
+    assert "it does not need to be dark." in line
 
 
 def test_avoid_block_default():
