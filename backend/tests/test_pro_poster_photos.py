@@ -881,8 +881,8 @@ def test_max_checks_capped_at_24(make_photo, sample_brief):
          patch("app.services.pro_poster.photos.gather_candidates", return_value=candidates):
         sel = select_photos(None, sample_brief)
 
-        assert check_calls == 24
-        assert len(sel.rejected) == 24
+        assert check_calls == 12
+        assert len(sel.rejected) == 12
 
 
 # ---------------------------------------------------------------------------
@@ -1987,4 +1987,257 @@ def test_candidate_caps_twelve_hero_ten_context(db_session, make_photo, sample_b
 
         assert len(hero_cands) == 12
         assert len(context_cands) == 10
+
+
+# ---------------------------------------------------------------------------
+# S1: Early stopping and parallel batching tests (a) - (e)
+# ---------------------------------------------------------------------------
+
+def _make_fake_check(
+    candidate: PhotoCandidate,
+    person: str = "no",
+    event_match: str = "no",
+    obstructed: bool = False,
+    watermark: bool = False,
+    quality: int = 2,
+    face_frontal: bool = False,
+    story_fit: int = 1,
+    shows: str = "",
+) -> PhotoCheck:
+    return PhotoCheck(
+        candidate=candidate,
+        person=person,
+        event_match=event_match,
+        obstructed=obstructed,
+        watermark=watermark,
+        quality=quality,
+        face_frontal=face_frontal,
+        story_fit=story_fit,
+        shows=shows,
+    )
+
+
+def test_select_photos_early_stop_hero_and_context(sample_brief):
+    # (a) story photo + 6 hero candidates + 4 context candidates.
+    # The first hero candidate is a strong hero (usable, frontal, story_fit 5)
+    # and the first 2 contexts are usable with story_fit 4
+    # -> check_photo is called at most 6 times, and no later hero candidate is checked.
+    cand_story = PhotoCandidate(source="story", gallery_image_id=None, path_or_url="story.jpg", role="hero")
+    hero_cands = [
+        PhotoCandidate(source="gallery", gallery_image_id=100 + i, path_or_url=f"hero_{i}.jpg", role="hero")
+        for i in range(6)
+    ]
+    context_cands = [
+        PhotoCandidate(source="gallery", gallery_image_id=200 + i, path_or_url=f"ctx_{i}.jpg", role="context")
+        for i in range(4)
+    ]
+    candidates = [cand_story] + hero_cands + context_cands
+    called: list[PhotoCandidate] = []
+
+    def fake_check(cand: PhotoCandidate, brief: PosterBrief, story: str | None = None) -> PhotoCheck:
+        called.append(cand)
+        if cand is hero_cands[0]:
+            return _make_fake_check(
+                cand,
+                person="yes",
+                event_match="yes",
+                obstructed=False,
+                watermark=False,
+                quality=5,
+                face_frontal=True,
+                story_fit=5,
+                shows="Verstappen podium celebration",
+            )
+        if cand in context_cands[:2]:
+            return _make_fake_check(
+                cand,
+                person="no",
+                event_match="yes",
+                obstructed=False,
+                watermark=False,
+                quality=4,
+                face_frontal=False,
+                story_fit=4,
+                shows=f"Track action {cand.gallery_image_id}",
+            )
+        return _make_fake_check(cand, person="no", event_match="no", quality=2, story_fit=1)
+
+    with patch("app.services.pro_poster.photos.check_photo", side_effect=fake_check), \
+         patch("app.services.pro_poster.photos.gather_candidates", return_value=candidates):
+        sel = select_photos(None, sample_brief)
+
+    assert len(called) <= 6
+    assert all(c not in called for c in hero_cands[2:])
+    assert sel.hero is not None
+    assert sel.hero.candidate == hero_cands[0]
+    assert len(sel.context) == 2
+
+
+def test_select_photos_all_weak_capped_at_twelve(sample_brief):
+    # (b) all candidates are weak (not usable) -> exactly 12 checks (the cap) when there are more than 12 candidates.
+    candidates = [
+        PhotoCandidate(source="gallery", gallery_image_id=300 + i, path_or_url=f"cand_{i}.jpg", role="hero" if i < 8 else "context")
+        for i in range(16)
+    ]
+    called: list[PhotoCandidate] = []
+
+    def fake_check(cand: PhotoCandidate, brief: PosterBrief, story: str | None = None) -> PhotoCheck:
+        called.append(cand)
+        return _make_fake_check(cand, person="no", event_match="no", quality=2, story_fit=1)
+
+    with patch("app.services.pro_poster.photos.check_photo", side_effect=fake_check), \
+         patch("app.services.pro_poster.photos.gather_candidates", return_value=candidates):
+        sel = select_photos(None, sample_brief)
+
+    assert len(called) == 12
+    assert len(sel.rejected) == 12
+    assert sel.hero is None
+    assert sel.context == ()
+
+
+def test_select_photos_hero_non_frontal_plus_portrait(sample_brief):
+    # (c) the hero is usable but not frontal, and a later hero candidate is a frontal portrait
+    # -> that portrait is checked and selected as portrait; hero scanning stops after it.
+    h0 = PhotoCandidate(source="gallery", gallery_image_id=400, path_or_url="h0.jpg", role="hero")
+    h1 = PhotoCandidate(source="gallery", gallery_image_id=401, path_or_url="h1.jpg", role="hero")
+    h2 = PhotoCandidate(source="gallery", gallery_image_id=402, path_or_url="h2.jpg", role="hero")
+    h3_portrait = PhotoCandidate(source="gallery", gallery_image_id=403, path_or_url="h3_port.jpg", role="hero")
+    h4 = PhotoCandidate(source="gallery", gallery_image_id=404, path_or_url="h4.jpg", role="hero")
+    h5 = PhotoCandidate(source="gallery", gallery_image_id=405, path_or_url="h5.jpg", role="hero")
+    h6 = PhotoCandidate(source="gallery", gallery_image_id=406, path_or_url="h6.jpg", role="hero")
+    c0 = PhotoCandidate(source="gallery", gallery_image_id=407, path_or_url="c0.jpg", role="context")
+    c1 = PhotoCandidate(source="gallery", gallery_image_id=408, path_or_url="c1.jpg", role="context")
+    candidates = [h0, h1, h2, h3_portrait, h4, h5, h6, c0, c1]
+    called: list[PhotoCandidate] = []
+
+    def fake_check(cand: PhotoCandidate, brief: PosterBrief, story: str | None = None) -> PhotoCheck:
+        called.append(cand)
+        if cand is h0:
+            return _make_fake_check(
+                cand,
+                person="yes",
+                event_match="yes",
+                obstructed=False,
+                watermark=False,
+                quality=4,
+                face_frontal=False,
+                story_fit=4,
+                shows="Verstappen in cockpit side view",
+            )
+        if cand is h3_portrait:
+            return _make_fake_check(
+                cand,
+                person="yes",
+                event_match="no",
+                obstructed=False,
+                watermark=False,
+                quality=4,
+                face_frontal=True,
+                story_fit=3,
+                shows="Verstappen studio portrait",
+            )
+        if cand in (c0, c1):
+            return _make_fake_check(
+                cand,
+                person="no",
+                event_match="yes",
+                obstructed=False,
+                watermark=False,
+                quality=4,
+                face_frontal=False,
+                story_fit=4,
+                shows=f"Track action {cand.gallery_image_id}",
+            )
+        return _make_fake_check(cand, person="no", event_match="no", quality=2, story_fit=1)
+
+    with patch("app.services.pro_poster.photos.check_photo", side_effect=fake_check), \
+         patch("app.services.pro_poster.photos.gather_candidates", return_value=candidates):
+        sel = select_photos(None, sample_brief)
+
+    assert sel.hero is not None
+    assert sel.hero.candidate == h0
+    assert sel.portrait is not None
+    assert sel.portrait.candidate == h3_portrait
+    assert h3_portrait in called
+    assert h6 not in called
+
+
+def test_select_photos_parallel_batches_preserve_order(sample_brief):
+    # (d) the order of `checked` equals the candidate order even with the parallel batches;
+    # for example, the fake returns after a random tiny sleep.
+    import random
+    import time
+
+    candidates = [
+        PhotoCandidate(source="gallery", gallery_image_id=500 + i, path_or_url=f"cand_{i}.jpg", role="context")
+        for i in range(6)
+    ]
+
+    def fake_check(cand: PhotoCandidate, brief: PosterBrief, story: str | None = None) -> PhotoCheck:
+        time.sleep(random.uniform(0.005, 0.02))
+        return _make_fake_check(
+            cand,
+            person="no",
+            event_match="no",
+            quality=2,
+            story_fit=1,
+            shows=f"Show {cand.gallery_image_id}",
+        )
+
+    with patch("app.services.pro_poster.photos.check_photo", side_effect=fake_check), \
+         patch("app.services.pro_poster.photos.gather_candidates", return_value=candidates):
+        sel = select_photos(None, sample_brief)
+
+    checked_ids = [r.candidate.gallery_image_id for r in sel.rejected]
+    expected_ids = [c.gallery_image_id for c in candidates]
+    assert checked_ids == expected_ids
+
+
+def test_select_photos_no_hero_subject_stops_after_two_usable_contexts():
+    # (e) no hero subject (all context) -> stops after 2 usable contexts.
+    brief = PosterBrief(
+        job_id=201,
+        subjects=(),
+        event=EventContext(
+            series="Formula 1",
+            vehicle="Formula 1 car",
+            circuit="Monza",
+            session="race",
+        ),
+        story_type="preview",
+        mood="neutral",
+        badge_label="F1 PREVIEW",
+    )
+    candidates = [
+        PhotoCandidate(source="gallery", gallery_image_id=600 + i, path_or_url=f"ctx_{i}.jpg", role="context")
+        for i in range(6)
+    ]
+    called: list[PhotoCandidate] = []
+
+    def fake_check(cand: PhotoCandidate, brief: PosterBrief, story: str | None = None) -> PhotoCheck:
+        called.append(cand)
+        if cand in candidates[:2]:
+            return _make_fake_check(
+                cand,
+                person="no",
+                event_match="yes",
+                obstructed=False,
+                watermark=False,
+                quality=4,
+                face_frontal=False,
+                story_fit=4,
+                shows=f"Monza atmosphere {cand.gallery_image_id}",
+            )
+        return _make_fake_check(cand, person="no", event_match="no", quality=2, story_fit=1)
+
+    with patch("app.services.pro_poster.photos.check_photo", side_effect=fake_check), \
+         patch("app.services.pro_poster.photos.gather_candidates", return_value=candidates):
+        sel = select_photos(None, brief)
+
+    assert len(sel.context) == 2
+    assert candidates[3] not in called
+    assert candidates[4] not in called
+    assert candidates[5] not in called
+    assert len(called) == 3
+
 

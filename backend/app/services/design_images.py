@@ -74,13 +74,13 @@ def _vision_datauri(image_bytes: bytes, max_dim: int = 768, quality: int = 78) -
 # Gemini-flash family/architecture as the verified ones.
 #
 # 2026-10-11: removed retired ag/gemini-3.6/3.7-flash-* and 3.5-flash-high IDs.
-# Owner rule 2026-10-17 (FINAL): vision uses ONLY the FlashFast combo (= gemini-3.8-flash
-# medium/low/high) and those three ids. Never My-Combo (it can route to Claude, which ignores images).
+# Owner rule 2026-10-20: vision tries gemini-3.8-flash low first (fastest), then medium, then high,
+# then the FlashFast combo. Never My-Combo (it can route to Claude, which ignores images).
 _VISION_MODEL_FALLBACKS = [
-    "FlashFast",
-    "ag/gemini-3.8-flash-medium",
     "ag/gemini-3.8-flash-low",
+    "ag/gemini-3.8-flash-medium",
     "ag/gemini-3.8-flash-high",
+    "FlashFast",
 ]
 
 
