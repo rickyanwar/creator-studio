@@ -53,6 +53,37 @@ function jobTimes(job: PublishJob) {
   return { queuedDate, scheduledDate, isPendingLive, differs };
 }
 
+/** Owner rule: "published" only when at least one copy is really live. A job Repliz merely accepted is still scheduled. */
+function liveState(
+  job: PublishJob,
+  copies: (DeliveryCopy | DeliveryActivity)[] | undefined
+): "live" | "scheduled" | "other" {
+  const hasLiveCopy =
+    !!copies && copies.length > 0 && copies.some((c) => c.state === "published");
+  const hasNoCopies = !copies || copies.length === 0;
+  const isPastOrNoScheduled =
+    !job.scheduled_for || parseUtc(job.scheduled_for).getTime() <= Date.now();
+
+  if (
+    hasLiveCopy ||
+    (hasNoCopies && job.status === "published" && isPastOrNoScheduled)
+  ) {
+    return "live";
+  }
+
+  const isFutureScheduled =
+    !!job.scheduled_for && parseUtc(job.scheduled_for).getTime() > Date.now();
+  const hasScheduledCopy =
+    !!copies &&
+    copies.some((c) => c.state === "repliz_scheduled" || c.state === "scheduled");
+
+  if (job.status === "published" && (hasScheduledCopy || isFutureScheduled)) {
+    return "scheduled";
+  }
+
+  return "other";
+}
+
 const STATUS_TABS = [
   { value: "scheduled", label: "Scheduled" },
   { value: "published", label: "Published" },
@@ -340,16 +371,20 @@ export default function HistoryPage() {
 
   // Client-side search filtering on loaded posts
   const jobs = useMemo(() => {
-    if (!searchQuery.trim()) return rawJobs;
+    let list = rawJobs;
+    if (activeStatus === "published") {
+      list = list.filter((j) => liveState(j, deliveriesByJob[j.id]) === "live");
+    }
+    if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
-    return rawJobs.filter((j) => {
+    return list.filter((j) => {
       const cap = (j.ai_generated_caption ?? "").toLowerCase();
       const title = (j.design_title ?? "").toLowerCase();
       const fp = (j.fanpage_name ?? "").toLowerCase();
       const ig = (j.ig_username ?? "").toLowerCase();
       return cap.includes(q) || title.includes(q) || fp.includes(q) || ig.includes(q);
     });
-  }, [rawJobs, searchQuery]);
+  }, [rawJobs, activeStatus, deliveriesByJob, searchQuery]);
 
   // Sentinel for infinite scrolling
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -885,7 +920,7 @@ export default function HistoryPage() {
                       const title =
                         job.design_title ??
                         (caption ? caption.slice(0, 70) : `@${job.ig_username}`);
-                      const { queuedDate, scheduledDate, isPendingLive } =
+                      const { queuedDate, scheduledDate, isPendingLive, differs } =
                         jobTimes(job);
                       const canReedit =
                         job.content_type === "news_content" &&
@@ -893,16 +928,23 @@ export default function HistoryPage() {
                       const src = sourceLink(job);
                       const blurClass = blurred ? "blur-sm select-none" : "";
                       const copies = deliveriesByJob[job.id] || [];
+                      const displayStatus =
+                        liveState(job, copies) === "scheduled" ? "scheduled" : job.status;
 
-                      const timeLabel = job.published_at
-                        ? `Went live ${formatScheduledWib(job.published_at)}`
-                        : job.scheduled_for
-                        ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
-                            job.scheduled_for
-                          )}`
-                        : queuedDate
-                        ? formatScheduledWib(job.created_at || queuedDate.toISOString())
-                        : null;
+                      const timeLabel =
+                        job.scheduled_for && job.published_at && differs
+                          ? `${isPendingLive ? "Goes live" : "Went live"} ${formatScheduledWib(
+                              job.scheduled_for
+                            )}`
+                          : job.published_at
+                          ? `Went live ${formatScheduledWib(job.published_at)}`
+                          : job.scheduled_for
+                          ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
+                              job.scheduled_for
+                            )}`
+                          : queuedDate
+                          ? formatScheduledWib(job.created_at || queuedDate.toISOString())
+                          : null;
 
                       return (
                         <tr
@@ -1017,7 +1059,7 @@ export default function HistoryPage() {
                               <ChannelChip
                                 destinationName={fanpage}
                                 method="Repliz"
-                                state={job.status}
+                                state={displayStatus}
                                 replizScheduleId={job.repliz_schedule_id}
                                 blurred={blurred}
                               />
@@ -1025,7 +1067,7 @@ export default function HistoryPage() {
                               <ChannelChip
                                 destinationName={fanpage}
                                 method="Direct"
-                                state={job.status}
+                                state={displayStatus}
                                 blurred={blurred}
                               />
                             )}
@@ -1247,7 +1289,7 @@ export default function HistoryPage() {
                   const title =
                     job.design_title ??
                     (caption ? caption.slice(0, 70) : `@${job.ig_username}`);
-                  const { queuedDate, scheduledDate, isPendingLive } =
+                  const { queuedDate, scheduledDate, isPendingLive, differs } =
                     jobTimes(job);
                   const canReedit =
                     job.content_type === "news_content" &&
@@ -1255,16 +1297,23 @@ export default function HistoryPage() {
                   const src = sourceLink(job);
                   const blurClass = blurred ? "blur-sm select-none" : "";
                   const copies = deliveriesByJob[job.id] || [];
+                  const displayStatus =
+                    liveState(job, copies) === "scheduled" ? "scheduled" : job.status;
 
-                  const timeLabel = job.published_at
-                    ? `Went live ${formatScheduledWib(job.published_at)}`
-                    : job.scheduled_for
-                    ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
-                        job.scheduled_for
-                      )}`
-                    : queuedDate
-                    ? formatScheduledWib(job.created_at || queuedDate.toISOString())
-                    : null;
+                  const timeLabel =
+                    job.scheduled_for && job.published_at && differs
+                      ? `${isPendingLive ? "Goes live" : "Went live"} ${formatScheduledWib(
+                          job.scheduled_for
+                        )}`
+                      : job.published_at
+                      ? `Went live ${formatScheduledWib(job.published_at)}`
+                      : job.scheduled_for
+                      ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
+                          job.scheduled_for
+                        )}`
+                      : queuedDate
+                      ? formatScheduledWib(job.created_at || queuedDate.toISOString())
+                      : null;
 
                   return (
                     <div
@@ -1345,7 +1394,7 @@ export default function HistoryPage() {
                             <ChannelChip
                               destinationName={fanpage}
                               method="Repliz"
-                              state={job.status}
+                              state={displayStatus}
                               replizScheduleId={job.repliz_schedule_id}
                               blurred={blurred}
                             />
@@ -1353,7 +1402,7 @@ export default function HistoryPage() {
                             <ChannelChip
                               destinationName={fanpage}
                               method="Direct"
-                              state={job.status}
+                              state={displayStatus}
                               blurred={blurred}
                             />
                           )}
@@ -1594,9 +1643,11 @@ function HistoryLightbox({
   const caption = job.ai_generated_caption ?? "";
   const total = urls.length;
   const currentUrl = urls[idx];
-  const { queuedDate, isPendingLive } = jobTimes(job);
+  const { queuedDate, isPendingLive, differs } = jobTimes(job);
   const src = sourceLink(job);
   const canReedit = job.content_type === "news_content" && job.status === "published";
+  const displayStatus =
+    liveState(job, copies) === "scheduled" ? "scheduled" : job.status;
 
   const isClip =
     job.content_type === "youtube_clip" || job.content_type === "ai_video";
@@ -1620,15 +1671,20 @@ function HistoryLightbox({
 
   const blurClass = blurred ? "blur-md select-none" : "";
 
-  const timeWibStr = job.published_at
-    ? `Went live ${formatScheduledWib(job.published_at)}`
-    : job.scheduled_for
-    ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
-        job.scheduled_for
-      )}`
-    : queuedDate
-    ? formatScheduledWib(job.created_at || queuedDate.toISOString())
-    : null;
+  const timeWibStr =
+    job.scheduled_for && job.published_at && differs
+      ? `${isPendingLive ? "Goes live" : "Went live"} ${formatScheduledWib(
+          job.scheduled_for
+        )}`
+      : job.published_at
+      ? `Went live ${formatScheduledWib(job.published_at)}`
+      : job.scheduled_for
+      ? `${isPendingLive ? "Goes live" : "Scheduled"} ${formatScheduledWib(
+          job.scheduled_for
+        )}`
+      : queuedDate
+      ? formatScheduledWib(job.created_at || queuedDate.toISOString())
+      : null;
 
   return (
     <div
@@ -1756,7 +1812,7 @@ function HistoryLightbox({
                 {timeWibStr && <span>· {timeWibStr}</span>}
               </p>
             </div>
-            <StatusBadge status={job.status} />
+            <StatusBadge status={displayStatus} />
           </div>
 
           {/* Channels with Repliz ID copy / Open post link */}
@@ -1790,7 +1846,7 @@ function HistoryLightbox({
                 <ChannelChip
                   destinationName={fanpage}
                   method="Repliz"
-                  state={job.status}
+                  state={displayStatus}
                   replizScheduleId={job.repliz_schedule_id}
                   blurred={blurred}
                 />
@@ -1798,7 +1854,7 @@ function HistoryLightbox({
                 <ChannelChip
                   destinationName={fanpage}
                   method="Direct"
-                  state={job.status}
+                  state={displayStatus}
                   blurred={blurred}
                 />
               )}
