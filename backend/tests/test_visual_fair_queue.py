@@ -14,10 +14,13 @@ from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.scraped_articles import ScrapedArticle
 from app.models.target_fanpages import PublishMode, TargetFanpage
 from app.services.visual_fair_queue import (
+    CLAIM_KEY,
     LAST_JOB_KEY,
+    claim_page,
     fair_counter_key,
     mark_served,
     news_job_waiting,
+    page_claimed,
     pick_next_news_job,
     served_today,
     visual_news_fanpage_ids,
@@ -43,6 +46,7 @@ class FakeRedis:
     def __init__(self):
         self.data: dict[str, str] = {}
         self.queues: dict[str, list] = {}
+        self.ttls: dict[str, int | None] = {}
 
     def get(self, key: str):
         return self.data.get(key)
@@ -62,6 +66,8 @@ class FakeRedis:
         if nx and key in self.data:
             return None
         self.data[key] = str(value)
+        if ex is not None:
+            self.ttls[key] = ex
         return True
 
     def exists(self, *keys: str) -> int:
@@ -525,3 +531,176 @@ def test_dispatch_fair_visual_news_idle_and_locked(db_engine, fake_redis):
          patch("app.tasks.design_renderer.render_design.apply_async") as mock_apply:
         assert dispatch_fair_visual_news() == "locked"
         mock_apply.assert_not_called()
+
+
+def test_jit_page_a_near_slot_page_b_far(db_session, fake_redis):
+    # (a) Page A's next slot is in 30 min, page B's in 5 h -> A's newest job is returned, and B's jobs stay pending_design, untouched.
+    fp_a = _create_fanpage(db_session, 10, "Page A")
+    fp_b = _create_fanpage(db_session, 20, "Page B")
+
+    t_old = datetime(2026, 10, 20, 10, 0)
+    t_new = datetime(2026, 10, 20, 11, 0)
+    job_a_old = _create_job(db_session, id=101, fanpage_id=fp_a.id, created_at=t_old)
+    job_a_new = _create_job(db_session, id=102, fanpage_id=fp_a.id, created_at=t_new)
+    job_b = _create_job(db_session, id=201, fanpage_id=fp_b.id, created_at=t_new)
+
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    slot_a = now + timedelta(minutes=30)
+    slot_b = now + timedelta(hours=5)
+
+    def mock_next_slot(db, job, now_utc):
+        if job.fanpage_id == fp_a.id:
+            return slot_a
+        return slot_b
+
+    with patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue._next_slot", side_effect=mock_next_slot):
+        picked = pick_next_news_job(db_session, fake_redis, now)
+
+    assert picked is not None
+    assert picked.id == job_a_new.id
+    assert getattr(picked, "_jit_slot", None) == slot_a
+
+    # B's job remains pending_design and untouched
+    db_session.refresh(job_b)
+    assert job_b.status == PublishJobStatus.pending_design
+    assert job_b.last_error is None
+
+
+def test_jit_page_claimed_skips_to_next(db_session, fake_redis):
+    # (b) Page A is claimed -> skipped, and B is returned when B is within 90 min.
+    fp_a = _create_fanpage(db_session, 10, "Page A")
+    fp_b = _create_fanpage(db_session, 20, "Page B")
+
+    t = datetime(2026, 10, 20, 11, 0)
+    job_a = _create_job(db_session, id=101, fanpage_id=fp_a.id, created_at=t)
+    job_b = _create_job(db_session, id=201, fanpage_id=fp_b.id, created_at=t)
+
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    slot_a = now + timedelta(minutes=30)
+    slot_b = now + timedelta(minutes=45)
+
+    # Claim Page A
+    claim_page(fake_redis, fp_a.id, slot_a, now)
+    assert page_claimed(fake_redis, fp_a.id)
+
+    def mock_next_slot(db, job, now_utc):
+        return slot_a if job.fanpage_id == fp_a.id else slot_b
+
+    with patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue._next_slot", side_effect=mock_next_slot):
+        picked = pick_next_news_job(db_session, fake_redis, now)
+
+    assert picked is not None
+    assert picked.id == job_b.id
+    assert getattr(picked, "_jit_slot", None) == slot_b
+
+
+def test_jit_page_multiple_jobs_picks_newest(db_session, fake_redis):
+    # (c) Two jobs on A, both fresh, slot in 20 min -> the NEWEST is returned.
+    fp_a = _create_fanpage(db_session, 10, "Page A")
+
+    t_old = datetime(2026, 10, 20, 10, 30)
+    t_new = datetime(2026, 10, 20, 11, 30)
+    job_old = _create_job(db_session, id=101, fanpage_id=fp_a.id, created_at=t_old)
+    job_new = _create_job(db_session, id=102, fanpage_id=fp_a.id, created_at=t_new)
+
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    slot = now + timedelta(minutes=20)
+
+    with patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue._next_slot", return_value=slot):
+        picked = pick_next_news_job(db_session, fake_redis, now)
+
+    assert picked is not None
+    assert picked.id == job_new.id
+    assert getattr(picked, "_jit_slot", None) == slot
+
+
+def test_jit_breaking_job_bypasses_jit(db_session, fake_redis):
+    # (d) A breaking job on a page whose slot is 5 h away -> still returned (breaking bypasses JIT).
+    fp_b = _create_fanpage(db_session, 20, "Page B")
+    t = datetime(2026, 10, 20, 11, 0)
+    job_breaking = _create_job(db_session, id=201, fanpage_id=fp_b.id, created_at=t, is_breaking=True)
+
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    slot_far = now + timedelta(hours=5)
+
+    with patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue._next_slot", return_value=slot_far), \
+         patch("app.services.visual_fair_queue._has_news_slot", return_value=True):
+        picked = pick_next_news_job(db_session, fake_redis, now)
+
+    assert picked is not None
+    assert picked.id == job_breaking.id
+
+
+def test_jit_next_slot_none_fallback(db_session, fake_redis):
+    # (e) _next_slot returns None -> the old _has_news_slot behaviour applies.
+    fp = _create_fanpage(db_session, 10, "Page A")
+    t = datetime(2026, 10, 20, 11, 0)
+    job1 = _create_job(db_session, id=101, fanpage_id=fp.id, created_at=t)
+
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+
+    # When _has_news_slot is True -> job returned
+    with patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue._next_slot", return_value=None), \
+         patch("app.services.visual_fair_queue._has_news_slot", return_value=True):
+        picked = pick_next_news_job(db_session, fake_redis, now)
+        assert picked is not None
+        assert picked.id == job1.id
+
+    # When _has_news_slot is False -> job marked skipped
+    job2 = _create_job(db_session, id=102, fanpage_id=fp.id, created_at=t)
+    with patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue._next_slot", return_value=None), \
+         patch("app.services.visual_fair_queue._has_news_slot", return_value=False):
+        picked = pick_next_news_job(db_session, fake_redis, now)
+        assert picked is None
+        db_session.refresh(job2)
+        assert job2.status == PublishJobStatus.skipped
+        assert "stale: no News slot within 24 h" in job2.last_error
+
+
+def test_dispatcher_claims_page_with_right_ttl(db_engine, fake_redis):
+    # (f) The dispatcher sets the claim key with the right TTL when _jit_slot is present.
+    Session = sessionmaker(bind=db_engine)
+    db = Session()
+    fp = _create_fanpage(db, 1, "Page A")
+    job = _create_job(db, id=901, fanpage_id=fp.id)
+    db.close()
+
+    slot_utc_holder = []
+
+    def mock_pick(db, r, now_utc):
+        j = db.query(PublishJob).filter_by(id=901).first()
+        slot = now_utc + timedelta(minutes=40)
+        j._jit_slot = slot
+        slot_utc_holder.append(slot)
+        return j
+
+    with patch("app.tasks.design_renderer.SessionLocal", side_effect=Session), \
+         patch("app.tasks.design_renderer._redis", return_value=fake_redis), \
+         patch("app.services.visual_fair_queue.news_job_waiting", return_value=False), \
+         patch("app.services.visual_fair_queue.pick_next_news_job", side_effect=mock_pick), \
+         patch("app.tasks.design_renderer._acquire_queued_lock", return_value=True), \
+         patch("app.tasks.design_renderer.render_design.apply_async"):
+        res = dispatch_fair_visual_news()
+        assert res == "dispatched 901"
+
+    claim_key = CLAIM_KEY.format(fanpage_id=1)
+    assert fake_redis.get(claim_key) == slot_utc_holder[0].isoformat()
+    ttl = fake_redis.ttls.get(claim_key)
+    assert ttl == 3000
+
+    # Direct claim_page checks with fixed now
+    fixed_now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    fixed_slot = fixed_now + timedelta(minutes=40)
+    claim_page(fake_redis, 2, fixed_slot, fixed_now)
+    assert fake_redis.ttls.get(CLAIM_KEY.format(fanpage_id=2)) == 3000
+
+    # Min TTL check (max(900, seconds + 600)): slot in 2 minutes -> 120 + 600 = 720 < 900 -> 900
+    slot_near = fixed_now + timedelta(minutes=2)
+    claim_page(fake_redis, 3, slot_near, fixed_now)
+    assert fake_redis.ttls.get(CLAIM_KEY.format(fanpage_id=3)) == 900

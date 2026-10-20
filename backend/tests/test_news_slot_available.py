@@ -36,7 +36,10 @@ from app.models.social_publishing import (
     SocialDestination,
 )
 from app.models.target_fanpages import TargetFanpage
-from app.services.social_delivery_planner import news_slot_available
+from app.services.social_delivery_planner import (
+    news_slot_available,
+    next_news_slot_utc,
+)
 
 
 @pytest.fixture
@@ -267,3 +270,46 @@ def test_non_news_content_type_returns_true(db_session: Session):
 
     with patch("app.services.mode_quota.pick_slot", return_value=now + timedelta(hours=30)):
         assert news_slot_available(db_session, job, now_utc=now) is True
+
+
+def test_next_news_slot_utc_no_destinations(db_session: Session):
+    """next_news_slot_utc returns None when there are no active destinations."""
+    now = datetime(2026, 10, 20, 10, 0, tzinfo=timezone.utc)
+    fp = _make_fanpage(db_session, "NoDestFP")
+    job = PublishJob(
+        fanpage_id=fp.id,
+        content_type=ContentType.news_content,
+        created_at=now,
+    )
+    db_session.add(job)
+    db_session.flush()
+
+    assert next_news_slot_utc(db_session, job, now_utc=now) is None
+
+
+def test_next_news_slot_utc_two_destinations_earlier_slot(db_session: Session):
+    """next_news_slot_utc returns earlier slot across multiple destinations."""
+    now = datetime(2026, 10, 20, 10, 0, tzinfo=timezone.utc)
+    fp = _make_fanpage(db_session, "TwoDestFP")
+    d1 = _make_destination(db_session, fp, name="Dest1", is_active=True)
+    d2 = _make_destination(db_session, fp, name="Dest2", is_active=True)
+
+    job = PublishJob(
+        fanpage_id=fp.id,
+        content_type=ContentType.news_content,
+        created_at=now,
+    )
+    db_session.add(job)
+    db_session.flush()
+
+    slot1 = now + timedelta(hours=3)
+    slot2 = now + timedelta(hours=1)
+
+    def mock_plan(db, destination, job, aware_now, sleep_start, sleep_end):
+        if destination.id == d1.id:
+            return slot1, False, 24, []
+        return slot2, False, 24, []
+
+    with patch("app.services.social_delivery_planner._plan_slot", side_effect=mock_plan):
+        earliest = next_news_slot_utc(db_session, job, now_utc=now)
+        assert earliest == slot2

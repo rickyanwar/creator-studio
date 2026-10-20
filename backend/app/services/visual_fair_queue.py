@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 _WIB = ZoneInfo("Asia/Jakarta")
 
 LAST_JOB_KEY = "visual_fair:news:last_job"
+JIT_LEAD_MINUTES = 90
+CLAIM_KEY = "visual_fair:news:claim:{fanpage_id}"
 
 
 def news_job_waiting(db, r) -> bool:
@@ -91,6 +93,38 @@ def _has_news_slot(db, job: PublishJob, now_utc: datetime) -> bool:
         return True
 
 
+def _next_slot(db, job: PublishJob, now_utc: datetime) -> datetime | None:
+    """Return earliest next news slot (aware UTC) over active destinations, or None on error."""
+    try:
+        from app.services.social_delivery_planner import next_news_slot_utc
+
+        return next_news_slot_utc(db, job, now_utc)
+    except Exception as exc:
+        logger.warning("Failed checking next news slot for job %s: %s", getattr(job, "id", None), exc)
+        return None
+
+
+def page_claimed(r, fanpage_id: int) -> bool:
+    """Return True if fan page is claimed for news design until next slot."""
+    try:
+        return bool(r.exists(CLAIM_KEY.format(fanpage_id=fanpage_id)))
+    except Exception as exc:
+        logger.warning("Failed checking page claim for fanpage %s: %s", fanpage_id, exc)
+        return False
+
+
+def claim_page(r, fanpage_id: int, slot_utc: datetime, now_utc: datetime) -> None:
+    """Claim fan page until its next news slot so no other news renders for that slot. Errors are logged."""
+    try:
+        key = CLAIM_KEY.format(fanpage_id=fanpage_id)
+        slot_aware = slot_utc if slot_utc.tzinfo else slot_utc.replace(tzinfo=timezone.utc)
+        now_aware = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
+        ttl = max(900, int((slot_aware - now_aware).total_seconds()) + 600)
+        r.set(key, slot_utc.isoformat(), ex=ttl)
+    except Exception as exc:
+        logger.warning("Failed claiming fanpage %s: %s", fanpage_id, exc)
+
+
 def visual_news_fanpage_ids(db) -> set[int]:
     """Return all TargetFanpage IDs in auto mode routing news to 'visual'."""
     fps = db.query(TargetFanpage).filter(TargetFanpage.mode2_publish_mode == PublishMode.auto).all()
@@ -143,9 +177,9 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
     breaking_jobs.sort(key=lambda j: j.created_at or datetime.min, reverse=True)
 
     non_breaking = [j for j in candidates if not j.is_breaking]
-    ordered_non_breaking = []
+    sorted_fps: list[int] = []
+    jobs_by_fp: dict[int, list[PublishJob]] = collections.defaultdict(list)
     if non_breaking:
-        jobs_by_fp = collections.defaultdict(list)
         for j in non_breaking:
             jobs_by_fp[j.fanpage_id].append(j)
 
@@ -166,12 +200,13 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             fps_by_newest,
             key=lambda fid: served.get(fid, 0),
         )
-        for fid in sorted_fps:
-            ordered_non_breaking.extend(jobs_by_fp[fid])
 
-    ordered_jobs = breaking_jobs + ordered_non_breaking
+    candidates_checked = 0
 
-    for job in ordered_jobs[:20]:
+    for job in breaking_jobs:
+        if candidates_checked >= 20:
+            return None
+        candidates_checked += 1
         try:
             if r.exists(f"render_design:queued:{job.id}"):
                 continue
@@ -183,5 +218,38 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             db.commit()
             continue
         return job
+
+    for fid in sorted_fps:
+        if candidates_checked >= 20:
+            return None
+        if page_claimed(r, fid):
+            continue
+
+        for job in jobs_by_fp[fid]:
+            if candidates_checked >= 20:
+                return None
+            try:
+                if r.exists(f"render_design:queued:{job.id}"):
+                    continue
+            except Exception:
+                pass
+            candidates_checked += 1
+
+            slot = _next_slot(db, job, now_utc)
+            if slot is None:
+                if not _has_news_slot(db, job, now_utc):
+                    job.status = PublishJobStatus.skipped
+                    job.last_error = "stale: no News slot within 24 h, AI poster not rendered"
+                    db.commit()
+                    continue
+                return job
+
+            slot_aware = slot if slot.tzinfo else slot.replace(tzinfo=timezone.utc)
+            now_aware = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
+            if (slot_aware - now_aware) > timedelta(minutes=JIT_LEAD_MINUTES):
+                break
+
+            job._jit_slot = slot
+            return job
 
     return None

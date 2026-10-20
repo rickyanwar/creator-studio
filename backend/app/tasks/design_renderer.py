@@ -1684,6 +1684,7 @@ def dispatch_fair_visual_news():
     from datetime import datetime, timezone
     from app.services.visual_fair_queue import (
         LAST_JOB_KEY,
+        claim_page,
         mark_served,
         news_job_waiting,
         pick_next_news_job,
@@ -1706,6 +1707,8 @@ def dispatch_fair_visual_news():
         except Exception as exc:
             logger.warning("fair dispatch: could not record last job %s: %s", job.id, exc)
         mark_served(r, job.fanpage_id, now)
+        if getattr(job, "_jit_slot", None):
+            claim_page(r, job.fanpage_id, job._jit_slot, now)
         return f"dispatched {job.id}"
     finally:
         db.close()

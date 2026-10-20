@@ -315,8 +315,12 @@ def publish_job(self, job_id: int):
                     if post:
                         _maybe_mark_post_done(db, post)
             else:
-                # Release back to pending_publish for recovery sweep without duplicating deliveries
-                job.status = PublishJobStatus.pending_publish
+                if all_delivs and all(d.state == "skipped" and (d.last_error or "").startswith("stale:") for d in all_delivs):
+                    job.status = PublishJobStatus.skipped
+                    job.last_error = all_delivs[0].last_error
+                else:
+                    # Release back to pending_publish for recovery sweep without duplicating deliveries
+                    job.status = PublishJobStatus.pending_publish
 
             db.commit()
             return
