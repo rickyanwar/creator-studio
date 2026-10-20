@@ -20,6 +20,7 @@ from app.services.pro_poster.brief import brief_from_dict, brief_to_dict, build_
 from app.services.pro_poster.types import PosterBrief, PosterConcept, ProPosterResult
 from app.services.visual_engine import (
     GenerationRequest,
+    NoAllowedEngine,
     VisualEngineDeferred,
     VisualEngineError,
     generate_ex,
@@ -255,6 +256,22 @@ def compose_pro_poster(
     # Let VisualEngineDeferred propagate to caller
     try:
         gen_res = generate_ex(db, req, fanpage_id=fanpage_id, engines=("gptcli",))
+    except NoAllowedEngine:
+        # ChatGPT is asleep or cooling down, so nothing was generated. attempts=0
+        # lets the caller fall back to the regular speaker design (Codex).
+        res = ProPosterResult(
+            image=None,
+            brief=brief,
+            selection=selection,
+            direction=direction,
+            qa=None,
+            engine=None,
+            attempts=0,
+            fallback_reason="engine: chatgpt not available",
+            attempt_log=(),
+        )
+        _log_job_summary(job, res)
+        return res
     except (VisualEngineError, GptcliError) as exc:
         kind = getattr(exc, "kind", None) or getattr(exc, "type", "error")
         res = ProPosterResult(

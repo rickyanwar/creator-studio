@@ -25,6 +25,13 @@ class VisualEngineError(Exception):
         self.kind = kind
 
 
+class NoAllowedEngine(VisualEngineError):
+    """No allowed engine could run right now, so no image call was made."""
+
+    def __init__(self, message: str = "no allowed engine available"):
+        super().__init__("quota", message)
+
+
 @dataclass(frozen=True)
 class GenerationRequest:
     layout: Literal['inset', 'solo', 'action', 'team_radio']
@@ -428,7 +435,7 @@ def generate_ex(
             )
             db.add(ev)
             db.commit()
-            raise VisualEngineError("quota", "no allowed engine available")
+            raise NoAllowedEngine()
         return GenerationResult(
             _generate_legacy(db, req, timeout=timeout, fanpage_id=fanpage_id),
             "9router",
@@ -449,7 +456,7 @@ def generate_ex(
             )
             db.add(ev)
             db.commit()
-            raise VisualEngineError("quota", "no allowed engine available")
+            raise NoAllowedEngine()
         ev = AICopyEvent(
             context="image_gen",
             fanpage_id=fanpage_id,
@@ -483,7 +490,7 @@ def generate_ex(
         )
         db.add(ev)
         db.commit()
-        raise VisualEngineError("quota", err_msg)
+        raise NoAllowedEngine(err_msg)
 
     start_time = datetime.now(timezone.utc)
     tried: list[str] = []
