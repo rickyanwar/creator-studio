@@ -120,6 +120,26 @@ def _build_quote_attribution(speaker: str, secondary: str, topic: str = "") -> s
     return topic_str
 
 
+def _recreate_niche(ig_source, fanpage) -> str:
+    niche = getattr(ig_source, "niche", None) if ig_source else None
+    if niche:
+        return niche
+    gallery_niches = getattr(fanpage, "mode2_gallery_niches", None)
+    if isinstance(gallery_niches, str):
+        import json
+        try:
+            gallery_niches = json.loads(gallery_niches)
+        except Exception:
+            gallery_niches = [n.strip('"{}') for n in gallery_niches.strip('{}').split(',') if n.strip('"{}')]
+    elif isinstance(gallery_niches, list) and len(gallery_niches) > 1 and gallery_niches[0] == "[" and gallery_niches[-1] == "]":
+        import json
+        try:
+            gallery_niches = json.loads("".join(gallery_niches))
+        except Exception:
+            pass
+    return (gallery_niches or [None])[0] or fanpage.name
+
+
 @celery_app.task(name="app.tasks.ig_recreate.recreate_post_for_fanpage", bind=True, max_retries=3)
 def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decision_id: int | None = None):
     db = SessionLocal()
@@ -162,7 +182,7 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
             return
 
         ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
-        niche = (ig_source.ig_username if ig_source else None) or fanpage.name
+        niche = _recreate_niche(ig_source, fanpage)
 
         with open(post.image_local_paths[0], "rb") as f:
             image_bytes = f.read()
@@ -566,7 +586,7 @@ def render_ig_recreate(self, job_id: int):
         )
         from app.models.ig_sources import IGSource
         ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
-        niche = (ig_source.ig_username if ig_source else None) or fanpage.name
+        niche = _recreate_niche(ig_source, fanpage)
 
         # News recreate: use a clean, relevant photo (gallery → fresh search) by the
         # headline's subject instead of the IG screenshot. Falls back to the IG
