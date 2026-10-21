@@ -1363,3 +1363,17 @@ def test_gflow_t2i_direct(cfg, runner, tmp_path):
     assert res.ok
     assert out.is_file()
 
+
+
+def test_resolve_cover_raw_reads_images_list_and_falls_back(tmp_path):
+    from types import SimpleNamespace
+    from gflow_worker.runner import JobRunner
+    runner = JobRunner.__new__(JobRunner)
+    runner.cfg = SimpleNamespace(cli_dir=tmp_path)
+    real = tmp_path / "cover_raw.jpg"
+    real.write_bytes(b"jpg")
+    listed = SimpleNamespace(payload={"images": [{"local_path": str(real)}]})
+    assert runner._resolve_cover_raw(listed, tmp_path / "other.png") == real
+    stale = SimpleNamespace(payload={"path": str(tmp_path / "missing.png")})
+    assert runner._resolve_cover_raw(stale, tmp_path / "cover_raw.png") == real
+    assert runner._resolve_cover_raw(SimpleNamespace(payload={}), tmp_path / "nothing.png") is None

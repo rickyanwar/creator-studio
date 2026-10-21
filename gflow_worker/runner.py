@@ -209,15 +209,13 @@ class JobRunner:
 
     def _resolve_cover_raw(self, result, out: Path) -> Path | None:
         payload = getattr(result, "payload", {})
-        payload_path = payload.get("local_path") or payload.get("path") if isinstance(payload, dict) else None
-        if payload_path:
-            p = Path(payload_path)
-            if not p.is_absolute():
-                p = self.cfg.cli_dir / p
-            if p.is_file() and p.stat().st_size > 0:
-                return p
-            return None
-        for cand in (out.with_suffix(".jpg"), out.with_suffix(".png"), out):
+        payload = payload if isinstance(payload, dict) else {}
+        images = payload.get("images") if isinstance(payload.get("images"), list) else []
+        first = images[0] if images and isinstance(images[0], dict) else {}
+        # gflow image t2i --json reports the file as images[0].local_path (seen on the VPS, v0.83.2);
+        # it may write .jpg although -o says .png, so the -o variants are tried after the reported paths.
+        candidates = [Path(v) for v in (payload.get("local_path"), payload.get("path"), first.get("local_path"), first.get("path")) if v]
+        for cand in (*candidates, out.with_suffix(".jpg"), out.with_suffix(".png"), out):
             p = cand if cand.is_absolute() else self.cfg.cli_dir / cand
             if p.is_file() and p.stat().st_size > 0:
                 return p
