@@ -832,6 +832,7 @@ def test_complete_job_and_ownership(db_session, test_fanpage, tmp_path, monkeypa
         b"fake_video_data",
         b"fake_thumb_data",
         {"duration_s": 10.5},
+        cover_bg_content=b"fake_cover_bg_bytes",
     )
 
     assert job.status == "uploaded"
@@ -841,6 +842,10 @@ def test_complete_job_and_ownership(db_session, test_fanpage, tmp_path, monkeypa
     assert os.path.exists(job.video_path)
     with open(job.video_path, "rb") as f:
         assert f.read() == b"fake_video_data"
+    assert job.cover_bg_path is not None
+    assert os.path.exists(job.cover_bg_path)
+    with open(job.cover_bg_path, "rb") as f:
+        assert f.read() == b"fake_cover_bg_bytes"
 
 
 def test_http_auth_and_endpoints(client, db_session, test_fanpage, worker_token, read_only_token, tmp_path, monkeypatch):
@@ -921,6 +926,7 @@ def test_http_auth_and_endpoints(client, db_session, test_fanpage, worker_token,
     claim_data = res.json()["job"]
     assert claim_data["id"] == job.id
     assert claim_data["project_name"] == f"ai-video-{job.id}-g1"
+    assert "cover_prompt" in claim_data
 
     # Progress
     res = client.post(
@@ -965,10 +971,16 @@ def test_http_auth_and_endpoints(client, db_session, test_fanpage, worker_token,
         files={
             "video": ("video.mp4", b"small_video", "video/mp4"),
             "thumbnail": ("thumb.jpg", b"small_thumb", "image/jpeg"),
+            "cover_bg": ("cover_bg.jpg", b"small_cover_bg", "image/jpeg"),
         },
     )
     assert res.status_code == 200
     assert res.json()["status"] == "uploaded"
+    db_session.refresh(job)
+    assert job.cover_bg_path is not None
+    assert os.path.exists(job.cover_bg_path)
+    with open(job.cover_bg_path, "rb") as f:
+        assert f.read() == b"small_cover_bg"
 
     # Admin endpoints
     res = client.get("/ai-video/jobs")

@@ -6,6 +6,7 @@ from app.database import SessionLocal
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
+from app.services.ai_video_cover_build import prepare_cover
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
 from app.services.social_project_eligibility import project_can_generate
@@ -109,6 +110,7 @@ def plan_ai_videos():
                 job = VideoJob(fanpage_id=fanpage.id, idea_id=idea.id, template_key=template.key, title=title, caption=caption, model=template.model, aspect=template.aspect, clip_seconds=template.clip_seconds, clips=rendered, credits_per_clip=template.credits_per_clip, credits_estimate=credits_estimate(template, clips), status="queued")
                 idea.variables, idea.status, idea.error = variables, "queued", None
                 db.add(job)
+                prepare_cover(db, fanpage, job)
                 db.commit()
             except ValueError as exc:
                 db.rollback()

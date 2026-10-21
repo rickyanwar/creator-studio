@@ -235,6 +235,7 @@ class TargetFanpage(Base):
     ai_video_caption_size = Column(Integer, default=76, nullable=False, server_default="76")
     ai_video_caption_bottom_pct = Column(Integer, default=29, nullable=False, server_default="29")
     ai_video_caption_highlight = Column(String(7), default="#FFE500", nullable=False, server_default="#FFE500")
+    ai_video_cover_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     # ── Viral Radar ───────────────────────────────────────────────────────────
     radar_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     radar_niches = Column(ARRAY(String), server_default="{}", nullable=False)

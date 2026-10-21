@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import random
 import re
 import threading
+import time
 
 from .api import JobLost, TransientApiError, UploadTooLarge
 from .gflow import classify
@@ -198,7 +200,63 @@ class JobRunner:
         self.media.thumbnail(video, thumb)
         if self.cancelled(jid):
             return
+        cover_bg = self._cover_background(job, state, project)
         self.api.complete(jid, generation, video, thumb,
-                          {"duration_s": duration, "clips": metadata})
+                          {"duration_s": duration, "clips": metadata},
+                          cover_bg=cover_bg)
         state.data["uploaded"] = True
         state.save()
+
+    def _resolve_cover_raw(self, result, out: Path) -> Path | None:
+        payload = getattr(result, "payload", {})
+        payload_path = payload.get("local_path") or payload.get("path") if isinstance(payload, dict) else None
+        if payload_path:
+            p = Path(payload_path)
+            if not p.is_absolute():
+                p = self.cfg.cli_dir / p
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+            return None
+        for cand in (out.with_suffix(".jpg"), out.with_suffix(".png"), out):
+            p = cand if cand.is_absolute() else self.cfg.cli_dir / cand
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+        return None
+
+    def _cover_background(self, job, state, project) -> Path | None:
+        jid = job.get("id")
+        try:
+            prompt = job.get("cover_prompt")
+            if not prompt:
+                return None
+            cached = state.data.get("cover_bg")
+            if cached:
+                cached_path = Path(cached)
+                if cached_path.is_file() and cached_path.stat().st_size > 0:
+                    return cached_path
+            min_sec, max_sec = self.cfg.cover_gap_seconds
+            time.sleep(random.uniform(min_sec, max_sec))
+            raw_out = (state.directory / "cover_raw.png").resolve()
+            result = self.gflow.t2i(
+                prompt,
+                profile=job["account"]["profile"],
+                project=project,
+                model=self.cfg.cover_image_model,
+                aspect=job["aspect"],
+                out=raw_out,
+            )
+            if not result.ok:
+                log.warning("cover t2i failed for job %s: %s", jid, getattr(result, "message", "unknown"))
+                return None
+            raw = self._resolve_cover_raw(result, raw_out)
+            if not raw or not raw.is_file() or not raw.stat().st_size:
+                log.warning("cover raw file missing or empty for job %s", jid)
+                return None
+            bg_path = state.directory / "cover_bg.jpg"
+            self.media.to_cover_jpeg(raw, bg_path)
+            state.data["cover_bg"] = str(bg_path.resolve())
+            state.save()
+            return bg_path
+        except Exception as exc:
+            log.warning("cover background failed for job %s: %s", jid, exc)
+            return None

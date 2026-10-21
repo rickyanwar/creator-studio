@@ -128,6 +128,10 @@ class GflowRunner:
     def i2v(self, prompt, *, frame, **kwargs):
         return self._video("i2v", prompt, frame=frame, **kwargs)
 
+    def t2i(self, prompt, *, profile, project, model, aspect, out):
+        return self.run(["image", "t2i", prompt, "--model", model, "--aspect", aspect,
+                         "--profile", profile, "--project", project, "-o", str(out)], profile=profile)
+
     def download_media(self, media_id, *, profile, out):
         out_dir = Path(out).parent if Path(out).suffix else Path(out)
         return self.run(["data", "download", str(media_id), "--profile", profile, "--out", str(out_dir)], profile=profile)

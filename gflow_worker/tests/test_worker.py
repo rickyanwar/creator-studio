@@ -459,6 +459,15 @@ def test_config_env(cfg, monkeypatch):
     config = Config.from_env()
     assert config.profiles == ("p1", "p2") and config.token not in repr(config)
     assert config.proxy == "socks5://100.64.96.50:1080"
+    assert config.cover_image_model == "nano2-lite"
+    assert config.cover_gap_seconds == (5, 15)
+
+    monkeypatch.setenv("GFLOW_COVER_IMAGE_MODEL", "custom-model")
+    monkeypatch.setenv("GFLOW_COVER_GAP_SECONDS", "3,10")
+    c_custom = Config.from_env()
+    assert c_custom.cover_image_model == "custom-model"
+    assert c_custom.cover_gap_seconds == (3.0, 10.0)
+
     monkeypatch.setenv("GFLOW_WORKER_ID", "bad id")
     with pytest.raises(ValueError):
         Config.from_env()
@@ -1200,4 +1209,157 @@ def test_stranded_clip_recovery_catalog_fallback(cfg, studio, runner, monkeypatc
     commands = calls(cfg)
     assert any(c[:3] == ["data", "list", "videos"] for c in commands)
     assert any(c[:2] == ["data", "download"] and c[2] == "catalog-media-1" for c in commands)
+
+
+def test_cover_background_success(cfg, studio, runner, monkeypatch):
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    complete_calls = []
+    orig_complete = runner.api.complete
+    def mock_complete(*args, **kwargs):
+        complete_calls.append((args, kwargs))
+        return orig_complete(*args, **kwargs)
+    monkeypatch.setattr(runner.api, "complete", mock_complete)
+
+    job = payload(2)
+    job["cover_prompt"] = "f1 racing car dramatic cover"
+    runner.run_job(job)
+
+    assert not studio.events("/fail")
+    assert len(complete_calls) == 1
+    cover_bg = complete_calls[0][1].get("cover_bg")
+    assert cover_bg is not None
+    assert Path(cover_bg).is_file()
+    assert Path(cover_bg).name == "cover_bg.jpg"
+    assert Path(cover_bg).stat().st_size > 0
+
+    commands = calls(cfg)
+    t2i_cmds = [c for c in commands if c[:2] == ["image", "t2i"]]
+    assert len(t2i_cmds) == 1
+    t2i_cmd = t2i_cmds[0]
+    assert t2i_cmd[2] == "f1 racing car dramatic cover"
+    assert t2i_cmd[t2i_cmd.index("--model") + 1] == cfg.cover_image_model
+    assert t2i_cmd[t2i_cmd.index("--aspect") + 1] == job["aspect"]
+    assert t2i_cmd[t2i_cmd.index("--profile") + 1] == job["account"]["profile"]
+
+    state = JobState(cfg.work_dir, job["id"], job["generation"])
+    assert state.data.get("cover_bg") == str(Path(cover_bg).resolve())
+
+
+def test_cover_background_t2i_failure_still_completes(cfg, studio, runner, monkeypatch):
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    monkeypatch.setenv("FAKE_GF_T2I_FAIL", "1")
+    complete_calls = []
+    orig_complete = runner.api.complete
+    def mock_complete(*args, **kwargs):
+        complete_calls.append((args, kwargs))
+        return orig_complete(*args, **kwargs)
+    monkeypatch.setattr(runner.api, "complete", mock_complete)
+
+    job = payload(2)
+    job["cover_prompt"] = "f1 racing car dramatic cover"
+    runner.run_job(job)
+
+    assert not studio.events("/fail")
+    assert len(complete_calls) == 1
+    cover_bg = complete_calls[0][1].get("cover_bg")
+    assert cover_bg is None
+    assert len(studio.uploads) == 1
+
+
+def test_cover_background_no_prompt_skips_t2i(cfg, studio, runner, monkeypatch):
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    complete_calls = []
+    orig_complete = runner.api.complete
+    def mock_complete(*args, **kwargs):
+        complete_calls.append((args, kwargs))
+        return orig_complete(*args, **kwargs)
+    monkeypatch.setattr(runner.api, "complete", mock_complete)
+
+    job = payload(2)
+    job.pop("cover_prompt", None)
+    runner.run_job(job)
+
+    assert not studio.events("/fail")
+    assert len(complete_calls) == 1
+    assert complete_calls[0][1].get("cover_bg") is None
+    commands = calls(cfg)
+    assert not any(c[:2] == ["image", "t2i"] for c in commands)
+
+
+def test_cover_background_retry_with_checkpoint_no_second_generation(cfg, studio, runner, monkeypatch):
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    job = payload(2)
+    job["cover_prompt"] = "f1 racing car dramatic cover"
+    state = JobState(cfg.work_dir, job["id"], job["generation"])
+    state.directory.mkdir(parents=True, exist_ok=True)
+    fake_cover = state.directory / "cached_cover.jpg"
+    fake_cover.write_bytes(b"jpeg-bytes")
+    state.data["cover_bg"] = str(fake_cover)
+    state.save()
+
+    complete_calls = []
+    orig_complete = runner.api.complete
+    def mock_complete(*args, **kwargs):
+        complete_calls.append((args, kwargs))
+        return orig_complete(*args, **kwargs)
+    monkeypatch.setattr(runner.api, "complete", mock_complete)
+
+    runner.run_job(job)
+
+    assert not studio.events("/fail")
+    assert len(complete_calls) == 1
+    assert complete_calls[0][1].get("cover_bg") == fake_cover
+    commands = calls(cfg)
+    assert not any(c[:2] == ["image", "t2i"] for c in commands)
+
+
+def test_api_complete_multipart_cover_bg(cfg, tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"fake video")
+    thumb = tmp_path / "thumb.jpg"
+    thumb.write_bytes(b"fake thumb")
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"fake cover")
+
+    captured_requests = []
+    def handle_mock(request):
+        captured_requests.append(request)
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = StudioClient(cfg, transport=httpx.MockTransport(handle_mock))
+    try:
+        client.complete(1, 1, video, thumb, {"duration_s": 10})
+        body_without = captured_requests[-1].read()
+        assert b'name="video"' in body_without
+        assert b'name="thumbnail"' in body_without
+        assert b'name="cover_bg"' not in body_without
+
+        client.complete(1, 1, video, thumb, {"duration_s": 10}, cover_bg=cover)
+        body_with = captured_requests[-1].read()
+        assert b'name="video"' in body_with
+        assert b'name="thumbnail"' in body_with
+        assert b'name="cover_bg"' in body_with
+        assert b'filename="cover_bg.jpg"' in body_with
+        assert b"fake cover" in body_with
+    finally:
+        client.close()
+
+
+def test_media_to_cover_jpeg(cfg, tmp_path):
+    media = Media(cfg)
+    src = tmp_path / "raw.png"
+    subprocess.run([cfg.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=red:s=1920x1080", "-frames:v", "1", str(src)], check=True)
+    dst = tmp_path / "cover.jpg"
+    res = media.to_cover_jpeg(src, dst)
+    assert dst.is_file()
+    assert dst.stat().st_size > 0
+    assert dst.stat().st_size < 2 * 1024 * 1024
+
+
+def test_gflow_t2i_direct(cfg, runner, tmp_path):
+    out = tmp_path / "out.png"
+    res = runner.gflow.t2i("test prompt", profile="p1", project="project-1", model="nano2-lite", aspect="9:16", out=out)
+    assert res.ok
+    assert out.is_file()
 

@@ -13,6 +13,10 @@
  * POST /render {template_json, width, height, title, image_src}
  *   image_src: data URI (preferred — no network dependency) or URL
  *   → 200 image/png
+ *
+ * POST /render-html {html, width, height, ready_flag}
+ *   ready_flag: window property to wait for before screenshot (default: "__coverReady")
+ *   → 200 image/png
  */
 
 const fs = require("fs");
@@ -76,6 +80,24 @@ async function renderOnce(body) {
   }
 }
 
+async function renderHtmlOnce(body) {
+  const { html, width, height, ready_flag = "__coverReady" } = body || {};
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width, height } });
+    await page.setContent(html, { waitUntil: "load" });
+    if (typeof ready_flag === "string" && ready_flag.length > 0) {
+      await page.waitForFunction((f) => window[f] === true, ready_flag, { timeout: 15000 });
+    }
+    return await page.screenshot({ type: "png", clip: { x: 0, y: 0, width, height } });
+  } finally {
+    await browser.close();
+  }
+}
+
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 app.post("/render", (req, res) => {
@@ -95,6 +117,27 @@ app.post("/render", (req, res) => {
     })
     .catch((err) => {
       console.error("render failed:", err.message);
+      res.status(500).json({ detail: `render failed: ${err.message}` });
+    });
+});
+
+app.post("/render-html", (req, res) => {
+  const { html, width, height } = req.body || {};
+  if (!html || !width || !height) {
+    return res.status(400).json({ detail: "html, width and height are required" });
+  }
+
+  enqueue(async () => {
+    const timeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error("render timed out")), RENDER_TIMEOUT_MS)
+    );
+    return Promise.race([renderHtmlOnce(req.body), timeout]);
+  })
+    .then((png) => {
+      res.type("png").send(png);
+    })
+    .catch((err) => {
+      console.error("render-html failed:", err.message);
       res.status(500).json({ detail: `render failed: ${err.message}` });
     });
 });

@@ -66,6 +66,11 @@ class Media:
         if not Path(jpg).exists():
             self._run([self.ffmpeg, "-y", "-i", str(video), "-frames:v", "1", "-vf", "scale=720:-1", "-update", "1", str(jpg)])
 
+    def to_cover_jpeg(self, src, jpg):
+        self._run([self.ffmpeg, "-y", "-i", str(src), "-vf", "scale='min(1080,iw)':-2",
+                   "-q:v", "3", "-map_metadata", "-1", str(jpg)])
+        return Path(jpg)
+
     def reencode_for_upload(self, video, duration):
         video = Path(video)
         target_bytes = 38 * 1024 * 1024

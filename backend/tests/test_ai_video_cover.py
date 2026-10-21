@@ -1,0 +1,674 @@
+import json
+import sqlite3
+import subprocess
+import uuid
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import httpx
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+
+from app.database import Base
+from app.models.ai_video import GflowWorker, VideoIdea, VideoJob
+from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
+from app.models.settings import Settings
+from app.models.target_fanpages import PublishMode, TargetFanpage
+from app.services.ai_video_cover import (
+    build_cover_copy_prompt,
+    build_cover_html,
+    build_cover_image_prompt,
+    fallback_cover_copy,
+    parse_cover_copy,
+)
+from app.services.ai_video_cover_build import apply_cover, prepare_cover
+from app.services import ai_video_dispatch
+from app.tasks import ai_video_finalize
+
+from sqlalchemy.pool import StaticPool
+
+# SQLite compiles for Postgres types
+sqlite3.register_adapter(list, json.dumps)
+sqlite3.register_adapter(dict, json.dumps)
+
+
+@compiles(ARRAY, "sqlite")
+def _compile_array(element, compiler, **kw):
+    return "TEXT"
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb(element, compiler, **kw):
+    return "TEXT"
+
+
+@pytest.fixture
+def sqlite_db():
+    clips_col = VideoJob.__table__.columns["clips_done"]
+    orig_clips = clips_col.server_default
+    clips_col.server_default = None
+
+    worker_col = GflowWorker.__table__.columns["running_job_ids"]
+    orig_worker = worker_col.server_default
+    worker_col.server_default = None
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    for t in [
+        TargetFanpage.__table__,
+        VideoIdea.__table__,
+        VideoJob.__table__,
+        PublishJob.__table__,
+        Settings.__table__,
+        GflowWorker.__table__,
+    ]:
+        t.create(bind=engine, checkfirst=True)
+
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
+        clips_col.server_default = orig_clips
+        worker_col.server_default = orig_worker
+
+
+# 1x1 transparent PNG
+TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06"
+    b"\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01"
+    b"\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Pure function tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_fallback_cover_copy():
+    # <= 3 lines, uppercase, last highlighted
+    res = fallback_cover_copy("Why 2026 F1 Wings Move So Fast On The Straights")
+    assert len(res["lines"]) <= 3
+    assert res["lines"] == [l.upper() for l in res["lines"]]
+    assert res["highlight"] == [len(res["lines"]) - 1]
+
+    # Single short word
+    res2 = fallback_cover_copy("Wings")
+    assert res2["lines"] == ["WINGS"]
+    assert res2["highlight"] == [0]
+
+    # Empty string defaults to WATCH
+    res3 = fallback_cover_copy("")
+    assert res3["lines"] == ["WATCH"]
+    assert res3["highlight"] == [0]
+
+
+def test_parse_cover_copy():
+    # Valid json with int highlight converted to list
+    raw = '{"lines": ["THE WING", "MOVES NOW"], "highlight": 1, "scene": "f1 car in wind tunnel"}'
+    res = parse_cover_copy(raw, "Why Wings Move", strict=True)
+    assert res["lines"] == ["THE WING", "MOVES NOW"]
+    assert res["highlight"] == [1]
+    assert res["scene"] == "f1 car in wind tunnel"
+
+    # Garbage input with strict=False returns fallback
+    fallback_res = parse_cover_copy("not valid json at all", "Why Wings Move", strict=False)
+    assert len(fallback_res["lines"]) <= 3
+    assert fallback_res["highlight"] == [len(fallback_res["lines"]) - 1]
+
+    # Garbage input with strict=True raises ValueError
+    with pytest.raises(ValueError, match="cover copy off spec"):
+        parse_cover_copy("not valid json at all", "Why Wings Move", strict=True)
+
+    # Off spec lines (> 3 lines) with strict=True raises ValueError
+    off_spec = '{"lines": ["ONE", "TWO", "THREE", "FOUR"], "highlight": [0]}'
+    with pytest.raises(ValueError):
+        parse_cover_copy(off_spec, "Title", strict=True)
+
+
+def test_build_cover_html():
+    html = build_cover_html(
+        width=1080,
+        height=1920,
+        background_src="data:image/jpeg;base64,fakebg",
+        lines=["FAST", "CARS"],
+        highlight=[1],
+        highlight_hex="#123456",
+        font_src="data:font/ttf;base64,fakefont",
+        logo_src="data:image/png;base64,fakelogo",
+    )
+    assert "#123456" in html
+    assert '<img class="logo"' in html
+    assert "data:image/png;base64,fakelogo" in html
+    assert "window.__coverReady" in html
+    assert "FAST" in html
+    assert "CARS" in html
+
+    # logo_text branch
+    html_text = build_cover_html(
+        width=1080,
+        height=1920,
+        background_src="data:image/jpeg;base64,fakebg",
+        lines=["FAST"],
+        highlight=[0],
+        highlight_hex="#FFE500",
+        font_src="data:font/ttf;base64,fakefont",
+        logo_text="BRAND_LOGO",
+    )
+    assert "BRAND_LOGO" in html_text
+    assert '<div class="logo txt"' in html_text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. prepare_cover tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_prepare_cover_success(sqlite_db):
+    fanpage = TargetFanpage(id=10, repliz_account_id="r10", name="FP 10", ai_video_cover_enabled=True)
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    job = VideoJob(
+        id=101,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Why Wings Move Fast",
+        caption="Aerodynamic breakdown",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    fake_copy = {"lines": ["THE WING", "MOVES FAST"], "highlight": [1], "scene": "wind tunnel rear wing"}
+    with patch("app.services.news_copywriter._generate_with_fallback", return_value=(fake_copy, "router")):
+        prepare_cover(sqlite_db, fanpage, job)
+
+    assert job.cover_lines == ["THE WING", "MOVES FAST"]
+    assert job.cover_highlight == [1]
+    assert job.cover_prompt is not None
+    assert "wind tunnel rear wing" in job.cover_prompt
+
+
+def test_prepare_cover_fallback_on_llm_error(sqlite_db):
+    fanpage = TargetFanpage(id=11, repliz_account_id="r11", name="FP 11", ai_video_cover_enabled=True)
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    job = VideoJob(
+        id=102,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Why Wings Move",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    with patch("app.services.news_copywriter._generate_with_fallback", side_effect=RuntimeError("router unreachable")):
+        prepare_cover(sqlite_db, fanpage, job)
+
+    assert job.cover_lines is not None
+    assert len(job.cover_lines) <= 3
+    assert job.cover_highlight is not None
+    assert job.cover_prompt is not None
+
+
+def test_prepare_cover_disabled(sqlite_db):
+    fanpage = TargetFanpage(id=12, repliz_account_id="r12", name="FP 12", ai_video_cover_enabled=False)
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    job = VideoJob(
+        id=103,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Why Wings Move",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    prepare_cover(sqlite_db, fanpage, job)
+    assert job.cover_lines is None
+    assert job.cover_highlight is None
+    assert job.cover_prompt is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. apply_cover tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _generate_test_video(dest: Path, duration: int = 1) -> None:
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-y",
+            "-f", "lavfi", "-i", f"color=c=blue:s=180x320:d={duration}",
+            "-f", "lavfi", "-i", "anullsrc",
+            "-shortest",
+            str(dest),
+        ],
+        check=True,
+        timeout=30,
+    )
+
+
+def test_apply_cover_success(tmp_path):
+    video = tmp_path / "input.mp4"
+    _generate_test_video(video, duration=1)
+
+    workdir = tmp_path / "work"
+    job = Mock(
+        id=1,
+        cover_bg_path=None,
+        cover_lines=["FAST", "CAR"],
+        cover_highlight=[1],
+        title="Fast Car",
+    )
+    fanpage = Mock(
+        ai_video_logo_enabled=False,
+        ai_video_caption_highlight="#FFE500",
+        ai_video_logo_size_pct=14,
+        ai_video_logo_position="top_right",
+        ai_video_logo_margin_pct=3,
+        watermark_text=None,
+    )
+
+    fake_response = Mock()
+    fake_response.content = TINY_PNG
+    fake_response.raise_for_status = Mock()
+
+    with patch("httpx.post", return_value=fake_response):
+        res = apply_cover(job, fanpage, video, video, workdir)
+
+    assert res is not None
+    out_video, out_cover = res
+    assert out_video.is_file()
+    assert out_cover.is_file()
+    assert out_cover.name.endswith("_cover.jpg")
+
+    # Check that video has valid duration ~ 1s
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out_video)],
+        capture_output=True, text=True, check=True,
+    )
+    duration = float(probe.stdout.strip())
+    assert 0.8 <= duration <= 1.5
+
+
+def test_apply_cover_renderer_error_preserves_input(tmp_path):
+    video = tmp_path / "input.mp4"
+    _generate_test_video(video, duration=1)
+    original_bytes = video.read_bytes()
+
+    workdir = tmp_path / "work"
+    job = Mock(id=2, cover_bg_path=None, cover_lines=["TEST"], cover_highlight=[0], title="Test")
+    fanpage = Mock(ai_video_logo_enabled=False, ai_video_caption_highlight="#FFE500")
+
+    with patch("httpx.post", side_effect=httpx.HTTPError("renderer crash")):
+        res = apply_cover(job, fanpage, video, video, workdir)
+
+    assert res is None
+    assert video.is_file()
+    assert video.read_bytes() == original_bytes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. complete_job and complete endpoint tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_complete_job_with_and_without_cover_bg(sqlite_db, tmp_path, monkeypatch):
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "storage_base_path", str(tmp_path))
+    monkeypatch.setattr(cfg, "storage_base_url", "http://localhost/media")
+
+    fanpage = TargetFanpage(id=20, repliz_account_id="r20", name="FP 20")
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    # Job 1: with cover_bg_content
+    job1 = VideoJob(
+        id=201,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 1",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="generating",
+        worker_id="w1",
+        generation=1,
+    )
+    sqlite_db.add(job1)
+    sqlite_db.commit()
+
+    with patch("app.tasks.ai_video_finalize.finalize_ai_video.delay"):
+        ai_video_dispatch.complete_job(
+            sqlite_db,
+            job1,
+            "w1",
+            1,
+            b"video_bytes_1",
+            b"thumb_bytes_1",
+            {"duration_s": 4.0},
+            cover_bg_content=b"cover_bg_image_data",
+        )
+
+    assert job1.status == "uploaded"
+    assert job1.cover_bg_path is not None
+    assert Path(job1.cover_bg_path).is_file()
+    assert Path(job1.cover_bg_path).read_bytes() == b"cover_bg_image_data"
+
+    # Job 2: without cover_bg_content
+    job2 = VideoJob(
+        id=202,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 2",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="generating",
+        worker_id="w1",
+        generation=1,
+    )
+    sqlite_db.add(job2)
+    sqlite_db.commit()
+
+    with patch("app.tasks.ai_video_finalize.finalize_ai_video.delay"):
+        ai_video_dispatch.complete_job(
+            sqlite_db,
+            job2,
+            "w1",
+            1,
+            b"video_bytes_2",
+            b"thumb_bytes_2",
+            {"duration_s": 4.0},
+        )
+
+    assert job2.status == "uploaded"
+    assert job2.cover_bg_path is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. finalize tests (cover success vs None)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_finalize_ai_video_cover_success(sqlite_db, tmp_path, monkeypatch):
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "storage_base_path", str(tmp_path))
+    monkeypatch.setattr(cfg, "storage_base_url", "http://localhost/media")
+
+    fanpage = TargetFanpage(
+        id=30, repliz_account_id="r30", name="FP 30",
+        ai_video_publish_mode=PublishMode.manual_review,
+        ai_video_cover_enabled=True,
+        ai_video_logo_enabled=False,
+        ai_video_captions_enabled=False,
+    )
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    video = tmp_path / "raw_video.mp4"
+    _generate_test_video(video, duration=1)
+    thumb = tmp_path / "raw_thumb.jpg"
+    thumb.write_bytes(b"thumb")
+
+    job = VideoJob(
+        id=301,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Finalize Test",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="uploaded",
+        video_path=str(video),
+        video_url="http://localhost/media/raw_video.mp4",
+        thumbnail_path=str(thumb),
+        thumbnail_url="http://localhost/media/raw_thumb.jpg",
+        duration_s=1.0,
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    covered_video = tmp_path / "covered.mp4"
+    covered_video.write_bytes(b"covered")
+    cover_jpg = tmp_path / "cover.jpg"
+    cover_jpg.write_bytes(b"cover_jpg_bytes")
+
+    with patch("app.tasks.ai_video_finalize.SessionLocal", return_value=sqlite_db), \
+         patch("app.services.ai_video_qc.technical_check", return_value={"passed": True, "reasons": []}), \
+         patch("app.services.ai_video_cover_build.apply_cover", return_value=(covered_video, cover_jpg)):
+        ai_video_finalize.finalize_ai_video(job.id)
+
+    publish_job = sqlite_db.query(PublishJob).filter_by(content_type=ContentType.ai_video, fanpage_id=fanpage.id).first()
+    assert publish_job is not None
+    assert publish_job.video_thumbnail_path == str(cover_jpg)
+    assert publish_job.video_path == str(covered_video)
+
+
+def test_finalize_ai_video_cover_none_keeps_old_behavior(sqlite_db, tmp_path, monkeypatch):
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "storage_base_path", str(tmp_path))
+    monkeypatch.setattr(cfg, "storage_base_url", "http://localhost/media")
+
+    fanpage = TargetFanpage(
+        id=31, repliz_account_id="r31", name="FP 31",
+        ai_video_publish_mode=PublishMode.manual_review,
+        ai_video_cover_enabled=True,
+        ai_video_logo_enabled=False,
+        ai_video_captions_enabled=False,
+    )
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    video = tmp_path / "raw_video_2.mp4"
+    _generate_test_video(video, duration=1)
+    thumb = tmp_path / "raw_thumb_2.jpg"
+    thumb.write_bytes(b"thumb2")
+
+    job = VideoJob(
+        id=302,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Finalize Fallback Test",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="uploaded",
+        video_path=str(video),
+        video_url="http://localhost/media/raw_video_2.mp4",
+        thumbnail_path=str(thumb),
+        thumbnail_url="http://localhost/media/raw_thumb_2.jpg",
+        duration_s=1.0,
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    with patch("app.tasks.ai_video_finalize.SessionLocal", return_value=sqlite_db), \
+         patch("app.services.ai_video_qc.technical_check", return_value={"passed": True, "reasons": []}), \
+         patch("app.services.ai_video_cover_build.apply_cover", return_value=None):
+        ai_video_finalize.finalize_ai_video(job.id)
+
+    publish_job = sqlite_db.query(PublishJob).filter_by(content_type=ContentType.ai_video, fanpage_id=fanpage.id).first()
+    assert publish_job is not None
+    # Falls back to old behaviour: raw video and raw thumbnail
+    assert publish_job.video_path == str(video)
+    assert publish_job.video_thumbnail_path == str(thumb)
+
+
+def test_finalize_ai_video_branded_branch_cover_success(sqlite_db, tmp_path, monkeypatch):
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "storage_base_path", str(tmp_path))
+    monkeypatch.setattr(cfg, "storage_base_url", "http://localhost/media")
+
+    fanpage = TargetFanpage(
+        id=32, repliz_account_id="r32", name="FP 32",
+        ai_video_publish_mode=PublishMode.manual_review,
+        ai_video_cover_enabled=True,
+        ai_video_logo_enabled=True,
+        ai_video_captions_enabled=False,
+    )
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    video = tmp_path / "raw_branded_in.mp4"
+    _generate_test_video(video, duration=1)
+    thumb = tmp_path / "raw_thumb_branded.jpg"
+    thumb.write_bytes(b"thumb3")
+
+    job = VideoJob(
+        id=303,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Finalize Branded Test",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="uploaded",
+        video_path=str(video),
+        video_url="http://localhost/media/raw_branded_in.mp4",
+        thumbnail_path=str(thumb),
+        thumbnail_url="http://localhost/media/raw_thumb_branded.jpg",
+        duration_s=1.0,
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    def _fake_render_branded(src, out, fp, words, workdir):
+        Path(out).write_bytes(b"branded_video_bytes")
+
+    covered_video = tmp_path / "covered_branded.mp4"
+    covered_video.write_bytes(b"covered_branded")
+    cover_jpg = tmp_path / "cover_branded.jpg"
+    cover_jpg.write_bytes(b"cover_jpg_bytes")
+
+    with patch("app.tasks.ai_video_finalize.SessionLocal", return_value=sqlite_db), \
+         patch("app.services.ai_video_qc.technical_check", return_value={"passed": True, "reasons": []}), \
+         patch("app.services.speech_words.caption_words", return_value=[]), \
+         patch("app.services.ai_video_overlay.speech_windows", return_value=[]), \
+         patch("app.services.ai_video_overlay.estimate_words", return_value=[]), \
+         patch("app.services.ai_video_overlay.render_branded", side_effect=_fake_render_branded), \
+         patch("app.services.ai_video_cover_build.apply_cover", return_value=(covered_video, cover_jpg)):
+        ai_video_finalize.finalize_ai_video(job.id)
+
+    publish_job = sqlite_db.query(PublishJob).filter_by(content_type=ContentType.ai_video, fanpage_id=fanpage.id).first()
+    assert publish_job is not None
+    assert publish_job.video_thumbnail_path == str(cover_jpg)
+    assert publish_job.video_path == str(covered_video)
+
+
+def test_complete_endpoint_cover_bg_too_large_ignored(sqlite_db, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.api.deps import get_db, require_hermes_scope
+    from app.api.gflow_worker import MAX_THUMB_BYTES
+    from app.config import get_settings
+
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "storage_base_path", str(tmp_path))
+    monkeypatch.setattr(cfg, "storage_base_url", "http://localhost/media")
+
+    fanpage = TargetFanpage(id=40, repliz_account_id="r40", name="FP 40")
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    job = VideoJob(
+        id=401,
+        fanpage_id=fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job 401",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="generating",
+        worker_id="w1",
+        generation=1,
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    app.dependency_overrides[get_db] = lambda: sqlite_db
+    client = TestClient(app)
+
+    try:
+        # cover_bg too large (> MAX_THUMB_BYTES * 2) should NOT cause 413; it is ignored with warning
+        too_big_cover = b"x" * (MAX_THUMB_BYTES * 2 + 10)
+        meta_json = json.dumps({"duration_s": 4.0})
+
+        with patch("app.services.api_tokens.verify", return_value=Mock(scopes=["gflow:worker"], last_used_at=None)), \
+             patch("app.tasks.ai_video_finalize.finalize_ai_video.delay"):
+            res = client.post(
+                f"/worker/gflow/jobs/{job.id}/complete",
+                headers={"Authorization": "Bearer test_token"},
+                data={"worker_id": "w1", "generation": "1", "meta": meta_json},
+                files={
+                    "video": ("video.mp4", b"valid_video", "video/mp4"),
+                    "thumbnail": ("thumb.jpg", b"valid_thumb", "image/jpeg"),
+                    "cover_bg": ("cover.jpg", too_big_cover, "image/jpeg"),
+                },
+            )
+        assert res.status_code == 200
+        assert res.json()["status"] == "uploaded"
+        sqlite_db.refresh(job)
+        # cover_bg was ignored because it was too large
+        assert job.cover_bg_path is None
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+

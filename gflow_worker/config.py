@@ -36,6 +36,8 @@ class Config:
     lock_file: Path | None = None
     lock_timeout_seconds: float = 1800
     proxy: str | None = None
+    cover_image_model: str = "nano2-lite"
+    cover_gap_seconds: tuple = (5, 15)
 
     @classmethod
     def from_env(cls):
@@ -72,6 +74,19 @@ class Config:
             values["max_concurrent"] = 2
         for name in ("poll_seconds", "credits_refresh_minutes", "credits_refresh_jitter_minutes", "clip_timeout_seconds", "keep_done_days"):
             values[name] = float(os.getenv("GFLOW_" + name.upper(), str(cls.__dataclass_fields__[name].default)))
+        values["cover_image_model"] = os.getenv("GFLOW_COVER_IMAGE_MODEL", str(cls.__dataclass_fields__["cover_image_model"].default))
+        gap_raw = os.getenv("GFLOW_COVER_GAP_SECONDS", "").strip()
+        if gap_raw:
+            parts = [float(p.strip()) for p in gap_raw.split(",") if p.strip()]
+            if len(parts) != 2 or parts[0] < 0 or parts[0] > parts[1]:
+                raise ValueError("invalid cover gap limits")
+            values["cover_gap_seconds"] = (parts[0], parts[1])
+        else:
+            cover_min = float(os.getenv("GFLOW_COVER_GAP_MIN_SECONDS", "5"))
+            cover_max = float(os.getenv("GFLOW_COVER_GAP_MAX_SECONDS", "15"))
+            if cover_min < 0 or cover_max < cover_min:
+                raise ValueError("invalid cover gap limits")
+            values["cover_gap_seconds"] = (cover_min, cover_max)
         cfg = cls(**values)
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", cfg.worker_id):
             raise ValueError("invalid GFLOW_WORKER_ID")
@@ -84,6 +99,8 @@ class Config:
             raise ValueError("worker intervals must be positive")
         if cfg.credits_refresh_jitter_minutes >= cfg.credits_refresh_minutes:
             raise ValueError("credits_refresh_jitter_minutes must be less than credits_refresh_minutes")
+        if len(cfg.cover_gap_seconds) != 2 or cfg.cover_gap_seconds[0] < 0 or cfg.cover_gap_seconds[0] > cfg.cover_gap_seconds[1]:
+            raise ValueError("invalid cover gap limits")
         if not shlex.split(cfg.probe_python_cmd) or shlex.split(cfg.probe_prefix) is None:
             raise ValueError("invalid probe command")
         return cfg

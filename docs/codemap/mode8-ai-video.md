@@ -290,8 +290,9 @@ Implemented in `backend/app/services/ai_video_overlay.py`:
 
 ### 8.3 Publish Job Hand-Off
 `backend/app/tasks/ai_video_finalize.py:134-150`:
+- Cover (thumbnail): Copy generated at job creation (`prepare_cover`), worker Flow t2i background (`cover_prompt` → `cover_bg`), renderer `/render-html`, cover overlaid on the first 0.3 s + 0.2 s fade (`apply_cover`), thumbnail = cover jpg, with fallbacks to ss=3 frame on error, governed by `ai_video_cover_enabled`.
 - Final video written to `<storage_base_path>/ai_videos/job_{id}_{uid8}_branded.mp4`.
-- Thumbnail extracted at `ss=3` to match branded overlay.
+- Thumbnail extracted at `ss=3` to match branded overlay (or set to cover jpg when cover is enabled).
 - Inserts `PublishJob`:
   - `content_type = ContentType.ai_video`
   - `video_path`, `video_url`, `video_thumbnail_path`, `video_thumbnail_url`, `video_duration_s`
