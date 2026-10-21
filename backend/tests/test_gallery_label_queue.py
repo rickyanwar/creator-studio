@@ -28,6 +28,13 @@ from app.tasks.gallery_labels import (
     label_new_gallery_images,
 )
 from app.services.gallery_labeler import LabelerError, LabelerUnavailable
+from zoneinfo import ZoneInfo
+
+
+@pytest.fixture(autouse=True)
+def _night_clock_for_queue_tests():
+    with patch("app.tasks.gallery_labels._get_now", return_value=datetime(2026, 10, 19, 2, 0, tzinfo=ZoneInfo("Asia/Jakarta"))):
+        yield
 
 
 @pytest.fixture
@@ -456,5 +463,51 @@ def test_missing_file_sets_attempts_and_skips_next_tick(db_session):
         # Tick 2: img_missing is not picked because label_attempts == 3
         processed_tick2 = label_new_gallery_images(db=db_session)
         assert processed_tick2 == 0
+
+
+def test_label_new_gallery_images_daytime_skips_old_labels_recent_and_night_runs_backfill(db_session):
+    now_utc = datetime(2026, 10, 21, 7, 0, tzinfo=timezone.utc)  # 14:00 WIB (+7)
+    since = datetime(2026, 10, 1, 0, 0)
+
+    s = Settings(
+        id=1,
+        gallery_labeling_enabled=True,
+        gallery_labeling_since=since,
+        gallery_labeling_daily_cap=10,
+    )
+    db_session.add(s)
+
+    # 1. Old unlabeled image (downloaded 2 days ago)
+    img_old = _make_image(501, downloaded_at=now_utc.replace(tzinfo=None) - timedelta(days=2))
+    # 2. 2-hour-old unlabeled image (downloaded 2 hours ago)
+    img_2h = _make_image(502, downloaded_at=now_utc.replace(tzinfo=None) - timedelta(hours=2))
+
+    db_session.add_all([img_old, img_2h])
+    db_session.commit()
+
+    with patch("os.path.exists", return_value=True), \
+         patch("app.tasks.gallery_labels.reserve", return_value=True), \
+         patch("app.tasks.gallery_labels.time.sleep"), \
+         patch("app.tasks.gallery_labels.label_image", return_value={"keyword_person_visible": "yes", "people": []}):
+
+        # Run at 14:00 WIB: skips img_old, but labels img_2h
+        with patch("app.tasks.gallery_labels._get_now", return_value=now_utc):
+            processed_day = label_new_gallery_images(db=db_session)
+        assert processed_day == 1
+
+        db_session.refresh(img_2h)
+        assert img_2h.labeled_at is not None
+
+        db_session.refresh(img_old)
+        assert img_old.labeled_at is None  # Skipped during daytime!
+
+        # Run at 02:00 WIB: night window (00:00-06:00 WIB)
+        night_utc = datetime(2026, 10, 21, 19, 0, tzinfo=timezone.utc)  # 02:00 WIB next day (+7)
+        with patch("app.tasks.gallery_labels._get_now", return_value=night_utc):
+            processed_night = label_new_gallery_images(db=db_session)
+        assert processed_night == 1
+
+        db_session.refresh(img_old)
+        assert img_old.labeled_at is not None  # Processed during night sweep!
 
 

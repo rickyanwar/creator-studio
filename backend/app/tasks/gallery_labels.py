@@ -2,6 +2,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from sqlalchemy import func, cast, String
 from app.database import SessionLocal
 from app.models.gallery import GalleryImage
@@ -12,6 +13,12 @@ from app.services.gallery_label_budget import reserve, release
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+_WIB = ZoneInfo("Asia/Jakarta")
+
+
+def _get_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _get_daily_budget(db, s: Settings) -> int:
@@ -167,8 +174,10 @@ def _pick_label_candidates(
 
 
 @celery_app.task(name="app.tasks.gallery_labels.label_new_gallery_images")
-def label_new_gallery_images(db=None) -> int:
-    """Safety net task: picks up to min(cap, 40) unlabeled images and labels them."""
+def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
+    """Safety net task: runs sweep at night (00:00-06:00 WIB) up to min(cap, 40).
+    Outside night hours, only processes images downloaded in the last 6 hours
+    with labeled_at IS NULL (cap 10 per run)."""
     close_db = db is None
     db = db or SessionLocal()
     processed = 0
@@ -177,9 +186,45 @@ def label_new_gallery_images(db=None) -> int:
         if not s or not s.gallery_labeling_enabled or not s.gallery_labeling_since:
             return 0
 
-        limit = min(s.gallery_labeling_daily_cap, 40)
-        safety_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=15)
-        candidates = _pick_label_candidates(db, s, limit, safety_cutoff)
+        curr_time = now if now is not None else _get_now()
+        if curr_time.tzinfo is None:
+            now_utc = curr_time.replace(tzinfo=timezone.utc)
+            now_wib = now_utc.astimezone(_WIB)
+        else:
+            now_wib = curr_time.astimezone(_WIB)
+            now_utc = curr_time.astimezone(timezone.utc)
+
+        is_night = 0 <= now_wib.hour < 6
+        now_naive = now_utc.replace(tzinfo=None)
+        six_hours_ago = now_naive - timedelta(hours=6)
+
+        if not is_night:
+            limit = min(s.gallery_labeling_daily_cap, 10)
+            recent_rows = (
+                db.query(GalleryImage)
+                .filter(
+                    GalleryImage.is_deleted == False,
+                    GalleryImage.labeled_at.is_(None),
+                    GalleryImage.downloaded_at >= six_hours_ago,
+                    GalleryImage.label_attempts < 3,
+                )
+                .order_by(GalleryImage.downloaded_at.asc())
+                .limit(limit)
+                .all()
+            )
+            if not recent_rows:
+                logger.info(
+                    "label_new_gallery_images: daytime outside 00:00-06:00 WIB (hour=%d) "
+                    "and no recent unlabeled images in last 6h — skipping sweep",
+                    now_wib.hour,
+                )
+                return 0
+            candidates = [(img, "new") for img in recent_rows]
+        else:
+            limit = min(s.gallery_labeling_daily_cap, 40)
+            safety_cutoff = now_naive - timedelta(minutes=15)
+            candidates = _pick_label_candidates(db, s, limit, safety_cutoff)
+
         counts = {"new": 0, "relabel": 0, "backfill": 0}
 
         for img, kind in candidates:

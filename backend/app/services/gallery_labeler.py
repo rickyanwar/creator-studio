@@ -120,6 +120,92 @@ def build_label_prompt(keyword: str | None = None) -> str:
     return prompt
 
 
+def build_gate_and_label_prompt(keyword: str | None = None, subject: str | None = None,
+                                allow_low_quality: bool = False) -> str:
+    """ONE vision call at download time that does both jobs: the calibrated download gate
+    (design_images.gate_prompt_text, wording unchanged) and the gallery labels (build_label_prompt).
+    Saves the separate gallery_label call per photo. The gate fields and the label fields share one
+    JSON object; their key names do not overlap ("label" / "usable" vs "sport", "shot_type", ...).
+    Calibrated 2026-10-21: a first version that only stacked PART A above PART B let the known-bad
+    gallery photo 14868 (a blurry reporter covering half of Bottas) through 2/2 times while the
+    stand-alone gate rejected it. Telling the model to judge PART A first and on its own, and to
+    write the PART A keys first, restored 5/5 rejections with 8/8 good photos still accepted.
+    Re-run that check before changing this wording."""
+    from app.services.design_images import gate_prompt_text
+
+    gate = gate_prompt_text(subject, allow_low_quality, reply_line=False)
+    gate_keys = ('"label", "content_acceptable", "quality_usable"' if allow_low_quality
+                 else '"label", "usable"')
+    labels = build_label_prompt(keyword).replace(
+        "Analyze this image and return a JSON object with the following fields strictly:",
+        "PART B — gallery labels. Also include every field below in the SAME JSON object:",
+    ).replace(
+        "Output only valid JSON with no extra commentary or Markdown formatting.",
+        "",
+    ).rstrip()
+    return (
+        "Answer TWO separate parts about this photo in ONE JSON object.\n\n"
+        "PART A — download check. Judge it FIRST and ON ITS OWN, exactly as strictly as if it were the only "
+        "question asked. The descriptive labels in PART B never make a photo usable.\n"
+        f"{gate}\n"
+        f"{labels}\n\n"
+        f"Reply with ONLY one valid JSON object. Write the PART A keys ({gate_keys}) FIRST, at the top level, "
+        "then all PART B fields. No extra commentary, no Markdown."
+    )
+
+
+def gate_and_label_image(
+    image_bytes: bytes,
+    *,
+    subject: str | None,
+    keyword: str | None,
+    allow_low_quality: bool = False,
+) -> tuple[str | None, bool, dict | None]:
+    """Download-time vision call: one vision request evaluating both download-gate
+    usability and rich gallery labels. Replaces classify_and_gate_image on the download path.
+    Fails closed: returns (None, False, None) on any vision/parsing error or missing gate keys.
+    If gate succeeds but label parsing fails, gate result stands and labels is None."""
+    try:
+        from app.services import design_images
+
+        content = [
+            {"type": "text", "text": build_gate_and_label_prompt(keyword, subject, allow_low_quality)},
+            {"type": "image_url", "image_url": {"url": design_images._vision_datauri(image_bytes)}},
+        ]
+        raw = design_images._vision_chat(content, max_tokens=2500, context="vision_gate_label")
+        parsed = _parse_json(raw)
+
+        if "label" not in parsed:
+            logger.warning("gate_and_label_image: missing 'label' key, failing closed")
+            return None, False, None
+
+        if allow_low_quality:
+            if "content_acceptable" not in parsed:
+                logger.warning("gate_and_label_image: missing 'content_acceptable' key, failing closed")
+                return None, False, None
+            usable = parsed.get("content_acceptable") is True
+        else:
+            if "usable" not in parsed:
+                logger.warning("gate_and_label_image: missing 'usable' key, failing closed")
+                return None, False, None
+            usable = parsed.get("usable") is True
+
+        label = str(parsed.get("label") or "OTHER").strip().upper()
+        if label not in ("FACE", "ACTION", "OTHER"):
+            label = "OTHER"
+
+        try:
+            labels = normalise_label_output(parsed, keyword=keyword)
+        except Exception as exc:
+            logger.warning("gate_and_label_image: label normalisation failed: %s", exc)
+            labels = None
+
+        return label.lower(), usable, labels
+    except Exception as exc:
+        logger.warning("gate_and_label_image failed, failing closed: %s", exc)
+        return None, False, None
+
+
 class LabelerError(Exception):
     """Client error or 4xx from labeler provider."""
     pass
