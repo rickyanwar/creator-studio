@@ -218,6 +218,13 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
     if not ok or not title or not description:
         return _reject(f"description/identify failed (ok={ok})")
 
+    extra = {}
+    if getattr(item, "attributes", None):
+        from app.services.muse_labeler import merge_label_attributes
+        extra["attributes"] = merge_label_attributes(None, item.attributes)
+        extra["labeled_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+        extra["label_error"] = None
+
     gi = GalleryImage(
         keyword=title.lower()[:128],
         source_image_url=item.source_url,
@@ -227,6 +234,7 @@ def build_idea_from_candidate(db, fanpage, candidate, source_type: str):
         height=item.height,
         source_engine="pinterest",
         label=item.label,
+        **extra,
     )
     try:
         db.add(gi)

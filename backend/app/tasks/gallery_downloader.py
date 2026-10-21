@@ -516,6 +516,15 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
 
         saved = 0
         for item in results:
+            image_attrs = None
+            image_labeled_at = None
+            image_label_error = None
+            if getattr(item, "attributes", None):
+                from app.services.muse_labeler import merge_label_attributes
+                image_attrs = merge_label_attributes(None, item.attributes)
+                image_labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                image_label_error = None
+
             image = GalleryImage(
                 keyword=kw.keyword,
                 source_image_url=item.source_url,
@@ -527,12 +536,16 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
                 license_info=kw.license_filter,
                 label=item.label,
                 captured_at=item.captured_at,
+                attributes=image_attrs,
+                labeled_at=image_labeled_at,
+                label_error=image_label_error,
             )
             db.add(image)
             try:
                 db.commit()
                 saved += 1
-                _enqueue_label_if_enabled(db, image.id)
+                if not image_labeled_at:
+                    _enqueue_label_if_enabled(db, image.id)
             except IntegrityError:
                 # URL already stored under another keyword — drop the duplicate file
                 db.rollback()

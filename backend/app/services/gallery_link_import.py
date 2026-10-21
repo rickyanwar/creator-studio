@@ -268,15 +268,24 @@ def import_links(db, links: list[str], keyword: str | None = None, hints: dict |
                     attributes["event"] = event
             if confidence:
                 attributes.update({"captured_at_source": "caption" if resolved.captured_date else "getty_id", "captured_at_confidence": confidence})
+            attrs = attributes or None
+            image_labeled_at = None
+            if getattr(item, "attributes", None):
+                from app.services.muse_labeler import merge_label_attributes
+                attrs = merge_label_attributes(attrs, item.attributes)
+                image_labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
             image = GalleryImage(
                 keyword=final_keyword[:128], source_image_url=item.source_url,
                 local_path=item.local_path, public_url=f"{s.storage_base_url.rstrip('/')}/gallery/{slug}/{item.filename}",
                 width=item.width, height=item.height, source_engine="manual-link", license_info="manual-link",
-                label=item.label, captured_at=captured, attributes=attributes or None,
+                label=item.label, captured_at=captured, attributes=attrs,
+                labeled_at=image_labeled_at,
+                label_error=None if image_labeled_at else None,
             )
             db.add(image)
             db.commit()
-            label_gallery_image.delay(image.id, force=True)
+            if not image_labeled_at:
+                label_gallery_image.delay(image.id, force=True)
             output.append(LinkResult(source, "saved", image.id, None))
         except LinkError as exc:
             output.append(LinkResult(source, "rejected", None, str(exc)))

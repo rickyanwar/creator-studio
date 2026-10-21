@@ -1880,6 +1880,52 @@ def classify_image_type(image_bytes: bytes) -> str:
     return "other"
 
 
+def gate_prompt_text(subject: str | None = None, allow_low_quality: bool = False, *, reply_line: bool = True) -> str:
+    """The calibrated download-gate prompt (see classify_and_gate_image's docstring before editing any
+    wording). reply_line=False drops the final "Reply with ONLY a JSON object ..." sentence so the
+    gallery labeler can merge these fields into its own single JSON reply (one vision call per photo)."""
+    subject_line = f" The subject should be {subject}." if subject else ""
+    quality_rules = (
+        "   - the subject is tiny, blurry, or mostly cropped out\n"
+        "   - a blurry, out-of-focus PERSON (someone else's head/"
+        "shoulder) fills roughly HALF the frame or more in the "
+        "foreground, competing with or blocking the subject — a "
+        "'someone walked in front of the camera' shot\n"
+        "   A MINOR foreground blur confined to a corner or edge (a "
+        "hand, an armrest, a microphone, a sleeve) that does NOT "
+        "overlap or compete with the subject is NORMAL press "
+        "photography — do NOT mark that unusable.\n"
+    )
+    gate_rules = (
+        '2) "content_acceptable": true/false — is the subject the MAIN focal point '
+        'of a photo? Reply false for generic crowd/stage/logo-only shots, '
+        'screenshots, or graphics with text overlays. Ignore resolution, blur, '
+        'and cropping for this field.\n'
+        '3) "quality_usable": true/false — is the photo sharp, sufficiently '
+        'detailed, and unobstructed? Reply false if:\n'
+        f'{quality_rules}'
+        'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", '
+        '"content_acceptable": true|false, "quality_usable": true|false}.'
+    ) if allow_low_quality else (
+        '2) "usable": true/false — is the subject the clear, '
+        "unobstructed MAIN focal point of this photo? Reply false if:\n"
+        "   - it's a generic crowd/stage/logo-only shot, a screenshot, "
+        "or a graphic with text overlays\n"
+        f"{quality_rules}"
+        'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", "usable": true|false}.'
+    )
+    text = (
+        "This photo is a candidate for a sports/news graphic background."
+        f"{subject_line}\n"
+        '1) "label": ONE word — FACE (clear head/upper-body portrait), '
+        "ACTION (riding/driving/on track), or OTHER (anything else).\n"
+        f"{gate_rules}"
+    )
+    if not reply_line:
+        text = text[: text.rindex("Reply with ONLY a JSON object")].rstrip() + "\n"
+    return text
+
+
 def classify_and_gate_image(
     image_bytes: bytes,
     subject: str | None = None,
@@ -1918,44 +1964,8 @@ def classify_and_gate_image(
     vision_check_photo_quality's calibration). Don't loosen this back to a
     bare "blurry foreground" ask without re-testing against both photos."""
     try:
-        subject_line = f" The subject should be {subject}." if subject else ""
-        quality_rules = (
-            "   - the subject is tiny, blurry, or mostly cropped out\n"
-            "   - a blurry, out-of-focus PERSON (someone else's head/"
-            "shoulder) fills roughly HALF the frame or more in the "
-            "foreground, competing with or blocking the subject — a "
-            "'someone walked in front of the camera' shot\n"
-            "   A MINOR foreground blur confined to a corner or edge (a "
-            "hand, an armrest, a microphone, a sleeve) that does NOT "
-            "overlap or compete with the subject is NORMAL press "
-            "photography — do NOT mark that unusable.\n"
-        )
-        gate_rules = (
-            '2) "content_acceptable": true/false — is the subject the MAIN focal point '
-            'of a photo? Reply false for generic crowd/stage/logo-only shots, '
-            'screenshots, or graphics with text overlays. Ignore resolution, blur, '
-            'and cropping for this field.\n'
-            '3) "quality_usable": true/false — is the photo sharp, sufficiently '
-            'detailed, and unobstructed? Reply false if:\n'
-            f'{quality_rules}'
-            'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", '
-            '"content_acceptable": true|false, "quality_usable": true|false}.'
-        ) if allow_low_quality else (
-            '2) "usable": true/false — is the subject the clear, '
-            "unobstructed MAIN focal point of this photo? Reply false if:\n"
-            "   - it's a generic crowd/stage/logo-only shot, a screenshot, "
-            "or a graphic with text overlays\n"
-            f"{quality_rules}"
-            'Reply with ONLY a JSON object {"label": "FACE|ACTION|OTHER", "usable": true|false}.'
-        )
         content = [
-            {"type": "text", "text": (
-                "This photo is a candidate for a sports/news graphic background."
-                f"{subject_line}\n"
-                '1) "label": ONE word — FACE (clear head/upper-body portrait), '
-                "ACTION (riding/driving/on track), or OTHER (anything else).\n"
-                f"{gate_rules}"
-            )},
+            {"type": "text", "text": gate_prompt_text(subject, allow_low_quality)},
             {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
         ]
         raw = _vision_chat(content, max_tokens=1500, context="vision_download_gate")
@@ -2594,6 +2604,21 @@ def vision_verify_subject(image_bytes: bytes, subject: str, niche: str = "") -> 
     an unverifiable candidate as a non-match just means it's skipped, since
     every caller already has a further fallback (another candidate, a fresh
     search, or a "needs manual image" state) rather than nothing at all."""
+    cached = None
+    cache_key = None
+    digest = None
+    try:
+        from app.services import vision_cache
+
+        digest = vision_cache.image_digest(image_bytes)
+        cache_key = f"{subject.strip().lower()}|{(niche or '').strip().lower()}"
+        cached = vision_cache.get_cached("verify_subject", digest, cache_key)
+    except Exception as exc:
+        logger.warning("vision_verify_subject cache lookup failed: %s", exc)
+
+    if cached is not None:
+        return cached
+
     try:
         content = [
             {"type": "text", "text": (
@@ -2615,7 +2640,13 @@ def vision_verify_subject(image_bytes: bytes, subject: str, niche: str = "") -> 
             return {"match": False, "confidence": 0.0}
         import json as _json
         d = _json.loads(m.group(0))
-        return {"match": bool(d.get("match")), "confidence": float(d.get("confidence") or 0)}
+        result = {"match": bool(d.get("match")), "confidence": float(d.get("confidence") or 0)}
+        if _is_confident_subject_match(result) or (not result["match"] and result["confidence"] >= _SUBJECT_MATCH_MIN_CONFIDENCE):
+            try:
+                vision_cache.put_cached("verify_subject", digest, cache_key, result)
+            except Exception as exc:
+                logger.warning("vision_verify_subject cache put failed: %s", exc)
+        return result
     except Exception as exc:
         logger.warning("vision_verify_subject failed (treating as no-match): %s", exc)
         return {"match": False, "confidence": 0.0}

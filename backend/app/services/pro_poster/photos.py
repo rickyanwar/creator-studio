@@ -541,6 +541,51 @@ def check_photo(
         rain_str = "yes" if event.rain is True else ("no" if event.rain is False else "unknown")
         must_avoid = ", ".join(brief.must_avoid) if brief.must_avoid else "none"
 
+        import hashlib
+        from app.services import vision_cache
+
+        event_fields = {
+            "circuit": circuit,
+            "night": night_str,
+            "rain": rain_str,
+            "series": series,
+            "session": session,
+            "vehicle": vehicle,
+            "year": year_str,
+        }
+        cache_key_raw = json.dumps(
+            {
+                "caption": getattr(candidate, "caption", None) or "",
+                "event": event_fields,
+                "must_avoid": must_avoid,
+                "story": (story or "")[:600],
+                "subject": hero_name,
+            },
+            sort_keys=True,
+        )
+        cache_key = hashlib.sha256(cache_key_raw.encode("utf-8")).hexdigest()
+        digest = vision_cache.image_digest(image_bytes)
+
+        cached = None
+        try:
+            cached = vision_cache.get_cached("photo_check", digest, cache_key)
+        except Exception as exc:
+            logger.warning("check_photo cache lookup failed: %s", exc)
+
+        if cached is not None:
+            return PhotoCheck(
+                candidate=candidate,
+                person=cached["person"],
+                event_match=cached["event_match"],
+                obstructed=cached["obstructed"],
+                watermark=cached["watermark"],
+                quality=cached["quality"],
+                face_frontal=cached.get("face_frontal", False),
+                shows=cached.get("shows", ""),
+                story_fit=cached.get("story_fit", 0),
+                notes=cached.get("notes", ""),
+            )
+
         context_lines = [
             f"- Hero subject name: {hero_name}",
             f"- Series: {series}",
@@ -652,7 +697,7 @@ def check_photo(
                 story_fit = 0
 
         notes = str(data.get("notes", ""))
-        return PhotoCheck(
+        res = PhotoCheck(
             candidate=candidate,
             person=person,
             event_match=event_match,
@@ -664,6 +709,27 @@ def check_photo(
             story_fit=story_fit,
             notes=notes,
         )
+        if person in ("yes", "no") and event_match in ("yes", "no"):
+            try:
+                vision_cache.put_cached(
+                    "photo_check",
+                    digest,
+                    cache_key,
+                    {
+                        "person": person,
+                        "event_match": event_match,
+                        "obstructed": obstructed,
+                        "watermark": watermark,
+                        "quality": quality,
+                        "face_frontal": face_frontal,
+                        "shows": shows,
+                        "story_fit": story_fit,
+                        "notes": notes,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("check_photo cache put failed: %s", exc)
+        return res
 
     except Exception as exc:
         logger.warning("check_photo failed for candidate %s: %s", getattr(candidate, "path_or_url", ""), exc)

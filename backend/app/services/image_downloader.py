@@ -58,6 +58,7 @@ class DownloadedImage:
     engine: str  # "9router"
     label: str | None = None  # vision label: "face" | "action" | "other"
     captured_at: date | None = None  # shot date parsed from the Getty caption, if found
+    attributes: dict | None = None
 
 
 def keyword_slug(keyword: str) -> str:
@@ -465,26 +466,22 @@ def _fetch_and_store(
             continue
 
         # Label the photo (face/action/other) AND gate it for actual design
-        # usability — one vision call doing both jobs (see
-        # design_images.classify_and_gate_image). Rejects the obvious junk a
+        # usability AND extract gallery labels — one vision call doing all jobs (see
+        # gallery_labeler.gate_and_label_image). Rejects the obvious junk a
         # keyword search drags in: crowd/stage/logo-only shots, screenshots,
         # graphics with text overlays, tiny/blurry/mostly-obstructed subjects.
         # Fails closed (owner rule: accuracy over availability): on any vision error the photo is skipped; it is not stored, so a later
         # run retries the same URL.
-        if allow_low_quality:
-            try:
-                from app.services.design_images import classify_and_gate_image
-                label, usable = classify_and_gate_image(
-                    final_bytes, subject=subject, allow_low_quality=True,
-                )
-            except Exception:
-                label, usable = None, False
-        else:
-            try:
-                from app.services.design_images import classify_and_gate_image
-                label, usable = classify_and_gate_image(final_bytes, subject=subject)
-            except Exception:
-                label, usable = None, False
+        try:
+            from app.services.gallery_labeler import gate_and_label_image
+            label, usable, labels = gate_and_label_image(
+                final_bytes,
+                subject=subject,
+                keyword=subject,
+                allow_low_quality=allow_low_quality,
+            )
+        except Exception:
+            label, usable, labels = None, False, None
 
         if not usable:
             logger.info("Gallery: rejecting %s — vision quality gate says not usable for design", url)
@@ -500,6 +497,7 @@ def _fetch_and_store(
             engine=engine,
             captured_at=captured_dates.get(key),
             label=label,
+            attributes=labels,
         ))
 
     logger.info("Gallery: stored %d/%d candidate images (engine=%s)", len(saved), len(urls), engine)

@@ -51,6 +51,7 @@ from app.models.social_publishing import (
 )
 from app.models.log_handled import LogHandled
 from app.models.auth_events import AuthEvent
+from app.models.vision_check_cache import VisionCheckCache
 
 __all__ = [
     "User",
@@ -115,4 +116,5 @@ __all__ = [
     "OperationalNotification",
     "LogHandled",
     "AuthEvent",
+    "VisionCheckCache",
 ]
