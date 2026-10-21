@@ -119,7 +119,7 @@ def test_build_news_copy_prompt_fit_chars_set():
     assert "Make it MORE engaging, not flatter: lead with the name or the hook" in prompt
     assert "Always keep the key context a fan needs: the event/place (e.g. Mandalika, Indonesian GP), the result or the concrete injury/fact. Cut filler, never context." in prompt
     assert "Do NOT start with 'BREAKING:' / 'OFFICIAL:' / 'CONFIRMED:'" in prompt
-    assert "Bagnaia crashes out in Indonesia: **No feeling, no grip**" in prompt
+    assert "**Bagnaia** crashes out in Indonesia: **No feeling, no grip**" in prompt
     assert "do NOT shorten it" not in prompt
 
 

@@ -2,8 +2,11 @@ import logging
 import json
 import re
 import os
-from datetime import date
-from sqlalchemy import or_
+from datetime import date, datetime
+import pytz
+from sqlalchemy import or_, select
+
+_WIB_TZ = pytz.timezone("Asia/Jakarta")
 
 def is_in_event_window(db, subject_or_niche: str, today: date) -> bool:
     from app.models.gallery import GalleryKeyword
@@ -23,13 +26,16 @@ from dataclasses import dataclass
 from typing import Literal
 
 from sqlalchemy import func, cast, String
-from app.models.gallery import GalleryImage
+from app.models.gallery import GalleryKeyword, GalleryImage
+from app.models.f1_drivers import F1Driver
 from app.services.gallery_filters import not_keyword_mismatch
 from app.services.ig_content_classifier import PostAnalysis
 from app.services.design_images import (
     fetch_subject_datauri,
     _vision_datauri,
-    _vision_chat
+    _vision_chat,
+    vision_verify_subject,
+    _is_confident_subject_match,
 )
 
 logger = logging.getLogger(__name__)
@@ -197,15 +203,30 @@ def get_name_variants(subject: str) -> list[str]:
     return [x for x in variants if not (x.lower() in seen or seen.add(x.lower()))]
 
 def _names_are_same_person(a: str, b: str) -> bool:
-    """True if a and b refer to the same person (case-insensitive full name or surname match)."""
-    a, b = a.strip().lower(), b.strip().lower()
+    """True if a and b refer to the same person.
+    When both have >=2 words, require full names to be equal OR
+    first names' first letters match and surnames match.
+    One-word names keep the old surname rule.
+    """
     if not a or not b:
         return False
-    if a == b:
+    a_clean = a.strip().lower()
+    b_clean = b.strip().lower()
+    if a_clean == b_clean:
         return True
-    # surname-only: last token of each
-    a_surname = a.split()[-1] if a.split() else a
-    b_surname = b.split()[-1] if b.split() else b
+    a_words = a_clean.split()
+    b_words = b_clean.split()
+    if not a_words or not b_words:
+        return False
+
+    a_surname = a_words[-1]
+    b_surname = b_words[-1]
+
+    if len(a_words) >= 2 and len(b_words) >= 2:
+        if a_words[0][0] == b_words[0][0] and len(a_surname) >= 3 and a_surname == b_surname:
+            return True
+        return False
+
     if len(a_surname) >= 3 and a_surname == b_surname:
         return True
     return False
@@ -227,16 +248,45 @@ def decision_photo_keys(db, story_id: int, exclude_fanpage_id: int) -> set[str]:
 
 
 def is_same_person(a: str, b: str) -> bool:
-    if not a or not b:
+    return _names_are_same_person(a, b)
+
+
+def _is_person_subject(db, analysis: PostAnalysis | None, subject: str) -> bool:
+    """Decide whether subject is a person.
+    A subject that matches a team (F1Driver.team_name ILIKE '%subject%') is NOT a person.
+    A subject is a person if it equals (case-insensitive) analysis.people or analysis.speaker,
+    or appears as a driver in f1_drivers.
+    """
+    if not subject or not subject.strip():
         return False
-    a_lower = a.lower()
-    b_lower = b.lower()
-    if a_lower == b_lower:
-        return True
-    a_surname = a_lower.split()[-1] if a_lower.split() else a_lower
-    b_surname = b_lower.split()[-1] if b_lower.split() else b_lower
-    if len(a_surname) >= 3 and a_surname == b_surname:
-        return True
+    s = subject.strip()
+
+    if db is not None:
+        try:
+            team_match = db.query(F1Driver).filter(
+                F1Driver.team_name.ilike(f"%{s}%")
+            ).first()
+            if team_match is not None:
+                return False
+        except Exception:
+            pass
+
+    if analysis:
+        if analysis.speaker and s.lower() == analysis.speaker.strip().lower():
+            return True
+        for p in (analysis.people or ()):
+            if p and s.lower() == p.strip().lower():
+                return True
+
+    if db is not None:
+        try:
+            from app.services.f1_drivers import get_driver
+            driver = get_driver(db, s)
+            if driver is not None:
+                return True
+        except Exception:
+            pass
+
     return False
 
 def _find_inset_pick(
@@ -328,25 +378,53 @@ def _find_inset_pick(
             notes.append("Vision pick failed for inset, treating as shows_hero")
 
         if not shows_hero:
-            winner = candidates[idx]
-            notes.append(f"Inset: picked gallery index {idx+1}, shows_hero_person=False")
-            return InsetPlan(pick=PhotoPick(
-                path=winner.local_path,
-                source="gallery",
-                gallery_id=winner.id,
-                url=winner.source_image_url,
-                label=label,
-                reason=f"Inset: vision picked index {idx+1}, hero absent"
-            ), mode='real', context_desc=inset_context)
+            inset_subj = analysis.secondary or context_item.get("query") or context_item.get("description") or ""
+            is_inset_person = (
+                analysis.secondary_kind == 'person'
+                or _is_person_subject(db, analysis, inset_subj)
+            )
+            winner = None
+            if is_inset_person and label == 'face':
+                to_check = [candidates[idx]] + [c for i, c in enumerate(candidates) if i != idx]
+                for cand in to_check[:3]:
+                    img_bytes = None
+                    try:
+                        with open(cand.local_path, "rb") as f:
+                            img_bytes = f.read()
+                    except Exception:
+                        continue
+                    if not img_bytes:
+                        continue
+                    try:
+                        res = vision_verify_subject(img_bytes, inset_subj, niche)
+                        if _is_confident_subject_match(res):
+                            winner = cand
+                            break
+                        else:
+                            notes.append(f"Inset: identity check failed for {inset_subj} on gallery candidate {cand.id}")
+                    except Exception as e:
+                        notes.append(f"Inset: identity check error for {inset_subj}: {e}")
+            else:
+                winner = candidates[idx]
+
+            if winner is not None:
+                winner_idx = candidates.index(winner)
+                notes.append(f"Inset: picked gallery index {winner_idx+1}, shows_hero_person=False")
+                return InsetPlan(pick=PhotoPick(
+                    path=winner.local_path,
+                    source="gallery",
+                    gallery_id=winner.id,
+                    url=winner.source_image_url,
+                    label=label,
+                    reason=f"Inset: vision picked index {winner_idx+1}, hero absent"
+                ), mode='real', context_desc=inset_context)
+            else:
+                notes.append(f"Inset: no gallery candidate verified for {inset_subj}")
         else:
             notes.append(f"Inset: gallery candidate shows hero person, rejected")
 
     # --- Jina fallback (Gated by Event Window) ---
-    from datetime import datetime
-    import pytz
-    # Use timezone known to viral-radar backend (Asia/Jakarta is _WIB)
-    wib_tz = pytz.timezone("Asia/Jakarta")
-    today = datetime.now(wib_tz).date()
+    today = datetime.now(_WIB_TZ).date()
     
     # Try hero first, then niche
     in_event = is_in_event_window(db, hero_subj, today)
@@ -501,6 +579,21 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                             GalleryImage.source_image_url.notin_(exclude_paths_or_urls),
                         ),
                     )
+
+                if niche and niche.strip().lower() not in ("", "general"):
+                    niche_clean = niche.strip().lower()
+                    if niche_clean == "motorsport":
+                        niche_cond = or_(
+                            GalleryKeyword.niche.is_(None),
+                            func.lower(GalleryKeyword.niche).in_(["motorsport", "f1", "motogp"])
+                        )
+                    else:
+                        niche_cond = or_(
+                            GalleryKeyword.niche.is_(None),
+                            func.lower(GalleryKeyword.niche) == niche_clean
+                        )
+                    kw_subq = db.query(GalleryKeyword.keyword).filter(niche_cond).subquery()
+                    base_query = base_query.filter(GalleryImage.keyword.in_(kw_subq.select()))
                     
                 # 1. Exact match attempt
                 exact_conds = []
@@ -515,7 +608,9 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                 ).limit(6).all()
                 
                 # 2. Surname ILIKE match attempt if exact fails
-                if not candidates:
+                is_person = _is_person_subject(db, analysis, subject)
+                has_ge2_words = len(subject.strip().split()) >= 2
+                if not candidates and is_person and has_ge2_words:
                     surnames = [v.strip().split()[-1].lower() for v in variants if v.strip() and len(v.strip().split()[-1]) >= 3]
                     if surnames:
                         ilike_conds = []
@@ -546,14 +641,42 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                         idx = 0
                         notes.append(f"Vision pick failed for {role}, using 0")
                     
-                    winner = candidates[idx]
+                    winner = None
+                    if is_person and label == 'face':
+                        to_check = [candidates[idx]] + [c for i, c in enumerate(candidates) if i != idx]
+                        for cand in to_check[:3]:
+                            img_bytes = None
+                            try:
+                                with open(cand.local_path, "rb") as f:
+                                    img_bytes = f.read()
+                            except Exception as e:
+                                notes.append(f"Could not read {cand.local_path}: {e}")
+                                continue
+                            if not img_bytes:
+                                continue
+                            try:
+                                res = vision_verify_subject(img_bytes, subject, niche)
+                                if _is_confident_subject_match(res):
+                                    winner = cand
+                                    break
+                                else:
+                                    notes.append(f"Identity check failed for {subject} on gallery candidate {cand.id}")
+                            except Exception as e:
+                                notes.append(f"Identity check error for {subject} on {cand.id}: {e}")
+                        if winner is None:
+                            notes.append(f"No gallery candidate passed identity check for {subject}")
+                            return None
+                    else:
+                        winner = candidates[idx]
+
+                    winner_idx = candidates.index(winner)
                     return PhotoPick(
                         path=winner.local_path,
                         source="gallery",
                         gallery_id=winner.id,
                         url=winner.source_image_url,
                         label=label,
-                        reason=f"Vision picked index {idx+1} from {len(candidates)} gallery candidates"
+                        reason=f"Vision picked index {winner_idx+1} from {len(candidates)} gallery candidates"
                     )
                 return None
 
@@ -598,7 +721,9 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
 
 
         hero_subj = analysis.speaker or analysis.main_subject
-        hero = _find_pick(hero_subj, w_labels.get('hero', 'face'), 'hero')
+        is_hero_person = _is_person_subject(db, analysis, hero_subj)
+        hero_label = w_labels.get('hero', 'face') if is_hero_person else 'action'
+        hero = _find_pick(hero_subj, hero_label, 'hero')
         
         insets_list = []
         if layout in ('inset', 'inset2'):

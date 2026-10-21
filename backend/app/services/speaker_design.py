@@ -164,8 +164,8 @@ def _as_naive_utc(value) -> datetime:
     return datetime.min
 
 
-HEAD_AND_SHOULDERS_FRAMING = "Tight head-and-shoulders, top of the head about 8-12 percent from the top edge, face about 40-45 percent of the card width, eyes in the upper third; shoulders and chest continue down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
-HALF_BODY_FRAMING = "HALF-BODY portrait from the top of the head down to the waist, the top of the head about 4-6 percent from the top edge, head and shoulders high in the frame, face about 34-38 percent of the card width; the body continues down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
+HEAD_AND_SHOULDERS_FRAMING = "Tight head-and-shoulders, top of the head about 6-10 percent from the top edge, eyes at about 25-30 percent of the card height, chin no lower than 50 percent of the card height, face about 30-35 percent of the card width (the whole face stays in the top half, well clear of the headline area); shoulders and chest continue down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
+HALF_BODY_FRAMING = "HALF-BODY portrait from the top of the head down to the waist, the top of the head about 4-6 percent from the top edge, head and shoulders high in the frame, chin no lower than 45 percent of the card height, face about 30-34 percent of the card width; the body continues down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
 
 _CRASH_WORDS = {"crash", "crashed", "crashes", "fall", "fell", "fallen", "clash", "collision", "contact", "incident", "highside", "lowside", "crashing"}
 _WIN_WORDS = {"win", "won", "victory", "winner", "podium", "trophy", "celebrate", "celebrates", "celebration", "champion"}

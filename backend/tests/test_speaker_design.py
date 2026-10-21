@@ -635,7 +635,7 @@ def test_speaker_framing_text(monkeypatch):
     monkeypatch.setattr(speaker_design, "face_info", lambda _: {"box": (100, 100, 200, 200)})
     text = speaker_design.speaker_framing(source)
     assert text == speaker_design.HALF_BODY_FRAMING
-    assert "face about 34-38 percent of the card width" in text
+    assert "face about 30-34 percent of the card width" in text
     assert "the body continues down to the bottom edge" in text
 
     # Close-up
@@ -692,9 +692,9 @@ def test_prompt_uses_actual_photo_descriptions_and_reference_layout_wording():
     prompt = speaker_design._build_prompt(
         "inset", "Marc Marquez", "right", "MotoGP", [moment_one, moment_two], [],
     )
-    assert "top of the head about 8-12 percent from the top edge" in prompt
-    assert "face about 40-45 percent of the card width" in prompt
-    assert "eyes in the upper third" in prompt
+    assert "top of the head about 6-10 percent from the top edge" in prompt
+    assert "face about 30-35 percent of the card width" in prompt
+    assert "eyes at about 25-30 percent of the card height" in prompt
     assert "Marc celebrates the heat win" in prompt
     assert "pecco podium 2026" in prompt
     assert "TWO circles of different sizes" in prompt
