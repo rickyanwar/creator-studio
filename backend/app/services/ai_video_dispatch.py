@@ -25,6 +25,7 @@ MAX_RESTARTS = 2
 UNUSUAL_BACKOFF_MINUTES = (30, 60, 120, 120)
 ACCOUNT_COOLDOWN_HOURS = 6
 SUBMIT_NO_REPLY = "of clicking submit"
+CREDITS_API_AUTH_ERROR = "aisandbox-pa authentication failed"
 MIN_CLAIM_GAP_MINUTES = 10
 ACCOUNT_REST_MINUTES = (8, 20)
 WORKER_GAP_SECONDS = (60, 240)
@@ -150,12 +151,22 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
             account = GflowAccount(worker_id=worker_id, profile=profile)
             db.add(account)
 
-        account.email = acc_data.get("email")
+        account.email = acc_data.get("email") or account.email
         authenticated = bool(acc_data.get("authenticated", False))
+        reported_error = acc_data.get("error") or ""
+        account.last_seen_at = now
+        # The credits REST call (aisandbox-pa) often fails while the browser session used to make
+        # videos is fine (verified 2026-10-21 on russel/tiska). It is not proof of a logout, so it
+        # never changes the login state; a real auth failure while generating does (record_failure).
+        if not authenticated and CREDITS_API_AUTH_ERROR in reported_error:
+            credits = acc_data.get("credits")
+            if credits is not None:
+                account.credits = int(credits)
+                account.credits_checked_at = now
+            continue
         account.authenticated = authenticated
         if account.status != "needs_terms":
             account.last_error = acc_data.get("error")
-        account.last_seen_at = now
 
         credits = acc_data.get("credits")
         if credits is not None:
