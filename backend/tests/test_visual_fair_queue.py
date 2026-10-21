@@ -313,7 +313,8 @@ def test_dispatch_fair_visual_news_dispatches_when_empty(db_engine, fake_redis):
     job_id = job.id
     db.close()
 
-    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    # The dispatcher counts with the real clock, so read the counter for today, not a fixed date.
+    now = datetime.now(timezone.utc)
 
     with patch("app.tasks.design_renderer.SessionLocal", side_effect=Session), \
          patch("app.tasks.design_renderer._redis", return_value=fake_redis), \
@@ -545,7 +546,7 @@ def test_jit_page_a_near_slot_page_b_far(db_session, fake_redis):
     job_b = _create_job(db_session, id=201, fanpage_id=fp_b.id, created_at=t_new)
 
     now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
-    slot_a = now + timedelta(minutes=30)
+    slot_a = now + timedelta(minutes=20)
     slot_b = now + timedelta(hours=5)
 
     def mock_next_slot(db, job, now_utc):
@@ -568,7 +569,7 @@ def test_jit_page_a_near_slot_page_b_far(db_session, fake_redis):
 
 
 def test_jit_page_claimed_skips_to_next(db_session, fake_redis):
-    # (b) Page A is claimed -> skipped, and B is returned when B is within 90 min.
+    # (b) Page A is claimed -> skipped, and B is returned when B is within the JIT window.
     fp_a = _create_fanpage(db_session, 10, "Page A")
     fp_b = _create_fanpage(db_session, 20, "Page B")
 
@@ -577,8 +578,8 @@ def test_jit_page_claimed_skips_to_next(db_session, fake_redis):
     job_b = _create_job(db_session, id=201, fanpage_id=fp_b.id, created_at=t)
 
     now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
-    slot_a = now + timedelta(minutes=30)
-    slot_b = now + timedelta(minutes=45)
+    slot_a = now + timedelta(minutes=20)
+    slot_b = now + timedelta(minutes=25)
 
     # Claim Page A
     claim_page(fake_redis, fp_a.id, slot_a, now)
