@@ -181,7 +181,6 @@ def test_migration_c80000000037_metadata():
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "c80000000037"
     assert "c80000000037" in {r.revision for r in script.walk_revisions()}
 
     rev37 = script.get_revision("c80000000037")

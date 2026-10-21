@@ -707,6 +707,7 @@ export interface GflowAccount {
   credits: number | null;
   credits_checked_at: string | null;
   last_error: string | null;
+  cooldown_until?: string | null;
   last_seen_at: string | null;
   last_used_at: string | null;
   busy_job_id: number | null;

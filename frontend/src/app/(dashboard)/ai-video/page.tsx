@@ -742,7 +742,14 @@ function AccountCard({
         <h3 className="font-semibold text-text text-sm truncate">
           {account.label || account.profile}
         </h3>
-        <StatusPill value={account.status} />
+        <div className="flex items-center gap-1.5">
+          {account.cooldown_until && new Date(account.cooldown_until.endsWith("Z") ? account.cooldown_until : account.cooldown_until + "Z") > new Date() && (
+            <span className="text-[11px] text-warn font-medium">
+              Resting until {new Date(account.cooldown_until.endsWith("Z") ? account.cooldown_until : account.cooldown_until + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
+          <StatusPill value={account.status} />
+        </div>
       </div>
 
       <p className="text-xs text-text2 truncate">
