@@ -104,9 +104,14 @@ _HEADLINE_NAME_RE = re.compile(
 )
 
 
+_FB_DISCUSSION_LABELS = ("DISCUSSION", "HOT TAKE")
+
+
 def _name_badge(value: str | None) -> str | None:
     value = (value or "").replace("**", "").strip()
     if not value or len(value) > 40 or any(char in value for char in ".?,;!"):
+        return None
+    if value.upper() in _FB_DISCUSSION_LABELS:
         return None
     words = value.split()
     if not 1 <= len(words) <= 4 or any(not word[0].isupper() for word in words):
@@ -1182,9 +1187,6 @@ def render_pinterest(self, job_id: int):
         raise self.retry(exc=exc, countdown=180)
     finally:
         db.close()
-
-
-_FB_DISCUSSION_LABELS = ("DISCUSSION", "HOT TAKE")
 
 
 def _news_badge_text(fanpage, breaking: bool = False) -> str:
