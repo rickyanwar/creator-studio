@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import os
+from pathlib import Path
 import re
 import shlex
 import signal
@@ -20,9 +22,9 @@ class GflowResult:
     message: str = ""
 
 
-def last_json(stdout):
+def all_json(stdout):
     decoder = json.JSONDecoder()
-    result = None
+    results = []
     position = 0
     while position < len(stdout):
         start = stdout.find("{", position)
@@ -34,11 +36,16 @@ def last_json(stdout):
             position = start + 1
             continue
         if isinstance(value, dict):
-            result = value
+            results.append(value)
         position = start + end
-    if result is None:
+    return results
+
+
+def last_json(stdout):
+    results = all_json(stdout)
+    if not results:
         raise ValueError("gflow returned no JSON object")
-    return result
+    return results[-1]
 
 
 def classify(result):
@@ -120,3 +127,53 @@ class GflowRunner:
 
     def i2v(self, prompt, *, frame, **kwargs):
         return self._video("i2v", prompt, frame=frame, **kwargs)
+
+    def download_media(self, media_id, *, profile, out):
+        out_dir = Path(out).parent if Path(out).suffix else Path(out)
+        return self.run(["data", "download", str(media_id), "--profile", profile, "--out", str(out_dir)], profile=profile)
+
+    def list_videos(self, *, profile, limit=20):
+        if self.cfg.proxy:
+            try:
+                ensure_proxy_ready(self.cfg.proxy)
+            except RuntimeError:
+                return []
+        env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
+        if self.cfg.proxy:
+            env["GFLOW_PROXY"] = self.cfg.proxy
+            env["GFLOW_SOCKS5_PROXY"] = self.cfg.proxy
+            env["ALL_PROXY"] = self.cfg.proxy
+            env["HTTP_PROXY"] = self.cfg.proxy
+            env["HTTPS_PROXY"] = self.cfg.proxy
+        try:
+            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=profile):
+                process = subprocess.Popen([*shlex.split(self.cfg.gflow_cmd), "data", "list", "videos",
+                                           "--profile", profile, "--limit", str(limit), "--json"],
+                                           cwd=self.cfg.cli_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           text=True, env=env, start_new_session=True)
+                stdout, _ = process.communicate(timeout=min(self.cfg.clip_timeout_seconds, 30.0))
+        except Exception:
+            return []
+        return all_json(stdout)
+
+    def find_stranded_media_id(self, *, profile, project=None, submit_time=None):
+        try:
+            rows = self.list_videos(profile=profile, limit=20)
+        except Exception:
+            return None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            # Only a clip of THIS job's own project may be recovered; never guess across projects.
+            if not project or row.get("project_id") != project:
+                continue
+            if not row.get("local_path") and (row.get("copy_count", 0) == 0 or row.get("status") in ("pending", "MEDIA_GENERATION_STATUS_FAILED")):
+                if submit_time and row.get("created_at"):
+                    try:
+                        created = datetime.fromisoformat(row["created_at"])
+                        if created < submit_time:
+                            continue
+                    except Exception:
+                        pass
+                return row.get("media_id")
+        return None

@@ -7,7 +7,10 @@ import pytest
 from phone_runner.adb import AdbResult
 from phone_runner.identity_proof import IdentityProofResult
 from phone_runner.mobilerun import MobilerunResult
-from phone_runner.observation import save_composer_observation
+from phone_runner.observation import (
+    save_composer_observation,
+    save_identity_gate_observation,
+)
 from phone_runner.publish import execute_publish
 
 TEST_SERIAL = "100.64.96.50:5555"
@@ -381,3 +384,30 @@ def test_publish_early_failure_paths_never_call_observation(monkeypatch):
     assert res["error_code"] == "missing_profile_id"
     mock_obs.assert_not_called()
     assert "observation_file" not in res["evidence"]
+
+
+def test_save_identity_gate_observation_writes_xml_and_json(tmp_path, monkeypatch):
+    obs_dir = tmp_path / "obs_identity"
+    monkeypatch.setenv("PHONE_RUNNER_OBSERVATION_DIR", str(obs_dir))
+
+    fake_xml = "<hierarchy><node text='VisitorProfile'/></hierarchy>"
+    res_path = save_identity_gate_observation(TEST_SERIAL, raw_xml=fake_xml, stage="identity_gate")
+
+    assert res_path is not None
+    assert os.path.isfile(res_path)
+    assert res_path.endswith(".xml")
+
+    # Verify XML content and file permissions
+    file_stat = os.stat(res_path)
+    assert file_stat.st_mode & 0o777 == 0o600
+    with open(res_path, "r", encoding="utf-8") as f:
+        assert f.read() == fake_xml
+
+    # Verify JSON observation was also written with expected stage and raw xml
+    json_path = res_path.rsplit(".", 1)[0] + ".json"
+    assert os.path.isfile(json_path)
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["stage"] == "identity_gate"
+    assert data["ui_xml"] == fake_xml
+

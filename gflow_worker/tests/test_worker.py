@@ -1157,3 +1157,47 @@ def test_moved_job_drops_old_account_project(cfg, studio, runner):
     for cmd in commands[1:]:
         assert "--project" in cmd
         assert cmd[cmd.index("--project") + 1] != "proj-p1"
+
+
+def test_download_media_direct(cfg, runner, tmp_path):
+    res = runner.gflow.download_media("direct-media-1", profile="p1", out=tmp_path)
+    assert res.ok
+    assert res.payload["media_id"] == "direct-media-1"
+    assert Path(res.payload["path"]).is_file()
+
+
+def test_stranded_clip_recovery_success(cfg, studio, runner, monkeypatch):
+    monkeypatch.setenv("FAKE_GF_MODE", "wire_no_url_first")
+    runner.run_job(payload(2))
+    assert not studio.events("/fail")
+    assert len(studio.uploads) == 1
+    commands = calls(cfg)
+    assert commands[0][:2] == ["project", "create"]
+    assert commands[1][:2] == ["video", "t2v"]
+    assert commands[2][:2] == ["data", "download"]
+    assert commands[2][2] == "recovered-media-1"
+    assert len([c for c in commands if c[:2] == ["video", "t2v"]]) == 1
+    progress = [e for e in studio.events("/progress") if e["event"] == "clip_done"]
+    assert len(progress) == 2
+    assert progress[0]["media_id"] == "recovered-media-1"
+
+
+def test_stranded_clip_recovery_failure_falls_back_to_fail(cfg, studio, runner, monkeypatch):
+    monkeypatch.setenv("FAKE_GF_MODE", "wire_no_url_fail")
+    runner.run_job(payload(2))
+    assert not studio.uploads
+    fail_events = studio.events("/fail")
+    assert len(fail_events) == 1
+    assert fail_events[0]["reason"] == "other"
+    assert "no signed media URL" in fail_events[0]["message"]
+
+
+def test_stranded_clip_recovery_catalog_fallback(cfg, studio, runner, monkeypatch):
+    monkeypatch.setenv("FAKE_GF_MODE", "wire_no_url_catalog")
+    runner.run_job(payload(2))
+    assert not studio.events("/fail")
+    assert len(studio.uploads) == 1
+    commands = calls(cfg)
+    assert any(c[:3] == ["data", "list", "videos"] for c in commands)
+    assert any(c[:2] == ["data", "download"] and c[2] == "catalog-media-1" for c in commands)
+

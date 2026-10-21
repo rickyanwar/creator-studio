@@ -36,9 +36,43 @@ if args[:2] == ["credits", "list"]:
                              "error_type": "FlowAccessUnavailableError"}], "total_credits": 100}
 elif args[:2] == ["project", "create"]:
     payload = {"status": "ok", "project_id": "project-1", "title": flag("--name"), "profile": flag("--profile")}
+elif args[:2] == ["data", "download"]:
+    if mode == "wire_no_url_fail" or os.getenv("FAKE_GF_DOWNLOAD_FAIL"):
+        print(json.dumps({"status": "fail", "error": {"class": "WireFormatError", "detail": "recovery failed", "exit_code": 7, "retryable": False}}))
+        sys.exit(7)
+    media_id = args[2]
+    out_dir = Path(flag("--out"))
+    out_file = out_dir if out_dir.suffix == ".mp4" else out_dir / f"{media_id}.mp4"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([os.environ["FAKE_FFMPEG"], "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=180x320:rate=24", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+                    "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(out_file)], check=True)
+    payload = {"status": "ok", "media_id": media_id, "workflow_id": "wf-recover-1", "profile": flag("--profile"),
+               "project_id": "project-1", "path": str(out_file), "local_path": str(out_file), "bytes": out_file.stat().st_size}
+elif args[:3] == ["data", "list", "videos"]:
+    from datetime import datetime, timezone
+    row = {"media_id": "catalog-media-1", "profile": flag("--profile"), "project_id": "project-1",
+           "created_at": datetime.now(timezone.utc).isoformat(), "local_path": None, "copy_count": 0, "status": "pending"}
+    print(json.dumps(row))
+    sys.exit(0)
 else:
     if args[1] == "i2v":
         assert Path(flag("--initial-frame")).is_file()
+    if mode in ("wire_no_url", "wire_no_url_fail", "wire_no_url_first", "wire_no_url_catalog"):
+        marker = Path(os.environ["FAKE_GF_LOG"]).parent / "wire_failed"
+        should_fail = True
+        if mode == "wire_no_url_first" and marker.exists():
+            should_fail = False
+        if should_fail:
+            marker.touch()
+            payload = {"status": "fail", "error": {"class": "WireFormatError",
+                                                   "detail": "migrated host: the generation finished but no signed media URL was observed within the 20s grace",
+                                                   "exit_code": 7, "retryable": False}}
+            if mode != "wire_no_url_catalog":
+                payload["media_id"] = "recovered-media-1"
+                payload["error"]["media_id"] = "recovered-media-1"
+            print(json.dumps(payload))
+            sys.exit(7)
     out = Path(flag("-o"))
     subprocess.run([os.environ["FAKE_FFMPEG"], "-v", "error", "-y", "-f", "lavfi", "-i",
                     "testsrc=size=180x320:rate=24", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",

@@ -1,6 +1,7 @@
 import io
 import json
 from unittest import mock
+import xml.etree.ElementTree as ET
 import pytest
 
 from phone_runner.adb import AdbResult
@@ -8,10 +9,14 @@ from phone_runner.dry_run import execute_dry_run, parse_device_identity_evidence
 from phone_runner.identity_proof import (
     IdentityProofResult,
     PortalImeContext,
+    SETTINGS_POLL_SECONDS,
+    SETTINGS_WAIT_SECONDS,
     bind_portal_ime_if_needed,
     collect_own_url_proof_chain,
     find_composer_open_trigger,
     find_go_to_profile_button,
+    find_own_profile_controls,
+    find_own_profile_name_identity,
     find_switcher_target_page,
     verify_foreground_facebook,
 )
@@ -1739,3 +1744,119 @@ def test_gallery_after_url_proof_aborts_without_relaunching_fb(mock_device_env, 
     assert len(launch_calls) == 0
     start_cmds = [c for c in adb_recorder.commands if c[:3] == ["shell", "am", "start"]]
     assert len(start_cmds) == 0
+
+
+def test_own_profile_with_messages_before_edit_profile_passes():
+    xml = """<hierarchy rotation="0">
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[100,100][200,200]" text="Messages" content-desc="Messages" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[396,1084][606,1166]" text="OwnRootUser" content-desc="" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[708,266][816,374]" text="" content-desc="Edit profile" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[924,266][1032,374]" text="" content-desc="More profile settings" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[36,1713][530,1821]" text="" content-desc="Dashboard" />
+    </hierarchy>"""
+    tree = ET.fromstring(xml)
+    ok, err, more_bounds = find_own_profile_controls(tree, "OwnRootUser")
+    assert ok is True
+    assert err == ""
+    assert more_bounds == (924, 266, 1032, 374)
+
+
+def test_own_profile_with_post_text_send_me_a_message_passes():
+    xml = """<hierarchy rotation="0">
+      <node package="com.facebook.katana" class="android.widget.TextView" clickable="false" bounds="[50,500][500,600]" text="Send me a message" content-desc="" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[396,1084][606,1166]" text="OwnRootUser" content-desc="" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[708,266][816,374]" text="" content-desc="Edit profile" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[924,266][1032,374]" text="" content-desc="More profile settings" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[36,1713][530,1821]" text="" content-desc="Dashboard" />
+    </hierarchy>"""
+    tree = ET.fromstring(xml)
+    ok, err, more_bounds = find_own_profile_controls(tree, "OwnRootUser")
+    assert ok is True
+    assert err == ""
+    assert more_bounds == (924, 266, 1032, 374)
+
+
+def test_visitor_profile_with_clickable_add_friend_and_message_fails():
+    xml = """<hierarchy rotation="0">
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[396,1084][606,1166]" text="OwnRootUser" content-desc="" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[100,200][300,300]" text="Add friend" content-desc="Add friend" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[350,200][550,300]" text="Message" content-desc="Message" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[924,266][1032,374]" text="" content-desc="More profile settings" />
+      <node package="com.facebook.katana" class="android.widget.Button" clickable="true" bounds="[36,1713][530,1821]" text="" content-desc="Dashboard" />
+    </hierarchy>"""
+    tree = ET.fromstring(xml)
+    ok, err, more_bounds = find_own_profile_controls(tree, "OwnRootUser")
+    assert ok is False
+    assert err == "Detected visitor profile rather than own profile"
+    assert more_bounds is None
+
+
+def test_collect_own_url_proof_chain_polls_profile_settings_success(mock_device_env, monkeypatch):
+    ui_dumps = [
+        ROOT_PROFILE_XML,   # step 2 root profile check
+        ROOT_PROFILE_XML,   # poll 1 after tap (old screen)
+        ROOT_PROFILE_XML,   # poll 2 after tap (old screen)
+        ROOT_SETTINGS_XML,  # poll 3 after tap (profile settings ready)
+        ROOT_PROFILE_XML,   # return to root profile
+        ROOT_COMPOSER_XML,  # composer binding
+    ]
+    ui_iter = iter(ui_dumps)
+    monkeypatch.setattr("phone_runner.identity_proof.query_ui_hierarchy", lambda s: AdbResult(0, next(ui_iter), ""))
+
+    mock_clear, mock_read = make_mock_clipboard([
+        f"https://www.facebook.com/profile.php?id={TEST_ROOT_ID}",
+    ])
+    monkeypatch.setattr("phone_runner.identity_proof.clear_device_clipboard", mock_clear)
+    monkeypatch.setattr("phone_runner.identity_proof.read_device_clipboard", mock_read)
+    adb_recorder = AdbCommandRecorder()
+    monkeypatch.setattr("phone_runner.identity_proof.run_adb", adb_recorder)
+    monkeypatch.setattr("phone_runner.identity_proof.run_mobilerun", lambda **kwargs: MobilerunResult(0, "Navigated", ""))
+    sleep_calls = []
+    monkeypatch.setattr("time.sleep", lambda s: sleep_calls.append(s))
+
+    proof = collect_own_url_proof_chain(
+        serial=TEST_SERIAL,
+        main_name=TEST_ROOT_NAME,
+        expected_root_id=TEST_ROOT_ID,
+        target_name=TEST_ROOT_NAME,
+        expected_target_id=TEST_ROOT_ID,
+    )
+
+    assert proof.passed is True
+    assert proof.observed_root_id == TEST_ROOT_ID
+    assert len(sleep_calls) >= 3
+
+
+def test_collect_own_url_proof_chain_settings_timeout_fails_and_saves_observation(mock_device_env, monkeypatch, tmp_path):
+    obs_dir = tmp_path / "obs"
+    monkeypatch.setenv("PHONE_RUNNER_OBSERVATION_DIR", str(obs_dir))
+
+    monkeypatch.setattr("phone_runner.identity_proof.query_ui_hierarchy", lambda s: AdbResult(0, ROOT_PROFILE_XML, ""))
+
+    adb_recorder = AdbCommandRecorder()
+    monkeypatch.setattr("phone_runner.identity_proof.run_adb", adb_recorder)
+    monkeypatch.setattr("phone_runner.identity_proof.run_mobilerun", lambda **kwargs: MobilerunResult(0, "Navigated", ""))
+
+    clock = [1000.0]
+    def fake_sleep(s):
+        clock[0] += s
+    monkeypatch.setattr("time.sleep", fake_sleep)
+
+    proof = collect_own_url_proof_chain(
+        serial=TEST_SERIAL,
+        main_name=TEST_ROOT_NAME,
+        expected_root_id=TEST_ROOT_ID,
+        target_name=TEST_ROOT_NAME,
+        expected_target_id=TEST_ROOT_ID,
+        time_fn=lambda: clock[0],
+    )
+
+    assert proof.passed is False
+    assert "Profile Settings controls invalid: Screen title is not 'Profile Settings'" in (proof.error or "")
+
+    files = list(obs_dir.glob("*identity_gate*"))
+    assert len(files) > 0
+    xml_files = [f for f in files if f.suffix == ".xml"]
+    assert len(xml_files) > 0
+    saved_content = xml_files[0].read_text(encoding="utf-8")
+    assert "OwnRootUser" in saved_content
