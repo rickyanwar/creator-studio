@@ -133,15 +133,17 @@ def fanpage_niche(fanpage) -> str:
 
 
 def required_variables(t: VideoTemplate, clips: int) -> list[str]:
+    blocks = t.raw.get("blocks", {})
+    string_blocks = {k for k, v in blocks.items() if isinstance(v, str)}
     names = []
     for clip in t.raw["clip_templates"][:clips]:
         for name in _PLACEHOLDER.findall(clip["prompt"]):
-            if name not in BLOCK_VARS and name not in names:
+            if name not in BLOCK_VARS and name not in string_blocks and name not in names:
                 names.append(name)
     # Also inspect vehicle presets for custom variables beyond standard {livery} and {lettering}
-    for preset_key, preset_text in t.raw.get("blocks", {}).get("vehicle_presets", {}).items():
+    for preset_key, preset_text in blocks.get("vehicle_presets", {}).items():
         for name in _PLACEHOLDER.findall(preset_text):
-            if name not in BLOCK_VARS and name not in {"livery", "livery_short", "lettering", "lettering_short"} and name not in names:
+            if name not in BLOCK_VARS and name not in string_blocks and name not in {"livery", "livery_short", "lettering", "lettering_short"} and name not in names:
                 names.append(name)
     if not uses_vehicle(t):
         return names
@@ -272,6 +274,8 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
         else:
             narrator = "Voice-over: " + preset_text
             narrator_followup = "Voice-over: " + ("the same " + preset_text[2:] if preset_text.startswith("a ") else preset_text)
+    # Template text blocks (e.g. bike_rules) always win over same-named variables, so a fill can never rewrite the rules.
+    substitutions.update({k: v for k, v in blocks.items() if isinstance(v, str)})
     substitutions.update(
         style=blocks["style"], audio=blocks["audio"], narrator=narrator,
         narrator_followup=narrator_followup,
@@ -293,6 +297,9 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
             prompt = prompt.replace("The car keeps driving forward", "The motorcycle keeps riding forward").replace(
                 "for a car travelling forward", "for a motorcycle travelling forward"
             )
+        prompt = re.sub(r"\s{2,}", " ", prompt).strip()
+        if len(prompt) > MAX_PROMPT_CHARS:
+            raise ValueError(f"clip {index} prompt is {len(prompt)} characters; Flow refuses prompts over {MAX_PROMPT_CHARS}")
         mode = {"t2v": "t2v", "i2v_from_previous_last_frame": "i2v"}[clip["mode"]]
         rendered.append({"index": index, "mode": mode, "prompt": prompt})
     return rendered
@@ -307,6 +314,7 @@ def _render_plain(t: VideoTemplate, variables: dict, clips: int, lang_code: str 
     if not (lang or "en").lower().startswith("en"):
         narrator = narrator.replace("says in English:", f"speaking natural, native-sounding {lang_display}, says in {lang_display}:")
     substitutions = dict(variables)
+    substitutions.update({k: v for k, v in blocks.items() if isinstance(v, str)})
     substitutions.update(style=blocks["style"], audio=blocks["audio"], narrator=narrator, narrator_followup=narrator)
     rendered = []
     for index, clip in enumerate(t.raw["clip_templates"][:clips], start=1):

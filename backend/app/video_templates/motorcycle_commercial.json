@@ -1,0 +1,124 @@
+{
+  "key": "motorcycle_commercial",
+  "niches": [
+    "motogp"
+  ],
+  "clip_options": [
+    3
+  ],
+  "default_clips": 3,
+  "id": "motorcycle_commercial",
+  "name": "Motorcycle Commercial — Legendary & New Race and Road Bikes",
+  "status": "active",
+  "usage": "A 30-second cinematic commercial for ONE real, famous motorcycle from any era up to 2026, classic or brand new: Grand Prix and superbike racers (including current MotoGP and WorldSBK bikes) and iconic road bikes. Reveal in a garage or pit lane that fits its era, ride, signature moment, hero stop. Short documentary narration names the bike and tells why it matters. Its real livery, team and sponsor lettering and race number may be shown; series logos may not.",
+  "real_names_allowed": true,
+  "keep_era_vehicle": true,
+  "generation": {
+    "engine": "Google Flow via gflow-cli",
+    "model": "omni-flash",
+    "aspect": "9:16",
+    "clip_seconds": 10,
+    "clips": 3,
+    "total_seconds": 30,
+    "credits_per_clip": 15,
+    "total_credits": 45,
+    "continuity": "clip 1 is t2v; clips 2 and 3 start from the last frame of the previous clip",
+    "narration": "spoken by Flow inside the clip; never external TTS",
+    "origin": "condensed from G-FLow_Automation_dekstop app/templates/motor_30s_base.txt (3-part motorcycle commercial); its realism rules are kept in a short form because Flow refuses prompts over ~3,000 characters"
+  },
+  "blocks": {
+    "style": "Ultra-realistic cinematic motorcycle commercial, filmed like real footage on a cinema camera: natural light, long lenses with no wide-angle distortion, shallow depth of field, real reflections on paint and chrome, fine film grain, never CGI, never a cartoon.",
+    "audio": "Audio: the authentic engine sound of this exact motorcycle and a low, rising cinematic music bed under the voice-over, no other voices.",
+    "bike_rules": "RULES: exactly one motorcycle with two wheels and real weight, both tyres touching the ground with a contact shadow; no part floats, detaches, morphs or changes shape between shots. It only ever moves forward, in the direction its front wheel points; dust, spray and smoke trail behind it. The wheels turn only while it moves and stand completely still while it is parked. Whenever it moves, the rider is on it, helmet on and visor closed, face never visible. No key, no stand under a moving motorcycle. Its real livery, team and sponsor lettering and race number stay exactly as described, painted flat on the bodywork, correctly spelled, never moved, mirrored or invented; lettering too small or too fast to read stays a soft unreadable mark. No series logos, no on-screen text, captions or titles, no other vehicles or people.",
+    "vehicle_presets": {
+      "classic_bike": "{bike_look}",
+      "classic_bike_short": "{bike_short}"
+    }
+  },
+  "clip_templates": [
+    {
+      "role": "reveal_and_start",
+      "mode": "t2v",
+      "prompt": "{style} The hero is {vehicle}, parked riderless in {setting}. One slow continuous camera move with shallow focus: an extreme macro push-in across {detail_1}, a low orbit past {detail_2} with both wheels completely still, then a glide along {detail_3} as light slides over the paint. In the last two seconds, a clean hard cut to a medium side shot: the rider is already seated, helmet on, visor closed, both feet on the ground, and the engine fires with no key, exhaust pulsing and a thin wisp of smoke, the wheels still. {bike_rules} {audio} {narrator} \"{narration_1}\"",
+      "narration_words": {
+        "en": "18-22"
+      }
+    },
+    {
+      "role": "ride",
+      "mode": "i2v_from_previous_last_frame",
+      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. The rider lifts both feet onto the footpegs and rides away forward. {ride_scene} First a low tracking shot at wheel height as it accelerates past the camera, the background streaking by while the motorcycle stays sharp; then it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressing. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
+      "narration_words": {
+        "en": "18-22"
+      }
+    },
+    {
+      "role": "finale",
+      "mode": "i2v_from_previous_last_frame",
+      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. {signature_move} Then the rider brakes in a straight line, the fork dips, and the motorcycle comes to a complete stop; both feet go down and the wheels stop turning. Final hero shot: low front three-quarter view of the stationary motorcycle in warm backlight, a slow push-in as the engine gives one last blip, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
+      "narration_words": {
+        "en": "18-22"
+      }
+    }
+  ],
+  "keywords_that_worked": [
+    "condensed MOTION, WHEELS, RIDER, NO KEY, REALISM rules from the desktop 30 s commercial",
+    "Continue seamlessly from this exact frame"
+  ],
+  "rules": [
+    "Each video is about ONE real, famous motorcycle from any era, classic or current: a Grand Prix, MotoGP or superbike racer, or an iconic road motorcycle. Pick one exact version and year. Name its maker and model in narration_1 and in the title (real names are allowed for this template). The model year is 2026 or earlier and the bike really exists: it was sold, or it raced; never a 2027-or-later model, an announced but unreleased bike, a concept, a rumour, or a bike built for future rules (e.g. the 2027 MotoGP regulations).",
+    "bike_look: 30-70 words describing exactly how that motorcycle looks: era, body shape (naked, cafe racer, full racing fairing), tank and seat shape, the visible engine layout (e.g. air-cooled inline-four with four chrome exhaust pipes), wheels (spoked or cast), brakes, and its REAL livery: colour layout, the real team and sponsor names exactly as painted and where they sit (e.g. 'white fairing with a blue ROTHMANS band across the nose'), and the real race number with its colours and position. Name at most three short sponsor words; never invent lettering. Real team and sponsor names are allowed for this template (owner 2026-10-22); series logos are not.",
+    "bike_short: 8-15 words, the same motorcycle and colours (e.g. 'candy-red 1969 inline-four roadster with gold tank stripes and chrome').",
+    "setting: where it is parked for the reveal, matching the bike and its era: a vintage workshop or garage door for classic road bikes, a modern design studio or dealer workshop for new road bikes, a period or modern pit-lane garage for race bikes. Daylight or golden hour.",
+    "detail_1, detail_2, detail_3: three different real parts of THIS motorcycle, in this order: a close part (tank, fairing nose, winglets, dashboard), the front wheel and brake, then the engine, swingarm or exhaust. Only parts that really exist on it.",
+    "ride_scene: one sentence placing the ride: a race circuit that fits its era for race bikes (old-style kerbs for classic racers, a modern circuit for current racers), a scenic coastal or mountain road for road bikes. Race bikes never ride on public roads; road bikes never race other bikes on a circuit.",
+    "signature_move: one sentence, the moment the bike is famous for, physically believable: a long high-speed pass at full lean, a two-stroke howl down a straight, a controlled wheelie for a powerful sport bike only. No jumps, no drifting, no tricks the real motorcycle could not do.",
+    "Narration: narration_1 = the hook: what the bike is, its year, why it matters. narration_2 = what makes it special (engine, chassis, aero, electronics, speed), only facts from research_notes. narration_3 = its legacy or its place today, ending on a strong line. Each 18-22 words in the audience language, no double quotes.",
+    "Facts, years and numbers come ONLY from research_notes. Without notes, keep to the model name and the widely known year, and describe its character without numbers.",
+    "Never show or describe official series logos (MotoGP, FIM, Dorna, WSBK). Never put text on screen; lettering exists only as paint on the motorcycle."
+  ],
+  "topic_ideas": [
+    "Honda CB750 Four (1969), the first mass-produced inline-four superbike",
+    "Kawasaki Z1 (1972), the double-overhead-cam muscle bike",
+    "Ducati 916 (1994), the single-sided swingarm superbike icon",
+    "Honda NSR500, the two-stroke 500 cc Grand Prix weapon",
+    "Yamaha YZR500, the factory two-stroke 500 cc Grand Prix racer",
+    "Honda RC30 (VFR750R), the V4 homologation superbike",
+    "Suzuki GSX-R750 (1985), the race replica that started a class",
+    "Ducati Panigale V4 R, the road bike built around a racing V4",
+    "Kawasaki Ninja H2, the supercharged hyperbike",
+    "BMW M 1000 RR, the winglet-equipped superbike",
+    "Yamaha YZF-R1 with its crossplane crankshaft",
+    "a current factory MotoGP bike: its aero, ride-height device and V4 or inline-four engine"
+  ],
+  "example": {
+    "topic": "Honda CB750 Four (1969)",
+    "variables": {
+      "vehicle_preset": "classic_bike",
+      "bike_look": "a 1969 inline-four roadster in candy ruby red: a teardrop fuel tank with a gold stripe and plain silver panel, a flat black seat, round chrome headlight, chrome fenders, spoked wheels with a front disc brake, and an air-cooled four-cylinder engine feeding four chrome exhaust pipes, two on each side",
+      "bike_short": "candy-red 1969 inline-four roadster with chrome and four chrome exhaust pipes",
+      "setting": "an old brick workshop with its roller door half open to warm morning light",
+      "detail_1": "the candy-red fuel tank and its gold stripe",
+      "detail_2": "the spoked front wheel and its single disc brake",
+      "detail_3": "the four cooling-finned cylinders and the four chrome exhaust pipes",
+      "ride_scene": "A sunlit coastal road curves along the cliffs, the sea glittering below.",
+      "signature_move": "It sweeps through a long fast bend at a steady lean, all four exhaust pipes singing as the road opens toward the sea.",
+      "narration_1": "In nineteen sixty-nine, Honda rolled out the CB750 Four, and the motorcycle world suddenly had a new word: superbike.",
+      "narration_2": "Four cylinders, four chrome pipes and a front disc brake gave everyday riders smooth, reliable speed that only racers knew before.",
+      "narration_3": "Every modern sport bike carries a little of its DNA. The CB750 did not follow the future. It started it.",
+      "narrator_preset": "EN-DOC"
+    }
+  },
+  "research": {
+    "required_before_script": true,
+    "questions": [
+      "exact model name and year",
+      "what was new or record-setting about it",
+      "engine type and layout",
+      "its real colour scheme",
+      "why it is remembered today"
+    ]
+  },
+  "language": "en",
+  "real_sponsors_allowed": true
+}

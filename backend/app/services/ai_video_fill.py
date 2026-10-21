@@ -95,7 +95,7 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
         else:
             # F1/car niche: prefer classic_gp or f1
             presets = [p for p in available_presets if "motogp" not in p] or available_presets
-        motogp_line = " This is a MotoGP page: show a modern MotoGP prototype racing bike unless the story is clearly about another motorcycle." if niche == "motogp" else ""
+        motogp_line = " This is a MotoGP page: show a modern MotoGP prototype racing bike unless the story is clearly about another motorcycle." if niche == "motogp" and not t.raw.get("keep_era_vehicle") else ""
         look_line = f"Vehicle preset choices for this page: {json.dumps(presets)}.{motogp_line} "
         accuracy = MECHANICAL_ACCURACY
         matches = matching_mechanisms((idea.topic or "") + " " + (idea.angle or ""))
@@ -105,6 +105,10 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
         look_line = ""
         accuracy = next((NICHE_ACCURACY[n] for n in t.niches if n in NICHE_ACCURACY), "")
         ref_line = ""
+    if t.raw.get("real_names_allowed"):
+        never_name = "Real makers, models, teams and sponsors ARE allowed in this template: name the motorcycle's maker and model in narration_1 and in the title; describe its real livery with its real team and sponsor lettering. Never name or show official series logos (MotoGP, FIM, Dorna, WSBK)."
+    else:
+        never_name = NEVER_NAME[kind]
     prompt = f"""Fill this video template as strict JSON with keys variables, title, caption.
 Template rules: {json.dumps(t.raw.get('rules', t.raw.get('description', '')))}
 Format example variables: {json.dumps(example)}
@@ -113,7 +117,7 @@ Required variables: {json.dumps(required_variables(t, clips))}; narration word b
 Title and caption must be in {lang}; title <= {title_max} chars, caption <= {desc_max} chars and <= {cs.hashtag_count} hashtags.
 The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
 {accuracy}{ref_line}Use research_notes as the ONLY source of specific facts and numbers. {NO_NOTES_RULE[kind]}
-{NEVER_NAME[kind]} Research notes: {idea.research_notes or '(none)'}
+{never_name} Research notes: {idea.research_notes or '(none)'}
     Topic: {idea.topic}; angle: {idea.angle or '(none)'}
     """
     if idea.variables:
