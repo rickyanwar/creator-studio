@@ -297,7 +297,7 @@ Eval: `python -m app.scripts.pro_poster_eval --jobs <ids> --run <name> [--pace s
   - It keeps working when only one page has jobs (work-conserving).
   - `news_copywriter` and `render_pending_designs` no longer enqueue visual-routed news (`render_queue_for(db, fp, "news") == "visual"`).
 - **Pre-render stale skip**: `_has_news_slot(db, job, now_utc)` checks `social_delivery_planner.news_slot_available`. Jobs with no News slot within 24 h are skipped BEFORE rendering, with `last_error` "stale: no News slot within 24 h, AI poster not rendered".
-- **Just-in-time design (JIT, branch slot-first)**: a non-breaking job is rendered only when its page's next free slot (`social_delivery_planner.next_news_slot_utc`) is ≤ `JIT_LEAD_MINUTES` (90) away.
+- **Just-in-time design (JIT)**: a non-breaking job is rendered only when its page's next free slot (`social_delivery_planner.next_news_slot_utc`) is ≤ `JIT_LEAD_MINUTES` (30; owner 2026-10-21) away.
   - The newest job of that page is picked.
   - On dispatch, the page is claimed (`visual_fair:news:claim:<fanpage_id>`, TTL until the slot + 10 min), so one slot gets one design.
   - Jobs that never get a near slot stay `pending_design` and are retired by the 24 h stale sweep without being rendered.

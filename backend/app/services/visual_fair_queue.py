@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _WIB = ZoneInfo("Asia/Jakarta")
 
 LAST_JOB_KEY = "visual_fair:news:last_job"
-JIT_LEAD_MINUTES = 90
+JIT_LEAD_MINUTES = 30
 CLAIM_KEY = "visual_fair:news:claim:{fanpage_id}"
 
 
