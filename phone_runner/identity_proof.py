@@ -94,6 +94,46 @@ def get_center(bounds: tuple[int, int, int, int]) -> tuple[int, int]:
     return ((bounds[0] + bounds[2]) // 2, (bounds[1] + bounds[3]) // 2)
 
 
+TAB_BAR_DESC_RE = re.compile(r",\s*tab \d+ of \d+$", re.IGNORECASE)
+
+
+def visible_tap_point(
+    tree: ET.Element | None,
+    bounds: tuple[int, int, int, int],
+) -> tuple[int, int] | None:
+    if bounds is None:
+        return None
+
+    b_left = bounds.left if hasattr(bounds, "left") else bounds[0]
+    b_top = bounds.top if hasattr(bounds, "top") else bounds[1]
+    b_right = bounds.right if hasattr(bounds, "right") else bounds[2]
+    b_bottom = bounds.bottom if hasattr(bounds, "bottom") else bounds[3]
+
+    center_x = (b_left + b_right) // 2
+
+    intersecting_bottoms: list[int] = []
+    if tree is not None:
+        for node in tree.iter("node"):
+            desc = (node.attrib.get("content-desc") or "").strip()
+            if not desc or not TAB_BAR_DESC_RE.search(desc):
+                continue
+            tb = parse_bounds(node.attrib.get("bounds", ""))
+            if not tb:
+                continue
+            t_left, t_top, t_right, t_bottom = tb
+            if max(b_left, t_left) < min(b_right, t_right) and max(b_top, t_top) < min(b_bottom, t_bottom):
+                intersecting_bottoms.append(t_bottom)
+
+    if not intersecting_bottoms:
+        return get_center(bounds)
+
+    max_tab_bottom = max(intersecting_bottoms)
+    top = max(b_top, max_tab_bottom + 4)
+    if b_bottom - top >= 6:
+        return (center_x, (top + b_bottom) // 2)
+    return None
+
+
 def is_clipped(bounds: tuple[int, int, int, int], screen_height: int) -> bool:
     return bounds[3] > screen_height - 100 or (bounds[3] - bounds[1]) < 40
 
@@ -1795,6 +1835,7 @@ def collect_own_url_proof_chain(
             if not ok or tree is None:
                 return make_fail(f"Root own profile check failed: {err}", "root_url")
 
+            root_profile_tree = tree
             root_prof_digest = compute_xml_digest(raw_xml)
             ok, err, more_bounds = find_own_profile_controls(tree, clean_main_name)
             name_proof_path = False
@@ -1834,12 +1875,29 @@ def collect_own_url_proof_chain(
                 })
 
             if not name_proof_path:
-                # Tap More profile settings
                 timeout_err = check_deadline("settings open")
                 if timeout_err:
                     return make_fail(timeout_err, "root_url")
 
-                cx, cy = get_center(more_bounds)
+                tap_pt = visible_tap_point(root_profile_tree, more_bounds)
+                if tap_pt is None:
+                    run_adb(["shell", "input", "swipe", "540", "1500", "540", "1300", "250"], serial=serial)
+                    time.sleep(0.5)
+                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if raw_xml:
+                        last_raw_xml = raw_xml
+                    if not ok or tree is None:
+                        return make_fail(f"Root own profile check failed: {err} (control covered by the tab bar)", "root_url")
+                    root_prof_digest = compute_xml_digest(raw_xml)
+                    ok, err, more_bounds = find_own_profile_controls(tree, clean_main_name)
+                    if not ok or more_bounds is None:
+                        return make_fail(f"Root own profile invalid: {err} (control covered by the tab bar)", "root_url")
+                    root_profile_tree = tree
+                    tap_pt = visible_tap_point(root_profile_tree, more_bounds)
+                    if tap_pt is None:
+                        return make_fail("Root own profile invalid: More profile settings (control covered by the tab bar)", "root_url")
+
+                cx, cy = tap_pt
                 run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
 
                 # Step 3: Validate Profile Settings & Prepare IME
@@ -1847,32 +1905,50 @@ def collect_own_url_proof_chain(
                 if timeout_err:
                     return make_fail(timeout_err, "root_url")
 
-                poll_start = time_fn()
-                poll_count = 0
                 max_polls = int(SETTINGS_WAIT_SECONDS / SETTINGS_POLL_SECONDS)
                 settings_found = False
                 last_err = ""
                 switcher_bounds = None
                 copy_link_bounds = None
+                last_tree: ET.Element | None = None
 
-                while True:
-                    time.sleep(SETTINGS_POLL_SECONDS)
-                    poll_count += 1
-                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-                    if not ok or tree is None:
-                        last_err = f"Profile Settings screen invalid: {err}"
-                    else:
-                        last_raw_xml = raw_xml
-                        ok_ctrl, err_ctrl, s_bounds, c_bounds = find_root_settings_controls(tree)
-                        if ok_ctrl:
-                            switcher_bounds = s_bounds
-                            copy_link_bounds = c_bounds
-                            settings_found = True
+                def _poll_settings() -> bool:
+                    nonlocal tree, raw_xml, switcher_bounds, copy_link_bounds, last_err, last_raw_xml, last_tree
+                    poll_start = time_fn()
+                    p_count = 0
+                    while True:
+                        time.sleep(SETTINGS_POLL_SECONDS)
+                        p_count += 1
+                        ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                        if not ok or tree is None:
+                            last_err = f"Profile Settings screen invalid: {err}"
+                        else:
+                            last_raw_xml = raw_xml
+                            last_tree = tree
+                            ok_ctrl, err_ctrl, s_bounds, c_bounds = find_root_settings_controls(tree)
+                            if ok_ctrl:
+                                switcher_bounds = s_bounds
+                                copy_link_bounds = c_bounds
+                                return True
+                            last_err = f"Profile Settings controls invalid: {err_ctrl}"
+
+                        if (time_fn() - poll_start >= SETTINGS_WAIT_SECONDS) or (p_count >= max_polls):
                             break
-                        last_err = f"Profile Settings controls invalid: {err_ctrl}"
+                    return False
 
-                    if (time_fn() - poll_start >= SETTINGS_WAIT_SECONDS) or (poll_count >= max_polls):
-                        break
+                settings_found = _poll_settings()
+
+                if not settings_found:
+                    still_own_profile = False
+                    if last_tree is not None:
+                        is_own, _, _ = find_own_profile_controls(last_tree, clean_main_name)
+                        still_own_profile = is_own
+
+                    # Retry only while the own profile is still on screen: never tap blind on another screen.
+                    if still_own_profile:
+                        cx, cy = tap_pt
+                        run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
+                        settings_found = _poll_settings()
 
                 if not settings_found:
                     return make_fail(last_err or "Profile Settings controls invalid", "root_url")
@@ -1998,6 +2074,7 @@ def collect_own_url_proof_chain(
 
                     # Poll switch completion and verify target Page own profile
                     target_prof_ok = False
+                    target_profile_tree: ET.Element | None = None
                     go_to_profile_tapped = False
                     for _ in range(6):
                         timeout_err = check_deadline("switch to target page")
@@ -2012,6 +2089,7 @@ def collect_own_url_proof_chain(
                             if pok and pmore_bounds is not None:
                                 target_prof_ok = True
                                 more_bounds = pmore_bounds
+                                target_profile_tree = tree
                                 break
 
                             # If on feed header, tap 'Go to profile' button once
@@ -2042,7 +2120,26 @@ def collect_own_url_proof_chain(
                     if timeout_err:
                         return make_fail(timeout_err, "target_url")
 
-                    cx, cy = get_center(more_bounds)
+                    tap_pt = visible_tap_point(target_profile_tree, more_bounds)
+                    if tap_pt is None:
+                        run_adb(["shell", "input", "swipe", "540", "1500", "540", "1300", "250"], serial=serial)
+                        time.sleep(0.5)
+                        ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                        if raw_xml:
+                            last_raw_xml = raw_xml
+                        if not ok or tree is None:
+                            return make_fail(f"Page Settings screen invalid: {err} (control covered by the tab bar)", "target_url")
+                        target_prof_digest = compute_xml_digest(raw_xml)
+                        pok, perr, pmore_bounds = find_own_profile_controls(tree, clean_target_name)
+                        if not pok or pmore_bounds is None:
+                            return make_fail(f"Target Page own profile for '{clean_target_name}' not active after switch: {perr} (control covered by the tab bar)", "target_url")
+                        more_bounds = pmore_bounds
+                        target_profile_tree = tree
+                        tap_pt = visible_tap_point(target_profile_tree, more_bounds)
+                        if tap_pt is None:
+                            return make_fail(f"Target Page own profile for '{clean_target_name}' not active after switch (control covered by the tab bar)", "target_url")
+
+                    cx, cy = tap_pt
                     run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
                     time.sleep(0.5)
 
