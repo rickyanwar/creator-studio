@@ -614,7 +614,23 @@ def render_design(self, job_id: int):
                     note_text = f"pro poster · qa {scores_str}".strip()
                     pro_poster_engine_note = note_text[:200]
                     pro_poster_label = pp_res.brief.badge_label
-                elif pp_res.fallback_reason == "no verified photo":
+                elif pp_res.fallback_reason in ("no verified photo", "photo check error"):
+                    if pp_res.fallback_reason == "photo check error":
+                        from datetime import timedelta
+
+                        retries = int(analysis.get("photo_check_retries", 0) or 0)
+                        if retries < PHOTO_CHECK_MAX_RETRIES:
+                            analysis["photo_check_retries"] = retries + 1
+                            job.design_analysis_json = analysis
+                            try:
+                                from app.services.visual_fair_queue import release_page
+                                release_page(_redis(), job.fanpage_id)
+                            except Exception as exc:
+                                logger.warning("Design: job %d could not release the JIT claim: %s", job_id, exc)
+                            raise VisualEngineDeferred(
+                                until=datetime.now(timezone.utc) + timedelta(minutes=PHOTO_CHECK_RETRY_MINUTES),
+                                reason=f"photo check error, retry {retries + 1}/{PHOTO_CHECK_MAX_RETRIES}",
+                            )
                     # TYPOGRAPHIC CARD
                     from app.services.pro_poster import typo_background
                     bg_bytes = typo_background.make_typographic_background(
@@ -625,7 +641,8 @@ def render_design(self, job_id: int):
                     image_src = typo_background.background_datauri(bg_bytes)
                     image_marker = "pro_poster_typo"
                     pro_poster_engine = "template"
-                    pro_poster_engine_note = (pp_res.fallback_reason or "")[:200]
+                    note = "no verified photo (photo check error)" if pp_res.fallback_reason == "photo check error" else (pp_res.fallback_reason or "")
+                    pro_poster_engine_note = note[:200]
                     pro_poster_label = pp_res.brief.badge_label
                 else:
                     logger.info("Pro poster job %d fell back to the old path: %s", job_id, pp_res.fallback_reason)
@@ -1490,6 +1507,8 @@ def render_facebook_photo(self, job_id: int):
 # new jobs need. A human can still jump the cooldown any time via "Open in
 # Designer" in the Queue, which attaches a photo directly.
 _NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_HOURS = 6
+PHOTO_CHECK_MAX_RETRIES = 2
+PHOTO_CHECK_RETRY_MINUTES = 10
 
 
 def _defer_job(db, job, exc) -> None:

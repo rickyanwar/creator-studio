@@ -22,6 +22,7 @@ from app.services.visual_fair_queue import (
     news_job_waiting,
     page_claimed,
     pick_next_news_job,
+    release_page,
     served_today,
     visual_news_fanpage_ids,
     wib_date,
@@ -705,3 +706,17 @@ def test_dispatcher_claims_page_with_right_ttl(db_engine, fake_redis):
     slot_near = fixed_now + timedelta(minutes=2)
     claim_page(fake_redis, 3, slot_near, fixed_now)
     assert fake_redis.ttls.get(CLAIM_KEY.format(fanpage_id=3)) == 900
+
+
+def test_release_page_deletes_claim_key(fake_redis):
+    claim_key = CLAIM_KEY.format(fanpage_id=42)
+    fake_redis.set(claim_key, "2026-10-21T10:00:00Z")
+    assert fake_redis.exists(claim_key)
+    release_page(fake_redis, 42)
+    assert not fake_redis.exists(claim_key)
+
+
+def test_release_page_redis_error_does_not_raise():
+    broken_redis = MagicMock()
+    broken_redis.delete.side_effect = RuntimeError("Redis connection lost")
+    release_page(broken_redis, 42)
