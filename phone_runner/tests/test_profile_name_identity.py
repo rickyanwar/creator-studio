@@ -166,7 +166,7 @@ def test_name_mismatch_and_substring_rejections():
 
 def test_visitor_fixture_rejected():
     """Profiles showing visitor buttons (Add friend, Message, Follow) must be rejected."""
-    for marker in ("Add friend", "Message", "Follow", "Add Friend"):
+    for marker in ("Add friend", "Message", "Follow", "Add Friend", "Follow back"):
         xml_visitor = f"""<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">
   <node index="0" text="" class="android.widget.FrameLayout" package="com.facebook.katana" bounds="[0,0][1080,2408]">
@@ -180,6 +180,38 @@ def test_visitor_fixture_rejected():
         ok, err = find_own_profile_name_identity(tree_vis, "Agung")
         assert ok is False, f"Did not reject marker: {marker}"
         assert "visitor" in err.lower()
+
+
+def test_own_profile_with_messages_button_passes():
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" class="android.widget.FrameLayout" package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" clickable="true" bounds="[936,337][1068,469]" text="" content-desc="Edit cover photo" package="com.facebook.katana" />
+    <node class="android.widget.Button" clickable="true" bounds="[396,669][606,751]" text="Agung" content-desc="" package="com.facebook.katana" />
+    <node class="android.widget.Button" clickable="true" bounds="[36,1298][530,1406]" text="Dashboard" content-desc="Dashboard" package="com.facebook.katana" />
+    <node class="android.widget.Button" clickable="true" bounds="[100,100][300,200]" text="Messages" content-desc="" package="com.facebook.katana" />
+  </node>
+</hierarchy>"""
+    tree = ET.fromstring(xml)
+    ok, err = find_own_profile_name_identity(tree, "Agung")
+    assert ok is True
+    assert err == ""
+
+
+def test_own_profile_with_post_text_message_unclickable_passes():
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" class="android.widget.FrameLayout" package="com.facebook.katana" bounds="[0,0][1080,2408]">
+    <node class="android.widget.Button" clickable="true" bounds="[936,337][1068,469]" text="" content-desc="Edit cover photo" package="com.facebook.katana" />
+    <node class="android.widget.Button" clickable="true" bounds="[396,669][606,751]" text="Agung" content-desc="" package="com.facebook.katana" />
+    <node class="android.widget.Button" clickable="true" bounds="[36,1298][530,1406]" text="Dashboard" content-desc="Dashboard" package="com.facebook.katana" />
+    <node class="android.widget.TextView" clickable="false" bounds="[100,100][300,200]" text="Send me a message" content-desc="" package="com.facebook.katana" />
+  </node>
+</hierarchy>"""
+    tree = ET.fromstring(xml)
+    ok, err = find_own_profile_name_identity(tree, "Agung")
+    assert ok is True
+    assert err == ""
 
 
 def test_missing_owner_controls_rejected():

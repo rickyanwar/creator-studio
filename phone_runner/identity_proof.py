@@ -37,6 +37,10 @@ from phone_runner.resolver import (
     share_url_matches_expected_id,
 )
 from phone_runner.interstitials import clear_interstitials
+from phone_runner.observation import (
+    save_composer_observation,
+    save_identity_gate_observation,
+)
 
 logger = logging.getLogger("phone_runner")
 
@@ -157,6 +161,9 @@ KNOWN_PORTAL_IME_IDS = (
 
 MODEL_NAV_MAX_SECONDS = 120.0
 MODEL_NAV_RESERVE_SECONDS = 60.0
+SETTINGS_WAIT_SECONDS = 6.0
+SETTINGS_POLL_SECONDS = 0.5
+VISITOR_MARKERS = {"add friend", "message", "follow", "follow back"}
 
 
 class PortalImeContext:
@@ -531,7 +538,7 @@ def _find_immersive_profile_controls(
         desc = (node.attrib.get("content-desc") or "").strip().lower()
         clickable = node.attrib.get("clickable", "").lower() == "true"
         if "button" in cls.lower() and clickable:
-            if text in ("add friend", "message", "follow") or desc in ("add friend", "message", "follow"):
+            if text in VISITOR_MARKERS or desc in VISITOR_MARKERS:
                 return False, f"Visitor action detected on profile: text='{text}', desc='{desc}'", None
 
     # Check Dashboard requirement: exact normalized text/desc membership
@@ -657,13 +664,14 @@ def find_own_profile_controls(
     more_bounds: tuple[int, int, int, int] | None = None
     has_dashboard = False
     name_count = 0
+    visitor_hits: list[str] = []
 
     norm_expected = expected_name.strip().lower()
 
     for node in tree.iter("node"):
         text = (node.attrib.get("text") or "").strip()
         desc = (node.attrib.get("content-desc") or "").strip()
-        clickable = node.attrib.get("clickable") == "true"
+        clickable = node.attrib.get("clickable", "").lower() == "true"
         b = parse_bounds(node.attrib.get("bounds", ""))
 
         if norm_expected and (norm_expected in text.lower() or norm_expected in desc.lower()):
@@ -679,10 +687,13 @@ def find_own_profile_controls(
         if "dashboard" in desc.lower() or "dashboard" in text.lower():
             has_dashboard = True
 
-        # Check visitor markers
-        if any(marker in desc.lower() or marker in text.lower() for marker in ("add friend", "message")):
-            if not has_edit:
-                return False, "Detected visitor profile rather than own profile", None
+        text_lower = text.lower()
+        desc_lower = desc.lower()
+        if clickable and (text_lower in VISITOR_MARKERS or desc_lower in VISITOR_MARKERS):
+            visitor_hits.append(text if text_lower in VISITOR_MARKERS else desc)
+
+    if visitor_hits and not has_edit:
+        return False, "Detected visitor profile rather than own profile", None
 
     if name_count == 0:
         return False, f"Expected name '{expected_name}' not visible on own profile", None
@@ -707,7 +718,7 @@ def find_own_profile_name_identity(
     if not clean_expected:
         return False, "Expected name is empty"
 
-    visitor_markers = {"add friend", "message", "follow"}
+    visitor_markers = VISITOR_MARKERS
     owner_controls = {
         "Edit cover photo",
         "Edit profile picture",
@@ -719,6 +730,7 @@ def find_own_profile_name_identity(
     has_name = False
     has_owner_control = False
     has_dashboard = False
+    visitor_hits: list[str] = []
 
     for node in tree.iter("node"):
         text = (node.attrib.get("text") or "").strip()
@@ -726,8 +738,11 @@ def find_own_profile_name_identity(
         pkg = (node.attrib.get("package") or "").strip()
         clickable = node.attrib.get("clickable", "").lower() == "true"
 
-        if text.lower() in visitor_markers or desc.lower() in visitor_markers:
-            return False, f"Detected visitor profile marker: '{text or desc}'"
+        text_lower = text.lower()
+        desc_lower = desc.lower()
+
+        if clickable and (text_lower in visitor_markers or desc_lower in visitor_markers):
+            visitor_hits.append(text if text_lower in visitor_markers else desc)
 
         if pkg == "com.facebook.katana" and text == clean_expected:
             has_name = True
@@ -735,13 +750,16 @@ def find_own_profile_name_identity(
         if clickable and (
             text in owner_controls
             or desc in owner_controls
-            or text.lower() in owner_controls_lower
-            or desc.lower() in owner_controls_lower
+            or text_lower in owner_controls_lower
+            or desc_lower in owner_controls_lower
         ):
             has_owner_control = True
 
         if text == "Dashboard" or desc == "Dashboard":
             has_dashboard = True
+
+    if visitor_hits:
+        return False, f"Detected visitor profile marker: '{visitor_hits[0]}'"
 
     if not has_name:
         return False, f"Expected exact name '{clean_expected}' in package com.facebook.katana not found"
@@ -1483,8 +1501,13 @@ def collect_own_url_proof_chain(
     actual_rotation: int = 0
     actual_card_ver: str | None = None
     proof_method = "own_url_chain_v1"
+    last_raw_xml: str | None = None
 
     def make_fail(err_msg: str, stage_name: str = "identity_proof") -> IdentityProofResult:
+        try:
+            save_identity_gate_observation(serial, last_raw_xml, stage="identity_gate")
+        except Exception:
+            pass
         stages.append({"stage": stage_name, "passed": False, "detail": err_msg})
         return IdentityProofResult(
             nonce=nonce,
@@ -1623,6 +1646,8 @@ def collect_own_url_proof_chain(
 
             # Step 2: Validate Own Root Profile via direct fresh XML
             ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+            if raw_xml:
+                last_raw_xml = raw_xml
             if not ok or tree is None:
                 return make_fail(f"Root own profile check failed: {err}", "root_url")
 
@@ -1672,21 +1697,43 @@ def collect_own_url_proof_chain(
 
                 cx, cy = get_center(more_bounds)
                 run_adb(["shell", "input", "tap", str(cx), str(cy)], serial=serial)
-                time.sleep(0.5)
 
                 # Step 3: Validate Profile Settings & Prepare IME
                 timeout_err = check_deadline("root settings check")
                 if timeout_err:
                     return make_fail(timeout_err, "root_url")
 
-                ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
-                if not ok or tree is None:
-                    return make_fail(f"Profile Settings screen invalid: {err}", "root_url")
+                poll_start = time_fn()
+                poll_count = 0
+                max_polls = int(SETTINGS_WAIT_SECONDS / SETTINGS_POLL_SECONDS)
+                settings_found = False
+                last_err = ""
+                switcher_bounds = None
+                copy_link_bounds = None
+
+                while True:
+                    time.sleep(SETTINGS_POLL_SECONDS)
+                    poll_count += 1
+                    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if not ok or tree is None:
+                        last_err = f"Profile Settings screen invalid: {err}"
+                    else:
+                        last_raw_xml = raw_xml
+                        ok_ctrl, err_ctrl, s_bounds, c_bounds = find_root_settings_controls(tree)
+                        if ok_ctrl:
+                            switcher_bounds = s_bounds
+                            copy_link_bounds = c_bounds
+                            settings_found = True
+                            break
+                        last_err = f"Profile Settings controls invalid: {err_ctrl}"
+
+                    if (time_fn() - poll_start >= SETTINGS_WAIT_SECONDS) or (poll_count >= max_polls):
+                        break
+
+                if not settings_found:
+                    return make_fail(last_err or "Profile Settings controls invalid", "root_url")
 
                 settings_digest = compute_xml_digest(raw_xml)
-                ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
-                if not ok:
-                    return make_fail(f"Profile Settings controls invalid: {err}", "root_url")
 
                 # Bind IME via Search if needed (with bounded Back + captures until back at same settings)
                 ime_ok, ime_performed, s_tree, s_xml = bind_portal_ime_if_needed(
@@ -1698,6 +1745,8 @@ def collect_own_url_proof_chain(
                 if ime_performed and s_tree is not None:
                     tree = s_tree
                     raw_xml = s_xml
+                    if raw_xml:
+                        last_raw_xml = raw_xml
                     settings_digest = compute_xml_digest(raw_xml)
                     ok, err, switcher_bounds, copy_link_bounds = find_root_settings_controls(tree)
                     if not ok:
@@ -1721,6 +1770,8 @@ def collect_own_url_proof_chain(
                     ok, err, tree, raw_xml = scroll_settings_and_recapture(
                         serial, screen_width=w, screen_height=h, expected_geometry=expected_geometry,
                     )
+                    if raw_xml:
+                        last_raw_xml = raw_xml
                     if not ok or tree is None:
                         return make_fail("Recapture after scroll failed", "root_url")
                     w, h = extract_viewport_geometry(tree, expected_geometry)
@@ -1779,6 +1830,8 @@ def collect_own_url_proof_chain(
 
                     # Validate Switcher list
                     ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if raw_xml:
+                        last_raw_xml = raw_xml
                     if not ok or tree is None:
                         return make_fail(f"Account switcher capture failed: {err}", "hierarchy")
 
@@ -1808,6 +1861,8 @@ def collect_own_url_proof_chain(
                             return make_fail(timeout_err, "hierarchy")
 
                         ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                        if raw_xml:
+                            last_raw_xml = raw_xml
                         if ok and tree is not None:
                             pok, _, pmore_bounds = find_own_profile_controls(tree, clean_target_name)
                             if pok and pmore_bounds is not None:
@@ -1853,6 +1908,8 @@ def collect_own_url_proof_chain(
                         return make_fail(timeout_err, "target_url")
 
                     ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if raw_xml:
+                        last_raw_xml = raw_xml
                     if not ok or tree is None:
                         return make_fail(f"Page Settings screen invalid: {err}", "target_url")
 
@@ -1871,6 +1928,8 @@ def collect_own_url_proof_chain(
                     if p_ime_performed and ps_tree is not None:
                         tree = ps_tree
                         raw_xml = ps_xml
+                        if raw_xml:
+                            last_raw_xml = raw_xml
                         page_settings_digest = compute_xml_digest(raw_xml)
                         ok, err, page_link_bounds = find_page_settings_controls(tree)
                         if not ok:
@@ -1895,6 +1954,8 @@ def collect_own_url_proof_chain(
                         ok, err, tree, raw_xml = scroll_settings_and_recapture(
                             serial, screen_width=w, screen_height=h, expected_geometry=expected_geometry,
                         )
+                        if raw_xml:
+                            last_raw_xml = raw_xml
                         if not ok or tree is None:
                             return make_fail("Recapture after scroll failed on Page Settings", "target_url")
                         w, h = extract_viewport_geometry(tree, expected_geometry)
@@ -1952,6 +2013,8 @@ def collect_own_url_proof_chain(
                     time.sleep(0.5)
 
                     ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if raw_xml:
+                        last_raw_xml = raw_xml
                     if not ok or tree is None:
                         return make_fail("Return to Page profile failed", "composer_binding")
                 else:
@@ -1973,6 +2036,8 @@ def collect_own_url_proof_chain(
                     time.sleep(0.5)
 
                     ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+                    if raw_xml:
+                        last_raw_xml = raw_xml
                     if not ok or tree is None:
                         return make_fail("Return to Root profile failed", "composer_binding")
 
@@ -1992,6 +2057,8 @@ def collect_own_url_proof_chain(
                     if s_ok and s_tree is not None:
                         tree = s_tree
                         raw_xml = s_raw
+                        if raw_xml:
+                            last_raw_xml = raw_xml
                         ok, err, trigger_bounds = find_composer_open_trigger(tree)
                         if ok and trigger_bounds is not None:
                             break
@@ -2010,6 +2077,8 @@ def collect_own_url_proof_chain(
                 return make_fail(timeout_err, "composer_binding")
 
             ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+            if raw_xml:
+                last_raw_xml = raw_xml
             if not ok or tree is None:
                 return make_fail("Composer capture failed", "composer_binding")
 

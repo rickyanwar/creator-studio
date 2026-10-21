@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import re
 import threading
 
 from .api import JobLost, TransientApiError, UploadTooLarge
@@ -28,6 +30,25 @@ class JobRunner:
                 with self.lock:
                     self.stale_profiles.add(profile)
         self.api.fail(jid, generation, classify(result), result.message)
+
+    def _find_media_id(self, result, *, profile, project, submit_time=None):
+        if isinstance(result.payload, dict):
+            media_id = result.payload.get("media_id")
+            if not media_id and isinstance(result.payload.get("error"), dict):
+                media_id = result.payload["error"].get("media_id")
+            if not media_id and isinstance(result.payload.get("asset"), dict):
+                media_id = result.payload["asset"].get("media_id")
+            if not media_id:
+                media_id = result.payload.get("workflow_id")
+            if media_id:
+                return str(media_id)
+        if result.message:
+            match = re.search(r"\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b", result.message)
+            if match:
+                return match.group(1)
+        if hasattr(self.gflow, "find_stranded_media_id"):
+            return self.gflow.find_stranded_media_id(profile=profile, project=project, submit_time=submit_time)
+        return None
 
     def apply_cancels(self, ids):
         with self.lock:
@@ -119,6 +140,7 @@ class JobRunner:
                 out = (state.directory / f"clip-{index}.mp4").resolve()
                 kwargs = dict(profile=job["account"]["profile"], project=project, model=job["model"],
                               aspect=job["aspect"], duration=job["clip_seconds"], out=out)
+                submit_time = datetime.now(timezone.utc)
                 if index == 1 or clip.get("mode") == "t2v":
                     # Cut-style templates (e.g. health) make every clip as its own t2v shot list.
                     result = self.gflow.t2v(clip["prompt"], **kwargs)
@@ -128,9 +150,28 @@ class JobRunner:
                         return
                     result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
                 if not result.ok:
-                    self._fail(jid, generation, result, profile=job["account"]["profile"])
-                    return
-                path = Path(result.payload.get("local_path") or out)
+                    recovered = False
+                    if "no signed media URL" in (result.message or ""):
+                        media_id = self._find_media_id(result, profile=job["account"]["profile"], project=project, submit_time=submit_time)
+                        if media_id:
+                            rec = self.gflow.download_media(media_id, profile=job["account"]["profile"], out=out.parent)
+                            rec_path = Path(rec.payload.get("path") or rec.payload.get("local_path") or (out.parent / f"{media_id}.mp4"))
+                            if not rec_path.is_absolute():
+                                rec_path = self.cfg.cli_dir / rec_path
+                            if rec.ok and rec_path.is_file() and rec_path.stat().st_size:
+                                log.info("Recovered clip %s for job %s clip %s via data download (%s)", media_id, jid, index, rec_path)
+                                rec.payload.setdefault("local_path", str(rec_path))
+                                rec.payload.setdefault("media_id", media_id)
+                                result = rec
+                                recovered = True
+                            else:
+                                log.warning("Recovery failed for job %s clip %s (media_id=%s): %s", jid, index, media_id, rec.message or "file missing")
+                        else:
+                            log.warning("Clip generation finished without signed media URL, but media id could not be found for job %s clip %s", jid, index)
+                    if not recovered:
+                        self._fail(jid, generation, result, profile=job["account"]["profile"])
+                        return
+                path = Path(result.payload.get("local_path") or result.payload.get("path") or out)
                 if not path.is_absolute():
                     path = self.cfg.cli_dir / path
                 if not path.is_file() or not path.stat().st_size:
