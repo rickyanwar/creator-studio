@@ -213,10 +213,11 @@ def test_heartbeat_credits_only_after_refresh(cfg, studio, monkeypatch):
     worker = Worker(cfg, studio.api)
     try:
         worker.tick()
+        first_tick = studio.events("/heartbeat")[-1]  # alive beats during probes come before it
         worker.tick()
-        heartbeats = studio.events("/heartbeat")
-        assert heartbeats[0]["accounts"][0]["credits"] == 100
-        assert heartbeats[1]["accounts"][0]["credits"] is None
+        second_tick = studio.events("/heartbeat")[-1]
+        assert first_tick["accounts"][0]["credits"] == 100
+        assert second_tick["accounts"][0]["credits"] is None
     finally:
         worker.executor.shutdown()
 
@@ -229,7 +230,7 @@ def test_credit_probe_fallback_and_heartbeat(cfg, studio, monkeypatch, mode, cre
     worker = Worker(replace(cfg, profiles=("p2",), probe_timeout_seconds=0.1), studio.api)
     try:
         worker.tick()
-        account = studio.events("/heartbeat")[0]["accounts"][0]
+        account = studio.events("/heartbeat")[-1]["accounts"][0]  # the tick's own heartbeat
         assert account["profile"] == "p2"
         assert account["credits"] == credits
         assert account["error"] == error
@@ -921,3 +922,34 @@ def test_tick_refreshes_stale_credits_when_idle_only(cfg, studio, monkeypatch):
 
 
 
+
+
+def test_alive_heartbeat_sent_between_credit_probes(cfg, studio, monkeypatch):
+    """A long credit probe must not make the worker look offline: one alive beat per probed account."""
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    monkeypatch.setenv("FAKE_PROBE_MODE", "credits")
+    worker = Worker(replace(cfg, profiles=("p2",), probe_timeout_seconds=0.1), studio.api)
+    try:
+        worker.tick()
+        beats = studio.events("/heartbeat")
+        assert len(beats) >= 2  # alive beat(s) during the probe + the tick's heartbeat
+        assert all(a["credits"] is None for a in beats[0]["accounts"])
+    finally:
+        worker.executor.shutdown()
+
+
+def test_no_reply_refreshes_only_the_failed_profile(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    worker = Worker(cfg, studio.api)
+    try:
+        worker.tick()  # full refresh once
+        probed = []
+        monkeypatch.setattr(worker, "_probe_credits", lambda account, previous=None: probed.append(account["profile"]))
+        monkeypatch.setattr(worker, "_refresh_accounts", lambda: probed.append("ALL"))
+        worker.runner.credits_stale = True
+        worker.runner.stale_profiles = {worker.accounts[0]["profile"]}
+        worker.tick()
+        assert probed == [worker.accounts[0]["profile"]]
+        assert worker.runner.stale_profiles == set()
+    finally:
+        worker.executor.shutdown()

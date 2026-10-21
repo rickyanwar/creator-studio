@@ -17,12 +17,16 @@ class JobRunner:
         self.cancel_ids = set()
         self.busy_profiles = set()
         self.credits_stale = False
+        self.stale_profiles = set()  # profiles whose balance should be re-read after a no-reply submit
         self.lock = threading.Lock()
 
-    def _fail(self, jid, generation, result):
+    def _fail(self, jid, generation, result, profile=None):
         """Report a failed CLI step; a submit that got no usable reply often means the account ran out of credits."""
         if SUBMIT_NO_REPLY in (result.message or ""):
             self.credits_stale = True
+            if profile:
+                with self.lock:
+                    self.stale_profiles.add(profile)
         self.api.fail(jid, generation, classify(result), result.message)
 
     def apply_cancels(self, ids):
@@ -84,7 +88,7 @@ class JobRunner:
         if not project:
             result = self.gflow.create_project(job["account"]["profile"], job["project_name"])
             if not result.ok:
-                self._fail(jid, generation, result)
+                self._fail(jid, generation, result, profile=job["account"]["profile"])
                 return
             project = result.payload["project_id"]
         state.data["project_id"] = project
@@ -114,7 +118,7 @@ class JobRunner:
                         return
                     result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
                 if not result.ok:
-                    self._fail(jid, generation, result)
+                    self._fail(jid, generation, result, profile=job["account"]["profile"])
                     return
                 path = Path(result.payload.get("local_path") or out)
                 if not path.is_absolute():

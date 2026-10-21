@@ -582,6 +582,7 @@ def test_sticky_account_prefers_most_recently_used(db_session, test_fanpage):
 
 def test_claim_gap_blocks_second_claim(db_session, test_fanpage, monkeypatch):
     monkeypatch.setattr(ai_video_dispatch, "MIN_CLAIM_GAP_MINUTES", 10)
+    monkeypatch.setattr(ai_video_dispatch.random, "uniform", lambda a, b: a)
     _ensure_settings(db_session, worker_enabled=True)
 
     worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
@@ -613,29 +614,322 @@ def test_claim_gap_blocks_second_claim(db_session, test_fanpage, monkeypatch):
         credits_estimate=15,
         status="queued",
     )
-    db_session.add_all([worker, acc1, acc2, job1, job2])
+    job3 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job Gap 3",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([worker, acc1, acc2, job1, job2, job3])
     db_session.commit()
 
-    # First claim succeeds
+    # First claim succeeds on one account, resting it for 8 minutes
     claimed1 = ai_video_dispatch.claim_job(db_session, "w1")
     assert claimed1 is not None
     assert claimed1[0].id == job1.id
+    first_acc = claimed1[1]
+    assert first_acc.cooldown_until is not None
+    assert abs((first_acc.cooldown_until - first_acc.last_used_at).total_seconds() - 8 * 60) < 5
 
-    # Second claim immediately fails due to claim gap
+    # Second claim right away on ANOTHER account succeeds
+    claimed2 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed2 is not None
+    assert claimed2[0].id == job2.id
+    second_acc = claimed2[1]
+    assert second_acc.id != first_acc.id
+    assert second_acc.cooldown_until is not None
+    assert abs((second_acc.cooldown_until - second_acc.last_used_at).total_seconds() - 8 * 60) < 5
+
+    # Third claim fails because all accounts are resting
+    claimed3 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed3 is None
+
+    # Free the first account's busy status so it can be claimed again once rested
+    claimed1[0].status = "uploaded"
+    now = ai_video_dispatch._utcnow()
+    first_acc.cooldown_until = now - timedelta(seconds=1)
+    db_session.commit()
+
+    claimed4 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed4 is not None
+    assert claimed4[0].id == job3.id
+    assert claimed4[1].id == first_acc.id
+
+
+def test_claim_gap_single_account_blocks_until_rested(db_session, test_fanpage, monkeypatch):
+    monkeypatch.setattr(ai_video_dispatch, "MIN_CLAIM_GAP_MINUTES", 10)
+    monkeypatch.setattr(ai_video_dispatch.random, "uniform", lambda a, b: 8.0)
+    _ensure_settings(db_session, worker_enabled=True)
+
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job1 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Single Acc 1",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    job2 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Single Acc 2",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([worker, acc, job1, job2])
+    db_session.commit()
+
+    claimed1 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed1 is not None
+    assert claimed1[0].id == job1.id
+    assert claimed1[1].id == acc.id
+
+    # Second claim on the same single account returns None until 10 minutes pass
     claimed2 = ai_video_dispatch.claim_job(db_session, "w1")
     assert claimed2 is None
 
-    # Set all accounts' last_used_at to 11 minutes ago
+    # Free the first job's busy status and expire cooldown
+    claimed1[0].status = "uploaded"
     now = ai_video_dispatch._utcnow()
-    past = now - timedelta(minutes=11)
-    acc1.last_used_at = past
-    acc2.last_used_at = past
+    acc.cooldown_until = now - timedelta(seconds=1)
     db_session.commit()
 
-    # Second claim now succeeds
     claimed3 = ai_video_dispatch.claim_job(db_session, "w1")
     assert claimed3 is not None
     assert claimed3[0].id == job2.id
+
+
+def test_worker_random_pause_after_complete_and_failure(db_session, test_fanpage, tmp_path, monkeypatch):
+    import sys
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "storage_base_path", str(tmp_path))
+    monkeypatch.setattr(cfg, "storage_base_url", "http://test-server/media")
+    monkeypatch.setattr(ai_video_dispatch, "MIN_CLAIM_GAP_MINUTES", 10)
+    monkeypatch.setattr(ai_video_dispatch.random, "uniform", lambda a, b: 60.0)
+    mock_finalize_module = MagicMock()
+    monkeypatch.setitem(sys.modules, "app.tasks.ai_video_finalize", mock_finalize_module)
+    _ensure_settings(db_session, worker_enabled=True)
+
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job1 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Worker Pause Complete",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="claimed",
+        worker_id="w1",
+        account_id=acc.id,
+        generation=1,
+    )
+    job2 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Worker Pause Fail",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="claimed",
+        worker_id="w1",
+        account_id=acc.id,
+        generation=1,
+    )
+    db_session.add_all([worker, acc, job1, job2])
+    db_session.commit()
+
+    # 1. Complete job pauses worker ~60s
+    ai_video_dispatch.complete_job(
+        db_session, job1, "w1", 1, b"video", b"thumb", {"duration_s": 10.0}
+    )
+    db_session.refresh(worker)
+    assert worker.paused_until is not None
+    now = ai_video_dispatch._utcnow()
+    assert abs((worker.paused_until - now).total_seconds() - 60.0) < 5
+
+    # Worker is paused, so claim_job returns None
+    assert ai_video_dispatch.claim_job(db_session, "w1") is None
+
+    # Clear worker pause
+    worker.paused_until = now - timedelta(seconds=1)
+    db_session.commit()
+
+    # 2. Failure pauses worker ~60s
+    ai_video_dispatch.record_failure(db_session, job2, "w1", 1, "transient", "network flake")
+    db_session.refresh(worker)
+    assert worker.paused_until is not None
+    now2 = ai_video_dispatch._utcnow()
+    assert abs((worker.paused_until - now2).total_seconds() - 60.0) < 5
+
+
+def test_min_claim_gap_zero_skips_random_rests(db_session, test_fanpage, tmp_path, monkeypatch):
+    import sys
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "storage_base_path", str(tmp_path))
+    monkeypatch.setattr(cfg, "storage_base_url", "http://test-server/media")
+    monkeypatch.setattr(ai_video_dispatch, "MIN_CLAIM_GAP_MINUTES", 0)
+    mock_finalize_module = MagicMock()
+    monkeypatch.setitem(sys.modules, "app.tasks.ai_video_finalize", mock_finalize_module)
+    _ensure_settings(db_session, worker_enabled=True)
+
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job1 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Gap Zero 1",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    job2 = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Gap Zero 2",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([worker, acc, job1, job2])
+    db_session.commit()
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed is not None
+    assert claimed[1].cooldown_until is None
+
+    # Complete job -> no worker pause applied
+    ai_video_dispatch.complete_job(
+        db_session, claimed[0], "w1", 1, b"video", b"thumb", {"duration_s": 10.0}
+    )
+    db_session.refresh(worker)
+    assert worker.paused_until is None
+
+    # Claim job2 and record failure -> no worker pause applied
+    claimed2 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed2 is not None
+    ai_video_dispatch.record_failure(db_session, claimed2[0], "w1", 1, "transient", "flake")
+    db_session.refresh(worker)
+    assert worker.paused_until is None
+
+
+def test_sweep_does_not_restart_pinned_job_in_cooldown_gap(db_session, test_fanpage):
+    _ensure_settings(db_session, reserve=0)
+    now = ai_video_dispatch._utcnow()
+    acc = GflowAccount(
+        worker_id="w1",
+        profile="p1",
+        authenticated=True,
+        status="ok",
+        credits=100,
+        cooldown_until=now + timedelta(minutes=10),
+        last_used_at=now - timedelta(minutes=5),
+    )
+    db_session.add(acc)
+    db_session.commit()
+
+    job_stale_pinned = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Stale Pinned In Gap",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}, {"index": 2}],
+        clips_done=[{"index": 1, "media_id": "m1", "at": "2026-01-01"}],
+        credits_per_clip=15,
+        credits_estimate=30,
+        status="queued",
+        account_id=acc.id,
+        last_progress_at=now - timedelta(hours=13),
+        generation=1,
+    )
+    db_session.add(job_stale_pinned)
+    db_session.commit()
+
+    # Sweep should NOT restart the job just because its account has cooldown_until or was used 5m ago
+    ai_video_dispatch.sweep(db_session)
+
+    db_session.refresh(job_stale_pinned)
+    assert job_stale_pinned.status == "queued"
+    assert job_stale_pinned.account_id == acc.id
+    assert job_stale_pinned.generation == 1
+    assert job_stale_pinned.restarts == 0
+    assert len(job_stale_pinned.clips_done) == 1
+
+    # But if the account lacks credits, sweep restarts it
+    acc.credits = 0
+    db_session.commit()
+
+    ai_video_dispatch.sweep(db_session)
+    db_session.refresh(job_stale_pinned)
+    assert job_stale_pinned.generation == 2
+    assert job_stale_pinned.restarts == 1
+    assert job_stale_pinned.account_id is None
+    assert len(job_stale_pinned.clips_done) == 0
+
+
+def test_get_candidate_accounts_respect_claim_gap_param(db_session):
+    now = ai_video_dispatch._utcnow()
+    acc = GflowAccount(
+        worker_id="w1",
+        profile="gap_prof",
+        authenticated=True,
+        status="ok",
+        credits=100,
+        cooldown_until=now + timedelta(minutes=10),
+    )
+    db_session.add(acc)
+    db_session.commit()
+
+    # With respect_claim_gap=True (default), cooling down account is excluded
+    candidates_default = ai_video_dispatch.get_candidate_accounts(db_session, "w1")
+    assert acc.id not in [a.id for a in candidates_default]
+
+    # With respect_claim_gap=False, cooling down account is included
+    candidates_no_gap = ai_video_dispatch.get_candidate_accounts(db_session, "w1", respect_claim_gap=False)
+    assert acc.id in [a.id for a in candidates_no_gap]
 
 
 def test_complete_clears_error(db_session, test_fanpage, tmp_path, monkeypatch):

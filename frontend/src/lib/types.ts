@@ -713,6 +713,26 @@ export interface GflowAccount {
   busy_job_id: number | null;
 }
 
+export interface GflowWorkerActivityJob {
+  id: number;
+  title: string;
+  fanpage_name: string;
+  account: string | null;
+  status: string;
+  clips_done: number;
+  clips_total: number;
+  started_at: string | null;
+  last_progress_at: string | null;
+}
+
+export interface GflowWorkerActivity {
+  state: "working" | "resting" | "waiting" | "idle" | "offline";
+  job: GflowWorkerActivityJob | null;
+  resting_until: string | null;
+  queued: number;
+  next_account_free_at: string | null;
+}
+
 export interface GflowWorker {
   worker_id: string;
   last_seen_at: string | null;
@@ -722,6 +742,7 @@ export interface GflowWorker {
   mem_available_mb: number | null;
   running_job_ids: number[];
   paused_until: string | null;
+  activity?: GflowWorkerActivity;
 }
 
 export interface AiVideoTemplate {

@@ -6,7 +6,9 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse
 from pathlib import Path
 import tempfile
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 
 from app.api.deps import DB, CurrentUser, get_current_user
 from app.models.ai_video import VideoJob, GflowAccount, GflowWorker
@@ -249,9 +251,95 @@ def list_workers(db: DB, user: CurrentUser):
     now = ai_video_dispatch._utcnow()
     threshold = now - ai_video_dispatch.timedelta(seconds=ai_video_dispatch.WORKER_ONLINE_SECONDS)
 
+    queued_count = (
+        db.query(func.count(VideoJob.id))
+        .filter(VideoJob.status == "queued")
+        .scalar()
+        or 0
+    )
+
     result = []
     for w in workers:
         online = bool(w.last_seen_at and w.last_seen_at >= threshold)
+        job_dict = None
+        resting_until = None
+        next_account_free_at = None
+
+        if not online:
+            state = "offline"
+        else:
+            working_job = (
+                db.query(VideoJob)
+                .filter(
+                    VideoJob.worker_id == w.worker_id,
+                    VideoJob.status.in_(["claimed", "generating", "uploaded"]),
+                )
+                .order_by(
+                    VideoJob.last_progress_at.is_(None),
+                    VideoJob.last_progress_at.desc(),
+                    VideoJob.id.desc(),
+                )
+                .first()
+            )
+
+            if working_job:
+                state = "working"
+                fanpage = (
+                    db.query(TargetFanpage)
+                    .filter(TargetFanpage.id == working_job.fanpage_id)
+                    .first()
+                    if working_job.fanpage_id
+                    else None
+                )
+                account = (
+                    db.query(GflowAccount)
+                    .filter(GflowAccount.id == working_job.account_id)
+                    .first()
+                    if working_job.account_id
+                    else None
+                )
+                clips_total = len(working_job.clips) if working_job.clips else 0
+                clips_done = len(working_job.clips_done) if working_job.clips_done else 0
+                job_dict = {
+                    "id": working_job.id,
+                    "title": working_job.title,
+                    "fanpage_name": fanpage.name if fanpage else "",
+                    "account": account.profile if account else None,
+                    "status": working_job.status,
+                    "clips_done": clips_done,
+                    "clips_total": clips_total,
+                    "started_at": working_job.started_at,
+                    "last_progress_at": working_job.last_progress_at,
+                }
+            elif w.paused_until and (
+                w.paused_until.replace(tzinfo=None) if w.paused_until.tzinfo else w.paused_until
+            ) > now:
+                state = "resting"
+                resting_until = w.paused_until
+            elif queued_count > 0:
+                state = "waiting"
+                earliest_cooldown = (
+                    db.query(func.min(GflowAccount.cooldown_until))
+                    .filter(
+                        GflowAccount.worker_id == w.worker_id,
+                        GflowAccount.enabled.is_(True),
+                        GflowAccount.authenticated.is_(True),
+                        GflowAccount.cooldown_until > now,
+                    )
+                    .scalar()
+                )
+                next_account_free_at = earliest_cooldown
+            else:
+                state = "idle"
+
+        activity = {
+            "state": state,
+            "job": job_dict,
+            "resting_until": resting_until,
+            "queued": queued_count,
+            "next_account_free_at": next_account_free_at,
+        }
+
         result.append({
             "worker_id": w.worker_id,
             "last_seen_at": w.last_seen_at,
@@ -261,5 +349,6 @@ def list_workers(db: DB, user: CurrentUser):
             "mem_available_mb": w.mem_available_mb,
             "running_job_ids": w.running_job_ids or [],
             "paused_until": w.paused_until,
+            "activity": activity,
         })
     return result
