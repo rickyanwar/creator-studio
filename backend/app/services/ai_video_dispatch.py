@@ -22,6 +22,8 @@ BACKOFF_MINUTES = (2, 5, 10)
 PIN_MAX_HOURS = 12
 MAX_RESTARTS = 2
 UNUSUAL_BACKOFF_MINUTES = (30, 60, 120, 120)
+ACCOUNT_COOLDOWN_HOURS = 6
+SUBMIT_NO_REPLY = "of clicking submit"
 MIN_CLAIM_GAP_MINUTES = 10
 WORKER_ONLINE_SECONDS = 180
 
@@ -42,8 +44,10 @@ def get_candidate_accounts(db: Session, worker_id: str) -> List[GflowAccount]:
     """
     Candidate account for worker W:
     worker_id == W, enabled, authenticated, status "ok", credits not None,
+    not cooling down (cooldown_until is None or <= now),
     and not busy (no video_job with this account_id in claimed or generating).
     """
+    now = _utcnow()
     busy_account_ids_subq = (
         db.query(VideoJob.account_id)
         .filter(
@@ -62,6 +66,7 @@ def get_candidate_accounts(db: Session, worker_id: str) -> List[GflowAccount]:
             GflowAccount.authenticated.is_(True),
             GflowAccount.status == "ok",
             GflowAccount.credits.isnot(None),
+            or_(GflowAccount.cooldown_until.is_(None), GflowAccount.cooldown_until <= now),
             ~GflowAccount.id.in_(busy_account_ids_subq.select()),
         )
         .all()
@@ -491,8 +496,7 @@ def record_failure(
         job.status = "queued"
         job.worker_id = None
         job.lease_until = None
-        if not_before_dt is not None:
-            job.not_before = not_before_dt
+        job.not_before = not_before_dt
         if not job.clips_done:
             job.account_id = None
             job.flow_project_id = None
@@ -506,6 +510,7 @@ def record_failure(
         job.flow_project_id = None
         job.worker_id = None
         job.lease_until = None
+        job.not_before = None
         if job.restarts > MAX_RESTARTS:
             job.status = "failed"
             job.finished_at = now
@@ -514,20 +519,22 @@ def record_failure(
             job.status = "queued"
 
     is_unusual = reason == "unusual_activity" or "UNUSUAL_ACTIVITY" in (message or "").upper()
-    if is_unusual:
+    no_submit_reply = reason in ("transient", "other") and SUBMIT_NO_REPLY in (message or "")
+    if is_unusual or no_submit_reply:
         job.unusual_hits = (job.unusual_hits or 0) + 1
+        if account:
+            account.cooldown_until = now + timedelta(hours=ACCOUNT_COOLDOWN_HOURS)
+            account.last_error = (message or reason)[:2000]
         if job.unusual_hits > len(UNUSUAL_BACKOFF_MINUTES):
             job.status = "failed"
             job.finished_at = now
             job.worker_id = None
             job.lease_until = None
             _fail_idea()
+        elif job.clips_done:
+            _restart()
         else:
-            pause_until = now + timedelta(minutes=UNUSUAL_BACKOFF_MINUTES[job.unusual_hits - 1])
-            _requeue(not_before_dt=pause_until)
-            worker_row = db.query(GflowWorker).filter(GflowWorker.worker_id == worker_id).first()
-            if worker_row and (worker_row.paused_until is None or worker_row.paused_until < pause_until):
-                worker_row.paused_until = pause_until
+            _requeue()
 
     elif reason == "policy":
         job.status = "failed"

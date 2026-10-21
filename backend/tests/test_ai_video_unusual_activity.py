@@ -113,16 +113,28 @@ def test_unusual_activity_pauses_worker_and_keeps_counters(db_session, test_fanp
     assert claimed_job.unusual_hits == 1
     assert claimed_job.clip_attempts == 0
     assert claimed_job.restarts == 0
-
-    assert claimed_job.not_before is not None
-    assert abs((claimed_job.not_before - (now + timedelta(minutes=30))).total_seconds()) < 120
+    assert claimed_job.account_id is None
+    assert claimed_job.not_before is None
 
     db_session.refresh(worker)
-    assert worker.paused_until is not None
-    assert abs((worker.paused_until - (now + timedelta(minutes=30))).total_seconds()) < 120
+    assert worker.paused_until is None  # Worker is NOT paused
 
-    # Worker is paused, so claim_job returns None
+    db_session.refresh(acc)
+    assert acc.cooldown_until is not None
+    assert abs((acc.cooldown_until - (now + timedelta(hours=6))).total_seconds()) < 120
+    assert acc.last_error == "x"
+
+    # Worker w1 has only acc (cooling), so claim_job returns None
     assert ai_video_dispatch.claim_job(db_session, "w1") is None
+
+    # When another healthy account is available, worker claims the job immediately
+    acc2 = GflowAccount(worker_id="w1", profile="p2", authenticated=True, status="ok", credits=100)
+    db_session.add(acc2)
+    db_session.commit()
+    claimed2 = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed2 is not None
+    assert claimed2[0].id == claimed_job.id
+    assert claimed2[1].id == acc2.id
 
 
 def test_transient_with_unusual_message_is_treated_as_unusual(db_session, test_fanpage):
@@ -149,12 +161,22 @@ def test_transient_with_unusual_message_is_treated_as_unusual(db_session, test_f
     assert claimed is not None
     claimed_job, _ = claimed
 
+    now = ai_video_dispatch._utcnow()
     msg = "Flow refused the submit: PUBLIC_ERROR_UNUSUAL_ACTIVITY (gRPC 7)"
     ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "transient", msg)
 
     assert claimed_job.unusual_hits == 1
     assert claimed_job.clip_attempts == 0
     assert claimed_job.status == "queued"
+    assert claimed_job.account_id is None
+    assert claimed_job.not_before is None
+
+    db_session.refresh(acc)
+    assert acc.cooldown_until is not None
+    assert abs((acc.cooldown_until - (now + timedelta(hours=6))).total_seconds()) < 120
+
+    db_session.refresh(worker)
+    assert worker.paused_until is None
 
 
 def test_unusual_activity_backoff_then_fails(db_session, test_fanpage):
@@ -177,12 +199,12 @@ def test_unusual_activity_backoff_then_fails(db_session, test_fanpage):
     db_session.add_all([worker, acc, job])
     db_session.commit()
 
-    expected_delays = [30, 60, 120, 120]
-
     for hit in range(1, 6):
         db_session.refresh(worker)
+        db_session.refresh(acc)
         db_session.refresh(job)
-        worker.paused_until = None
+        # Clear cooldown so single-account test can reclaim
+        acc.cooldown_until = None
         job.not_before = None
         db_session.commit()
 
@@ -196,15 +218,301 @@ def test_unusual_activity_backoff_then_fails(db_session, test_fanpage):
         )
 
         assert claimed_job.unusual_hits == hit
+        db_session.refresh(worker)
+        assert worker.paused_until is None
         if hit <= 4:
             assert claimed_job.status == "queued"
-            assert claimed_job.not_before is not None
-            expected_sec = expected_delays[hit - 1] * 60
-            actual_sec = (claimed_job.not_before - now).total_seconds()
-            assert abs(actual_sec - expected_sec) < 120
+            assert claimed_job.account_id is None
+            assert claimed_job.not_before is None
+            db_session.refresh(acc)
+            assert acc.cooldown_until is not None
         else:
             assert claimed_job.status == "failed"
             assert claimed_job.finished_at is not None
+
+
+def test_fail_job_submit_no_reply_cooldown_unpinned(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True)
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job No Reply",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([worker, acc, job])
+    db_session.commit()
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed is not None
+    claimed_job, _ = claimed
+
+    now = ai_video_dispatch._utcnow()
+    msg = "transient: migrated host: no YhhmEf/eb1hJf/MZZa6b/nprQif reply within 60s of clicking submit (profile afb)"
+    ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "transient", msg)
+
+    assert claimed_job.status == "queued"
+    assert claimed_job.account_id is None
+    assert claimed_job.not_before is None
+    assert claimed_job.unusual_hits == 1
+
+    db_session.refresh(acc)
+    assert acc.cooldown_until is not None
+    assert abs((acc.cooldown_until - (now + timedelta(hours=6))).total_seconds()) < 120
+    assert "of clicking submit" in (acc.last_error or "")
+
+    db_session.refresh(worker)
+    assert worker.paused_until is None
+
+
+def test_fail_job_submit_no_reply_with_clips_done_restarts(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True)
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job With Clips",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}, {"index": 2}],
+        credits_per_clip=15,
+        credits_estimate=30,
+        status="queued",
+    )
+    db_session.add_all([worker, acc, job])
+    db_session.commit()
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed is not None
+    claimed_job, _ = claimed
+    initial_gen = claimed_job.generation
+
+    # Simulate 1 clip done
+    claimed_job.clips_done = [{"index": 1, "video_url": "http://example.com/1.mp4"}]
+    db_session.commit()
+
+    now = ai_video_dispatch._utcnow()
+    msg = "transient: no reply within 60s of clicking submit"
+    ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "transient", msg)
+
+    assert claimed_job.status == "queued"
+    assert claimed_job.generation == initial_gen + 1
+    assert claimed_job.clips_done == []
+    assert claimed_job.account_id is None
+    assert claimed_job.not_before is None
+    assert claimed_job.unusual_hits == 1
+
+    db_session.refresh(acc)
+    assert acc.cooldown_until is not None
+    assert abs((acc.cooldown_until - (now + timedelta(hours=6))).total_seconds()) < 120
+
+    db_session.refresh(worker)
+    assert worker.paused_until is None
+
+
+def test_fail_job_unusual_activity_cooldown_unpinned(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True)
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job Unusual Activity",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([worker, acc, job])
+    db_session.commit()
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed is not None
+    claimed_job, _ = claimed
+
+    now = ai_video_dispatch._utcnow()
+    ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "unusual_activity", "blocked by cloudflare")
+
+    assert claimed_job.status == "queued"
+    assert claimed_job.account_id is None
+    assert claimed_job.not_before is None
+    assert claimed_job.unusual_hits == 1
+
+    db_session.refresh(acc)
+    assert acc.cooldown_until is not None
+    assert abs((acc.cooldown_until - (now + timedelta(hours=6))).total_seconds()) < 120
+
+    db_session.refresh(worker)
+    assert worker.paused_until is None
+
+
+def test_get_candidate_accounts_cooldown_filtering(db_session):
+    now = ai_video_dispatch._utcnow()
+    acc_cooling = GflowAccount(
+        worker_id="w1",
+        profile="cooling_prof",
+        authenticated=True,
+        status="ok",
+        credits=100,
+        cooldown_until=now + timedelta(hours=2),
+    )
+    acc_past = GflowAccount(
+        worker_id="w1",
+        profile="past_prof",
+        authenticated=True,
+        status="ok",
+        credits=100,
+        cooldown_until=now - timedelta(minutes=5),
+    )
+    acc_none = GflowAccount(
+        worker_id="w1",
+        profile="none_prof",
+        authenticated=True,
+        status="ok",
+        credits=100,
+        cooldown_until=None,
+    )
+    db_session.add_all([acc_cooling, acc_past, acc_none])
+    db_session.commit()
+
+    candidates = ai_video_dispatch.get_candidate_accounts(db_session, "w1")
+    candidate_profiles = {a.profile for a in candidates}
+
+    assert "cooling_prof" not in candidate_profiles
+    assert "past_prof" in candidate_profiles
+    assert "none_prof" in candidate_profiles
+
+    # Once cooldown expires, cooling_prof becomes candidate again
+    acc_cooling.cooldown_until = now - timedelta(seconds=1)
+    db_session.commit()
+
+    candidates2 = ai_video_dispatch.get_candidate_accounts(db_session, "w1")
+    candidate_profiles2 = {a.profile for a in candidates2}
+    assert "cooling_prof" in candidate_profiles2
+
+
+def test_plain_transient_keeps_old_retry_backoff(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True)
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job Plain Transient",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([worker, acc, job])
+    db_session.commit()
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed is not None
+    claimed_job, _ = claimed
+
+    now = ai_video_dispatch._utcnow()
+    ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "transient", "network timeout 504")
+
+    assert claimed_job.status == "queued"
+    assert claimed_job.clip_attempts == 1
+    assert claimed_job.unusual_hits is None or claimed_job.unusual_hits == 0
+    assert claimed_job.not_before is not None
+    assert abs((claimed_job.not_before - (now + timedelta(minutes=2))).total_seconds()) < 120
+    assert claimed_job.account_id is None  # no clip done yet, so _requeue unpins (unchanged behaviour)
+
+    db_session.refresh(acc)
+    assert acc.cooldown_until is None
+    db_session.refresh(worker)
+    assert worker.paused_until is None
+
+
+def test_unusual_hits_exceeding_max_fails_job(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True)
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job Max Hits",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    db_session.add_all([worker, acc, job])
+    db_session.commit()
+
+    # Simulate 4 previous unusual hits
+    job.unusual_hits = 4
+    db_session.commit()
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+    assert claimed is not None
+    claimed_job, _ = claimed
+
+    ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "unusual_activity", "fifth hit")
+
+    assert claimed_job.status == "failed"
+    assert claimed_job.unusual_hits == 5
+    assert claimed_job.finished_at is not None
+    assert claimed_job.worker_id is None
+    assert claimed_job.lease_until is None
+
+
+def test_queued_pinned_to_cooling_account_not_claimed(db_session, test_fanpage):
+    _ensure_settings(db_session, worker_enabled=True)
+    now = ai_video_dispatch._utcnow()
+    worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
+    acc_cooling = GflowAccount(
+        worker_id="w1", profile="p_cool", authenticated=True, status="ok", credits=100,
+        cooldown_until=now + timedelta(hours=6),
+    )
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job Pinned Cooling",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+        account_id=None,
+    )
+    db_session.add_all([worker, acc_cooling, job])
+    db_session.commit()
+
+    job.account_id = acc_cooling.id
+    db_session.commit()
+
+    # Worker w1 has only acc_cooling which is on cooldown. claim_job should return None.
+    assert ai_video_dispatch.claim_job(db_session, "w1") is None
 
 
 def test_sticky_account_prefers_most_recently_used(db_session, test_fanpage):
