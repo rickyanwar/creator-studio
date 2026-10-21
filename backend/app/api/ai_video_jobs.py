@@ -317,7 +317,11 @@ def list_workers(db: DB, user: CurrentUser):
                     "last_progress_at": working_job.last_progress_at,
                 }
                 running_ids = w.running_job_ids or []
-                if working_job.id in running_ids or str(working_job.id) in [str(x) for x in running_ids]:
+                # The worker heartbeats BEFORE it claims, so a job claimed (or reporting progress) in the
+                # last 2 minutes may not be in running_job_ids yet: that is still "working", not stalled.
+                last_touch = working_job.last_progress_at or working_job.started_at
+                recently_active = bool(last_touch and last_touch >= now - ai_video_dispatch.timedelta(seconds=120))
+                if working_job.id in running_ids or str(working_job.id) in [str(x) for x in running_ids] or recently_active:
                     state = "working"
                 else:
                     state = "stalled"

@@ -313,7 +313,7 @@ def test_worker_activity_stalled(db_session, test_fanpage, client):
         credits_per_clip=10,
         credits_estimate=10,
         status="claimed",
-        started_at=now - timedelta(minutes=1),
+        started_at=now - timedelta(minutes=5),  # older than the 2-minute "just claimed" grace
         lease_until=lease_time,
     )
     db_session.add_all([worker, job])
@@ -398,3 +398,21 @@ def test_heartbeat_requeues_orphan_job_after_grace_period(db_session, test_fanpa
 
     worker_row = db_session.query(GflowWorker).filter(GflowWorker.worker_id == "w-orphan").first()
     assert worker_row.phase == {"kind": "checking_credits", "done": 1, "total": 2}
+
+
+def test_worker_activity_just_claimed_is_working(db_session, test_fanpage, client):
+    """The worker heartbeats before it claims: a job claimed seconds ago is not yet in running_job_ids."""
+    now = _now()
+    worker = GflowWorker(worker_id="vps-gflow-fresh", last_seen_at=now, version="1.0.0", max_concurrent=1,
+                         mem_available_mb=4000, running_job_ids=[])
+    job = VideoJob(worker_id="vps-gflow-fresh", fanpage_id=test_fanpage.id, template_key="tpl1", title="Fresh Job",
+                   caption="c", model="veo2", aspect="9:16", clip_seconds=5, clips=[{"prompt": "p1"}],
+                   credits_per_clip=10, credits_estimate=10, status="claimed",
+                   started_at=now - timedelta(seconds=40), lease_until=now + timedelta(minutes=20))
+    db_session.add_all([worker, job])
+    db_session.commit()
+
+    act = client.get("/ai-video/workers").json()[0]["activity"]
+
+    assert act["state"] == "working"
+    assert act["job"]["id"] == job.id
