@@ -35,6 +35,8 @@ class GflowAccount(Base):
     credits_checked_at = Column(DateTime, nullable=True)
     last_error = Column(Text, nullable=True)
     cooldown_until = Column(DateTime, nullable=True)
+    unusual_strikes = Column(Integer, nullable=False, default=0, server_default="0")
+    last_unusual_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
     last_used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())

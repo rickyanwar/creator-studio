@@ -157,7 +157,7 @@ Implemented in `ai_video_dispatch.py:151-317`:
 
 | Failure Reason | Worker Condition | Action on Job & Account |
 | :--- | :--- | :--- |
-| `unusual_activity` / no submit reply | Flow anti-bot trigger or submit timeout ("of clicking submit") | Increments `unusual_hits`. Sets account on 6h cooldown (`cooldown_until = now + 6h`). Worker is NOT paused; job moves to another account immediately (restarts if `clips_done`, unpinned requeue if empty). Fails permanently if `unusual_hits > 4`. |
+| `unusual_activity` / no submit reply / agent-only | Flow anti-bot trigger, submit timeout ("of clicking submit"), or agent-only composer | Increments `unusual_hits`. Sets escalating account cooldown by strike within 24h (1st: 60-120m, 2nd: 120-180m, 3rd+: 180-240m) subject to share guard (max 40% cooling accounts per worker). Job requeues with backoff (30m, 60m, 120m * 0.85..1.25) before next account; restarts if `clips_done`. Circuit breaker pauses worker 30-60m if 3 distinct accounts hit within 30m or share guard trips. Fails permanently if `unusual_hits > 3`. |
 | `policy` | Safety / NSFW / RAI block | Fails job and idea immediately (`status="failed"`, line 451). |
 | `out_of_credits` | Balance 0 or exit code 37 | Sets `account.credits = 0`, requeues job unpinned (`status="queued"`, line 455). |
 | `auth` | Session expired (exit 8, 12, 14, 38) | Sets `account.status="auth_error"`, `authenticated=False`, requeues job unpinned (line 461). |
@@ -311,7 +311,7 @@ backend/app/tasks/ai_video_plan.py:76 - Approved ideas rotate by least recently 
 backend/app/tasks/ai_video_plan.py:84 - An approved idea is marked failed immediately if template's minimum clip option exceeds fanpage ai_video_max_credits_per_video.
 backend/app/services/ai_video_dispatch.py:188 - Worker claim requests are throttled by MIN_CLAIM_GAP_MINUTES = 10 based on GflowAccount.last_used_at.
 backend/app/services/ai_video_dispatch.py:288 - Unpinned job account selection uses sticky algorithm: prefers most recently used account with sufficient credits over never-used accounts.
-backend/app/services/ai_video_dispatch.py:521 - Google Flow unusual activity or no submit reply puts only the account on 6h cooldown (worker not paused); job moves to another account.
+backend/app/services/ai_video_dispatch.py:545 - Google Flow unusual activity or no submit reply puts account on escalating cooldown (1-2h, 2-3h, 3-4h), requeues job with backoff (30m, 60m, 120m), caps cooling accounts at 40%, and trips worker circuit breaker on 3 distinct hits in 30m.
 gflow_worker/proxy_guard.py:66 - If configured Flow proxy is unreachable, worker attempts phone proxy revival via ADB before failing closed to prevent leaking datacenter IP.
 gflow_worker/lock.py:40 - Locking enforces hierarchical order: global shared lock (LOCK_SH) first, then per-profile exclusive lock (LOCK_EX) second.
 gflow_worker/media.py:44 - Video concatenation trims seed_offset_ms (100ms) from preceding clips to eliminate duplicated static freeze frames at clip junctions.
