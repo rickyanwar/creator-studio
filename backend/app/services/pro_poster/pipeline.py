@@ -228,6 +228,8 @@ def compose_pro_poster(
         concept=concept,
     )
     if direction.layout == "typographic":
+        photo_errors = sum(1 for c in selection.rejected if c.person == "error")
+        reason = "photo check error" if photo_errors else "no verified photo"
         res = ProPosterResult(
             image=None,
             brief=brief,
@@ -236,7 +238,7 @@ def compose_pro_poster(
             qa=None,
             engine=None,
             attempts=0,
-            fallback_reason="no verified photo",
+            fallback_reason=reason,
         )
         _log_job_summary(job, res)
         return res

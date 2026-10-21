@@ -59,7 +59,7 @@ def determine_eval_final(
 ) -> tuple[str, str | None]:
     if bool(result_image):
         return "pro_poster", eval_url
-    if fallback_reason == "no verified photo":
+    if fallback_reason in ("no verified photo", "photo check error"):
         return "typographic", eval_url
     return "production", live_url
 

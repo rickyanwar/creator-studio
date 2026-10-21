@@ -125,6 +125,14 @@ def claim_page(r, fanpage_id: int, slot_utc: datetime, now_utc: datetime) -> Non
         logger.warning("Failed claiming fanpage %s: %s", fanpage_id, exc)
 
 
+def release_page(r, fanpage_id: int) -> None:
+    """Drop the JIT claim so the page's job can be picked again (used when a render is retried)."""
+    try:
+        r.delete(CLAIM_KEY.format(fanpage_id=fanpage_id))
+    except Exception as exc:
+        logger.warning("Failed releasing fanpage %s: %s", fanpage_id, exc)
+
+
 def visual_news_fanpage_ids(db) -> set[int]:
     """Return all TargetFanpage IDs in auto mode routing news to 'visual'."""
     fps = db.query(TargetFanpage).filter(TargetFanpage.mode2_publish_mode == PublishMode.auto).all()

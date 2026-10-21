@@ -114,6 +114,100 @@ def test_compose_typographic_path_no_generation(mock_gen, mock_direct, mock_sele
 
 @patch("app.services.pro_poster.photos.select_photos")
 @patch("app.services.pro_poster.art_direction.direct")
+@patch("app.services.pro_poster.pipeline.generate_ex")
+def test_compose_typographic_photo_check_error(mock_gen, mock_direct, mock_select):
+    """Typographic layout with photo check errors sets fallback_reason to 'photo check error'."""
+    db = MagicMock()
+    fanpage = MagicMock(id=10)
+    job = MagicMock(id=101, design_analysis_json={})
+    article = MagicMock(id=201)
+
+    brief = _make_brief(101)
+    err_chk = PhotoCheck(
+        candidate=PhotoCandidate(source="gallery", gallery_image_id=1, path_or_url="/tmp/err.jpg", role="hero"),
+        person="error",
+        event_match="error",
+        obstructed=False,
+        watermark=False,
+        quality=0,
+    )
+    selection = PhotoSelection(hero=None, context=(), rejected=(err_chk,))
+    mock_select.return_value = selection
+    mock_direct.return_value = ArtDirection(layout="typographic", prompt="", refs=())
+
+    with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
+         patch("app.services.story_photo.fetch_story_photo", return_value=None):
+        result = compose_pro_poster(db, fanpage, job, article)
+
+    assert result.image is None
+    assert result.direction.layout == "typographic"
+    assert result.attempts == 0
+    assert result.fallback_reason == "photo check error"
+    mock_gen.assert_not_called()
+
+
+@patch("app.services.pro_poster.photos.select_photos")
+@patch("app.services.pro_poster.art_direction.direct")
+@patch("app.services.pro_poster.pipeline.generate_ex")
+def test_compose_typographic_all_rejected_person_no(mock_gen, mock_direct, mock_select):
+    """Typographic layout with all rejected person='no' sets fallback_reason to 'no verified photo'."""
+    db = MagicMock()
+    fanpage = MagicMock(id=10)
+    job = MagicMock(id=101, design_analysis_json={})
+    article = MagicMock(id=201)
+
+    brief = _make_brief(101)
+    no_chk = PhotoCheck(
+        candidate=PhotoCandidate(source="gallery", gallery_image_id=1, path_or_url="/tmp/no.jpg", role="hero"),
+        person="no",
+        event_match="yes",
+        obstructed=False,
+        watermark=False,
+        quality=4,
+    )
+    selection = PhotoSelection(hero=None, context=(), rejected=(no_chk,))
+    mock_select.return_value = selection
+    mock_direct.return_value = ArtDirection(layout="typographic", prompt="", refs=())
+
+    with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
+         patch("app.services.story_photo.fetch_story_photo", return_value=None):
+        result = compose_pro_poster(db, fanpage, job, article)
+
+    assert result.image is None
+    assert result.direction.layout == "typographic"
+    assert result.attempts == 0
+    assert result.fallback_reason == "no verified photo"
+    mock_gen.assert_not_called()
+
+
+@patch("app.services.pro_poster.photos.select_photos")
+@patch("app.services.pro_poster.art_direction.direct")
+@patch("app.services.pro_poster.pipeline.generate_ex")
+def test_compose_typographic_empty_selection(mock_gen, mock_direct, mock_select):
+    """Typographic layout with empty selection sets fallback_reason to 'no verified photo'."""
+    db = MagicMock()
+    fanpage = MagicMock(id=10)
+    job = MagicMock(id=101, design_analysis_json={})
+    article = MagicMock(id=201)
+
+    brief = _make_brief(101)
+    selection = PhotoSelection(hero=None, context=(), rejected=())
+    mock_select.return_value = selection
+    mock_direct.return_value = ArtDirection(layout="typographic", prompt="", refs=())
+
+    with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
+         patch("app.services.story_photo.fetch_story_photo", return_value=None):
+        result = compose_pro_poster(db, fanpage, job, article)
+
+    assert result.image is None
+    assert result.direction.layout == "typographic"
+    assert result.attempts == 0
+    assert result.fallback_reason == "no verified photo"
+    mock_gen.assert_not_called()
+
+
+@patch("app.services.pro_poster.photos.select_photos")
+@patch("app.services.pro_poster.art_direction.direct")
 @patch("app.services.pro_poster.qa.check_safety")
 @patch("app.services.pro_poster.pipeline.generate_ex")
 @patch("app.services.speaker_design._finish", return_value=b"finished_png")

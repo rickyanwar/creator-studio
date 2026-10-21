@@ -168,6 +168,91 @@ def test_renderer_pro_poster_no_verified_photo_uses_typo_marker(
 @patch("app.services.design_images.prepare_design_images")
 @patch("app.tasks.design_renderer.SessionLocal")
 @patch("app.services.design_images.resolve_template")
+def test_renderer_pro_poster_photo_check_error_retries_and_defers(
+    mock_resolve, mock_session, mock_prepare, mock_post
+):
+    """When fallback_reason is 'photo check error' and no previous retries, defers job and releases page."""
+    from datetime import datetime, timedelta, timezone
+
+    db, job, fanpage, article, template = _setup_render_design_mocks(204)
+    mock_session.return_value = db
+    mock_resolve.return_value = template
+
+    pp_res = ProPosterResult(
+        image=None,
+        brief=_make_brief(204, badge_label="GT NEWS"),
+        selection=PhotoSelection(hero=None, context=(), rejected=()),
+        direction=ArtDirection(layout="typographic", prompt="", refs=()),
+        qa=None,
+        engine=None,
+        attempts=0,
+        fallback_reason="photo check error",
+    )
+
+    now_before = datetime.now(timezone.utc)
+    with patch("app.services.pro_poster.pipeline.compose_pro_poster", return_value=pp_res), \
+         patch("app.services.visual_fair_queue.release_page") as mock_release, \
+         patch("app.tasks.design_renderer._redis") as mock_redis, \
+         patch("pathlib.Path.write_bytes") as mock_write_bytes:
+        render_design(204)
+
+    assert job.status == PublishJobStatus.pending_design
+    assert job.design_not_before is not None
+    job_dnb_utc = job.design_not_before.replace(tzinfo=timezone.utc)
+    expected_not_before = now_before + timedelta(minutes=10)
+    assert abs((job_dnb_utc - expected_not_before).total_seconds()) < 60
+    assert job.design_analysis_json.get("photo_check_retries") == 1
+    mock_write_bytes.assert_not_called()
+    mock_release.assert_called_once_with(mock_redis.return_value, job.fanpage_id)
+
+
+@patch("app.tasks.design_renderer.httpx.post")
+@patch("app.services.design_images.prepare_design_images")
+@patch("app.tasks.design_renderer.SessionLocal")
+@patch("app.services.design_images.resolve_template")
+def test_renderer_pro_poster_photo_check_error_max_retries_uses_typo_marker(
+    mock_resolve, mock_session, mock_prepare, mock_post
+):
+    """When fallback_reason is 'photo check error' and max retries used, falls back to typo card."""
+    db, job, fanpage, article, template = _setup_render_design_mocks(205)
+    job.design_analysis_json = {"photo_check_retries": 2}
+    mock_session.return_value = db
+    mock_resolve.return_value = template
+    mock_prepare.return_value = ({"objects": []}, ["img1"])
+    mock_post.return_value.content = b"rendered_card"
+
+    pp_res = ProPosterResult(
+        image=None,
+        brief=_make_brief(205, badge_label="GT NEWS"),
+        selection=PhotoSelection(hero=None, context=(), rejected=()),
+        direction=ArtDirection(layout="typographic", prompt="", refs=()),
+        qa=None,
+        engine=None,
+        attempts=0,
+        fallback_reason="photo check error",
+    )
+
+    with patch("app.services.pro_poster.pipeline.compose_pro_poster", return_value=pp_res), \
+         patch("app.services.pro_poster.typo_background.make_typographic_background", return_value=b"fake_bg_png") as mock_tb, \
+         patch("app.services.pro_poster.typo_background.background_datauri", return_value="data:image/png;base64,BG") as mock_uri, \
+         patch("app.services.design_images.single_photo_face_fits") as mock_fits, \
+         patch("app.services.design_images.focus_points_for", return_value=[]), \
+         patch("pathlib.Path.mkdir"), \
+         patch("pathlib.Path.write_bytes"):
+        render_design(205)
+
+    mock_tb.assert_called_once()
+    mock_uri.assert_called_once_with(b"fake_bg_png")
+    mock_fits.assert_not_called()
+    assert job.last_image_marker == "pro_poster_typo"
+    assert job.design_engine == "template"
+    assert job.design_engine_note == "no verified photo (photo check error)"
+
+
+@patch("app.tasks.design_renderer.httpx.post")
+@patch("app.services.design_images.prepare_design_images")
+@patch("app.tasks.design_renderer.SessionLocal")
+@patch("app.services.design_images.resolve_template")
 def test_renderer_pro_poster_qa_failed_falls_back_to_old_path(
     mock_resolve, mock_session, mock_prepare, mock_post
 ):
@@ -242,6 +327,15 @@ def test_determine_eval_final_helper():
     final, new_url = determine_eval_final(None, "engine error: timeout", eval_url, live_url)
     assert final == "production"
     assert new_url == live_url
+
+
+def test_determine_eval_final_photo_check_error():
+    """determine_eval_final returns 'typographic' on 'photo check error'."""
+    eval_url = "/media/pro_poster_eval/test_run/100_new.png"
+    live_url = "http://media/live.png"
+    final, new_url = determine_eval_final(None, "photo check error", eval_url, live_url)
+    assert final == "typographic"
+    assert new_url == eval_url
 
 
 def test_eval_script_production_fallback_does_not_render(tmp_path, monkeypatch):
