@@ -867,6 +867,50 @@ def find_page_settings_controls(
     return True, "", page_link_bounds
 
 
+_STATUS_RE = re.compile(
+    r"^(.+?)[.,]\s*(?:see your profile|\d+\s+notifications?)\.?$",
+    re.IGNORECASE,
+)
+
+
+def _row_texts(row: ET.Element) -> str:
+    texts = []
+    for n in row.iter():
+        t = (n.attrib.get("text") or "").strip().lower()
+        d = (n.attrib.get("content-desc") or "").strip().lower()
+        if t:
+            texts.append(t)
+        if d:
+            texts.append(d)
+    return " ".join(texts)
+
+
+def _row_has_exact_name(row: ET.Element, norm_expected: str) -> bool:
+    if not norm_expected:
+        return False
+    for n in row.iter():
+        for attr in ("text", "content-desc"):
+            val = (n.attrib.get(attr) or "").strip()
+            if not val:
+                continue
+            norm_val = val.lower()
+            if norm_val == norm_expected:
+                return True
+            m = _STATUS_RE.fullmatch(norm_val)
+            if m and m.group(1).strip() == norm_expected:
+                return True
+    return False
+
+
+def _get_clickable_or_selected_rows(tree: ET.Element) -> list[ET.Element]:
+    clickable_rows: list[ET.Element] = []
+    for n in tree.iter():
+        if (n.attrib.get("clickable") == "true" or n.attrib.get("selected") == "true"):
+            if n not in clickable_rows:
+                clickable_rows.append(n)
+    return clickable_rows
+
+
 def find_switcher_target_page(
     tree: ET.Element,
     target_name: str,
@@ -898,55 +942,19 @@ def find_switcher_target_page(
             curr = parent_map.get(curr)
         return False
 
-    def row_texts(row: ET.Element) -> str:
-        texts = []
-        for n in row.iter():
-            t = (n.attrib.get("text") or "").strip().lower()
-            d = (n.attrib.get("content-desc") or "").strip().lower()
-            if t:
-                texts.append(t)
-            if d:
-                texts.append(d)
-        return " ".join(texts)
-
-    _STATUS_RE = re.compile(
-        r"^(.+?)[.,]\s*(?:see your profile|\d+\s+notifications?)\.?$",
-        re.IGNORECASE,
-    )
-
-    def row_has_exact_name(row: ET.Element, norm_expected: str) -> bool:
-        if not norm_expected:
-            return False
-        for n in row.iter():
-            for attr in ("text", "content-desc"):
-                val = (n.attrib.get(attr) or "").strip()
-                if not val:
-                    continue
-                norm_val = val.lower()
-                if norm_val == norm_expected:
-                    return True
-                m = _STATUS_RE.fullmatch(norm_val)
-                if m and m.group(1).strip() == norm_expected:
-                    return True
-        return False
-
-    clickable_rows: list[ET.Element] = []
-    for n in tree.iter():
-        if (n.attrib.get("clickable") == "true" or n.attrib.get("selected") == "true"):
-            if n not in clickable_rows:
-                clickable_rows.append(n)
+    clickable_rows = _get_clickable_or_selected_rows(tree)
 
     # Step 1: Detect and verify root row
     root_candidate_rows: list[tuple[ET.Element, str, bool]] = []
     other_active_root: str | None = None
 
     for row in clickable_rows:
-        text = row_texts(row)
+        text = _row_texts(row)
         if "create new profile" in text or "create another profile" in text:
             continue
         is_page_labeled = bool(re.search(r"\bpage\b", text)) and "create" not in text
         is_active = is_row_selected(row) or "see your profile" in text
-        if row_has_exact_name(row, norm_root) and not is_page_labeled:
+        if _row_has_exact_name(row, norm_root) and not is_page_labeled:
             root_candidate_rows.append((row, text, is_active))
         elif is_active:
             other_active_root = text
@@ -978,10 +986,10 @@ def find_switcher_target_page(
     for row in clickable_rows:
         if row == verified_root_row:
             continue
-        text = row_texts(row)
+        text = _row_texts(row)
         if "create new profile" in text or "create another profile" in text:
             continue
-        if row_has_exact_name(row, norm_target):
+        if _row_has_exact_name(row, norm_target):
             b = parse_bounds(row.attrib.get("bounds", ""))
             if b:
                 if "page" in text and b not in legacy_matches:
@@ -996,6 +1004,47 @@ def find_switcher_target_page(
 
     if len(matches) > 1:
         return False, f"Ambiguous switcher rows: found {len(matches)} rows matching '{target_name}'", None
+
+    return True, "", matches[0]
+
+
+def find_switcher_root_row(
+    tree: ET.Element,
+    root_name: str,
+) -> tuple[bool, str, tuple[int, int, int, int] | None]:
+    """Finds the unique root profile row in the account switcher."""
+    if tree is None:
+        return False, "UI hierarchy tree is None", None
+
+    norm_root = root_name.strip().lower()
+    if not norm_root:
+        return False, "Root profile name is empty", None
+
+    clickable_rows = _get_clickable_or_selected_rows(tree)
+    matches: list[tuple[int, int, int, int]] = []
+
+    for row in clickable_rows:
+        text = _row_texts(row)
+        if "create new profile" in text or "create another profile" in text:
+            continue
+        is_page_labeled = bool(re.search(r"\bpage\b", text)) and "create" not in text
+        if is_page_labeled:
+            continue
+        if _row_has_exact_name(row, norm_root):
+            b = parse_bounds(row.attrib.get("bounds", ""))
+            if not b:
+                for c in row.iter():
+                    cb = parse_bounds(c.attrib.get("bounds", ""))
+                    if cb:
+                        b = cb
+                        break
+            if b and b not in matches:
+                matches.append(b)
+
+    if len(matches) == 0:
+        return False, f"Root profile '{root_name}' not found in switcher", None
+    if len(matches) > 1:
+        return False, f"Ambiguous switcher rows: found {len(matches)} rows matching '{root_name}'", None
 
     return True, "", matches[0]
 
@@ -1082,6 +1131,97 @@ def _is_profile_switcher_open(tree: ET.Element) -> bool:
     return _has_label(tree, ("Dismiss",)) and _has_label(tree, ("Page",))
 
 
+def _switch_back_to_root_session(
+    serial: str,
+    main_name: str,
+    expected_geometry: str | None,
+    tree: ET.Element,
+) -> bool:
+    """Switches session back to main root profile from a managed Page session."""
+    if tree is None:
+        return False
+
+    is_main_own, _, _ = find_own_profile_controls(tree, main_name)
+    if is_main_own:
+        return False
+
+    switcher_node: ET.Element | None = None
+    for node in tree.iter():
+        desc = (node.attrib.get("content-desc") or "").strip().lower()
+        if "profile switcher" in desc:
+            switcher_node = node
+            break
+
+    if switcher_node is None:
+        return False
+
+    switcher_bounds: tuple[int, int, int, int] | None = None
+    if switcher_node.attrib.get("clickable") == "true":
+        switcher_bounds = parse_bounds(switcher_node.attrib.get("bounds", ""))
+    if switcher_bounds is None:
+        parent_map = {child: parent for parent in tree.iter() for child in parent}
+        curr = parent_map.get(switcher_node)
+        while curr is not None:
+            if curr.attrib.get("clickable") == "true":
+                anc_b = parse_bounds(curr.attrib.get("bounds", ""))
+                if anc_b:
+                    switcher_bounds = anc_b
+                    break
+            curr = parent_map.get(curr)
+
+    if switcher_bounds is None:
+        switcher_bounds = parse_bounds(switcher_node.attrib.get("bounds", ""))
+
+    if switcher_bounds is None:
+        logger.info("Profile switcher node found but no valid bounds could be determined")
+        return False
+
+    scx, scy = get_center(switcher_bounds)
+    logger.info("Tapping profile switcher at (%d, %d)", scx, scy)
+    run_adb(["shell", "input", "tap", str(scx), str(scy)], serial=serial)
+    time.sleep(1.0)
+
+    ok, err, tree_sw, _ = verify_foreground_facebook(serial, expected_geometry)
+    if not ok or tree_sw is None:
+        logger.info("Screen capture failed after opening profile switcher (%s), pressing Back", err)
+        run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+        return False
+
+    sw_open = _is_profile_switcher_open(tree_sw)
+    root_ok, root_err, root_bounds = find_switcher_root_row(tree_sw, main_name)
+    if not sw_open and not root_ok:
+        logger.info("Neither profile switcher nor root row visible after tap, pressing Back")
+        run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+        return False
+
+    if not root_ok or root_bounds is None:
+        logger.info("Root row '%s' not found or ambiguous (%s), pressing Back", main_name, root_err)
+        run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+        return False
+
+    rcx, rcy = get_center(root_bounds)
+    logger.info("Tapping root profile row '%s' at (%d, %d)", main_name, rcx, rcy)
+    run_adb(["shell", "input", "tap", str(rcx), str(rcy)], serial=serial)
+
+    profile_launched = False
+    for poll_idx in range(1, 9):
+        time.sleep(1.5)
+        ok_p, err_p, tree_p, _ = verify_foreground_facebook(serial, expected_geometry)
+        if ok_p and tree_p is not None:
+            is_own, _, _ = find_own_profile_controls(tree_p, main_name)
+            if is_own:
+                logger.info("Switched back to root session: verified own profile controls for '%s' on poll %d", main_name, poll_idx)
+                return True
+
+        if poll_idx == 2 and not profile_launched:
+            logger.info("Still not on own root for '%s' after 2 polls, launching fb://profile", main_name)
+            launch_facebook_own_profile(serial)
+            profile_launched = True
+
+    logger.info("Failed to switch back to root session for '%s' after 8 polls", main_name)
+    return False
+
+
 def _try_open_own_root_without_model(
     serial: str,
     main_name: str,
@@ -1137,6 +1277,10 @@ def _try_open_own_root_without_model(
         if _is_own_root(tree_p):
             logger.info("Deterministic root navigation succeeded: fb://profile intent")
             return True
+
+    if ok_p and tree_p is not None and _switch_back_to_root_session(serial, main_name, expected_geometry, tree_p):
+        logger.info("Deterministic root navigation succeeded: switched back from a Page session")
+        return True
 
     inter = clear_interstitials(serial)
     if inter.tapped:
