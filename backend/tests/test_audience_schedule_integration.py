@@ -291,9 +291,10 @@ def test_legacy_jobs_counted_in_reservations_and_daily_cap(db_session):
     db_session.flush()
     deliv1 = ensure_deliveries(db_session, job1, now_utc=now_utc)[0]
 
+    # Not news: a news job may not roll over to the next day (owner rule 2026-10-21).
     job2 = PublishJob(
         fanpage_id=fanpage.id,
-        content_type=ContentType.news_content,
+        content_type=ContentType.discussion,
         design_image_url="https://cdn.example.com/job2.jpg",
         status=PublishJobStatus.pending_publish,
         created_at=now_utc.replace(tzinfo=None),

@@ -376,13 +376,13 @@ def test_timezone_rollover_and_min_gap(db_session: Session):
     t0 = datetime(2026, 10, 15, 1, 0, tzinfo=timezone.utc)
     job1 = PublishJob(
         fanpage_id=project.id,
-        content_type=ContentType.news_content,
-        design_image_url="https://cdn.example.com/1.png",
+        content_type=ContentType.ig_repost,
+        watermarked_image_urls=["https://cdn.example.com/1.png"],
     )
     job2 = PublishJob(
         fanpage_id=project.id,
-        content_type=ContentType.news_content,
-        design_image_url="https://cdn.example.com/2.png",
+        content_type=ContentType.ig_repost,
+        watermarked_image_urls=["https://cdn.example.com/2.png"],
     )
     db_session.add_all([job1, job2])
     db_session.flush()
@@ -436,13 +436,13 @@ def test_planner_cap_rollover_honors_sleep_window(db_session: Session):
     t0 = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
     job1 = PublishJob(
         fanpage_id=project.id,
-        content_type=ContentType.news_content,
-        design_image_url="https://cdn.example.com/1.png",
+        content_type=ContentType.ig_repost,
+        watermarked_image_urls=["https://cdn.example.com/1.png"],
     )
     job2 = PublishJob(
         fanpage_id=project.id,
-        content_type=ContentType.news_content,
-        design_image_url="https://cdn.example.com/2.png",
+        content_type=ContentType.ig_repost,
+        watermarked_image_urls=["https://cdn.example.com/2.png"],
     )
     db_session.add_all([job1, job2])
     db_session.flush()
@@ -459,6 +459,58 @@ def test_planner_cap_rollover_honors_sleep_window(db_session: Session):
     assert d2.scheduled_for.date() == datetime(2026, 10, 16).date()
     assert 7 <= d2.scheduled_for.hour < 23
     assert (d2.scheduled_for - d1.scheduled_for).total_seconds() >= 60 * 60
+
+
+def test_news_next_day_rollover_is_stale(db_session: Session):
+    """Verify news job rolling over to next calendar day is marked skipped as stale."""
+    project = TargetFanpage(name="TZ News Project", repliz_account_id="rep_tz_news", is_active=True)
+    db_session.add(project)
+    db_session.flush()
+
+    dest = SocialDestination(
+        content_project_id=project.id,
+        kind="facebook_page",
+        name="Tokyo Page News",
+        mode="repliz",
+        timezone="Asia/Tokyo",
+        daily_target=1,
+        phone_daily_target=0,
+        repliz_daily_target=1,
+        min_gap_minutes=60,
+        supported_media=["image"],
+        repliz_account_id="rep_tokyo_news",
+        is_active=True,
+    )
+    db_session.add(dest)
+    db_session.flush()
+
+    # 2026-10-15 01:00 UTC = 2026-10-15 10:00 JST
+    t0 = datetime(2026, 10, 15, 1, 0, tzinfo=timezone.utc)
+    job1 = PublishJob(
+        fanpage_id=project.id,
+        content_type=ContentType.news_content,
+        design_image_url="https://cdn.example.com/1.png",
+    )
+    job2 = PublishJob(
+        fanpage_id=project.id,
+        content_type=ContentType.news_content,
+        design_image_url="https://cdn.example.com/2.png",
+    )
+    db_session.add_all([job1, job2])
+    db_session.flush()
+
+    d1 = ensure_deliveries(db_session, job1, now_utc=t0)[0]
+    tokyo_tz = zoneinfo.ZoneInfo("Asia/Tokyo")
+    d1_tokyo = d1.scheduled_for.replace(tzinfo=timezone.utc).astimezone(tokyo_tz)
+    # First delivery scheduled on Oct 15 in Tokyo within active hours and >= t0 + 60s
+    assert d1_tokyo.date() == datetime(2026, 10, 15).date()
+    assert 7 <= d1_tokyo.hour < 22
+    assert d1.scheduled_for >= datetime(2026, 10, 15, 1, 1)
+
+    d2 = ensure_deliveries(db_session, job2, now_utc=t0)[0]
+    assert d2.state == "skipped"
+    assert d2.last_error == "stale: no News slot on the day the news arrived"
+    assert d2.scheduled_for is None
 
 
 def test_immutable_snapshots_after_job_edit(db_session: Session):

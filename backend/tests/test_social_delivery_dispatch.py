@@ -582,7 +582,7 @@ def test_spaced_recovery_no_backlog_burst(db_session):
     for i in range(3):
         job = PublishJob(
             fanpage_id=fanpage.id,
-            content_type=ContentType.news_content,
+            content_type=ContentType.discussion,
             design_image_url=f"https://cdn.example.com/img_{i}.png",
             ai_generated_caption=f"News caption {i}",
             status=PublishJobStatus.pending_publish,

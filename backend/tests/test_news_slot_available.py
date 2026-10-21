@@ -313,3 +313,99 @@ def test_next_news_slot_utc_two_destinations_earlier_slot(db_session: Session):
     with patch("app.services.social_delivery_planner._plan_slot", side_effect=mock_plan):
         earliest = next_news_slot_utc(db_session, job, now_utc=now)
         assert earliest == slot2
+
+
+def test_news_stale_reason():
+    """Verify _news_stale_reason logic across timezones, calendar day boundary, stale_hours, and invalid tz."""
+    from app.services.social_delivery_planner import _news_stale_reason
+
+    # (a) tz "Asia/Jakarta": created 10:00 WIB, slot 18:00 WIB same day -> None
+    created_a = datetime(2026, 10, 21, 3, 0, tzinfo=timezone.utc)
+    slot_a = datetime(2026, 10, 21, 11, 0, tzinfo=timezone.utc)
+    assert _news_stale_reason(slot_a, created_a, 24, "Asia/Jakarta") is None
+
+    # (b) tz "Asia/Jakarta": created 15:00 WIB, slot next day 08:00 WIB (17 h) -> "stale: no News slot on the day the news arrived"
+    created_b = datetime(2026, 10, 21, 8, 0, tzinfo=timezone.utc)
+    slot_b = datetime(2026, 10, 22, 1, 0, tzinfo=timezone.utc)
+    assert (
+        _news_stale_reason(slot_b, created_b, 24, "Asia/Jakarta")
+        == "stale: no News slot on the day the news arrived"
+    )
+
+    # (c) tz "Asia/Jakarta": created 01:00 WIB, slot 23:30 WIB same day, stale_hours 8 -> "stale: no News slot within 8 h"
+    created_c = datetime(2026, 10, 20, 18, 0, tzinfo=timezone.utc)
+    slot_c = datetime(2026, 10, 21, 16, 30, tzinfo=timezone.utc)
+    assert (
+        _news_stale_reason(slot_c, created_c, 8, "Asia/Jakarta")
+        == "stale: no News slot within 8 h"
+    )
+
+    # (d) tz "America/New_York": created 2026-10-21 20:00 New York (= 2026-10-22 00:00 UTC),
+    # slot 2026-10-21 22:00 New York (= 2026-10-22 02:00 UTC) -> None (same New York day although the UTC date differs)
+    created_d = datetime(2026, 10, 22, 0, 0, tzinfo=timezone.utc)
+    slot_d = datetime(2026, 10, 22, 2, 0, tzinfo=timezone.utc)
+    assert _news_stale_reason(slot_d, created_d, 24, "America/New_York") is None
+
+    # (e) invalid tz "Nope/Zone" falls back to Asia/Jakarta without raising
+    assert _news_stale_reason(slot_a, created_a, 24, "Nope/Zone") is None
+    assert (
+        _news_stale_reason(slot_b, created_b, 24, "Nope/Zone")
+        == "stale: no News slot on the day the news arrived"
+    )
+
+
+def test_ensure_deliveries_next_day_slot_stale_skipped(db_session: Session):
+    """ensure_deliveries with next-day slot creates delivery skipped with same-day stale message."""
+    from app.services.social_delivery_planner import ensure_deliveries
+
+    now = datetime(2026, 10, 21, 10, 0, tzinfo=timezone.utc)
+    fp = _make_fanpage(db_session, "EnsureDeliveriesSameDayFP")
+    dest = _make_destination(db_session, fp, name="Dest1", is_active=True, news_stale_hours=24)
+    dest.timezone = "Asia/Jakarta"
+    db_session.flush()
+
+    job = PublishJob(
+        fanpage_id=fp.id,
+        content_type=ContentType.news_content,
+        design_image_url="https://cdn.example.com/news.png",
+        created_at=now,
+    )
+    db_session.add(job)
+    db_session.flush()
+
+    # Slot 17h later is next day in Jakarta (10:00 WIB next day)
+    next_day_slot = now + timedelta(hours=17)
+    with patch("app.services.mode_quota.pick_slot", return_value=next_day_slot):
+        deliveries = ensure_deliveries(db_session, job, now_utc=now)
+
+    assert len(deliveries) == 1
+    d = deliveries[0]
+    assert d.state == "skipped"
+    assert d.scheduled_for is None
+    assert d.last_error == "stale: no News slot on the day the news arrived"
+
+
+def test_news_slot_available_same_day_vs_next_day(db_session: Session):
+    """news_slot_available: next-day slot -> False; same-day slot -> True."""
+    now = datetime(2026, 10, 21, 10, 0, tzinfo=timezone.utc)
+    fp = _make_fanpage(db_session, "SameDayFP")
+    dest = _make_destination(db_session, fp, name="Dest1", is_active=True, news_stale_hours=24)
+    dest.timezone = "Asia/Jakarta"
+    db_session.flush()
+
+    job = PublishJob(
+        fanpage_id=fp.id,
+        content_type=ContentType.news_content,
+        created_at=now,
+    )
+    db_session.add(job)
+    db_session.flush()
+
+    # Same-day slot (2h later, 19:00 WIB Oct 21) -> True
+    with patch("app.services.mode_quota.pick_slot", return_value=now + timedelta(hours=2)):
+        assert news_slot_available(db_session, job, now_utc=now) is True
+
+    # Next-day slot (15h later, 08:00 WIB Oct 22, diff 15h < 24h) -> False
+    with patch("app.services.mode_quota.pick_slot", return_value=now + timedelta(hours=15)):
+        assert news_slot_available(db_session, job, now_utc=now) is False
+
