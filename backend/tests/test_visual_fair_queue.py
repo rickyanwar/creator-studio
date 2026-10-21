@@ -355,7 +355,7 @@ def test_has_news_slot_skips_and_advances(db_session, fake_redis):
 
     db_session.refresh(job1)
     assert job1.status == PublishJobStatus.skipped
-    assert job1.last_error == "stale: no News slot within 24 h, AI poster not rendered"
+    assert job1.last_error == "stale: no News slot on the news day or within 24 h, AI poster not rendered"
 
 
 # -------------------------------------------------------------------------
@@ -662,7 +662,40 @@ def test_jit_next_slot_none_fallback(db_session, fake_redis):
         assert picked is None
         db_session.refresh(job2)
         assert job2.status == PublishJobStatus.skipped
-        assert "stale: no News slot within 24 h" in job2.last_error
+        assert "stale: no News slot on the news day or within 24 h" in job2.last_error
+
+
+def test_jit_window_has_news_slot_false_skips_and_returns_other_page_job(db_session, fake_redis):
+    # (f) a page whose next slot is within the JIT window but _has_news_slot returns False ->
+    # that job becomes skipped with the new message and is NOT returned; another page's good job is returned instead.
+    fp_a = _create_fanpage(db_session, 201, "Page A")
+    fp_b = _create_fanpage(db_session, 202, "Page B")
+    t0 = datetime(2026, 10, 20, 11, 0)
+    job_a = _create_job(db_session, id=801, fanpage_id=fp_a.id, created_at=t0)
+    job_b = _create_job(db_session, id=802, fanpage_id=fp_b.id, created_at=t0)
+
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    slot_a = now + timedelta(minutes=10)
+    slot_b = now + timedelta(minutes=15)
+
+    def mock_next_slot(db, job, now_utc):
+        return slot_a if job.id == job_a.id else slot_b
+
+    def mock_has_news_slot(db, job, now_utc):
+        return job.id != job_a.id
+
+    with patch("app.services.visual_fair_queue.render_queue_for", return_value="visual"), \
+         patch("app.services.visual_fair_queue._next_slot", side_effect=mock_next_slot), \
+         patch("app.services.visual_fair_queue._has_news_slot", side_effect=mock_has_news_slot):
+        picked = pick_next_news_job(db_session, fake_redis, now)
+
+    assert picked is not None
+    assert picked.id == job_b.id
+    assert picked._jit_slot == slot_b
+
+    db_session.refresh(job_a)
+    assert job_a.status == PublishJobStatus.skipped
+    assert job_a.last_error == "stale: no News slot on the news day or within 24 h, AI poster not rendered"
 
 
 def test_dispatcher_claims_page_with_right_ttl(db_engine, fake_redis):

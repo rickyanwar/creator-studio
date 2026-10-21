@@ -254,6 +254,28 @@ def _resolve_sleep_window(db: Session, job: PublishJob) -> tuple[int | None, int
     return sleep_start, sleep_end
 
 
+def _news_stale_reason(
+    slot_utc: datetime,
+    created_utc: datetime,
+    stale_hours: int,
+    tz_name: str | None,
+) -> str | None:
+    """Why a news slot is too late, or None when it is fine. Owner rule 2026-10-21: news posts on the same local day it arrived (destination timezone), and within stale_hours."""
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name) if tz_name else zoneinfo.ZoneInfo("Asia/Jakarta")
+    except Exception:
+        tz = zoneinfo.ZoneInfo("Asia/Jakarta")
+
+    slot_aware = slot_utc if slot_utc.tzinfo is not None else slot_utc.replace(tzinfo=timezone.utc)
+    created_aware = created_utc if created_utc.tzinfo is not None else created_utc.replace(tzinfo=timezone.utc)
+
+    if slot_aware.astimezone(tz).date() != created_aware.astimezone(tz).date():
+        return "stale: no News slot on the day the news arrived"
+    elif (slot_aware - created_aware) > timedelta(hours=stale_hours):
+        return f"stale: no News slot within {stale_hours} h"
+    return None
+
+
 def _plan_slot(
     db: Session,
     destination: SocialDestination,
@@ -293,6 +315,8 @@ def _plan_slot(
         job_created_at_utc = job_created_at.replace(tzinfo=timezone.utc)
     else:
         job_created_at_utc = job_created_at.astimezone(timezone.utc)
+    if job_created_at_utc > aware_now:
+        job_created_at_utc = aware_now
 
     news_stale_hours = getattr(destination, "news_stale_hours", 24)
     if news_stale_hours is None:
@@ -300,7 +324,7 @@ def _plan_slot(
 
     is_stale_news = (
         group_of(job.content_type) == "news"
-        and (next_slot_utc - job_created_at_utc) > timedelta(hours=news_stale_hours)
+        and _news_stale_reason(next_slot_utc, job_created_at_utc, news_stale_hours, getattr(destination, "timezone", None)) is not None
     )
 
     return next_slot_utc, is_stale_news, news_stale_hours, existing_slots_utc
@@ -502,7 +526,21 @@ def ensure_deliveries(
             state = "skipped"
             assigned_device_id = None
             naive_scheduled_for = None
-            last_error = f"stale: no News slot within {news_stale_hours} h"
+            job_created_at = getattr(job, "created_at", None)
+            if job_created_at is None:
+                job_created_at_utc = aware_now
+            elif job_created_at.tzinfo is None:
+                job_created_at_utc = job_created_at.replace(tzinfo=timezone.utc)
+            else:
+                job_created_at_utc = job_created_at.astimezone(timezone.utc)
+            if job_created_at_utc > aware_now:
+                job_created_at_utc = aware_now
+            last_error = _news_stale_reason(
+                next_slot_utc,
+                job_created_at_utc,
+                news_stale_hours,
+                destination.timezone,
+            ) or f"stale: no News slot within {news_stale_hours} h"
         elif platform_accepted and payload.media_kind not in platform_accepted:
             state = "skipped"
             assigned_device_id = None

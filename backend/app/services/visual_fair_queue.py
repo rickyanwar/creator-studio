@@ -222,7 +222,7 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             pass
         if not _has_news_slot(db, job, now_utc):
             job.status = PublishJobStatus.skipped
-            job.last_error = "stale: no News slot within 24 h, AI poster not rendered"
+            job.last_error = "stale: no News slot on the news day or within 24 h, AI poster not rendered"
             db.commit()
             continue
         return job
@@ -247,7 +247,7 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             if slot is None:
                 if not _has_news_slot(db, job, now_utc):
                     job.status = PublishJobStatus.skipped
-                    job.last_error = "stale: no News slot within 24 h, AI poster not rendered"
+                    job.last_error = "stale: no News slot on the news day or within 24 h, AI poster not rendered"
                     db.commit()
                     continue
                 return job
@@ -256,6 +256,12 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             now_aware = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
             if (slot_aware - now_aware) > timedelta(minutes=JIT_LEAD_MINUTES):
                 break
+
+            if not _has_news_slot(db, job, now_utc):
+                job.status = PublishJobStatus.skipped
+                job.last_error = "stale: no News slot on the news day or within 24 h, AI poster not rendered"
+                db.commit()
+                continue
 
             job._jit_slot = slot
             return job
