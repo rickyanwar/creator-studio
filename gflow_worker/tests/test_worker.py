@@ -201,6 +201,8 @@ def test_credits_filter_and_interval(cfg, studio, monkeypatch):
     worker = Worker(replace(cfg, profiles=("p2",)), studio.api)
     try:
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         worker.tick()
         assert len(calls(cfg)) == 1  # credits list only; probe does not create projects
         assert worker.accounts == [{"profile": "p2", "email": None, "authenticated": False, "credits": None, "error": "no access", "error_class": "FlowAccessUnavailableError"}]
@@ -213,7 +215,10 @@ def test_heartbeat_credits_only_after_refresh(cfg, studio, monkeypatch):
     worker = Worker(cfg, studio.api)
     try:
         worker.tick()
-        first_tick = studio.events("/heartbeat")[-1]  # alive beats during probes come before it
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
+        worker.tick()
+        first_tick = studio.events("/heartbeat")[-1]
         worker.tick()
         second_tick = studio.events("/heartbeat")[-1]
         assert first_tick["accounts"][0]["credits"] == 100
@@ -229,6 +234,9 @@ def test_credit_probe_fallback_and_heartbeat(cfg, studio, monkeypatch, mode, cre
     monkeypatch.setenv("FAKE_PROBE_MODE", mode)
     worker = Worker(replace(cfg, profiles=("p2",), probe_timeout_seconds=0.1), studio.api)
     try:
+        worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         worker.tick()
         account = studio.events("/heartbeat")[-1]["accounts"][0]  # the tick's own heartbeat
         assert account["profile"] == "p2"
@@ -269,12 +277,18 @@ def test_credit_probe_transient_failure_retains_balance(cfg, studio, monkeypatch
     try:
         # Tick 1: Initial probe succeeds -> 638 credits
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         assert worker.accounts[0]["credits"] == 638
         assert worker.accounts[0]["error"] is None
 
         # Force a refresh tick with mode="unknown" (transient network glitch)
+        worker.next_full_refresh = None
         worker.last_refresh = None
         monkeypatch.setenv("FAKE_PROBE_MODE", "unknown")
+        worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         worker.tick()
         # Retains 638 credits; does NOT flip to unreadable on single glitch
         assert worker.accounts[0]["credits"] == 638
@@ -284,16 +298,22 @@ def test_credit_probe_transient_failure_retains_balance(cfg, studio, monkeypatch
         assert heartbeat_accounts[0]["error"] is None
 
         # Force another refresh tick with mode="unknown" (second consecutive failure)
+        worker.next_full_refresh = None
         worker.last_refresh = None
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         # Now it transitions to unreadable after 2 consecutive failures
         assert worker.accounts[0]["credits"] is None
         assert worker.accounts[0]["error"] == "credits unreadable"
 
         # Next tick recovers with mode="credits"
+        worker.next_full_refresh = None
         worker.last_refresh = None
         monkeypatch.setenv("FAKE_PROBE_MODE", "credits")
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         assert worker.accounts[0]["credits"] == 638
         assert worker.accounts[0]["error"] is None
     finally:
@@ -310,21 +330,28 @@ def test_probe_project_resolution_and_token_isolation(cfg, studio, monkeypatch):
     worker = Worker(replace(cfg, profiles=("p2",), probe_projects={"p2": "env-project"}), studio.api)
     try:
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         assert "project=env-project" in env_file.read_text()
         assert "must-not-leak" not in env_file.read_text()
         assert not any(command[:2] == ["project", "create"] for command in calls(cfg))
         assert worker.accounts[0]["credits"] == 638
 
+        (cfg.work_dir / "accounts_cache.json").unlink(missing_ok=True)
         cached_worker = Worker(replace(cfg, profiles=("p2",)), studio.api)
         cached_worker.cfg.work_dir.mkdir(parents=True, exist_ok=True)
         (cached_worker.cfg.work_dir / "probe_projects.json").write_text('{"p2": "cached-project"}')
         cached_worker.tick()
+        if cached_worker._refresh_thread:
+            cached_worker._refresh_thread.join()
         assert "project=cached-project" in env_file.read_text()
         assert not any(command[:2] == ["project", "create"] for command in calls(cfg)[2:])
         cached_worker.executor.shutdown()
 
         none_worker = Worker(replace(cfg, profiles=("p2",), work_dir=cfg.work_dir / "create"), studio.api)
         none_worker.tick()
+        if none_worker._refresh_thread:
+            none_worker._refresh_thread.join()
         assert "project=(none)" in env_file.read_text()
         assert not any(command[:2] == ["project", "create"] for command in calls(cfg))
         none_worker.executor.shutdown()
@@ -381,6 +408,9 @@ def test_main_claim_and_cancel(cfg, studio, monkeypatch):
     worker = Worker(cfg, studio.api)
     try:
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
+            worker.tick()
         worker.jobs[1][1].result(timeout=10)
         assert len(calls(cfg)) == 1  # credits only; probe project not created; job cancelled before video CLI
         worker.stop.set()
@@ -542,6 +572,8 @@ def test_probe_waits_for_shared_lock(cfg, studio, monkeypatch):
     try:
         started = time.monotonic()
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         assert worker.accounts[0]["credits"] == 638 and time.monotonic() - started >= 0.15
     finally:
         worker.executor.shutdown()
@@ -847,6 +879,8 @@ def test_credits_list_fails_discovers_profiles_and_probes(cfg, studio, monkeypat
     worker = Worker(replace(cfg, profiles=("life",)), studio.api)
     try:
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         assert len(worker.accounts) == 1
         acc = worker.accounts[0]
         assert acc["profile"] == "life"
@@ -924,17 +958,55 @@ def test_tick_refreshes_stale_credits_when_idle_only(cfg, studio, monkeypatch):
 
 
 
-def test_alive_heartbeat_sent_between_credit_probes(cfg, studio, monkeypatch):
-    """A long credit probe must not make the worker look offline: one alive beat per probed account."""
+def test_refresh_thread_heartbeat_and_phase(cfg, studio, monkeypatch):
+    """While a slow refresh thread runs, tick() posts heartbeat with phase and skips claims; next tick after finish sends credits."""
     monkeypatch.setattr(memory, "available_mb", lambda: 9000)
     monkeypatch.setenv("FAKE_PROBE_MODE", "credits")
+    job = payload()
+    job["account"]["profile"] = "p2"
+    studio.claims = [job]
     worker = Worker(replace(cfg, profiles=("p2",), probe_timeout_seconds=0.1), studio.api)
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+
+    orig_probe = worker._probe_credits
+
+    def slow_probe(account, previous=None):
+        refresh_started.set()
+        release_refresh.wait(timeout=5)
+        orig_probe(account, previous=previous)
+
+    monkeypatch.setattr(worker, "_probe_credits", slow_probe)
     try:
+        # Tick 1: starts the slow refresh thread
+        worker.tick()
+        assert refresh_started.wait(timeout=2)
+
+        # While refresh thread is running: tick() still sends heartbeat with phase and does not claim
         worker.tick()
         beats = studio.events("/heartbeat")
-        assert len(beats) >= 2  # alive beat(s) during the probe + the tick's heartbeat
-        assert all(a["credits"] is None for a in beats[0]["accounts"])
+        assert len(beats) >= 2
+        last_beat = beats[-1]
+        assert last_beat["phase"] is not None
+        assert last_beat["phase"]["kind"] == "checking_credits"
+        assert all(a["credits"] is None for a in last_beat["accounts"])
+        assert len(worker.jobs) == 0  # no claim while refresh thread is alive
+
+        # Let the refresh thread complete
+        release_refresh.set()
+        worker._refresh_thread.join(timeout=3)
+
+        # Next tick after thread finishes carries credits and phase is None, and can claim jobs
+        worker.tick()
+        beats = studio.events("/heartbeat")
+        last_beat = beats[-1]
+        assert last_beat["phase"] is None
+        assert last_beat["accounts"][0]["credits"] == 638
+        assert job["id"] in worker.jobs
     finally:
+        release_refresh.set()
+        if worker._refresh_thread:
+            worker._refresh_thread.join(timeout=2)
         worker.executor.shutdown()
 
 
@@ -943,13 +1015,145 @@ def test_no_reply_refreshes_only_the_failed_profile(cfg, studio, monkeypatch):
     worker = Worker(cfg, studio.api)
     try:
         worker.tick()  # full refresh once
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         probed = []
         monkeypatch.setattr(worker, "_probe_credits", lambda account, previous=None: probed.append(account["profile"]))
         monkeypatch.setattr(worker, "_refresh_accounts", lambda: probed.append("ALL"))
+        worker.last_profile_probe.clear()
         worker.runner.credits_stale = True
         worker.runner.stale_profiles = {worker.accounts[0]["profile"]}
         worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
         assert probed == [worker.accounts[0]["profile"]]
         assert worker.runner.stale_profiles == set()
     finally:
         worker.executor.shutdown()
+
+
+def test_next_full_refresh_scheduled_with_jitter(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    monkeypatch.setattr("random.uniform", lambda a, b: 0.0)
+    worker = Worker(cfg, studio.api)
+    try:
+        t0 = time.monotonic()
+        worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
+        assert worker.next_full_refresh is not None
+        assert pytest.approx(worker.next_full_refresh - t0, abs=5) == 1440 * 60
+
+        monkeypatch.setattr("random.uniform", lambda a, b: 120.0)
+        worker.next_full_refresh = None
+        t1 = time.monotonic()
+        worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
+        assert pytest.approx(worker.next_full_refresh - t1, abs=5) == (1440 + 120) * 60
+    finally:
+        worker.executor.shutdown()
+
+
+def test_accounts_cache_startup_and_stale(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    cfg.work_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cfg.work_dir / "accounts_cache.json"
+
+    # Write a fresh cache (1 hour old, < 20h limit)
+    cache_file.write_text(json.dumps({
+        "at": time.time() - 3600,
+        "accounts": [{"profile": "p1", "email": "p1@test.local", "authenticated": True, "credits": 500, "error": None, "error_class": None}]
+    }))
+
+    probed = []
+    credits_list_called = []
+    worker = Worker(cfg, studio.api)
+    monkeypatch.setattr(worker.gflow, "credits_list", lambda: credits_list_called.append(True))
+    monkeypatch.setattr(worker, "_probe_credits", lambda account, previous=None: probed.append(account["profile"]))
+
+    try:
+        worker.startup()
+        worker.tick()
+        # Fresh cache: accounts loaded, NO credits_list or _probe_credits called
+        assert len(worker.accounts) == 1
+        assert worker.accounts[0]["profile"] == "p1"
+        assert worker.accounts[0]["credits"] == 500
+        assert len(credits_list_called) == 0
+        assert len(probed) == 0
+        assert worker.next_full_refresh is not None
+
+        # Write a stale cache (25 hours old, >= 20h limit)
+        cache_file.write_text(json.dumps({
+            "at": time.time() - 25 * 3600,
+            "accounts": [{"profile": "p1", "email": "p1@test.local", "authenticated": True, "credits": 500, "error": None, "error_class": None}]
+        }))
+        stale_worker = Worker(cfg, studio.api)
+        stale_probed = []
+        monkeypatch.setattr(stale_worker, "_probe_credits", lambda account, previous=None: stale_probed.append(account["profile"]))
+        stale_worker.startup()
+        assert stale_worker.next_full_refresh is None
+        stale_worker.tick()
+        if stale_worker._refresh_thread:
+            stale_worker._refresh_thread.join()
+        assert len(stale_probed) >= 1
+        stale_worker.executor.shutdown()
+    finally:
+        worker.executor.shutdown()
+
+
+def test_second_no_reply_within_2h_skips_probe(cfg, studio, monkeypatch):
+    monkeypatch.setattr(memory, "available_mb", lambda: 9000)
+    worker = Worker(cfg, studio.api)
+    try:
+        worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
+        profile = worker.accounts[0]["profile"]
+
+        probed = []
+        monkeypatch.setattr(worker, "_probe_credits", lambda account, previous=None: probed.append(account["profile"]))
+
+        # First stale profile refresh: probe happens
+        worker.last_profile_probe.clear()
+        worker.runner.credits_stale = True
+        worker.runner.stale_profiles = {profile}
+        worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
+        assert probed == [profile]
+
+        # Second stale profile refresh within 2h: probe is skipped
+        worker.runner.credits_stale = True
+        worker.runner.stale_profiles = {profile}
+        worker.tick()
+        if worker._refresh_thread:
+            worker._refresh_thread.join()
+        assert probed == [profile]  # unchanged, not probed again
+    finally:
+        worker.executor.shutdown()
+
+
+def test_moved_job_drops_old_account_project(cfg, studio, runner):
+    state = JobState(cfg.work_dir, 1, 1)
+    state.data["project_id"] = "proj-p1"
+    state.data["profile"] = "p1"
+    state.data["clips"] = {"1": {"media_id": "clip-old", "path": "/tmp/dummy.mp4"}}
+    state.save()
+
+    job = payload(2)
+    job["id"] = 1
+    job["generation"] = 1
+    job["account"] = {"profile": "p2"}
+    job["clips_done"] = []
+    job["flow_project_id"] = None
+
+    runner.run_job(job)
+    assert not studio.events("/fail")
+    assert len(studio.uploads) == 1
+    commands = calls(cfg)
+    assert commands[0][:2] == ["project", "create"]
+    assert commands[0][commands[0].index("--profile") + 1] == "p2"
+    for cmd in commands[1:]:
+        assert "--project" in cmd
+        assert cmd[cmd.index("--project") + 1] != "proj-p1"

@@ -29,6 +29,7 @@ MIN_CLAIM_GAP_MINUTES = 10
 ACCOUNT_REST_MINUTES = (8, 20)
 WORKER_GAP_SECONDS = (60, 240)
 WORKER_ONLINE_SECONDS = 180
+ORPHAN_GRACE_SECONDS = 180
 
 
 class ConflictError(Exception):
@@ -105,6 +106,32 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
     worker.max_concurrent = payload.get("max_concurrent")
     worker.mem_available_mb = payload.get("mem_available_mb")
     worker.running_job_ids = payload.get("running_job_ids", [])
+    worker.phase = payload.get("phase")
+
+    running_job_ids = set(payload.get("running_job_ids", []))
+    orphan_cutoff = now - timedelta(seconds=ORPHAN_GRACE_SECONDS)
+    orphan_jobs = (
+        db.query(VideoJob)
+        .filter(
+            VideoJob.worker_id == worker_id,
+            VideoJob.status.in_(("claimed", "generating")),
+        )
+        .all()
+    )
+    for orphan in orphan_jobs:
+        if orphan.id not in running_job_ids:
+            last_activity = orphan.last_progress_at or orphan.started_at
+            if last_activity is not None and last_activity <= orphan_cutoff:
+                logger.info(
+                    "Requeueing orphan job %s on worker %s (last activity %s <= cutoff %s)",
+                    orphan.id, worker_id, last_activity, orphan_cutoff
+                )
+                orphan.status = "queued"
+                orphan.worker_id = None
+                orphan.lease_until = None
+                if not orphan.clips_done:
+                    orphan.account_id = None
+                    orphan.flow_project_id = None
 
     reported_accounts = payload.get("accounts", [])
     for acc_data in reported_accounts:
@@ -169,7 +196,7 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
 
 
 def effective_credits(db: Session, acc: GflowAccount) -> int | None:
-    """Account credits minus clips made on it since the last credit probe (the probe runs ~every 30 min)."""
+    """Account credits minus clips made on it since the last credit probe (the probe runs about once a day; between probes the balance is estimated)."""
     if acc.credits is None:
         return None
     if acc.credits_checked_at is None:
