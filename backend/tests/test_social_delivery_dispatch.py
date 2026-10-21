@@ -673,7 +673,7 @@ def test_publish_job_with_destinations_idempotent(db_session, monkeypatch):
 
     job = PublishJob(
         fanpage_id=fanpage.id,
-        content_type=ContentType.news_content,
+        content_type=ContentType.discussion,
         design_image_url="https://cdn.example.com/news.png",
         ai_generated_caption="Breaking story",
         status=PublishJobStatus.pending_publish,

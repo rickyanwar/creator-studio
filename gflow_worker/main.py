@@ -116,16 +116,45 @@ class Worker:
         for account in self.accounts:
             if account["credits"] is None:
                 self._probe_credits(account, previous=previous_by_profile.get(account["profile"]))
+                self._alive_heartbeat()
         if not result.ok:
             log.warning("Credits refresh failed (exit_code=%s, error_class=%s)",
                         result.exit_code, result.error_class)
+        self._credits_heartbeat_pending = True
+
+    def _alive_heartbeat(self):
+        """Keep the worker 'online' in Studio during long credit probes (one Chrome per account).
+        Sends no credits (None = unchanged) and claims nothing."""
+        try:
+            self.api.heartbeat(dict(version=__version__, max_concurrent=self.cfg.max_concurrent,
+                                    mem_available_mb=memory.available_mb(), running_job_ids=list(self.jobs),
+                                    accounts=[dict(profile=a["profile"], email=a.get("email"),
+                                                   authenticated=a.get("authenticated", False), credits=None,
+                                                   error=a.get("error"), error_class=a.get("error_class"))
+                                              for a in self.accounts]))
+        except Exception as exc:  # noqa: BLE001 - a missed beat must never stop the probe loop
+            log.warning("Alive heartbeat failed: %s", exc)
+
+    def _refresh_stale_profiles(self):
+        """After a no-reply submit, re-read only the accounts that failed instead of all of them."""
+        with self.runner.lock:
+            profiles, self.runner.stale_profiles = set(self.runner.stale_profiles), set()
+        previous_by_profile = {a["profile"]: dict(a) for a in self.accounts}
+        for account in self.accounts:
+            if account["profile"] in profiles:
+                account["credits"] = None
+                self._probe_credits(account, previous=previous_by_profile.get(account["profile"]))
+                self._alive_heartbeat()
         self._credits_heartbeat_pending = True
 
     def tick(self):
         self.jobs = {jid: entry for jid, entry in self.jobs.items() if not entry[1].done()}
         if self.runner.credits_stale and not self.jobs:
             self.runner.credits_stale = False
-            self.last_refresh = None  # refresh now: a submit got no reply, the balance may be empty
+            if self.runner.stale_profiles and self.accounts:
+                self._refresh_stale_profiles()  # only the accounts whose submit got no reply
+            else:
+                self.last_refresh = None  # unknown account: refresh all now
         now = time.monotonic()
         if (self.last_refresh is None or now - self.last_refresh >= self.cfg.credits_refresh_minutes * 60) and memory.can_start(self.cfg, len(self.jobs)):
             # credits list inspects ALL profiles; avoid opening a second browser on a busy profile.

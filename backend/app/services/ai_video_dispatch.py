@@ -3,6 +3,7 @@
 import os
 import uuid
 import logging
+import random
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List, Dict, Any
 from pathlib import Path
@@ -25,6 +26,8 @@ UNUSUAL_BACKOFF_MINUTES = (30, 60, 120, 120)
 ACCOUNT_COOLDOWN_HOURS = 6
 SUBMIT_NO_REPLY = "of clicking submit"
 MIN_CLAIM_GAP_MINUTES = 10
+ACCOUNT_REST_MINUTES = (8, 20)
+WORKER_GAP_SECONDS = (60, 240)
 WORKER_ONLINE_SECONDS = 180
 
 
@@ -40,12 +43,23 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def get_candidate_accounts(db: Session, worker_id: str) -> List[GflowAccount]:
+def _wib_day_start_utc(now_naive_utc: datetime) -> datetime:
+    """Start of the current Asia/Jakarta day, as naive UTC (the round-robin counting window)."""
+    wib = timezone(timedelta(hours=7))
+    local = now_naive_utc.replace(tzinfo=timezone.utc).astimezone(wib)
+    return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def get_candidate_accounts(
+    db: Session, worker_id: str, respect_claim_gap: bool = True
+) -> List[GflowAccount]:
     """
     Candidate account for worker W:
     worker_id == W, enabled, authenticated, status "ok", credits not None,
-    not cooling down (cooldown_until is None or <= now),
+    not cooling down (cooldown_until is None or <= now when respect_claim_gap is True),
     and not busy (no video_job with this account_id in claimed or generating).
+    respect_claim_gap=False (used by sweep) checks only the account's health: resting or
+    busy accounts still count, so a pinned job is never restarted just for waiting its turn.
     """
     now = _utcnow()
     busy_account_ids_subq = (
@@ -58,19 +72,20 @@ def get_candidate_accounts(db: Session, worker_id: str) -> List[GflowAccount]:
         .subquery()
     )
 
-    return (
-        db.query(GflowAccount)
-        .filter(
-            GflowAccount.worker_id == worker_id,
-            GflowAccount.enabled.is_(True),
-            GflowAccount.authenticated.is_(True),
-            GflowAccount.status == "ok",
-            GflowAccount.credits.isnot(None),
-            or_(GflowAccount.cooldown_until.is_(None), GflowAccount.cooldown_until <= now),
-            ~GflowAccount.id.in_(busy_account_ids_subq.select()),
-        )
-        .all()
+    query = db.query(GflowAccount).filter(
+        GflowAccount.worker_id == worker_id,
+        GflowAccount.enabled.is_(True),
+        GflowAccount.authenticated.is_(True),
+        GflowAccount.status == "ok",
+        GflowAccount.credits.isnot(None),
     )
+    if respect_claim_gap:
+        query = query.filter(
+            ~GflowAccount.id.in_(busy_account_ids_subq.select()),
+            or_(GflowAccount.cooldown_until.is_(None), GflowAccount.cooldown_until <= now),
+        )
+
+    return query.all()
 
 
 def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
@@ -214,21 +229,23 @@ def effective_credits(db: Session, acc: GflowAccount) -> int | None:
 def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAccount]]:
     """
     Claim a job for worker_id.
-    0. Return None while the worker is paused (gflow_workers.paused_until > now)
-       or the last claim on this worker was less than MIN_CLAIM_GAP_MINUTES ago.
+    0. Return None while the worker is paused (gflow_workers.paused_until > now).
+       Accounts resting in cooldown_until are excluded.
     1. Return None when ai_video_worker_enabled is false.
     2. Pinned first: queued jobs whose account_id is a candidate account and
        whose not_before is null or <= now, oldest first.
        Remaining cost = (len(job.clips) - len(clips_done)) * credits_per_clip.
        Take the job if credits - reserve >= remaining cost.
-    3. Otherwise unpinned queued jobs (account_id null, not_before ok), oldest first.
-       Jobs of the fanpage served least recently go first (fair share).
+    3. Otherwise unpinned queued jobs (account_id null, not_before ok), round-robin: the
+       fanpage with the fewest jobs started today (WIB) first, then the one served least
+       recently, then the oldest job.
        Pick the most recently used candidate account with
        credits - reserve >= credits_estimate; never-used accounts last (largest credits first).
        If none fits, return None.
     4. Lock job row with with_for_update(skip_locked=True).
     5. Set status=claimed, worker_id=W, account_id=acc.id, lease_until=now+LEASE,
-       last_progress_at=now, started_at=started_at or now, acc.last_used_at=now.
+       last_progress_at=now, started_at=started_at or now, acc.last_used_at=now,
+       acc.cooldown_until=now + random rest (ACCOUNT_REST_MINUTES).
        Commit.
     """
     settings_row = db.query(Settings).first()
@@ -241,15 +258,6 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
     worker_row = db.query(GflowWorker).filter(GflowWorker.worker_id == worker_id).first()
     if worker_row and worker_row.paused_until and worker_row.paused_until > now:
         return None
-    if MIN_CLAIM_GAP_MINUTES > 0:
-        last_claim = (
-            db.query(GflowAccount.last_used_at)
-            .filter(GflowAccount.worker_id == worker_id, GflowAccount.last_used_at.isnot(None))
-            .order_by(desc(GflowAccount.last_used_at))
-            .first()
-        )
-        if last_claim and last_claim[0] and last_claim[0] > now - timedelta(minutes=MIN_CLAIM_GAP_MINUTES):
-            return None
 
     candidates = get_candidate_accounts(db, worker_id)
     if not candidates:
@@ -310,6 +318,11 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
             locked_job.last_progress_at = now
             locked_job.started_at = locked_job.started_at or now
             acc.last_used_at = now
+            if MIN_CLAIM_GAP_MINUTES > 0:
+                acc.cooldown_until = max(
+                    acc.cooldown_until or now,
+                    now + timedelta(minutes=random.uniform(*ACCOUNT_REST_MINUTES)),
+                )
             db.commit()
             db.refresh(locked_job)
             db.refresh(acc)
@@ -348,14 +361,26 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         .all()
     )
 
-    # Fair share: the fanpage whose last job started longest ago goes first, then the oldest job.
+    # Round-robin (owner rule 2026-10-21): every page gets one video before any page gets a second.
+    # The page with the fewest jobs started today (WIB day) goes first, then the page served
+    # longest ago, then the oldest job. Each page's ai_video_daily_count caps it when jobs are planned.
     last_started = dict(
         db.query(VideoJob.fanpage_id, func.max(VideoJob.started_at))
         .filter(VideoJob.started_at.isnot(None))
         .group_by(VideoJob.fanpage_id)
         .all()
     )
-    unpinned_jobs.sort(key=lambda j: (last_started.get(j.fanpage_id) or datetime.min, j.created_at))
+    started_today = dict(
+        db.query(VideoJob.fanpage_id, func.count(VideoJob.id))
+        .filter(VideoJob.started_at >= _wib_day_start_utc(now), VideoJob.status != "cancelled")
+        .group_by(VideoJob.fanpage_id)
+        .all()
+    )
+    unpinned_jobs.sort(key=lambda j: (
+        started_today.get(j.fanpage_id, 0),
+        last_started.get(j.fanpage_id) or datetime.min,
+        j.created_at,
+    ))
 
     for cand_job in unpinned_jobs:
         # Pick candidate account with largest credits - reserve >= credits_estimate
@@ -396,6 +421,11 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         locked_job.last_progress_at = now
         locked_job.started_at = locked_job.started_at or now
         best_acc.last_used_at = now
+        if MIN_CLAIM_GAP_MINUTES > 0:
+            best_acc.cooldown_until = max(
+                best_acc.cooldown_until or now,
+                now + timedelta(minutes=random.uniform(*ACCOUNT_REST_MINUTES)),
+            )
         db.commit()
         db.refresh(locked_job)
         db.refresh(best_acc)
@@ -579,8 +609,19 @@ def record_failure(
         else:
             _restart()
 
+    _apply_worker_pause(db, worker_id, now)
     db.commit()
     db.refresh(job)
+
+
+def _apply_worker_pause(db: Session, worker_id: str, now: datetime) -> None:
+    if MIN_CLAIM_GAP_MINUTES <= 0:
+        return
+    worker_row = db.query(GflowWorker).filter(GflowWorker.worker_id == worker_id).first()
+    if worker_row:
+        pause_target = now + timedelta(seconds=random.uniform(*WORKER_GAP_SECONDS))
+        if worker_row.paused_until is None or worker_row.paused_until < pause_target:
+            worker_row.paused_until = pause_target
 
 
 def sweep(db: Session):
@@ -652,7 +693,12 @@ def sweep(db: Session):
             rem_cost = max(0, clips_count - clips_done_count) * job.credits_per_clip
 
             candidate_ok = False
-            if account and account.enabled and account.authenticated and account.status == "ok" and account.credits is not None:
+            if account and account.worker_id:
+                candidates = get_candidate_accounts(db, account.worker_id, respect_claim_gap=False)
+                if any(c.id == account.id for c in candidates):
+                    if (account.credits - credit_reserve) >= rem_cost:
+                        candidate_ok = True
+            elif account and account.enabled and account.authenticated and account.status == "ok" and account.credits is not None:
                 if (account.credits - credit_reserve) >= rem_cost:
                     candidate_ok = True
 
@@ -730,6 +776,7 @@ def complete_job(
     job.lease_until = None
     job.error = None
 
+    _apply_worker_pause(db, worker_id, now)
     db.commit()
     db.refresh(job)
 

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import useSWR from "swr";
 import { Icon } from "@iconify/react";
 import {
@@ -68,6 +68,266 @@ function StatusPill({ value }: { value: string }) {
   );
 }
 
+const WORKER_STEPS = [
+  { key: "claimed", label: "Claimed" },
+  { key: "generating", label: "Generating" },
+  { key: "uploaded", label: "Uploading" },
+  { key: "done", label: "Done" },
+];
+
+function getWorkerStepIndex(status: string): number {
+  switch (status) {
+    case "claimed":
+      return 0;
+    case "generating":
+      return 1;
+    case "uploaded":
+      return 2;
+    case "done":
+      return 3;
+    default:
+      return 1;
+  }
+}
+
+function formatElapsed(startedAt: string | null | undefined, now: number): string {
+  if (!startedAt) return "0:00";
+  const startMs = new Date(startedAt.endsWith("Z") ? startedAt : startedAt + "Z").getTime();
+  if (isNaN(startMs)) return "0:00";
+  const elapsedSec = Math.max(0, Math.floor((now - startMs) / 1000));
+  const m = Math.floor(elapsedSec / 60);
+  const s = elapsedSec % 60;
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+function formatCountdown(targetAt: string | null | undefined, now: number): string {
+  if (!targetAt) return "0:00";
+  const targetMs = new Date(targetAt.endsWith("Z") ? targetAt : targetAt + "Z").getTime();
+  if (isNaN(targetMs)) return "0:00";
+  const remainSec = Math.max(0, Math.floor((targetMs - now) / 1000));
+  const m = Math.floor(remainSec / 60);
+  const s = remainSec % 60;
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+function formatHHmm(isoString: string | null | undefined): string {
+  if (!isoString) return "";
+  const dt = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
+  if (isNaN(dt.getTime())) return "";
+  return dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatMinutesAgo(isoString: string | null | undefined, now: number): string {
+  if (!isoString) return "";
+  const dt = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
+  if (isNaN(dt.getTime())) return "";
+  const mins = Math.max(1, Math.round((now - dt.getTime()) / 60000));
+  return `${mins} min`;
+}
+
+function WorkerCard({ worker, now }: { worker: GflowWorker; now: number }) {
+  const act = worker.activity ?? {
+    state: worker.online ? "idle" : "offline",
+    job: null,
+    resting_until: worker.paused_until,
+    queued: 0,
+    next_account_free_at: null,
+  };
+  const state = act.state;
+
+  const bgStyles: Record<string, string> = {
+    working: "bg-pri-soft text-pri-text border border-pri/20",
+    resting: "bg-warn-soft text-warn border border-warn/20",
+    waiting: "bg-warn-soft text-warn border border-warn/20",
+    idle: "bg-surface2 text-text2 border border-line",
+    offline: "bg-bad-soft text-bad border border-bad/20",
+  };
+
+  const job = act.job;
+  const currentStepIdx = job ? getWorkerStepIndex(job.status) : 1;
+  const clipsDone = job?.clips_done ?? 0;
+  const clipsTotal = Math.max(job?.clips_total ?? 1, 1);
+  const progressPercent = Math.min(100, Math.round((clipsDone / clipsTotal) * 100));
+
+  const restingUntil = act.resting_until || worker.paused_until;
+  const remRestMs = restingUntil
+    ? Math.max(0, new Date(restingUntil.endsWith("Z") ? restingUntil : restingUntil + "Z").getTime() - now)
+    : 0;
+  const restPercent = Math.min(100, Math.max(0, Math.round((remRestMs / (4 * 60 * 1000)) * 100)));
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`w-full sm:w-auto sm:min-w-[340px] max-w-full rounded-xl px-3.5 py-2.5 min-h-[76px] flex flex-col justify-center transition-colors duration-300 text-xs ${
+        bgStyles[state] || bgStyles.idle
+      }`}
+    >
+      <style>{`
+        @keyframes workerShimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        @media (prefers-reduced-motion: no-preference) {
+          .animate-worker-shimmer {
+            animation: workerShimmer 1.8s infinite;
+          }
+        }
+      `}</style>
+
+      {/* Line 1: Icon + State Label + Worker ID */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 font-bold">
+          {state === "working" && (
+            <>
+              <span className="relative flex h-2 w-2 mr-0.5">
+                <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-current" />
+              </span>
+              <Icon icon="svg-spinners:ring-resize" width={14} className="shrink-0 text-current" />
+              <span className="tracking-tight">Generating</span>
+            </>
+          )}
+          {state === "resting" && (
+            <>
+              <Icon
+                icon="solar:cup-hot-bold"
+                width={15}
+                className="shrink-0 text-current motion-safe:animate-pulse"
+              />
+              <span className="tracking-tight">Resting</span>
+            </>
+          )}
+          {state === "waiting" && (
+            <>
+              <Icon
+                icon="solar:hourglass-line-bold"
+                width={15}
+                className="shrink-0 text-current motion-safe:animate-bounce"
+              />
+              <span className="tracking-tight">Waiting</span>
+            </>
+          )}
+          {state === "idle" && (
+            <>
+              <Icon icon="solar:moon-sleep-bold" width={15} className="shrink-0 text-current" />
+              <span className="tracking-tight">Idle</span>
+            </>
+          )}
+          {state === "offline" && (
+            <>
+              <Icon icon="solar:danger-triangle-bold" width={15} className="shrink-0 text-current" />
+              <span className="tracking-tight">Offline</span>
+            </>
+          )}
+        </div>
+        <span className="text-[11px] opacity-60 font-mono tracking-tight shrink-0">
+          {worker.worker_id}
+        </span>
+      </div>
+
+      {/* Line 2 / Content */}
+      {state === "working" && job && (
+        <div className="mt-1 flex flex-col gap-1">
+          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px]">
+            <span className="truncate max-w-[220px]">
+              {job.fanpage_name || "Video"} · #{job.id} · {job.account || "flow"}
+            </span>
+            <span className="font-semibold shrink-0">
+              clip {Math.min(clipsDone + 1, clipsTotal)}/{clipsTotal}
+            </span>
+          </div>
+
+          {/* Step row */}
+          <div className="flex items-center justify-between gap-1 text-[10px] mt-0.5 font-medium">
+            <div className="flex items-center gap-1">
+              {WORKER_STEPS.map((s, idx) => {
+                const isCurrent = idx === currentStepIdx;
+                const isPast = idx < currentStepIdx;
+                return (
+                  <span key={s.key} className="flex items-center gap-1">
+                    <span
+                      className={
+                        isCurrent
+                          ? "font-bold underline underline-offset-2 opacity-100"
+                          : isPast
+                          ? "opacity-60"
+                          : "opacity-30"
+                      }
+                    >
+                      {s.label}
+                    </span>
+                    {idx < WORKER_STEPS.length - 1 && <span className="opacity-30">→</span>}
+                  </span>
+                );
+              })}
+            </div>
+            <span className="font-mono text-[11px] opacity-75 shrink-0 ml-1">
+              {formatElapsed(job.started_at, now)}
+            </span>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full bg-black/10 dark:bg-white/10 h-1.5 rounded-full overflow-hidden mt-0.5 relative">
+            <div
+              className="h-full bg-pri rounded-full transition-all duration-300 relative overflow-hidden"
+              style={{ width: `${progressPercent}%` }}
+            >
+              <div className="absolute inset-0 animate-worker-shimmer bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {state === "working" && !job && (
+        <div className="mt-1 text-[11px] opacity-80">
+          Generating...
+        </div>
+      )}
+
+      {state === "resting" && (
+        <div className="mt-1 flex flex-col gap-1">
+          <div className="flex items-center justify-between text-[11px]">
+            <span>
+              Next video in {formatCountdown(restingUntil, now)}
+              <span className="opacity-60 ml-1.5">(Anti-bot pause)</span>
+            </span>
+          </div>
+          <div className="w-full bg-black/10 dark:bg-white/10 h-1 rounded-full overflow-hidden mt-0.5">
+            <div
+              className="h-full bg-warn rounded-full transition-all duration-1000"
+              style={{ width: `${restPercent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {state === "waiting" && (
+        <div className="mt-1 text-[11px] opacity-90">
+          {act.queued} in queue ·{" "}
+          {act.next_account_free_at
+            ? `accounts resting until ${formatHHmm(act.next_account_free_at)}`
+            : "no free account"}
+        </div>
+      )}
+
+      {state === "idle" && (
+        <div className="mt-1 text-[11px] opacity-80">
+          Queue empty
+        </div>
+      )}
+
+      {state === "offline" && (
+        <div className="mt-1 text-[11px] opacity-90">
+          {worker.last_seen_at
+            ? `Offline · last seen ${formatMinutesAgo(worker.last_seen_at, now)} ago`
+            : "Offline"}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AiVideoPage() {
   const [tab, setTab] = useState<"ideas" | "jobs" | "accounts">("ideas");
   const [ideaStatus, setIdeaStatus] = useState("proposed");
@@ -102,8 +362,14 @@ export default function AiVideoPage() {
   const { data: workers = [] } = useSWR(
     "gflow-workers",
     () => listGflowWorkers().then((r) => r.data as GflowWorker[]),
-    { refreshInterval: 15000 }
+    { refreshInterval: 5000 }
   );
+
+  const [ticker, setTicker] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setTicker(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const enabledFanpages = fanpages.filter((fp) => fp.ai_video_enabled);
   const credits = accounts
@@ -140,41 +406,11 @@ export default function AiVideoPage() {
         </div>
 
         {/* Worker and Credit Status Badges */}
-        <div className="flex flex-wrap items-center gap-2">
-          {workers.map((worker) => {
-            const pausedUntil = worker.paused_until ? new Date(worker.paused_until + "Z") : null;
-            const paused = !!pausedUntil && pausedUntil.getTime() > Date.now();
-            return (
-              <span
-                key={worker.worker_id}
-                className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold ${
-                  worker.online
-                    ? paused
-                      ? "bg-warn-soft text-warn"
-                      : "bg-pri-soft text-pri-text"
-                    : "bg-surface2 text-text2 border border-line"
-                }`}
-              >
-                <span
-                  aria-hidden="true"
-                  className="w-1.5 h-1.5 rounded-full bg-current shrink-0"
-                />
-                <span>
-                  {worker.online && paused && pausedUntil
-                    ? `${worker.worker_id} paused until ${pausedUntil.toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })} · Google unusual activity`
-                    : `${worker.worker_id} ${
-                        worker.online
-                          ? `online · ${worker.running_job_ids.length} job · ${worker.mem_available_mb ?? "?"} MB free`
-                          : "offline"
-                      }`}
-                </span>
-              </span>
-            );
-          })}
-          <span className="inline-flex items-center h-8 px-3 rounded-full bg-surface2 text-text text-xs font-semibold border border-line">
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+          {workers.map((worker) => (
+            <WorkerCard key={worker.worker_id} worker={worker} now={ticker} />
+          ))}
+          <span className="inline-flex items-center h-8 px-3 rounded-full bg-surface2 text-text text-xs font-semibold border border-line self-start sm:self-center">
             {credits} credits left
           </span>
         </div>

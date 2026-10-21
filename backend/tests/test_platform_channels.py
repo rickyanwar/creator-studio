@@ -233,7 +233,7 @@ def test_youtube_photo_skipped_media_not_accepted(db_session: Session):
     # Image job
     job = PublishJob(
         fanpage_id=project.id,
-        content_type=ContentType.news_content,
+        content_type=ContentType.discussion,
         design_image_url="https://cdn.example.com/photo.jpg",
         ai_generated_caption="News card photo",
         status=PublishJobStatus.pending_publish,
