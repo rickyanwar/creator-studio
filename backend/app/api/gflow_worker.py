@@ -1,7 +1,8 @@
 """GFlow worker API endpoints."""
 
-import re
 import json
+import logging
+import re
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from pydantic import BaseModel, Field
@@ -11,6 +12,8 @@ from app.models.ai_video import VideoJob
 from app.models.api_tokens import ApiToken
 from app.services import ai_video_dispatch
 from app.services.ai_video_dispatch import ConflictError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/worker/gflow", tags=["gflow_worker"])
 
@@ -104,6 +107,7 @@ def claim(
             "clips_done": job.clips_done,
             "flow_project_id": job.flow_project_id,
             "project_name": f"ai-video-{job.id}-g{job.generation}",
+            "cover_prompt": job.cover_prompt,
             "account": {
                 "id": acc.id,
                 "profile": acc.profile,
@@ -186,6 +190,7 @@ def complete(
     meta: str = Form(...),
     video: UploadFile = File(...),
     thumbnail: UploadFile = File(...),
+    cover_bg: UploadFile | None = File(None),
     token: ApiToken = Depends(require_hermes_scope("gflow:worker")),
 ):
     _validate_worker_id(worker_id)
@@ -206,6 +211,17 @@ def complete(
     if len(thumb_bytes) > MAX_THUMB_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Thumbnail too large")
 
+    cover_bg_bytes: bytes | None = None
+    if cover_bg is not None:
+        try:
+            raw_cover = cover_bg.file.read()
+            if len(raw_cover) > MAX_THUMB_BYTES * 2:
+                logger.warning("cover_bg too large (%d bytes), ignoring", len(raw_cover))
+            elif raw_cover:
+                cover_bg_bytes = raw_cover
+        except Exception as exc:
+            logger.warning("Failed to read cover_bg: %s", exc)
+
     try:
         ai_video_dispatch.complete_job(
             db,
@@ -215,6 +231,7 @@ def complete(
             video_bytes,
             thumb_bytes,
             meta_dict,
+            cover_bg_content=cover_bg_bytes,
         )
     except ConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))

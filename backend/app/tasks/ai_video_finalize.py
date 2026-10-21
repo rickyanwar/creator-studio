@@ -1,6 +1,7 @@
 """Finalize uploaded Mode 8 videos through QC and the publish queue."""
 
 import logging
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,9 +95,19 @@ def finalize_ai_video(video_job_id: int):
                 overlay_info["words"] = len(words)
                 branded = raw_path.with_name(f"{raw_path.stem}_branded_{uuid.uuid4().hex[:8]}{raw_path.suffix}")
                 render_branded(str(raw_path), str(branded), fanpage, words, workdir)
-                thumbnail = branded.with_suffix(".jpg")
-                import subprocess
-                subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(branded), "-frames:v", "1", "-q:v", "3", str(thumbnail)], check=True, timeout=60)
+                thumbnail = None
+                if fanpage and getattr(fanpage, "ai_video_cover_enabled", True):
+                    from app.services.ai_video_cover_build import apply_cover
+                    res = apply_cover(job, fanpage, branded, raw_path, workdir)
+                    if res:
+                        covered_video, cover_jpg = res
+                        branded.unlink(missing_ok=True)
+                        branded = covered_video
+                        thumbnail = cover_jpg
+                if thumbnail is None:
+                    thumbnail = branded.with_suffix(".jpg")
+                    import subprocess
+                    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(branded), "-frames:v", "1", "-q:v", "3", str(thumbnail)], check=True, timeout=60)
                 s = get_settings()
                 publish_video_path = str(branded)
                 publish_video_url = _sibling_url(job.video_url, job.video_path, branded, s.storage_base_url)
@@ -129,6 +140,24 @@ def finalize_ai_video(video_job_id: int):
                     idea.status = "done"
                 db.commit()
                 return
+        else:
+            raw_path = Path(job.video_path)
+            workdir = raw_path.parent / f"cover_{job.id}_{uuid.uuid4().hex[:8]}"
+            if fanpage and getattr(fanpage, "ai_video_cover_enabled", True):
+                from app.services.ai_video_cover_build import apply_cover
+                res = apply_cover(job, fanpage, raw_path, raw_path, workdir)
+                shutil.rmtree(workdir, ignore_errors=True)
+                if res:
+                    covered_video, cover_jpg = res
+                    s = get_settings()
+                    publish_video_path = str(covered_video)
+                    publish_video_url = _sibling_url(job.video_url, job.video_path, covered_video, s.storage_base_url)
+                    publish_thumbnail_path = str(cover_jpg)
+                    publish_thumbnail_url = _sibling_url(job.video_url, job.video_path, cover_jpg, s.storage_base_url)
+                    if job.thumbnail_path:
+                        Path(job.thumbnail_path).unlink(missing_ok=True)
+                    job.video_path, job.video_url = publish_video_path, publish_video_url
+                    job.thumbnail_path, job.thumbnail_url = publish_thumbnail_path, publish_thumbnail_url
         job.qc = {"technical": technical, "vision": vision, "passed": passed,
                   "reasons": reasons, "overlay": overlay_info}
         publish_job = PublishJob(
@@ -249,13 +278,23 @@ def rerender_ai_video_overlay(publish_job_id: int):
                 overlay_info["words"] = len(words) if words else 0
                 branded = raw_path.with_name(f"{raw_path.stem}_branded_{uuid.uuid4().hex[:8]}{raw_path.suffix}")
                 render_branded(str(raw_path), str(branded), fanpage, words or [], workdir)
-                thumbnail = branded.with_suffix(".jpg")
-                import subprocess
-                subprocess.run(
-                    ["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(branded), "-frames:v", "1", "-q:v", "3", str(thumbnail)],
-                    check=True,
-                    timeout=60,
-                )
+                thumbnail = None
+                if fanpage and getattr(fanpage, "ai_video_cover_enabled", True) and video_job:
+                    from app.services.ai_video_cover_build import apply_cover
+                    res = apply_cover(video_job, fanpage, branded, raw_path, workdir)
+                    if res:
+                        covered_video, cover_jpg = res
+                        branded.unlink(missing_ok=True)
+                        branded = covered_video
+                        thumbnail = cover_jpg
+                if thumbnail is None:
+                    thumbnail = branded.with_suffix(".jpg")
+                    import subprocess
+                    subprocess.run(
+                        ["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(branded), "-frames:v", "1", "-q:v", "3", str(thumbnail)],
+                        check=True,
+                        timeout=60,
+                    )
                 s = get_settings()
                 publish_video_path = str(branded)
                 publish_video_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), branded, s.storage_base_url)
@@ -273,17 +312,26 @@ def rerender_ai_video_overlay(publish_job_id: int):
                 logger.exception("AI video overlay re-render failed for publish job %s", publish_job_id)
                 return
         else:
+            video_to_publish = raw_path
+            thumbnail = None
+            if fanpage and getattr(fanpage, "ai_video_cover_enabled", True) and video_job:
+                from app.services.ai_video_cover_build import apply_cover
+                workdir = raw_path.parent / f"cover_{publish_job.id}_{uuid.uuid4().hex[:8]}"
+                res = apply_cover(video_job, fanpage, raw_path, raw_path, workdir)
+                if res:
+                    video_to_publish, thumbnail = res
+            if thumbnail is None:
+                thumbnail = raw_path.with_suffix(".jpg")
+                if not thumbnail.is_file():
+                    import subprocess
+                    subprocess.run(
+                        ["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(raw_path), "-frames:v", "1", "-q:v", "3", str(thumbnail)],
+                        check=True,
+                        timeout=60,
+                    )
             s = get_settings()
-            publish_video_path = str(raw_path)
-            publish_video_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), raw_path, s.storage_base_url)
-            thumbnail = raw_path.with_suffix(".jpg")
-            if not thumbnail.is_file():
-                import subprocess
-                subprocess.run(
-                    ["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(raw_path), "-frames:v", "1", "-q:v", "3", str(thumbnail)],
-                    check=True,
-                    timeout=60,
-                )
+            publish_video_path = str(video_to_publish)
+            publish_video_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), video_to_publish, s.storage_base_url)
             publish_thumbnail_path = str(thumbnail)
             publish_thumbnail_url = _sibling_url(publish_job.video_url, publish_job.video_path or str(raw_path), thumbnail, s.storage_base_url)
 

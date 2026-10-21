@@ -55,6 +55,15 @@ elif args[:3] == ["data", "list", "videos"]:
            "created_at": datetime.now(timezone.utc).isoformat(), "local_path": None, "copy_count": 0, "status": "pending"}
     print(json.dumps(row))
     sys.exit(0)
+elif args[:2] == ["image", "t2i"]:
+    if mode == "t2i_fail" or os.getenv("FAKE_GF_T2I_FAIL"):
+        print(json.dumps({"status": "fail", "error": {"class": "T2iError", "detail": "fake t2i failure", "exit_code": 1}}))
+        sys.exit(1)
+    out = Path(flag("-o"))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([os.environ["FAKE_FFMPEG"], "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=blue:s=180x320", "-frames:v", "1", str(out)], check=True)
+    payload = {"status": "ok", "local_path": str(out), "failure_reasons": [], "error_message": None}
 else:
     if args[1] == "i2v":
         assert Path(flag("--initial-frame")).is_file()

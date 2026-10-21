@@ -138,6 +138,12 @@ class FanpageBase(BaseModel):
     ai_video_caption_size: int = Field(76, ge=40, le=140)
     ai_video_caption_bottom_pct: int = Field(29, ge=5, le=70)
     ai_video_caption_highlight: str = Field("#FFE500", pattern=r"^#[0-9A-Fa-f]{6}$")
+    ai_video_cover_enabled: bool = True
+
+    @field_validator("ai_video_cover_enabled", mode="before")
+    @classmethod
+    def clean_ai_video_cover_enabled(cls, v):
+        return True if v is None else v
 
     @field_validator("ai_video_template")
     def validate_ai_video_template(cls, value):

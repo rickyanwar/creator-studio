@@ -772,6 +772,7 @@ def complete_job(
     video_content: bytes,
     thumb_content: bytes,
     meta: dict,
+    cover_bg_content: bytes | None = None,
 ):
     """
     Save video and thumbnail, set duration_s, status uploaded, finished_at,
@@ -803,6 +804,13 @@ def complete_job(
 
     with open(thumb_path, "wb") as f:
         f.write(thumb_content)
+
+    if cover_bg_content:
+        cover_bg_filename = f"job_{job.id}_{uid8}_cover_bg.jpg"
+        cover_bg_file = dest_dir / cover_bg_filename
+        with open(cover_bg_file, "wb") as f:
+            f.write(cover_bg_content)
+        job.cover_bg_path = str(cover_bg_file)
 
     job.video_path = str(video_path)
     job.video_url = f"{storage_base_url}/ai_videos/{video_filename}"

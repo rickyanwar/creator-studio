@@ -1,3 +1,4 @@
+import contextlib
 import json
 from pathlib import Path
 
@@ -53,8 +54,17 @@ class StudioClient:
     def fail(self, job_id, generation, reason, message):
         return self._post(f"jobs/{job_id}/fail", json=dict(worker_id=self.worker_id, generation=generation, reason=reason, message=message))
 
-    def complete(self, job_id, generation, video, thumbnail, meta):
-        with Path(video).open("rb") as v, Path(thumbnail).open("rb") as t:
+    def complete(self, job_id, generation, video, thumbnail, meta, cover_bg=None):
+        with contextlib.ExitStack() as stack:
+            v = stack.enter_context(Path(video).open("rb"))
+            t = stack.enter_context(Path(thumbnail).open("rb"))
+            files = {
+                "video": ("video.mp4", v, "video/mp4"),
+                "thumbnail": ("thumbnail.jpg", t, "image/jpeg"),
+            }
+            if cover_bg is not None:
+                c = stack.enter_context(Path(cover_bg).open("rb"))
+                files["cover_bg"] = ("cover_bg.jpg", c, "image/jpeg")
             return self._post(f"jobs/{job_id}/complete", timeout=600,
                               data={"worker_id": self.worker_id, "generation": str(generation), "meta": json.dumps(meta)},
-                              files={"video": ("video.mp4", v, "video/mp4"), "thumbnail": ("thumbnail.jpg", t, "image/jpeg")})
+                              files=files)
