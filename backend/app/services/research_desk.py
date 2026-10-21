@@ -113,7 +113,8 @@ RULE_SLOT_FORMAT = "Slot values: plain text, at most 600 characters, no curly br
 RULE_COPY_STYLE = "Copy the visual style of reference videos, never their footage, logos, watermarks or wording."
 GLOBAL_RULES = [
     "Never name real teams, constructors, manufacturers, riders, drivers, sponsors, brands or circuits in any slot, "
-    "narration, title or caption; describe them instead (colour, era, corner type).",
+    "narration, title or caption; describe them instead (colour, era, corner type)."
+    " Exception: templates with real_names_allowed true may name the real maker, model, team and sponsors as their rules say.",
     RULE_FACTS_FROM_NOTES,
     "Numbers need two independent sources; note the season or year of every rule-dependent claim; leave unverified claims out.",
     "Regulations change by season: check that the technology is still current, or frame it as history or as what replaced it.",
@@ -122,7 +123,8 @@ GLOBAL_RULES = [
     RULE_COPY_STYLE,
     "MotoGP channels (for example GP Racing) show a modern MotoGP prototype racing bike with a MotoGP team-style livery: "
     "choose a motogp vehicle_preset and describe that bike in your visual slots. Show another kind of motorcycle only "
-    "when the story is clearly about that other bike, and say which kind in the slots.",
+    "when the story is clearly about that other bike, and say which kind in the slots."
+    " Templates with keep_era_vehicle true show the one real motorcycle their story is about instead.",
 ]
 RESEARCH_DEFAULTS = {
     "source_priority": [
@@ -293,6 +295,8 @@ def template_item(t, niches) -> dict:
         "usage": raw.get("usage") or raw.get("purpose") or raw.get("description") or "",
         "inspiration": raw.get("inspiration"),
         "uses_vehicle": uses_vehicle(t),
+        "real_names_allowed": bool(t.raw.get("real_names_allowed")),
+        "keep_era_vehicle": bool(t.raw.get("keep_era_vehicle")),
         "clip_seconds": t.clip_seconds,
         "clip_options": list(t.clip_options),
         "slots_by_clips": {str(n): content_slots(t, n) for n in t.clip_options},
