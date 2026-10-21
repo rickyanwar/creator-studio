@@ -725,10 +725,17 @@ export interface GflowWorkerActivityJob {
   last_progress_at: string | null;
 }
 
+export interface GflowWorkerChecking {
+  done: number;
+  total: number | null;
+}
+
 export interface GflowWorkerActivity {
-  state: "working" | "resting" | "waiting" | "idle" | "offline";
+  state: "working" | "checking" | "resting" | "waiting" | "idle" | "offline" | "stalled";
   job: GflowWorkerActivityJob | null;
+  checking?: GflowWorkerChecking | null;
   resting_until: string | null;
+  retry_at?: string | null;
   queued: number;
   next_account_free_at: string | null;
 }

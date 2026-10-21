@@ -247,6 +247,10 @@ def update_account(id: int, req: AccountUpdate, db: DB, user: CurrentUser):
 
 @router.get("/workers")
 def list_workers(db: DB, user: CurrentUser):
+    """
+    List workers and their activity states:
+    offline | working | stalled | checking | resting | waiting | idle
+    """
     workers = db.query(GflowWorker).all()
     now = ai_video_dispatch._utcnow()
     threshold = now - ai_video_dispatch.timedelta(seconds=ai_video_dispatch.WORKER_ONLINE_SECONDS)
@@ -264,6 +268,8 @@ def list_workers(db: DB, user: CurrentUser):
         job_dict = None
         resting_until = None
         next_account_free_at = None
+        checking_info = None
+        retry_at = None
 
         if not online:
             state = "offline"
@@ -283,7 +289,6 @@ def list_workers(db: DB, user: CurrentUser):
             )
 
             if working_job:
-                state = "working"
                 fanpage = (
                     db.query(TargetFanpage)
                     .filter(TargetFanpage.id == working_job.fanpage_id)
@@ -310,6 +315,18 @@ def list_workers(db: DB, user: CurrentUser):
                     "clips_total": clips_total,
                     "started_at": working_job.started_at,
                     "last_progress_at": working_job.last_progress_at,
+                }
+                running_ids = w.running_job_ids or []
+                if working_job.id in running_ids or str(working_job.id) in [str(x) for x in running_ids]:
+                    state = "working"
+                else:
+                    state = "stalled"
+                    retry_at = working_job.lease_until
+            elif w.phase and isinstance(w.phase, dict) and w.phase.get("kind") == "checking_credits":
+                state = "checking"
+                checking_info = {
+                    "done": w.phase.get("done"),
+                    "total": w.phase.get("total"),
                 }
             elif w.paused_until and (
                 w.paused_until.replace(tzinfo=None) if w.paused_until.tzinfo else w.paused_until
@@ -338,7 +355,10 @@ def list_workers(db: DB, user: CurrentUser):
             "resting_until": resting_until,
             "queued": queued_count,
             "next_account_free_at": next_account_free_at,
+            "retry_at": retry_at,
         }
+        if checking_info is not None:
+            activity["checking"] = checking_info
 
         result.append({
             "worker_id": w.worker_id,

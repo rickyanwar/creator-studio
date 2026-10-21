@@ -16,6 +16,7 @@ class GflowWorker(Base):
     mem_available_mb = Column(Integer, nullable=True)
     running_job_ids = Column(JSON, nullable=False, default=list, server_default=text("'[]'::json"))
     paused_until = Column(DateTime, nullable=True)
+    phase = Column(JSON, nullable=True)
 
 
 class GflowAccount(Base):

@@ -22,7 +22,8 @@ class Config:
     chrome_peak_mb: int = 1200
     work_dir: Path = field(default_factory=lambda: Path("~/.gflow-worker").expanduser())
     poll_seconds: float = 60
-    credits_refresh_minutes: float = 30
+    credits_refresh_minutes: float = 1440
+    credits_refresh_jitter_minutes: float = 240
     clip_timeout_seconds: float = 1200
     seed_offset_ms: int = 100
     keep_done_days: float = 3
@@ -69,18 +70,20 @@ class Config:
         if values["max_concurrent"] > 2:
             log.warning("GFLOW_MAX_CONCURRENT=%d clamped to 2", values["max_concurrent"])
             values["max_concurrent"] = 2
-        for name in ("poll_seconds", "credits_refresh_minutes", "clip_timeout_seconds", "keep_done_days"):
+        for name in ("poll_seconds", "credits_refresh_minutes", "credits_refresh_jitter_minutes", "clip_timeout_seconds", "keep_done_days"):
             values[name] = float(os.getenv("GFLOW_" + name.upper(), str(cls.__dataclass_fields__[name].default)))
         cfg = cls(**values)
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", cfg.worker_id):
             raise ValueError("invalid GFLOW_WORKER_ID")
         if not cfg.cli_dir.is_dir():
             raise ValueError("GFLOW_CLI_DIR must be a directory")
-        if cfg.max_concurrent < 1 or any(getattr(cfg, n) < 0 for n in ("mem_reserve_mb", "chrome_peak_mb", "seed_offset_ms", "keep_done_days")):
+        if cfg.max_concurrent < 1 or any(getattr(cfg, n) < 0 for n in ("mem_reserve_mb", "chrome_peak_mb", "seed_offset_ms", "keep_done_days", "credits_refresh_jitter_minutes")):
             raise ValueError("invalid worker limits")
         if min(cfg.poll_seconds, cfg.credits_refresh_minutes, cfg.clip_timeout_seconds, cfg.probe_timeout_seconds,
                cfg.lock_timeout_seconds) <= 0:
             raise ValueError("worker intervals must be positive")
+        if cfg.credits_refresh_jitter_minutes >= cfg.credits_refresh_minutes:
+            raise ValueError("credits_refresh_jitter_minutes must be less than credits_refresh_minutes")
         if not shlex.split(cfg.probe_python_cmd) or shlex.split(cfg.probe_prefix) is None:
             raise ValueError("invalid probe command")
         return cfg

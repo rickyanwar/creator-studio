@@ -261,3 +261,140 @@ def test_worker_activity_idle(db_session, client):
     assert act["resting_until"] is None
     assert act["queued"] == 0
     assert act["next_account_free_at"] is None
+
+
+def test_worker_activity_checking(db_session, client):
+    now = _now()
+    worker = GflowWorker(
+        worker_id="vps-gflow-checking",
+        last_seen_at=now,
+        version="1.0.0",
+        max_concurrent=1,
+        mem_available_mb=4000,
+        running_job_ids=[],
+        phase={"kind": "checking_credits", "done": 2, "total": 5},
+    )
+    db_session.add(worker)
+    db_session.commit()
+
+    res = client.get("/ai-video/workers")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    w = data[0]
+    assert w["online"] is True
+    act = w["activity"]
+    assert act["state"] == "checking"
+    assert act["checking"] == {"done": 2, "total": 5}
+    assert act["job"] is None
+
+
+def test_worker_activity_stalled(db_session, test_fanpage, client):
+    now = _now()
+    lease_time = now + timedelta(minutes=15)
+    worker = GflowWorker(
+        worker_id="vps-gflow-stalled",
+        last_seen_at=now,
+        version="1.0.0",
+        max_concurrent=1,
+        mem_available_mb=4000,
+        running_job_ids=[],
+    )
+    job = VideoJob(
+        worker_id="vps-gflow-stalled",
+        fanpage_id=test_fanpage.id,
+        template_key="tpl1",
+        title="Stalled Job",
+        caption="Stalled caption",
+        model="veo2",
+        aspect="9:16",
+        clip_seconds=5,
+        clips=[{"prompt": "p1"}],
+        credits_per_clip=10,
+        credits_estimate=10,
+        status="claimed",
+        started_at=now - timedelta(minutes=1),
+        lease_until=lease_time,
+    )
+    db_session.add_all([worker, job])
+    db_session.commit()
+
+    res = client.get("/ai-video/workers")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    w = data[0]
+    assert w["online"] is True
+    act = w["activity"]
+    assert act["state"] == "stalled"
+    assert act["job"] is not None
+    assert act["job"]["id"] == job.id
+    assert act["retry_at"] == lease_time.isoformat()
+
+
+def test_heartbeat_requeues_orphan_job_after_grace_period(db_session, test_fanpage):
+    now = ai_video_dispatch._utcnow()
+    worker = GflowWorker(worker_id="w-orphan", last_seen_at=now)
+    db_session.add(worker)
+
+    # Job claimed 4 minutes ago, last activity 4 minutes ago
+    claimed_4m = VideoJob(
+        worker_id="w-orphan",
+        fanpage_id=test_fanpage.id,
+        template_key="tpl",
+        title="Orphan Job",
+        caption="cap",
+        model="veo2",
+        aspect="9:16",
+        clip_seconds=5,
+        clips=[{"prompt": "p1"}],
+        credits_per_clip=10,
+        credits_estimate=10,
+        status="claimed",
+        started_at=now - timedelta(minutes=4),
+        last_progress_at=now - timedelta(minutes=4),
+        lease_until=now + timedelta(minutes=16),
+        clips_done=[],
+    )
+    # Job claimed 1 minute ago (within 2 minutes)
+    claimed_1m = VideoJob(
+        worker_id="w-orphan",
+        fanpage_id=test_fanpage.id,
+        template_key="tpl",
+        title="Fresh Job",
+        caption="cap",
+        model="veo2",
+        aspect="9:16",
+        clip_seconds=5,
+        clips=[{"prompt": "p1"}],
+        credits_per_clip=10,
+        credits_estimate=10,
+        status="claimed",
+        started_at=now - timedelta(minutes=1),
+        last_progress_at=now - timedelta(minutes=1),
+        lease_until=now + timedelta(minutes=19),
+        clips_done=[],
+    )
+    db_session.add_all([claimed_4m, claimed_1m])
+    db_session.commit()
+
+    payload = {
+        "version": "1.0.0",
+        "running_job_ids": [],
+        "phase": {"kind": "checking_credits", "done": 1, "total": 2},
+    }
+    ai_video_dispatch.record_heartbeat(db_session, "w-orphan", payload)
+    db_session.refresh(claimed_4m)
+    db_session.refresh(claimed_1m)
+
+    # 4 minutes after claim without running_job_ids -> requeued
+    assert claimed_4m.status == "queued"
+    assert claimed_4m.worker_id is None
+    assert claimed_4m.lease_until is None
+
+    # Within 2 minutes (1 min) -> untouched
+    assert claimed_1m.status == "claimed"
+    assert claimed_1m.worker_id == "w-orphan"
+
+    worker_row = db_session.query(GflowWorker).filter(GflowWorker.worker_id == "w-orphan").first()
+    assert worker_row.phase == {"kind": "checking_credits", "done": 1, "total": 2}

@@ -74,6 +74,15 @@ class JobRunner:
         if self.cancelled(jid):
             return
         state = JobState(self.cfg.work_dir, jid, generation)
+        if not job.get("clips_done"):
+            stored_profile = state.data.get("profile")
+            current_profile = job["account"]["profile"]
+            if (stored_profile and stored_profile != current_profile) or (
+                job.get("flow_project_id") is None and stored_profile != current_profile
+            ):
+                state.data["project_id"] = None
+                state.data["clips"] = {}
+                state.save()
         done = {str(c["index"]): c for c in job.get("clips_done", [])}
         local = state.data["clips"]
         # A checkpoint includes the file, not merely an entry in state.json.
@@ -92,6 +101,7 @@ class JobRunner:
                 return
             project = result.payload["project_id"]
         state.data["project_id"] = project
+        state.data["profile"] = job["account"]["profile"]
         state.save()
         # Replaying project/clip progress recovers a lost HTTP acknowledgement.
         self.api.progress(jid, generation, "project", flow_project_id=project)

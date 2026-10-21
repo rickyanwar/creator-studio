@@ -117,11 +117,16 @@ function formatHHmm(isoString: string | null | undefined): string {
   return dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatMinutesAgo(isoString: string | null | undefined, now: number): string {
-  if (!isoString) return "";
+function getMinutesAgo(isoString: string | null | undefined, now: number): number | null {
+  if (!isoString) return null;
   const dt = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
-  if (isNaN(dt.getTime())) return "";
-  const mins = Math.max(1, Math.round((now - dt.getTime()) / 60000));
+  if (isNaN(dt.getTime())) return null;
+  return Math.max(1, Math.round((now - dt.getTime()) / 60000));
+}
+
+function formatMinutesAgo(isoString: string | null | undefined, now: number): string {
+  const mins = getMinutesAgo(isoString, now);
+  if (mins === null) return "";
   return `${mins} min`;
 }
 
@@ -129,18 +134,42 @@ function WorkerCard({ worker, now }: { worker: GflowWorker; now: number }) {
   const act = worker.activity ?? {
     state: worker.online ? "idle" : "offline",
     job: null,
+    checking: null,
     resting_until: worker.paused_until,
+    retry_at: null,
     queued: 0,
     next_account_free_at: null,
   };
   const state = act.state;
 
-  const bgStyles: Record<string, string> = {
-    working: "bg-pri-soft text-pri-text border border-pri/20",
-    resting: "bg-warn-soft text-warn border border-warn/20",
-    waiting: "bg-warn-soft text-warn border border-warn/20",
-    idle: "bg-surface2 text-text2 border border-line",
-    offline: "bg-bad-soft text-bad border border-bad/20",
+  const tileStyles: Record<string, string> = {
+    working: "bg-pri-soft text-pri-text",
+    checking: "bg-info-soft text-info",
+    resting: "bg-warn-soft text-warn",
+    waiting: "bg-warn-soft text-warn",
+    stalled: "bg-warn-soft text-warn",
+    idle: "bg-surface2 text-text2",
+    offline: "bg-bad-soft text-bad",
+  };
+
+  const tileIcons: Record<string, string> = {
+    working: "svg-spinners:ring-resize",
+    checking: "solar:wallet-money-bold",
+    resting: "solar:cup-hot-bold",
+    waiting: "solar:hourglass-line-bold",
+    stalled: "solar:refresh-circle-bold",
+    idle: "solar:moon-sleep-bold",
+    offline: "solar:cloud-cross-bold",
+  };
+
+  const stateTitles: Record<string, string> = {
+    working: "Generating video",
+    checking: "Checking credits",
+    resting: "Resting",
+    waiting: "Waiting for an account",
+    stalled: "Stalled",
+    idle: "Idle",
+    offline: "Offline",
   };
 
   const job = act.job;
@@ -155,13 +184,20 @@ function WorkerCard({ worker, now }: { worker: GflowWorker; now: number }) {
     : 0;
   const restPercent = Math.min(100, Math.max(0, Math.round((remRestMs / (4 * 60 * 1000)) * 100)));
 
+  const checkingDone = act.checking?.done ?? 0;
+  const checkingTotal = act.checking?.total;
+  const checkingPercent =
+    checkingTotal != null && checkingTotal > 0
+      ? Math.min(100, Math.max(0, Math.round((checkingDone / checkingTotal) * 100)))
+      : 0;
+
+  const minsAgo = getMinutesAgo(worker.last_seen_at, now);
+
   return (
     <div
       role="status"
       aria-live="polite"
-      className={`w-full sm:w-auto sm:min-w-[340px] max-w-full rounded-xl px-3.5 py-2.5 min-h-[76px] flex flex-col justify-center transition-colors duration-300 text-xs ${
-        bgStyles[state] || bgStyles.idle
-      }`}
+      className="w-full sm:w-auto min-w-0 sm:min-w-[320px] max-w-[520px] rounded-2xl border border-line bg-surface shadow-sm p-4 grid grid-cols-[44px_1fr] sm:grid-cols-[44px_1fr_auto] gap-x-3.5 gap-y-2 items-start min-h-[110px] text-xs transition-colors duration-200"
     >
       <style>{`
         @keyframes workerShimmer {
@@ -175,155 +211,208 @@ function WorkerCard({ worker, now }: { worker: GflowWorker; now: number }) {
         }
       `}</style>
 
-      {/* Line 1: Icon + State Label + Worker ID */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 font-bold">
-          {state === "working" && (
-            <>
-              <span className="relative flex h-2 w-2 mr-0.5">
-                <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-current" />
-              </span>
-              <Icon icon="svg-spinners:ring-resize" width={14} className="shrink-0 text-current" />
-              <span className="tracking-tight">Generating</span>
-            </>
-          )}
-          {state === "resting" && (
-            <>
-              <Icon
-                icon="solar:cup-hot-bold"
-                width={15}
-                className="shrink-0 text-current motion-safe:animate-pulse"
-              />
-              <span className="tracking-tight">Resting</span>
-            </>
-          )}
-          {state === "waiting" && (
-            <>
-              <Icon
-                icon="solar:hourglass-line-bold"
-                width={15}
-                className="shrink-0 text-current motion-safe:animate-bounce"
-              />
-              <span className="tracking-tight">Waiting</span>
-            </>
-          )}
-          {state === "idle" && (
-            <>
-              <Icon icon="solar:moon-sleep-bold" width={15} className="shrink-0 text-current" />
-              <span className="tracking-tight">Idle</span>
-            </>
-          )}
-          {state === "offline" && (
-            <>
-              <Icon icon="solar:danger-triangle-bold" width={15} className="shrink-0 text-current" />
-              <span className="tracking-tight">Offline</span>
-            </>
-          )}
-        </div>
-        <span className="text-[11px] opacity-60 font-mono tracking-tight shrink-0">
-          {worker.worker_id}
-        </span>
+      {/* Column 1: Icon tile */}
+      <div
+        className={`w-11 h-11 rounded-xl shrink-0 flex items-center justify-center ${
+          tileStyles[state] || tileStyles.idle
+        }`}
+      >
+        <Icon icon={tileIcons[state] || tileIcons.idle} width={24} height={24} className="shrink-0" />
       </div>
 
-      {/* Line 2 / Content */}
-      {state === "working" && job && (
-        <div className="mt-1 flex flex-col gap-1">
-          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px]">
-            <span className="truncate max-w-[220px]">
-              {job.fanpage_name || "Video"} · #{job.id} · {job.account || "flow"}
+      {/* Column 2: Content */}
+      <div className="col-start-2 row-start-1 min-w-0 flex flex-col justify-between h-full gap-1">
+        {/* Title row */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-text tracking-tight">
+            {stateTitles[state] || "Worker"}
+          </span>
+          {state === "working" && (
+            <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+              <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-pri opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-pri" />
             </span>
-            <span className="font-semibold shrink-0">
-              clip {Math.min(clipsDone + 1, clipsTotal)}/{clipsTotal}
+          )}
+          {state === "checking" && (
+            <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+              <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-info opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-info" />
             </span>
-          </div>
+          )}
+          {(state === "resting" || state === "waiting" || state === "stalled") && (
+            <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+              <span className="motion-safe:animate-pulse relative inline-flex rounded-full h-2 w-2 bg-warn" />
+            </span>
+          )}
+          {state === "idle" && (
+            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-text2/40 shrink-0" aria-hidden="true" />
+          )}
+          {state === "offline" && (
+            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-bad/40 shrink-0" aria-hidden="true" />
+          )}
+        </div>
 
-          {/* Step row */}
-          <div className="flex items-center justify-between gap-1 text-[10px] mt-0.5 font-medium">
-            <div className="flex items-center gap-1">
-              {WORKER_STEPS.map((s, idx) => {
-                const isCurrent = idx === currentStepIdx;
-                const isPast = idx < currentStepIdx;
-                return (
-                  <span key={s.key} className="flex items-center gap-1">
-                    <span
-                      className={
-                        isCurrent
-                          ? "font-bold underline underline-offset-2 opacity-100"
-                          : isPast
-                          ? "opacity-60"
-                          : "opacity-30"
-                      }
-                    >
-                      {s.label}
-                    </span>
-                    {idx < WORKER_STEPS.length - 1 && <span className="opacity-30">→</span>}
-                  </span>
-                );
-              })}
+        {/* Subtitle */}
+        <div className="min-w-0">
+          {state === "working" && (
+            <div className="text-xs text-text2 truncate">
+              {job ? `${job.fanpage_name || "Video"} · #${job.id} · ${job.account || "flow"}` : "Generating…"}
             </div>
-            <span className="font-mono text-[11px] opacity-75 shrink-0 ml-1">
-              {formatElapsed(job.started_at, now)}
-            </span>
-          </div>
+          )}
 
-          {/* Progress bar */}
-          <div className="w-full bg-black/10 dark:bg-white/10 h-1.5 rounded-full overflow-hidden mt-0.5 relative">
-            <div
-              className="h-full bg-pri rounded-full transition-all duration-300 relative overflow-hidden"
-              style={{ width: `${progressPercent}%` }}
-            >
-              <div className="absolute inset-0 animate-worker-shimmer bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+          {state === "checking" && (
+            <div className="flex items-center gap-1.5 text-xs text-text2 truncate">
+              <Icon icon="svg-spinners:3-dots-fade" width={14} height={14} className="shrink-0 text-info" />
+              <span className="truncate">
+                Reading Flow balances ·{" "}
+                {checkingTotal != null ? `${checkingDone}/${checkingTotal} accounts` : "Starting…"}
+              </span>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {state === "working" && !job && (
-        <div className="mt-1 text-[11px] opacity-80">
-          Generating...
-        </div>
-      )}
+          {state === "resting" && (
+            <div className="text-xs text-text2 truncate">
+              Anti-bot pause · next video in {formatCountdown(restingUntil, now)}
+            </div>
+          )}
 
-      {state === "resting" && (
-        <div className="mt-1 flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[11px]">
-            <span>
-              Next video in {formatCountdown(restingUntil, now)}
-              <span className="opacity-60 ml-1.5">(Anti-bot pause)</span>
-            </span>
-          </div>
-          <div className="w-full bg-black/10 dark:bg-white/10 h-1 rounded-full overflow-hidden mt-0.5">
-            <div
-              className="h-full bg-warn rounded-full transition-all duration-1000"
-              style={{ width: `${restPercent}%` }}
-            />
-          </div>
-        </div>
-      )}
+          {state === "waiting" && (
+            <div className="text-xs text-text2 truncate">
+              {act.queued} queued ·{" "}
+              {act.next_account_free_at
+                ? `next account free at ${formatHHmm(act.next_account_free_at)}`
+                : "no free account"}
+            </div>
+          )}
 
-      {state === "waiting" && (
-        <div className="mt-1 text-[11px] opacity-90">
-          {act.queued} in queue ·{" "}
-          {act.next_account_free_at
-            ? `accounts resting until ${formatHHmm(act.next_account_free_at)}`
-            : "no free account"}
-        </div>
-      )}
+          {state === "stalled" && (
+            <div className="text-xs text-text2 truncate">
+              {job ? `${job.fanpage_name || "Video"} · #${job.id} · ` : ""}
+              retrying {act.retry_at ? `at ${formatHHmm(act.retry_at)}` : "soon"}
+            </div>
+          )}
 
-      {state === "idle" && (
-        <div className="mt-1 text-[11px] opacity-80">
-          Queue empty
-        </div>
-      )}
+          {state === "idle" && (
+            <div className="text-xs text-text2 truncate">Queue empty</div>
+          )}
 
-      {state === "offline" && (
-        <div className="mt-1 text-[11px] opacity-90">
-          {worker.last_seen_at
-            ? `Offline · last seen ${formatMinutesAgo(worker.last_seen_at, now)} ago`
-            : "Offline"}
+          {state === "offline" && (
+            <div className="text-xs text-text2 truncate">
+              {minsAgo != null ? (
+                <>
+                  Last seen {minsAgo} min ago
+                  {minsAgo < 10 && <span className="opacity-60"> · restarting?</span>}
+                </>
+              ) : (
+                "Offline"
+              )}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Bottom area (fixed height 28 px) */}
+        <div className="mt-1">
+          {state === "working" && (
+            <div className="h-7 flex flex-col justify-between">
+              {/* Stepper + Elapsed */}
+              <div className="flex items-center justify-between gap-1 text-[10px] leading-tight">
+                <div className="flex items-center gap-1 min-w-0 truncate">
+                  {WORKER_STEPS.map((s, idx) => {
+                    const isCurrent = idx === currentStepIdx;
+                    const isPast = idx < currentStepIdx;
+                    return (
+                      <span key={s.key} className="inline-flex items-center gap-1 shrink-0">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                            isPast
+                              ? "bg-pri"
+                              : isCurrent
+                              ? "bg-pri ring-2 ring-pri-soft"
+                              : "bg-line"
+                          }`}
+                        />
+                        <span
+                          className={`leading-none ${
+                            isCurrent
+                              ? "font-bold text-pri-text"
+                              : isPast
+                              ? "text-text font-medium"
+                              : "text-text2/50"
+                          }`}
+                        >
+                          {s.label}
+                        </span>
+                        {idx < WORKER_STEPS.length - 1 && (
+                          <span className="text-line text-[9px] mx-0.5">·</span>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+                <span className="font-mono text-[10px] tabular-nums text-text2 shrink-0 ml-auto pl-1">
+                  {formatElapsed(job?.started_at, now)}
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div className="w-full bg-surface2 h-1.5 rounded-full overflow-hidden relative">
+                <div
+                  className="h-full bg-pri rounded-full transition-all duration-300 relative overflow-hidden"
+                  style={{ width: `${progressPercent}%` }}
+                >
+                  <div className="absolute inset-0 motion-safe:animate-worker-shimmer bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {state === "checking" && (
+            <div className="h-7 flex flex-col justify-center">
+              <div className="w-full bg-surface2 h-1.5 rounded-full overflow-hidden relative">
+                {checkingTotal != null ? (
+                  <div
+                    className="h-full bg-info rounded-full transition-all duration-300 relative overflow-hidden"
+                    style={{ width: `${checkingPercent}%` }}
+                  >
+                    <div className="absolute inset-0 motion-safe:animate-worker-shimmer bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+                  </div>
+                ) : (
+                  <div className="h-full w-full bg-info/20 rounded-full relative overflow-hidden">
+                    <div className="absolute inset-0 motion-safe:animate-worker-shimmer bg-gradient-to-r from-transparent via-info to-transparent" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {state === "resting" && (
+            <div className="h-7 flex flex-col justify-center">
+              <div className="w-full bg-surface2 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-warn rounded-full transition-all duration-1000"
+                  style={{ width: `${restPercent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {state !== "working" && state !== "checking" && state !== "resting" && (
+            <div className="h-7" aria-hidden="true" />
+          )}
+        </div>
+      </div>
+
+      {/* Column 3: Right meta (stacked under content on small screens) */}
+      <div className="col-start-2 sm:col-start-3 row-start-2 sm:row-start-1 flex items-center justify-between sm:flex-col sm:items-end sm:text-right text-[11px] text-text2 mt-1 sm:mt-0 shrink-0">
+        <span className="font-mono opacity-70 tracking-tight truncate max-w-[140px]" title={worker.worker_id}>
+          {worker.worker_id}
+        </span>
+        {state !== "offline" && worker.mem_available_mb != null && (
+          <span className="opacity-70 sm:mt-0.5 whitespace-nowrap">
+            {worker.mem_available_mb} MB free
+          </span>
+        )}
+      </div>
     </div>
   );
 }
