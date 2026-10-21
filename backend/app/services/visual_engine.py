@@ -54,7 +54,7 @@ def build_inset_prompt(
     refs = [hero_path]
     prompt_lines = [
         f"Design a premium vertical (4:5) {sport} social media graphic of the quality a senior graphic designer at the best {sport} media pages produces in Photoshop. Use only the REAL people and objects from the reference photos — never invent, beautify or alter a face.\n",
-        f"HERO (Image 1): {hero_desc}. Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 8-12% from the top edge, shoulders filling the card width, face large (about 40-45% of the card width), placed center-right, eyes in the upper third. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n"
+        f"HERO (Image 1): {hero_desc}. Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 6-10% from the top edge, eyes at about 25-30% of the card height, chin no lower than 50% of the card height, face about 30-35% of the card width, shoulders filling the card width, placed center-right. The whole face stays in the top half, well clear of the headline area at the bottom. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n"
     ]
     
     idx = 2
@@ -96,7 +96,7 @@ def build_inset_prompt(
 def build_solo_prompt(hero_desc: str, purpose: str, accent: str, sport: str = 'Formula 1', treatment: str = 'clean') -> str:
     return (
         f"Design a premium vertical (4:5) {sport} social media graphic of the quality a senior graphic designer at the best {sport} media pages produces in Photoshop. Use only the REAL people and objects from the reference photos — never invent, beautify or alter a face.\n\n"
-        f"HERO (image 1): {hero_desc}. Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 8-12% from the top edge, shoulders filling the card width, face large (about 40-45% of the card width), placed center, eyes in the upper third. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n\n"
+        f"HERO (image 1): {hero_desc}. Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 6-10% from the top edge, eyes at about 25-30% of the card height, chin no lower than 50% of the card height, face about 30-35% of the card width, shoulders filling the card width, placed center. The whole face stays in the top half, well clear of the headline area at the bottom. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n\n"
         f"{treatment_clause(treatment, accent)}\n\n"
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade across hero and background; high micro-contrast on the face, rich true team colours, soft cool rim light on the hero's edge, clean separation from the background. Looks like a real photograph composited by a professional, not AI art.\n\n"
         f"{realism_block()}\n\n"
@@ -133,7 +133,7 @@ def build_whatif_inset_prompt(
     refs = [hero_path]
     prompt_lines = [
         f"Design a premium vertical (4:5) {sport} social media graphic of the quality a senior graphic designer at the best {sport} media pages produces in Photoshop. Use only the REAL people and objects from the reference photos — never invent, beautify or alter a face.\n",
-        f"HERO (Image 1): {hero_desc} (real, keep exactly). Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 8-12% from the top edge, shoulders filling the card width, face large (about 40-45% of the card width), placed center-right, eyes in the upper third. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n"
+        f"HERO (Image 1): {hero_desc} (real, keep exactly). Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 6-10% from the top edge, eyes at about 25-30% of the card height, chin no lower than 50% of the card height, face about 30-35% of the card width, shoulders filling the card width, placed center-right. The whole face stays in the top half, well clear of the headline area at the bottom. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n"
     ]
     
     idx = 2

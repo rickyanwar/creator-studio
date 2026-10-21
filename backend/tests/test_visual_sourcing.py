@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, mock_open
 from typing import Tuple
 from dataclasses import replace
 
@@ -77,10 +77,8 @@ def test_names_are_same_person_different():
     assert not _names_are_same_person("Lewis Hamilton", "Fernando Alonso")
 
 def test_names_are_same_person_same_surname_different_first():
-    # edge case: Hill (Damon Hill vs Graham Hill) — same surname, documented ambiguity
-    # surname-only match returns True; callers must handle this edge case.
-    # ponytail: full-name disambiguation needed for same-surname families; add when it causes real FP.
-    assert _names_are_same_person("Damon Hill", "Graham Hill")  # same surname → same person (known limitation)
+    # Multi-word names with different first initials are not the same person
+    assert not _names_are_same_person("Damon Hill", "Graham Hill")
 
 def test_names_are_same_person_short_surname_not_matched():
     # Surnames < 3 chars don't trigger surname-only match
@@ -108,9 +106,10 @@ def test_parse_inset_pick_out_of_range():
 
 # --- V5: plan_photos inset rejection ---
 
+@patch('app.services.visual_sourcing.vision_verify_subject', return_value={'match': True, 'confidence': 0.95})
 @patch('app.services.visual_sourcing._vision_chat')
 @patch('app.services.visual_sourcing._vision_datauri')
-def test_plan_photos_gallery_and_vision_parsing(mock_datauri, mock_chat):
+def test_plan_photos_gallery_and_vision_parsing(mock_datauri, mock_chat, mock_verify):
     mock_datauri.return_value = "data:image/jpeg;base64,mock"
     mock_chat.return_value = "Candidate 2 is best"
     
@@ -400,10 +399,11 @@ def test_plan_photos_inset_person_is_same_as_hero_rejected(mock_fetch):
     
     assert any("is the hero" in n for n in plan.notes)
 
+@patch('app.services.visual_sourcing.vision_verify_subject', return_value={'match': True, 'confidence': 0.95})
 @patch('app.services.visual_sourcing._vision_chat')
 @patch('app.services.visual_sourcing._vision_datauri')
 @patch('app.services.visual_sourcing.fetch_subject_datauri')
-def test_plan_photos_quote_different_person_inset_kept(mock_fetch, mock_datauri, mock_chat):
+def test_plan_photos_quote_different_person_inset_kept(mock_fetch, mock_datauri, mock_chat, mock_verify):
     """
     Verstappen-responds-to-Russell: secondary_kind='person', secondary='George Russell' → different
     person → inset search proceeds → inset_is_distinct=True if photo found.
@@ -431,7 +431,8 @@ def test_plan_photos_quote_different_person_inset_kept(mock_fetch, mock_datauri,
         radio_lines=(), weather='none', people=('Max Verstappen', 'George Russell'), unique_moment=False
     )
 
-    plan = plan_photos(db, analysis, 'inset', 'F1', None, set())
+    with patch('builtins.open', mock_open(read_data=b'dummy')):
+        plan = plan_photos(db, analysis, 'inset', 'F1', None, set())
 
     assert plan.inset is not None
     assert plan.inset_is_distinct is True

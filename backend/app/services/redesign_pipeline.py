@@ -433,7 +433,8 @@ def redesign_card(
 
             template_json, image_srcs = prepare_design_images(
                 db, tpl.template_json, tpl.canvas_width,
-                d_title or "", niche, image_src, expand=False
+                d_title or "", niche, image_src, expand=False,
+                smart=False,  # AI-made image: one full-width picture, never a split or an added inset
             )
             
             # Zero baked sample text so the renderer fills from title/subtitle/caption.
@@ -456,7 +457,9 @@ def redesign_card(
                         "watermark_image": watermark_datauri(fanpage),
                         "image_srcs": image_srcs,
                         "focus_points": focus_points_for(
-                            image_srcs, safe_cy_ceiling=_safe_face_cy_ceiling(template_json, tpl.canvas_height)
+                            image_srcs,
+                            safe_cy_ceiling=_safe_face_cy_ceiling(template_json, tpl.canvas_height),
+                            keep_top=True,
                         ),
                         "scale": settings.design_render_scale,
                         "accent": fanpage.accent_color,

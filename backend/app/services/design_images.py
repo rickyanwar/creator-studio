@@ -1777,7 +1777,7 @@ def vision_focus_point(image_bytes: bytes, for_split: bool = False, safe_cy_ceil
     return None
 
 
-def focus_points_for(image_srcs: list, for_split: bool = False, safe_cy_ceiling: float | None = None) -> list:
+def focus_points_for(image_srcs: list, for_split: bool = False, safe_cy_ceiling: float | None = None, keep_top: bool = False) -> list:
     """Compute a focus point per data-URI image (for the renderer). When vision
     focus is enabled, the 9Router vision model chooses the point (best for the
     full-bleed portrait templates); otherwise OpenCV face/saliency is used.
@@ -1806,7 +1806,13 @@ def focus_points_for(image_srcs: list, for_split: bool = False, safe_cy_ceiling:
     the ACTUAL chosen template's computed ceiling so the target adapts to
     that template's own title position instead of a flat guess. Omit to
     keep the old flat-ceiling behavior (callers without a template in hand,
-    or the split path, which has its own separate ceiling logic already)."""
+    or the split path, which has its own separate ceiling logic already).
+
+    `keep_top` (redesign AI-composed cards only): anchor the vertical crop
+    to the top of the image (fy = 0.0), preserving the AI image's own
+    composition without moving the face or re-aiming down into text zones."""
+    if keep_top:
+        return [[0.5, 0.0] for _ in image_srcs]
     from app.config import get_settings
     use_vision = get_settings().vision_focus_enabled
     default = [0.5, 0.42]

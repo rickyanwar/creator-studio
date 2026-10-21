@@ -162,9 +162,9 @@ def build_news_copy_prompt(
    - Always keep the key context a fan needs: the event/place (e.g. Mandalika, Indonesian GP), the result or the concrete injury/fact. Cut filler, never context.
    - Details that do not fit go into the caption, not lost.
    - Do NOT start with 'BREAKING:' / 'OFFICIAL:' / 'CONFIRMED:' — the design already shows a label badge (BREAKING or the page's news label).
-   - GOOD example: "Bagnaia crashes out in Indonesia: **No feeling, no grip**" (49 chars)
+   - GOOD example: "**Bagnaia** crashes out in Indonesia: **No feeling, no grip**" (49 chars)
    - BAD example: "Francesco Bagnaia has officially confirmed after the race that he suffered from terrible tire grip issues and crashed out of the Indonesian Grand Prix" (152 chars, way too long for the space)
-   - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 4 words) in double asterisks so it renders in red. Mark exactly ONE phrase; leave the rest unmarked.
+   - HIGHLIGHT: wrap TWO parts in double asterisks so they render in the accent colour: (1) the main person or team, and (2) the key claim/result (2 to 4 words), e.g. "**Bagnaia** crashes out in Indonesia: **No feeling, no grip**". Mark exactly those two parts (one part only when the headline has no person or team); never mark the whole headline.
    - No hashtags, no emoji, no quote marks
    - The "title" and "subtitle" are printed on the image: both MUST be in {language}. Never leave them in the source language."""
     else:
@@ -174,7 +174,7 @@ def build_news_copy_prompt(
    - GOOD example: source "Di Giannantonio to join Red Bull KTM Factory Racing" → "BREAKING: Fabio Di Giannantonio is officially joining Red Bull KTM Factory Racing!"
    - BAD example: "MotoGP Shake-Up" (dropped the facts, too short)
    - BAD example: "You Won't Believe What Marquez Just Did" (withholds the actual news — this is the "far from the original title" failure mode to avoid)
-   - HIGHLIGHT: wrap the SINGLE most important phrase (the key claim/result — 2 to 5 words) in double asterisks so it renders in red, e.g. "Marc Marquez takes **his first pole** at Sachsenring". Mark exactly ONE phrase; leave the rest unmarked.
+   - HIGHLIGHT: wrap TWO parts in double asterisks so they render in the accent colour: (1) the main person or team, and (2) the key claim/result (2 to 5 words), e.g. "**Marc Marquez** takes **his first pole** at Sachsenring". Mark exactly those two parts (one part only when the headline has no person or team); never mark the whole headline.
    - Maximum {_effective_title_max_chars(fanpage, article)} characters (the ** markers do not count)
    - No hashtags, no emoji, no quote marks
    - The "title" and "subtitle" are printed on the image: both MUST be in {language}. Never leave them in the source language."""

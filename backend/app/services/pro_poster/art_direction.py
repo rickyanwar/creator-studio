@@ -5,7 +5,7 @@ poster prompt and ordered reference images for the visual engine.
 """
 from __future__ import annotations
 
-from app.services.prompt_rules import TEMPLATE_TEXT_ZONE_PCT
+from app.services.prompt_rules import NO_SPLIT_LINE, TEMPLATE_TEXT_ZONE_PCT
 from app.services.pro_poster.types import (
     ArtDirection,
     PhotoSelection,
@@ -172,7 +172,7 @@ def direct(
     ]
     if hero_subj is not None and (selection.hero is not None or selection.face_ref is not None):
         must_do_lines.append(
-            f"- {hero} must be recognisably himself: show his face clearly, turned toward the camera (front or three-quarter view), with his real face and likeness from the reference photos; never show him only from behind or with his face hidden."
+            f"- {hero} must be recognisably himself: show his face clearly, turned toward the camera (front or three-quarter view), with his real face and likeness from the reference photos; never show him only from behind or with his face hidden. Keep his face high in the image: eyes at about 25-35% of the image height and the chin above the middle of the image, so the headline never covers it."
         )
     if selection.hero is None and selection.face_ref is None:
         must_do_lines.append(
@@ -212,6 +212,7 @@ def direct(
     avoid_lines = [
         "Do NOT include anything below (very important):",
         "- No official series logo or wordmark anywhere in the image: not on banners, screens, walls, the track, the octagon mat or fence, or podium backdrops (for example F1, Formula 1, FIA, MotoGP, FIM, Dorna, UFC). Use plain unbranded surfaces there. A small series logo that is part of an athlete's real gear (gloves, fight shorts, race suit, helmet) is fine. Team, manufacturer and sponsor logos (Ferrari, Red Bull, Ducati, Mercedes, Monster and so on) are fine and must look real. No watermark.",
+        NO_SPLIT_LINE,
     ]
     avoid_lines.append(f"- Any text or graphic words in the bottom {TEMPLATE_TEXT_ZONE_PCT}% of the image.")
     for item in brief.must_avoid:

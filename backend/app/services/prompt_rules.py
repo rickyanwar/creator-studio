@@ -27,10 +27,19 @@ SERIES_LOGO_LINE = (
 )
 
 
+# Owner rule 2026-10-21: AI-designed cards (ChatGPT / Codex) are never split. A split
+# layout exists only on the template path, for a story that really is about two people.
+NO_SPLIT_LINE = (
+    "- A split card: two photos side by side as separate panels, a vertical seam or a hard dividing line. "
+    "The card is ONE continuous scene; any second photo appears only inside its circle inset, never as a second large panel."
+)
+
+
 def avoid_block(extra: list[str] | tuple[str, ...] = (), *, text_zone: bool = True) -> str:
     lines = [
         "Do NOT include anything below (very important):",
         SERIES_LOGO_LINE,
+        NO_SPLIT_LINE,
     ]
     if text_zone:
         lines.append(

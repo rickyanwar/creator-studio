@@ -187,6 +187,9 @@ def test_visual_sourcing_whatif_picks():
         def first(self): return mock_driver
         def limit(self, val): return self
         def all(self): return [mock_alt_candidate] # ensures candidates exist
+        def subquery(self):  # niche filter builds a keyword subquery
+            from sqlalchemy import literal, select
+            return select(literal("x")).subquery()
     
     def db_query(model):
         return MockQuery()

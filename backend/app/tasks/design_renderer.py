@@ -408,6 +408,7 @@ def render_card_png(
     db: Any = None,
     main_path: str | None = None,
     skip_face_fix: bool = False,
+    ai_image: bool = False,
 ) -> bytes:
     """Render a card PNG through the headless renderer service.
 
@@ -445,6 +446,7 @@ def render_card_png(
         image_src,
         main_path=main_path,
         expand=bool(getattr(fanpage, "design_expand", False)),
+        smart=not ai_image,
     )
     image_zooms = template_json.pop("_splitImageZooms", None)
 
@@ -457,7 +459,8 @@ def render_card_png(
         and image_srcs[1]
     )
     safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
-    if not is_split and not skip_face_fix and image_srcs and image_srcs[0]:
+    # An AI-made image is used exactly as generated: no content-aware fill, crop from the top.
+    if not is_split and not skip_face_fix and not ai_image and image_srcs and image_srcs[0]:
         try:
             main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
             fixed = fix_unsafe_single_photo_face(
@@ -468,7 +471,7 @@ def render_card_png(
         except Exception as exc:
             logger.warning("Design: fix_unsafe_single_photo_face failed for job %s: %s", getattr(job, "id", None), exc)
 
-    focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
+    focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling, keep_top=ai_image)
     if is_split:
         focus_points = align_split_focus_points(focus_points)
 
@@ -712,6 +715,7 @@ def render_design(self, job_id: int):
             db=db,
             main_path=gallery_image.local_path if gallery_image else None,
             skip_face_fix=skip_face_fix,
+            ai_image=image_marker in ("pro_poster", "speaker_design"),
         )
 
         designs_dir = Path(settings.storage_base_path) / "designs"
@@ -1375,6 +1379,7 @@ def render_facebook_photo(self, job_id: int):
             _facebook_photo_grounding(category, job), niche, image_src,
             main_path=gallery_image.local_path if gallery_image else None,
             expand=bool(fanpage.design_expand),
+            smart=False if image_marker == "speaker_design" else True,
         )
         image_zooms = template_json.pop("_splitImageZooms", None)
 
@@ -1386,7 +1391,8 @@ def render_facebook_photo(self, job_id: int):
         safe_cy_ceiling = _safe_face_cy_ceiling(template_json, template.canvas_height)
         # See render_design's identical block (zero cover-fit vertical slack
         # on a landscape photo — the ceiling alone can't be honored).
-        if not is_split and image_srcs and image_srcs[0]:
+        ai_image = image_marker == "speaker_design"
+        if not is_split and not ai_image and image_srcs and image_srcs[0]:
             try:
                 main_bytes = base64.b64decode(image_srcs[0].split(",", 1)[1])
                 fixed = fix_unsafe_single_photo_face(
@@ -1396,7 +1402,7 @@ def render_facebook_photo(self, job_id: int):
                     image_srcs[0] = fixed
             except Exception as exc:
                 logger.warning("Facebook photo: fix_unsafe_single_photo_face failed for job %d: %s", job_id, exc)
-        focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling)
+        focus_points = focus_points_for(image_srcs, for_split=False, safe_cy_ceiling=safe_cy_ceiling, keep_top=ai_image)
         if is_split:
             focus_points = align_split_focus_points(focus_points)
 

@@ -48,7 +48,10 @@ def _rewrite_news_title(text: str, caption: str, fanpage, other_titles: list[str
         f"- Keep every key number/name/team exactly as in the source (prefer the source headline's figure; never drop or change totals).\n"
         f"- Do not add \"BREAKING\"/\"JUST IN\"/\"OFFICIAL\" unless the source itself says so AND the event is the new fact.\n"
         f"- No clickbait questions that hide the fact.\n"
-        f"- Keep the existing **keyword** highlight markers for the main figure/name.\n"
+        f"- Highlight TWO parts with double asterisks (they render in the page's accent colour): "
+        f"(1) the main person or team, and (2) the key fact of the news — the number, result or claim (2 to 5 words). "
+        f"Example: \"**Aston Martin** record **17 DNFs** in 15 Grand Prix this season\". "
+        f"Mark exactly those two parts, never the whole headline, and never a lone small word such as \"in\" or \"the\".\n"
         f"- Max {fanpage.mode2_title_max_chars or 80} characters.\n"
     )
     if other_titles:
