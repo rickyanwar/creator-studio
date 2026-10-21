@@ -117,6 +117,7 @@ export const updateIGSource = (
     caption_hashtag_count?: number | null;
     caption_cta_text?: string;
     caption_custom_prompt?: string;
+    niche?: string;
   }
 ) => api.patch(`/ig-sources/${sourceId}`, data);
 export const deleteIGSource = (sourceId: number) =>

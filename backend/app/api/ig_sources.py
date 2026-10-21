@@ -17,6 +17,7 @@ class UpdateIGSourceRequest(BaseModel):
     is_active: Optional[bool] = None
     album_image_indices: Optional[List[int]] = None
     scraper_backend: Optional[str] = None  # "auto" | "instagrapi" | "viewer"
+    niche: Optional[str] = None
     # Per-source caption criteria (None = leave unchanged; "" = clear → fanpage default)
     caption_tone: Optional[str] = None
     caption_language: Optional[str] = None
@@ -44,17 +45,63 @@ def list_ig_sources(
     _: CurrentUser,
     orphan_only: bool = Query(False, description="Only show sources with no active fanpage links"),
 ):
+    from collections import defaultdict
     from app.models.ig_sources import IGSource
     from app.models.fanpage_sources import FanpageSource
+    from app.models.target_fanpages import TargetFanpage
 
-    q = db.query(IGSource)
-    sources = q.order_by(IGSource.ig_username).all()
+    sources = db.query(IGSource).order_by(IGSource.ig_username).all()
+
+    active_links = (
+        db.query(FanpageSource.ig_source_id, TargetFanpage)
+        .outerjoin(TargetFanpage, FanpageSource.fanpage_id == TargetFanpage.id)
+        .filter(FanpageSource.is_active == True)
+        .all()
+    )
+    source_fanpages = defaultdict(list)
+    source_active_counts = defaultdict(int)
+    for src_id, fp in active_links:
+        source_active_counts[src_id] += 1
+        if fp is not None:
+            source_fanpages[src_id].append(fp)
 
     result = []
     for s in sources:
-        active_links = db.query(FanpageSource).filter_by(ig_source_id=s.id, is_active=True).count()
-        if orphan_only and active_links > 0:
+        active_links_count = source_active_counts[s.id]
+        if orphan_only and active_links_count > 0:
             continue
+
+        linked_fps = source_fanpages.get(s.id, [])
+        all_niches = set()
+        has_fp_with_niches = False
+        for fp in linked_fps:
+            niches = fp.mode2_gallery_niches or []
+            if isinstance(niches, str):
+                import json
+                try:
+                    niches = json.loads(niches)
+                except Exception:
+                    niches = [n.strip('"{}') for n in niches.strip('{}').split(',') if n.strip('"{}')]
+            elif isinstance(niches, list) and len(niches) > 1 and niches[0] == "[" and niches[-1] == "]":
+                import json
+                try:
+                    niches = json.loads("".join(niches))
+                except Exception:
+                    pass
+            if niches:
+                has_fp_with_niches = True
+                for n in niches:
+                    if n:
+                        all_niches.add(n)
+        fanpage_niches = sorted(all_niches)
+
+        niche_mismatch = False
+        if s.niche and has_fp_with_niches:
+            if s.niche not in all_niches:
+                if s.niche == "Motorsport" and ("F1" in all_niches or "MotoGP" in all_niches):
+                    niche_mismatch = False
+                else:
+                    niche_mismatch = True
 
         result.append({
             "id": s.id,
@@ -66,7 +113,7 @@ def list_ig_sources(
             "is_active": s.is_active,
             "last_checked_at": s.last_checked_at.replace(tzinfo=timezone.utc).isoformat() if s.last_checked_at else None,
             "last_seen_post_id": s.last_seen_post_id,
-            "active_fanpage_count": active_links,
+            "active_fanpage_count": active_links_count,
             "album_image_indices": s.album_image_indices or [1],
             "scraper_backend": (s.scraper_backend.value if s.scraper_backend else "auto"),
             "last_crawl_error": s.last_crawl_error,
@@ -76,6 +123,9 @@ def list_ig_sources(
             "caption_hashtag_count": s.caption_hashtag_count,
             "caption_cta_text": s.caption_cta_text,
             "caption_custom_prompt": s.caption_custom_prompt,
+            "niche": s.niche,
+            "fanpage_niches": fanpage_niches,
+            "niche_mismatch": niche_mismatch,
         })
 
     return result
@@ -116,9 +166,16 @@ def update_ig_source(source_id: int, body: UpdateIGSourceRequest, db: DB, _: Cur
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid scraper_backend: must be auto, instagrapi, or viewer")
 
+    provided = body.model_fields_set
+    if "niche" in provided:
+        if body.niche in ("", None):
+            source.niche = None
+        else:
+            cleaned = body.niche.strip()[:64]
+            source.niche = cleaned if cleaned else None
+
     # Caption criteria: apply only fields present in the request; "" clears back
     # to the fanpage default (stored as NULL).
-    provided = body.model_fields_set
     for field in ("caption_tone", "caption_language", "caption_max_length",
                   "caption_hashtag_count", "caption_cta_text", "caption_custom_prompt"):
         if field in provided:

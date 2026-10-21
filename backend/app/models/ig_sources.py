@@ -24,6 +24,7 @@ class IGSource(Base):
     last_seen_post_id = Column(String(128), nullable=True)  # ig_media_id of most recent seen post
     is_active = Column(Boolean, default=True, nullable=False)
     album_image_indices = Column(ARRAY(Integer), nullable=False, server_default="{1}")
+    niche = Column(String(64), nullable=True, index=False)
     scraper_backend = Column(
         SAEnum(ScraperBackend, name="scraperbackend"),
         nullable=False,

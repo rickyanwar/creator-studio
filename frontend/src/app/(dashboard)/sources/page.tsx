@@ -8,6 +8,7 @@ import { format, formatDistanceToNowStrict } from "date-fns";
 import { Icon } from "@iconify/react";
 import {
   listIGSources,
+  updateIGSource,
   deleteIGSource,
   getCrawlerHealth,
   getScraperHealth,
@@ -23,7 +24,19 @@ type IGSourceRow = {
   last_checked_at: string | null;
   active_fanpage_count: number;
   last_crawl_error: string | null;
+  niche: string | null;
+  fanpage_niches: string[];
+  niche_mismatch: boolean;
 };
+
+const PRESET_NICHES = [
+  "F1",
+  "MotoGP",
+  "Motorsport",
+  "UFC",
+  "NBA",
+  "Sports",
+] as const;
 
 const viewerTiers = [
   ["gramsnap", "GramSnap"],
@@ -88,8 +101,14 @@ function SourcesPage() {
 
   // Filters for IG
   const [searchQuery, setSearchQuery] = useState("");
+  const [nicheFilter, setNicheFilter] = useState("all");
   const [onlyProblems, setOnlyProblems] = useState(false);
   const [notUsedOnly, setNotUsedOnly] = useState(false);
+
+  // Edit IG Source
+  const [editingSource, setEditingSource] = useState<IGSourceRow | null>(null);
+  const [editNiche, setEditNiche] = useState("");
+  const [savingNiche, setSavingNiche] = useState(false);
 
   // News Sources Panel state (for header Add button & tab count)
   const [newsCount, setNewsCount] = useState<number | null>(null);
@@ -97,10 +116,23 @@ function SourcesPage() {
 
   const orphans = sources.filter((s) => s.active_fanpage_count === 0);
 
+  const distinctNiches = Array.from(
+    new Set(
+      sources
+        .map((s) => s.niche)
+        .filter((n): n is string => Boolean(n && n.trim()))
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
   const filteredSources = sources.filter((s) => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase().replace(/^@/, "");
       if (!s.ig_username.toLowerCase().includes(q)) return false;
+    }
+    if (nicheFilter === "none") {
+      if (s.niche) return false;
+    } else if (nicheFilter !== "all") {
+      if (s.niche !== nicheFilter) return false;
     }
     if (notUsedOnly && s.active_fanpage_count > 0) return false;
     if (onlyProblems) {
@@ -115,6 +147,25 @@ function SourcesPage() {
     }
     return true;
   });
+
+  function openEditSource(s: IGSourceRow) {
+    setEditingSource(s);
+    setEditNiche(s.niche ?? "");
+  }
+
+  async function handleSaveNiche() {
+    if (!editingSource) return;
+    setSavingNiche(true);
+    try {
+      await updateIGSource(editingSource.id, { niche: editNiche });
+      await mutate();
+      setEditingSource(null);
+    } catch (err: any) {
+      alert("Failed to update niche: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setSavingNiche(false);
+    }
+  }
 
   async function handleDelete(sourceId: number, username: string) {
     if (!confirm(`Delete @${username}? This cannot be undone.`)) return;
@@ -307,6 +358,20 @@ function SourcesPage() {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-9 w-56 px-3 rounded-xl border border-line bg-surface text-text text-[13px] focus:outline-none focus:ring-1 focus:ring-pri"
             />
+            <select
+              aria-label="Filter by niche"
+              value={nicheFilter}
+              onChange={(e) => setNicheFilter(e.target.value)}
+              className="h-9 px-3 rounded-xl border border-line bg-surface text-text text-[13px] focus:outline-none focus:ring-1 focus:ring-pri cursor-pointer"
+            >
+              <option value="all">All niches</option>
+              {distinctNiches.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+              <option value="none">No niche</option>
+            </select>
             <label className="flex items-center gap-2 h-9 px-3 rounded-xl border border-line bg-surface text-[13px] text-text cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -367,14 +432,36 @@ function SourcesPage() {
                       return (
                         <tr key={s.id} className="hover:bg-surface2/40 transition-colors">
                           <td className="py-3 px-4 font-semibold text-text">
-                            <a
-                              href={`https://instagram.com/${s.ig_username}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="hover:text-pri-text"
-                            >
-                              @{s.ig_username}
-                            </a>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <a
+                                href={`https://instagram.com/${s.ig_username}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:text-pri-text"
+                              >
+                                @{s.ig_username}
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => openEditSource(s)}
+                                title="Click to edit niche"
+                                className={`px-2 py-0.5 rounded-full text-xs font-semibold border transition-colors ${
+                                  s.niche
+                                    ? "bg-surface2 text-text border-line hover:border-pri/40"
+                                    : "bg-surface2 text-text2 border-line/60 hover:border-pri/40"
+                                }`}
+                              >
+                                {s.niche || "No niche"}
+                              </button>
+                              {s.niche_mismatch && (
+                                <span
+                                  title={`Niche ${s.niche} does not match the linked fan pages (${(s.fanpage_niches || []).join(", ")})`}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-semibold bg-warn-soft text-warn cursor-help border border-warn/30"
+                                >
+                                  <Icon icon="solar:danger-triangle-bold-duotone" width={13} />
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 px-3 text-[13px] text-text2">
                             {s.active_fanpage_count > 0 ? (
@@ -421,20 +508,31 @@ function SourcesPage() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(s.id, s.ig_username)}
-                              disabled={deleting === s.id}
-                              title="Delete source"
-                              className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-text2 hover:text-bad text-xs font-medium transition-colors inline-flex items-center gap-1"
-                            >
-                              {deleting === s.id ? (
-                                <Icon icon="svg-spinners:ring-resize" width={14} />
-                              ) : (
-                                <Icon icon="solar:trash-bin-trash-bold-duotone" width={15} />
-                              )}
-                              <span>Delete</span>
-                            </button>
+                            <div className="inline-flex items-center gap-1 justify-end">
+                              <button
+                                type="button"
+                                onClick={() => openEditSource(s)}
+                                title="Edit source"
+                                className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text2 hover:text-text text-xs font-medium transition-colors inline-flex items-center gap-1"
+                              >
+                                <Icon icon="solar:pen-bold-duotone" width={14} />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(s.id, s.ig_username)}
+                                disabled={deleting === s.id}
+                                title="Delete source"
+                                className="h-8 px-2.5 rounded-lg border border-line bg-surface hover:bg-bad-soft text-text2 hover:text-bad text-xs font-medium transition-colors inline-flex items-center gap-1"
+                              >
+                                {deleting === s.id ? (
+                                  <Icon icon="svg-spinners:ring-resize" width={14} />
+                                ) : (
+                                  <Icon icon="solar:trash-bin-trash-bold-duotone" width={15} />
+                                )}
+                                <span>Delete</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -448,6 +546,77 @@ function SourcesPage() {
           <p className="text-[13px] text-text2">
             Add Instagram accounts in a brand&apos;s settings (Instagram mode). One account can feed several brands.
           </p>
+
+          {editingSource && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+              onClick={() => !savingNiche && setEditingSource(null)}
+            >
+              <div
+                className="bg-surface border border-line rounded-xl w-full max-w-sm p-5 space-y-4 shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-text">
+                    Edit @{editingSource.ig_username}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setEditingSource(null)}
+                    disabled={savingNiche}
+                    className="text-text2 hover:text-text p-1"
+                  >
+                    <Icon icon="solar:close-circle-bold" width={18} />
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-source-niche" className="text-xs font-semibold text-text">
+                    Niche
+                  </label>
+                  <select
+                    id="edit-source-niche"
+                    value={editNiche}
+                    onChange={(e) => setEditNiche(e.target.value)}
+                    disabled={savingNiche}
+                    className="h-9 w-full px-3 rounded-xl border border-line bg-surface text-text text-[13px] focus:outline-none focus:ring-1 focus:ring-pri cursor-pointer"
+                  >
+                    <option value="">(none)</option>
+                    {[
+                      ...PRESET_NICHES,
+                      ...(editingSource.niche && !PRESET_NICHES.includes(editingSource.niche as any)
+                        ? [editingSource.niche]
+                        : []),
+                    ].map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-line">
+                  <button
+                    type="button"
+                    onClick={() => setEditingSource(null)}
+                    disabled={savingNiche}
+                    className="h-8 px-3 rounded-lg border border-line bg-surface hover:bg-surface2 text-text2 text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveNiche}
+                    disabled={savingNiche}
+                    className="h-8 px-3 rounded-lg bg-pri text-pri-fg text-xs font-semibold hover:opacity-95 disabled:opacity-50 inline-flex items-center gap-1.5"
+                  >
+                    {savingNiche && <Icon icon="svg-spinners:ring-resize" width={13} />}
+                    <span>Save</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

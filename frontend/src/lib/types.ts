@@ -189,6 +189,9 @@ export interface IGSourceRef {
   watermark_image_url: string | null;
   last_used_at: string | null;
   trigger?: "every_post" | "viral_only";
+  niche: string | null;
+  fanpage_niches: string[];
+  niche_mismatch: boolean;
 }
 
 export interface PinterestSourceRef {
