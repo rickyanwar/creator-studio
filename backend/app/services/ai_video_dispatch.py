@@ -22,9 +22,15 @@ MAX_CLIP_ATTEMPTS = 3
 BACKOFF_MINUTES = (2, 5, 10)
 PIN_MAX_HOURS = 12
 MAX_RESTARTS = 2
-UNUSUAL_BACKOFF_MINUTES = (30, 60, 120, 120)
-ACCOUNT_COOLDOWN_HOURS = 6
+UNUSUAL_BACKOFF_MINUTES = (30, 60, 120)          # job waits before the next account; 3 accounts max per job
+ACCOUNT_COOLDOWN_MINUTES = ((60, 120), (120, 180), (180, 240))  # by strike: 1st, 2nd, 3rd+ within 24 h
+STRIKE_WINDOW_HOURS = 24
+BREAKER_WINDOW_MINUTES = 30
+BREAKER_ACCOUNTS = 3                              # distinct accounts hit inside the window -> pause the worker
+BREAKER_PAUSE_MINUTES = (30, 60)
+MAX_COOLING_SHARE = 0.4                           # never cool down more than 40% of enabled accounts
 SUBMIT_NO_REPLY = "of clicking submit"
+COMPOSER_AGENT_ONLY = "composer is agent-only"
 CREDITS_API_AUTH_ERROR = "aisandbox-pa authentication failed"
 MIN_CLAIM_GAP_MINUTES = 10
 ACCOUNT_REST_MINUTES = (8, 20)
@@ -529,6 +535,93 @@ def record_progress(
     db.refresh(job)
 
 
+def _maybe_trip_breaker(
+    db: Session,
+    worker_id: str,
+    now: datetime,
+    force: bool = False,
+) -> bool:
+    trip = force
+    if not trip:
+        window_start = now - timedelta(minutes=BREAKER_WINDOW_MINUTES)
+        distinct_accounts = (
+            db.query(GflowAccount.id)
+            .filter(
+                GflowAccount.worker_id == worker_id,
+                GflowAccount.last_unusual_at.isnot(None),
+                GflowAccount.last_unusual_at >= window_start,
+            )
+            .distinct()
+            .count()
+        )
+        if distinct_accounts >= BREAKER_ACCOUNTS:
+            trip = True
+
+    if not trip:
+        return False
+
+    worker_row = db.query(GflowWorker).filter(GflowWorker.worker_id == worker_id).first()
+    if worker_row:
+        pause_minutes = random.uniform(*BREAKER_PAUSE_MINUTES)
+        target_paused = now + timedelta(minutes=pause_minutes)
+        if worker_row.paused_until is not None:
+            worker_row.paused_until = max(worker_row.paused_until, target_paused)
+        else:
+            worker_row.paused_until = target_paused
+        logger.warning(
+            "Flow circuit breaker: pausing worker %s for %d min",
+            worker_id,
+            int(pause_minutes),
+        )
+        return True
+    return False
+
+
+def _strike_account(
+    db: Session,
+    account: GflowAccount,
+    now: datetime,
+    message: Optional[str] = None,
+) -> bool:
+    if account.last_unusual_at is not None and (now - account.last_unusual_at) <= timedelta(hours=STRIKE_WINDOW_HOURS):
+        strikes = (account.unusual_strikes or 0) + 1
+    else:
+        strikes = 1
+
+    lo, hi = ACCOUNT_COOLDOWN_MINUTES[min(strikes, 3) - 1]
+    minutes = random.uniform(lo, hi)
+
+    enabled_accounts = (
+        db.query(GflowAccount)
+        .filter(
+            GflowAccount.worker_id == account.worker_id,
+            GflowAccount.enabled.is_(True),
+        )
+        .all()
+    )
+    enabled = len(enabled_accounts)
+    cooling = sum(
+        1 for a in enabled_accounts
+        if a.id != account.id and a.cooldown_until is not None and a.cooldown_until > now
+    )
+
+    share_refused = False
+    if enabled == 0 or ((cooling + 1) / enabled) > MAX_COOLING_SHARE:
+        share_refused = True
+        _maybe_trip_breaker(db, account.worker_id, now, force=True)
+    else:
+        target_cooldown = now + timedelta(minutes=minutes)
+        if account.cooldown_until is not None:
+            account.cooldown_until = max(account.cooldown_until, target_cooldown)
+        else:
+            account.cooldown_until = target_cooldown
+
+    account.unusual_strikes = strikes
+    account.last_unusual_at = now
+    account.last_error = (message or "")[:2000]
+    return share_refused
+
+
 def record_failure(
     db: Session,
     job: VideoJob,
@@ -587,22 +680,31 @@ def record_failure(
             job.status = "queued"
 
     is_unusual = reason == "unusual_activity" or "UNUSUAL_ACTIVITY" in (message or "").upper()
-    no_submit_reply = reason in ("transient", "other") and SUBMIT_NO_REPLY in (message or "")
+    no_submit_reply = (
+        reason in ("transient", "other") and SUBMIT_NO_REPLY in (message or "")
+    ) or COMPOSER_AGENT_ONLY in (message or "")
     if is_unusual or no_submit_reply:
-        job.unusual_hits = (job.unusual_hits or 0) + 1
+        refused_cooldown = False
         if account:
-            account.cooldown_until = now + timedelta(hours=ACCOUNT_COOLDOWN_HOURS)
-            account.last_error = (message or reason)[:2000]
+            refused_cooldown = _strike_account(db, account, now, message or reason)
+        job.unusual_hits = (job.unusual_hits or 0) + 1
         if job.unusual_hits > len(UNUSUAL_BACKOFF_MINUTES):
             job.status = "failed"
             job.finished_at = now
             job.worker_id = None
             job.lease_until = None
             _fail_idea()
-        elif job.clips_done:
-            _restart()
         else:
-            _requeue()
+            backoff_base = UNUSUAL_BACKOFF_MINUTES[job.unusual_hits - 1]
+            wait_min = backoff_base * random.uniform(0.85, 1.25)
+            not_before_dt = now + timedelta(minutes=wait_min)
+            if job.clips_done:
+                _restart()
+                if job.status == "queued":
+                    job.not_before = not_before_dt
+            else:
+                _requeue(not_before_dt=not_before_dt)
+        _maybe_trip_breaker(db, worker_id, now, force=refused_cooldown)
 
     elif reason == "policy":
         job.status = "failed"
