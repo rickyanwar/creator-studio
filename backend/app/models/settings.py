@@ -130,6 +130,7 @@ class Settings(Base):
     pro_poster_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     pro_poster_fanpage_ids = Column(JSON, default=list, nullable=False, server_default="[]")
     ai_day_start = Column(String(5), default="05:30", nullable=False, server_default="05:30")  # WIB; = gpt serve sleep end
+    ai_night_start = Column(String(5), default="00:00", nullable=False, server_default="00:00")  # WIB; = gpt serve sleep start
     codex_share_percent = Column(Integer, default=35, nullable=False, server_default="35")
     codex_share_window_jobs = Column(Integer, default=40, nullable=False, server_default="40")
     codex_overflow_queue_len = Column(Integer, default=3, nullable=False, server_default="3")

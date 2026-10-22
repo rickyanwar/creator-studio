@@ -67,6 +67,7 @@ class SettingsUpdate(BaseModel):
     pro_poster_enabled: Optional[bool] = None
     pro_poster_fanpage_ids: Optional[list[int]] = None
     ai_day_start: Optional[str] = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    ai_night_start: Optional[str] = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     codex_share_percent: Optional[int] = Field(None, ge=0, le=100)
     codex_share_window_jobs: Optional[int] = Field(None, ge=1, le=1000)
     codex_overflow_queue_len: Optional[int] = Field(None, ge=0, le=100)
@@ -160,6 +161,7 @@ class SettingsOut(BaseModel):
     pro_poster_enabled: bool = False
     pro_poster_fanpage_ids: list[int] = []
     ai_day_start: str = "05:30"
+    ai_night_start: str = "00:00"
     codex_share_percent: int = 35
     codex_share_window_jobs: int = 40
     codex_overflow_queue_len: int = 3

@@ -285,7 +285,7 @@ export function AiImageEngineSettingsCard({
               <>
                 <span className="text-line">•</span>
                 <span className="text-warn font-medium">
-                  Sleeping (00:00–{settings?.ai_day_start || "05:30"})
+                  Sleeping ({settings?.ai_night_start || "00:00"}–{settings?.ai_day_start || "05:30"})
                 </span>
               </>
             )}
@@ -401,7 +401,7 @@ export function AiImageEngineSettingsCard({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
         <TextInput
           label="Thread"
           value={settings?.gptcli_thread ?? "default"}
@@ -413,6 +413,12 @@ export function AiImageEngineSettingsCard({
           value={settings?.gptcli_size ?? "1080x1350"}
           placeholder="1080x1350"
           onCommit={(val) => update("gptcli_size", val || "1080x1350")}
+        />
+        <TextInput
+          label="ChatGPT sleeps from (WIB)"
+          value={settings?.ai_night_start ?? "00:00"}
+          placeholder="00:00"
+          onCommit={(val) => update("ai_night_start", val || "00:00")}
         />
         <TextInput
           label="Day starts (WIB)"

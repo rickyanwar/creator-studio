@@ -1734,9 +1734,10 @@ def dispatch_fair_visual_news():
         except Exception as exc:
             logger.warning("fair dispatch: could not record last job %s: %s", job.id, exc)
         mark_served(r, job.fanpage_id, now)
-        if getattr(job, "_jit_slot", None):
+        lookahead = bool(getattr(job, "_lookahead", False))
+        if not lookahead and getattr(job, "_jit_slot", None):
             claim_page(r, job.fanpage_id, job._jit_slot, now)
-        return f"dispatched {job.id}"
+        return f"dispatched {job.id}" + (" lookahead" if lookahead else "")
     finally:
         db.close()
 
