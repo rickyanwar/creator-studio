@@ -29,6 +29,7 @@ from app.services.ai_video_ideas import _normalized_topic
 from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language
 from app.services.real_names import find_real_names
+from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import (
     allowed_video_templates,
     clip_choices,
@@ -47,8 +48,8 @@ SCHEMA_VERSION = 1
 DOCS_PATH = Path(__file__).resolve().parent.parent / "assets" / "research-desk-api.md"
 MODES = ("pilot", "live")
 NICHES = ("f1", "motogp", "health")
-MAX_CHANNELS_PER_PACK = 10
-MAX_PACKS_PER_REQUEST = 3
+MAX_CHANNELS_PER_PACK = 1  # one channel per idea: subjects are never shared across channels (owner 2026-10-22)
+MAX_PACKS_PER_REQUEST = 10
 PILOT_CHANNELS_PER_NICHE = 10
 MIN_SCORE = 70
 HOOK_MAX_CHARS = 125
@@ -138,8 +139,8 @@ PACK_RULES = {
     "max_channels_per_pack": MAX_CHANNELS_PER_PACK,
     "max_packs_per_request": MAX_PACKS_PER_REQUEST,
     "min_score": MIN_SCORE,
-    "variants": "Variants of one pack share the facts only: each needs its own angle, hook, narration wording and "
-                "title. A channel never gets two variants of the same pack.",
+    "variants": "Each pack is for exactly one channel. Never reuse a subject that appears in "
+                "used_subjects or that another channel already got.",
     "team_livery": "Leave team_livery out normally — the studio rotates liveries so videos look different. "
                    "Set it ONLY when the video is about one team's own technology (e.g. that team's wing or device), "
                    "using that team's key from templates[].team_liveries. Never write team names in any slot.",
@@ -350,6 +351,17 @@ def recent_topics(db: Session, fanpage_id: int) -> list[str]:
     return [topic for (topic,) in rows]
 
 
+def used_subjects(db: Session, exclude_fanpage_id: int | None = None) -> list[dict]:
+    q = db.query(VideoIdea.fanpage_id, VideoIdea.topic).filter(
+        VideoIdea.created_at >= _now() - timedelta(days=TOPIC_DAYS),
+        VideoIdea.status != "rejected",
+    )
+    if exclude_fanpage_id is not None:
+        q = q.filter(VideoIdea.fanpage_id != exclude_fanpage_id)
+    rows = q.order_by(VideoIdea.created_at.desc()).limit(500).all()
+    return [{"channel_id": fp_id, "topic": topic} for fp_id, topic in rows]
+
+
 def topic_channel_counts(db: Session) -> dict[str, tuple[str, set]]:
     """normalized topic -> (a topic text, channels that had it in the last 30 days)."""
     rows = db.query(VideoIdea.topic, VideoIdea.fanpage_id).filter(
@@ -478,7 +490,6 @@ def build_brief(db: Session) -> dict:
         return _idle(db, "this research mode is not available yet")
 
     references = effective_references(row)
-    counts = topic_channel_counts(db)
     niches = []
     used_templates = {}
     for niche, fanpages in research_channels(db).items():
@@ -534,7 +545,7 @@ def build_brief(db: Session) -> dict:
         "research_defaults": RESEARCH_DEFAULTS,
         "pack_rules": PACK_RULES,
         "niches": niches,
-        "saturated_topics": sorted(text for text, channels in counts.values() if len(channels) >= MAX_CHANNELS_PER_PACK),
+        "used_subjects": list(dict.fromkeys(t["topic"] for t in used_subjects(db))),
         "templates": [template_item(t, sorted(ns)) for t, ns in used_templates.values()],
     }
     return {"brief_id": _brief_id(body), **body}
@@ -773,7 +784,7 @@ def _narration_text(variables: dict) -> str:
     return " ".join(v for k, v in sorted(variables.items()) if k.startswith("narration_") and isinstance(v, str))
 
 
-def _check_variant(db, variant, pack, template, row, need_left, accepted, channel_topic_counts) -> tuple[list[str], object]:
+def _check_variant(db, variant, pack, template, row, need_left, accepted, channel_topic_counts=None, used_subjects_cache=None) -> tuple[list[str], object]:
     errors = []
     channel_id = variant.get("channel_id")
     fp = None
@@ -794,9 +805,30 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
     topic_key = _normalized_topic(pack["topic"])
     if topic_key in {_normalized_topic(t) for t in recent_topics(db, fp.id)}:
         errors.append(f"channel {channel_id} already had this topic in the last {TOPIC_DAYS} days")
-    channels_with_topic = channel_topic_counts.get(topic_key, set())
-    if fp.id not in channels_with_topic and len(channels_with_topic) >= MAX_CHANNELS_PER_PACK:
-        errors.append(f"this topic is already used on {MAX_CHANNELS_PER_PACK} channels")
+
+    if used_subjects_cache is None:
+        used_subjects_cache = used_subjects(db)
+
+    found_duplicate = False
+    for row_subj in used_subjects_cache:
+        if row_subj["channel_id"] != fp.id:
+            if similar_subjects(row_subj["topic"], pack["topic"]):
+                errors.append(
+                    f"subject already used on channel {row_subj['channel_id']} in the last {TOPIC_DAYS} days: {row_subj['topic'][:80]}"
+                )
+                found_duplicate = True
+                break
+
+    if not found_duplicate:
+        for item in accepted:
+            other_channel = item[0]
+            other_topic = item[3] if len(item) > 3 else None
+            if other_channel != fp.id and other_topic and similar_subjects(other_topic, pack["topic"]):
+                errors.append(
+                    f"subject already used on channel {other_channel} in the last {TOPIC_DAYS} days: {other_topic[:80]}"
+                )
+                break
+
     min_score = max(MIN_SCORE, fp.ai_video_min_score or 0)
     if pack["score"] < min_score:
         errors.append(f"score must be at least {min_score} for channel {channel_id}")
@@ -884,7 +916,8 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
 
     if variables and isinstance(title, str):
         narration = _narration_text(variables)
-        for other_channel, other_narration, other_title in accepted:
+        for item in accepted:
+            other_channel, other_narration, other_title = item[:3]
             if other_title.strip().casefold() == title.strip().casefold():
                 errors.append(f"title is the same as the variant for channel {other_channel}")
             elif narration and difflib.SequenceMatcher(None, narration, other_narration).ratio() >= SIMILARITY_LIMIT:
@@ -909,8 +942,7 @@ def submit_pack(db: Session, pack, brief_id, row: Settings, token_id=None) -> di
         return {"client_ref": ref, "status": "rejected", "errors": ["the studio is not taking research packs now"], "variants": []}
 
     template = get_template(pack["template_key"])
-    counts = {key: channels for key, (_text, channels) in topic_channel_counts(db).items()}
-    topic_key = _normalized_topic(pack["topic"])
+    used_cache = used_subjects(db)
     need_left = {}
     results, accepted, to_create = [], [], []
     for variant in pack["variants"]:
@@ -918,13 +950,12 @@ def submit_pack(db: Session, pack, brief_id, row: Settings, token_id=None) -> di
         fp = db.query(TargetFanpage).filter_by(id=channel_id).first() if isinstance(channel_id, int) and not isinstance(channel_id, bool) else None
         if fp is not None and fp.id not in need_left:
             need_left[fp.id] = channel_need(db, fp, row)
-        v_errors, fp = _check_variant(db, variant, pack, template, row, need_left, accepted, counts)
+        v_errors, fp = _check_variant(db, variant, pack, template, row, need_left, accepted, used_subjects_cache=used_cache)
         if v_errors:
             results.append({"channel_id": channel_id, "status": "rejected", "errors": v_errors})
             continue
         need_left[fp.id] -= 1
-        counts.setdefault(topic_key, set()).add(fp.id)
-        accepted.append((fp.id, _narration_text(variant["variables"]), variant["title"]))
+        accepted.append((fp.id, _narration_text(variant["variables"]), variant["title"], pack["topic"]))
         to_create.append((fp, variant))
         results.append({"channel_id": channel_id, "status": "created", "errors": []})
 

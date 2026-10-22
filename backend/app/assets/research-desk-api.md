@@ -31,11 +31,9 @@ You are the research desk for a studio that makes short vertical (9:16) explaine
 ## Concepts
 
 - **Channel.** One output stream with its own audience. It is identified by `channel_id` and has a `niche` (`f1`, `motogp` or `health`), an audience language, allowed templates and copy limits.
-- **Research pack.** One topic, researched once: verified facts (`research_notes` + `sources`), the reference videos that justify it, a score and a rationale. It has 1–10 **variants**.
-- **Variant.** One channel's version of the pack. It has its own `angle`, template `variables` (the slots), `title` and `caption`, all written by you in that channel's audience language.
-  - Variants of the same pack must read clearly differently: different angle, hook, narration wording and title.
-  - They share only the facts.
-  - A pack can serve at most 10 channels.
+- **Research pack.** One topic, researched once for exactly one channel: verified facts (`research_notes` + `sources`), the reference videos that justify it, a score and a rationale. It has exactly 1 **variant**.
+- **Variant.** The channel's version of the pack. It has its own `angle`, template `variables` (the slots), `title` and `caption`, all written by you in that channel's audience language.
+  - Each pack serves exactly one channel; subjects are never shared across channels.
 - **Template.** A fixed sequence of 10-second clips. The first clip is text-to-video; in motorsport templates later clips continue from the previous clip's last frame (`continues_previous_clip: true`). Templates with `uses_vehicle: false` (health) make every clip as its own text-to-video shot list. Your slot values are placed into `clip_prompts`. The studio fills `{style}`, `{audio}`, `{narrator}`, `{vehicle}` (motorsport only) and similar placeholders itself.
 
 ## GET /research/brief
@@ -66,7 +64,7 @@ Abridged; real values come from the server.
   "idea_sources": ["New or changed motorsport regulations (FIA, FIM/MotoGP) ...", "..."],
   "global_rules": ["..."],
   "research_defaults": {"source_priority": ["..."], "fact_rules": ["..."]},
-  "pack_rules": {"max_channels_per_pack": 10, "max_packs_per_request": 3, "min_score": 70, "variants": "..."},
+  "pack_rules": {"max_channels_per_pack": 1, "max_packs_per_request": 10, "min_score": 70, "variants": "..."},
   "niches": [
     {
       "niche": "f1",
@@ -93,7 +91,7 @@ Abridged; real values come from the server.
       ]
     }
   ],
-  "saturated_topics": ["topics already used on 10 channels in the last 30 days: do not use"],
+  "used_subjects": ["topics already used on any channel in the last 30 days: do not use"],
   "templates": [
     {
       "key": "motorsport_tech_explainer",
@@ -114,9 +112,9 @@ Abridged; real values come from the server.
 Plan the run from the brief:
 - **Niche guide.** A niche entry may carry a `guide` (the `health` niche does). For that niche's packs, the guide's `studio`, `idea_sources`, `rules`, `research_defaults` and `motion_check` replace the brief's top-level `studio`, `idea_sources`, `global_rules`, `research_defaults` and `pack_rules.motion_check`. Everything else (queue, packs, variants, copy rules, server checks) stays the same.
 - **How many packs.** Make `packs_needed` packs per niche, no more.
-- **Assigning channels.** Give each pack's variants to channels with `ideas_needed > 0`, at most 10 channels per pack. A channel never receives more variants in total than its `ideas_needed`, and never two variants of the same pack.
-- **Topics.** Never give a channel a topic from its `recent_topics`, and never use a `saturated_topics` entry.
-- **Templates.** Pick each pack's template from the templates every one of its channels allows, and `clips` from the `clip_options` all of them allow.
+- **Assigning channels.** Each pack is for exactly one channel with `ideas_needed > 0`. Never reuse a subject that appears in `used_subjects` or that another channel already got.
+- **Topics.** Never give a channel a topic from its `recent_topics`, and never reuse a subject similar to any in `used_subjects`.
+- **Templates.** Pick each pack's template from the templates the channel allows, and `clips` from the `clip_options` it allows.
 
 ## GET /research/schema
 
@@ -280,11 +278,11 @@ A variant or pack failing any check is rejected, with the reason.
 7. `score` is at least 70, or the channel's own minimum if that is higher.
 8. `rationale` is present.
 9. `qc.passed` is `true`.
-10. There are 1–10 variants with no repeated channel.
+10. There is exactly 1 variant for the channel.
 11. `qc.motion_checked` is `true` and `qc.motion_notes` says what was checked.
 
 **Variant:**
-1. The channel is in the brief, still needs ideas, allows the template and `clips`, and did not have this topic in the last 30 days.
+1. The channel is in the brief, still needs ideas, allows the template and `clips`, and did not have this topic or a similar subject used on any channel in the last 30 days.
 2. `vehicle_preset` is allowed for the channel's niche. Templates with `uses_vehicle: false` take no `vehicle_preset` and no `team_livery`.
 3. All slots for the template and `clips` are present. Slots are plain text of at most 600 characters, with no `{` or `}`, and narration has no double quotes.
 4. Never send `livery`, `channel_name` or `narrator_preset`; the studio sets them.
@@ -294,7 +292,7 @@ A variant or pack failing any check is rejected, with the reason.
 8. `title` and `caption` respect the channel's `copy_rules`.
    - The caption's first sentence is the hook a viewer sees before the text is truncated: at most `hook_max_chars`, concrete, no generic opener.
    - At most `hashtags_max` hashtags.
-9. The variant's narration and title are not near-copies of another variant in the same pack.
+9. The subject is not already used on another channel or accepted earlier in the request.
 10. `moving_part` and `fixed_parts` are filled, `mechanism_action` names the moving part, and the moving part is not listed as fixed.
 
 ## Research and writing rules

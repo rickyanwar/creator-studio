@@ -50,8 +50,7 @@ def clean(db):
     ids = [fp_id for fp_id in created]
     from app.models.ai_video import VideoJob
     db.query(VideoJob).filter(VideoJob.fanpage_id.in_(ids)).delete(synchronize_session=False)
-    db.query(ResearchFeedback).filter(ResearchFeedback.idea_id.in_(
-        db.query(VideoIdea.id).filter(VideoIdea.fanpage_id.in_(ids)))).delete(synchronize_session=False)
+    db.query(ResearchFeedback).delete(synchronize_session=False)
     db.query(VideoIdea).filter(VideoIdea.fanpage_id.in_(ids)).delete(synchronize_session=False)
     db.query(TargetFanpage).filter(TargetFanpage.id.in_(ids)).delete(synchronize_session=False)
     db.commit()
@@ -199,25 +198,25 @@ def test_brief_research_shape_and_no_leak(db, clean):
 
 def test_schema_endpoint(db, clean):
     schema = TestClient(app).get("/research/schema", headers=token(db)).json()
-    assert schema["$defs"]["pack"]["properties"]["variants"]["maxItems"] == 10
+    assert schema["$defs"]["pack"]["properties"]["variants"]["maxItems"] == 1
 
 
 # ── Packs ────────────────────────────────────────────────────────────────────
 
 def test_pack_created_idempotent_and_pilot_only(db, clean):
-    a, b = make_fanpage(db, clean), make_fanpage(db, clean, name="Second Page")
+    a = make_fanpage(db, clean)
     client = TestClient(app)
     headers = token(db)
-    p = pack([a.id, b.id])
+    p = pack([a.id])
     res = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [p], "run_report": {"sources_checked": 3}}).json()
     result = res["results"][0]
     assert result["status"] == "created", result
     stored = db.query(VideoIdea).filter(VideoIdea.client_ref == p["client_ref"]).all()
-    assert len(stored) == 2 and {i.status for i in stored} == {"pilot"} and {i.source for i in stored} == {"muse"}
+    assert len(stored) == 1 and {i.status for i in stored} == {"pilot"} and {i.source for i in stored} == {"muse"}
     assert stored[0].title and stored[0].caption and stored[0].evidence["sources"]
     assert research_desk.get_settings_row(db).research_last_report["sources_checked"] == 3
     again = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [p]}).json()["results"][0]
-    assert again["status"] == "exists" and len(again["variants"]) == 2
+    assert again["status"] == "exists" and len(again["variants"]) == 1
     listed = client.get(f"/research/packs?client_ref={p['client_ref']}", headers=headers).json()
     assert listed[0]["variants"][0]["status"] == "in_review"
     # Pilot ideas are invisible to the planner's queue and do not block production topics.
@@ -234,14 +233,17 @@ def test_pack_and_variant_rejections(db, clean):
     r = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [bad]}).json()["results"][0]
     assert r["status"] == "rejected" and any("sources" in e for e in r["errors"]) and any("score" in e for e in r["errors"])
 
-    p = pack([a.id, b.id])
+    p = pack([a.id])
     p["variants"][0]["variables"]["narration_1"] = "too short line"
-    p["variants"][1]["caption"] = "Ferrari found this first. #F1"
     r = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [p]}).json()["results"][0]
     assert r["status"] == "rejected"
-    errors = {v["channel_id"]: " ".join(v["errors"]) for v in r["variants"]}
-    assert "narration_1 must contain" in errors[a.id]
-    assert "real names" in errors[b.id] and "Ferrari" in errors[b.id]
+    assert "narration_1 must contain" in " ".join(r["variants"][0]["errors"])
+
+    p_names = pack([b.id])
+    p_names["variants"][0]["caption"] = "Ferrari found this first. #F1"
+    r = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [p_names]}).json()["results"][0]
+    assert r["status"] == "rejected"
+    assert "real names" in " ".join(r["variants"][0]["errors"]) and "Ferrari" in " ".join(r["variants"][0]["errors"])
 
     p = pack([a.id])
     p["variants"][0]["variables"]["livery"] = "scarlet"
@@ -249,11 +251,6 @@ def test_pack_and_variant_rejections(db, clean):
     r = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [p]}).json()["results"][0]
     errors = " ".join(r["variants"][0]["errors"])
     assert "do not send livery" in errors and "vehicle_preset must be one of" in errors
-
-    p = pack([a.id, b.id])
-    p["variants"][1]["variables"] = dict(p["variants"][0]["variables"])
-    r = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [p]}).json()["results"][0]
-    assert r["status"] == "partial" and "near-copy" in " ".join(r["variants"][1]["errors"])
 
     p = pack([a.id])
     p["research_notes"] = "1. A fact. [S7]"
@@ -296,16 +293,15 @@ def test_pilot_cap_and_topic_rules(db, clean):
 
 
 def test_saturated_topic(db, clean):
-    pages = [make_fanpage(db, clean, name=f"Page {i}") for i in range(11)]
-    topic = f"Saturated topic {uuid.uuid4().hex[:6]}"
-    for fp in pages[:10]:
-        db.add(VideoIdea(fanpage_id=fp.id, template_key="motorsport_tech_explainer", topic=topic, source="hermes", status="approved"))
+    pages = [make_fanpage(db, clean, name=f"Page {i}") for i in range(2)]
+    topic = f"Active aero wing {uuid.uuid4().hex[:6]}"
+    db.add(VideoIdea(fanpage_id=pages[0].id, template_key="motorsport_tech_explainer", topic=topic, source="hermes", status="approved"))
     db.commit()
     client = TestClient(app)
     headers = token(db)
-    assert topic in client.get("/research/brief", headers=headers).json()["saturated_topics"]
-    r = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [pack([pages[10].id], topic=topic)]}).json()["results"][0]
-    assert "already used on 10 channels" in " ".join(r["variants"][0]["errors"])
+    assert topic in client.get("/research/brief", headers=headers).json()["used_subjects"]
+    r = client.post("/research/packs", headers=headers, json={"brief_id": "x", "packs": [pack([pages[1].id], topic=topic)]}).json()["results"][0]
+    assert f"already used on channel {pages[0].id}" in " ".join(r["variants"][0]["errors"])
 
 
 # ── Feedback both ways ───────────────────────────────────────────────────────

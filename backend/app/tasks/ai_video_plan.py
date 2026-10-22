@@ -10,6 +10,7 @@ from app.services.ai_video_cover_build import prepare_cover
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
 from app.services.social_project_eligibility import project_can_generate
+from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import allowed_video_templates, credits_estimate, fit_clips_to_credits, get_template, pick_clips
 from app.tasks.celery_app import celery_app
 from app.tasks.publisher import _fanpage_tz
@@ -63,8 +64,35 @@ def plan_ai_videos():
             if not approved_ideas:
                 continue
 
+            other_jobs = (
+                db.query(VideoJob.fanpage_id, VideoJob.title, VideoIdea.topic)
+                .outerjoin(VideoIdea, VideoJob.idea_id == VideoIdea.id)
+                .filter(
+                    VideoJob.fanpage_id != fanpage.id,
+                    VideoJob.status != "cancelled",
+                    VideoJob.created_at >= _now() - timedelta(days=30),
+                )
+                .all()
+            )
+            other_page_topics = [
+                (job_fp_id, (idea_topic or job_title or "").strip())
+                for job_fp_id, job_title, idea_topic in other_jobs
+                if (idea_topic or job_title)
+            ]
+
             valid_ideas = []
             for app_idea in approved_ideas:
+                duplicate_fp = None
+                if app_idea.topic:
+                    for other_fp_id, other_topic in other_page_topics:
+                        if other_topic and similar_subjects(other_topic, app_idea.topic):
+                            duplicate_fp = other_fp_id
+                            break
+                if duplicate_fp is not None:
+                    app_idea.status = "rejected"
+                    app_idea.error = f"duplicate subject: already used on channel {duplicate_fp}"
+                    db.commit()
+                    continue
                 if allowed and app_idea.template_key not in allowed:
                     logger.warning(
                         "Skipping idea %s for fanpage %s: template %s is no longer allowed",
