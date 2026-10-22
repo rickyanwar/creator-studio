@@ -16,6 +16,21 @@ from app.tasks.publisher import _fanpage_tz
 
 logger = logging.getLogger(__name__)
 
+# Failed videos (Flow error, QC reject) are replaced the same day, at most this many per fan page per day,
+# so a Flow outage cannot loop through ideas and credits (owner 2026-10-22).
+MAX_FAILED_REPLACEMENTS_PER_DAY = 2
+
+
+def _daily_counts(jobs) -> tuple[int, int]:
+    """(jobs that count toward ai_video_daily_count, credits spent) for today's non-cancelled jobs."""
+    failed = [j for j in jobs if j.status == "failed"]
+    others = [j for j in jobs if j.status != "failed"]
+    count = len(others) + max(0, len(failed) - MAX_FAILED_REPLACEMENTS_PER_DAY)
+    credits_spent = sum(j.credits_estimate or 0 for j in others) + sum(
+        (j.credits_per_clip or 0) * len(j.clips_done or []) for j in failed
+    )
+    return count, credits_spent
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -29,7 +44,8 @@ def plan_ai_videos():
             now = datetime.now(timezone.utc)
             local_today = now.astimezone(_fanpage_tz(fanpage)).date()
             local_midnight = datetime.combine(local_today, datetime.min.time(), tzinfo=_fanpage_tz(fanpage)).astimezone(timezone.utc).replace(tzinfo=None)
-            made_today = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.created_at >= local_midnight, VideoJob.status != "cancelled").count()
+            today_jobs = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.created_at >= local_midnight, VideoJob.status != "cancelled").all()
+            made_today, spent_today = _daily_counts(today_jobs)
             open_count = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.status.in_(["queued", "claimed", "generating"])).count()
             if made_today >= fanpage.ai_video_daily_count or open_count >= 2:
                 continue
@@ -90,12 +106,6 @@ def plan_ai_videos():
                 continue
             budget = per_video
             if per_day is not None:
-                spent_today = sum(
-                    j.credits_estimate or 0 for j in db.query(VideoJob).filter(
-                        VideoJob.fanpage_id == fanpage.id, VideoJob.created_at >= local_midnight,
-                        VideoJob.status != "cancelled",
-                    )
-                )
                 left_today = per_day - spent_today
                 budget = left_today if budget is None else min(budget, left_today)
             fitted = fit_clips_to_credits(template, clips, budget)
