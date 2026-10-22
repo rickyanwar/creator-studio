@@ -30,6 +30,7 @@ class GflowAccount(Base):
     label = Column(String(100), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True, server_default="true")
     authenticated = Column(Boolean, nullable=False, default=False, server_default="false")
+    agent_only = Column(Boolean, nullable=False, default=False, server_default="false")
     status = Column(String(16), nullable=False, default="ok", server_default="ok")
     credits = Column(Integer, nullable=True)
     credits_checked_at = Column(DateTime, nullable=True)

@@ -54,10 +54,13 @@ def last_json(stdout):
 
 def classify(result):
     text = json.dumps([result.payload.get("failure_reasons"), result.payload.get("error_message")]).upper()
+    detail = ((result.message or "") + json.dumps(result.payload.get("error") or {}) + " " + str(result.payload.get("error_message") or "")).upper()
     if result.error_class == "MediaUploadRejectedError" and "upload-terms" in (result.message or ""):
         return "upload_terms"
     if "UNUSUAL_ACTIVITY" in (result.message or "").upper() or "UNUSUAL_ACTIVITY" in text:
         return "unusual_activity"
+    if re.search(r"BATAS PENGGUNAAN|USAGE LIMIT|REACHED YOUR (USAGE )?LIMIT|YOU'?VE HIT (THE |YOUR )?(USAGE )?LIMIT", detail):
+        return "usage_limit"
     if result.exit_code == 37 or result.error_class == "InsufficientCreditsError":
         return "out_of_credits"
     if result.exit_code in (8, 12, 14, 38, 39):
@@ -66,9 +69,10 @@ def classify(result):
         return "policy"
     # Flow's content refusals (PUBLIC_ERROR_UNSAFE_CONTENT/_FACE/_IDENTITY/_GENERATION) are caused by the prompt or seed
     # image, so retrying on other accounts can never succeed: report them as policy so the job and idea are skipped.
-    detail = ((result.message or "") + json.dumps(result.payload.get("error") or {})).upper()
     if re.search(r"PUBLIC_ERROR_UNSAFE_[A-Z_]+", detail):
         return "policy"
+    if "AGENT-ONLY COMPOSER" in detail or "COMPOSER IS AGENT-ONLY" in detail:
+        return "agent_only"
     if result.exit_code in (9, 10, 15, 23, 25, 28, 31, 36) or result.error_class == "TimeoutExpired":
         return "transient"
     return "other"
