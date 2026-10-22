@@ -12,6 +12,7 @@ One set of caption criteria per fanpage applies to every content mode:
 
 All generators read caption criteria ONLY from CaptionSettings.
 """
+import re
 from dataclasses import dataclass, field
 from app.services.fanpage_language import fanpage_language
 
@@ -76,3 +77,27 @@ def caption_settings(fanpage) -> CaptionSettings:
         attribution_position=pos_str,
         custom_prompt=prompt,
     )
+
+
+_CREDIT_LINE_RE = re.compile(
+    r"^\W{0,3}(?:(?:credits?|kredit|cr|via|source|sources|sumber|photo|foto|pic)\b|[📸📷])\s*(?:[:：\-–—]\s*\S|@\S)",
+    re.IGNORECASE,
+)
+
+
+def strip_credit_lines(caption: str) -> str:
+    """Remove credit and source attribution lines from caption text."""
+    if not caption:
+        return caption
+
+    kept = []
+    for line in caption.replace("\r\n", "\n").split("\n"):
+        stripped = line.strip()
+        if len(stripped) <= 80 and _CREDIT_LINE_RE.match(stripped):
+            continue
+        kept.append(line)
+
+    result = "\n".join(kept)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
+

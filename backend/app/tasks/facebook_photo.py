@@ -150,6 +150,7 @@ def _consume_one(db, fanpage) -> bool:
     from app.models.target_fanpages import PublishMode
     from app.services.ai_caption import build_caption_prompt, generate_caption
     from app.services.design_images import resolve_template
+    from app.services.fanpage_caption import strip_credit_lines
 
     idea = (
         db.query(FacebookPhotoIdea)
@@ -170,6 +171,7 @@ def _consume_one(db, fanpage) -> bool:
                 image_description=None,
             ),
         )
+        caption = strip_credit_lines(caption)
     except Exception as exc:
         logger.warning("Facebook photo: copy for idea %d (fanpage %d) failed: %s", idea.id, fanpage.id, exc)
         return False

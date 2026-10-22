@@ -30,7 +30,7 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
         ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()
 
         from app.services.caption_grounding import has_usable_caption, describe_image_for_caption
-        from app.services.fanpage_caption import caption_settings
+        from app.services.fanpage_caption import caption_settings, strip_credit_lines
 
         image_description = None
         orig_caption = post.original_caption or ""
@@ -102,6 +102,9 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
         )
 
         caption, provider_used = generate_caption(prompt, force_provider=force_provider)
+
+        if not caption_settings(fanpage).use_attribution:
+            caption = strip_credit_lines(caption)
 
         job.ai_generated_caption = caption
         job.ai_provider_used = AIProvider(provider_used)
