@@ -39,7 +39,7 @@
     {
       "role": "reveal_and_start",
       "mode": "t2v",
-      "prompt": "{style} The hero is {vehicle}, parked riderless in {setting}. Shot list, one smooth camera move each: a wide reveal of the whole motorcycle; then a low front three-quarter hero shot of it on its stands (paddock stands for a race bike, side stand for a road bike) on a freshly washed, mirror-wet floor reflecting it whole, thin haze behind, the camera slowly pushing in; then quick macro cuts across {detail_1}, {detail_2} and {detail_3}, wheels completely still. Last two seconds: a hard cut outside to the pit exit (a forecourt for a road bike), low front three-quarter view: the motorcycle on the asphalt on both tyres, no stands, the rider seated, helmet on, visor closed, feet down; the engine fires, exhaust pulsing, wheels still. {bike_rules} {audio} {narrator} \"{narration_1}\"",
+      "prompt": "{style} The hero is {vehicle}, parked riderless in {setting}. Shots, one smooth camera move each: a wide reveal of the whole motorcycle; then the hero shot: at the garage mouth under a dark roof overhang, bright daylight behind, the motorcycle on its stands (paddock stands for a race bike, side stand for a road bike) in a mirror-wet puddle reflecting it whole, thick white smoke rolling low along the ground behind it, a low camera slowly arcing around its front three-quarter; then quick macro cuts: {detail_1}; {detail_2}; {detail_3}; wheels still. Last two seconds: a hard cut outside to the pit exit (for a road bike, the dealer forecourt by the road), low front three-quarter view: on both tyres, no stands, the rider seated, visor closed, feet down; the engine fires, exhaust pulsing. {bike_rules} {audio} {narrator} \"{narration_1}\"",
       "narration_words": {
         "en": "18-22"
       }
@@ -47,7 +47,7 @@
     {
       "role": "ride",
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. The rider lifts both feet onto the footpegs and rides away forward. {ride_scene} First a low tracking shot at wheel height as it accelerates past the camera, the background streaking by while the motorcycle stays sharp; then it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressing; in the final second the whole motorcycle stays in frame, centred, coming toward the camera in a front three-quarter view. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
+      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. The rider lifts both feet onto the footpegs and rides away forward. {ride_scene} First a low tracking shot at wheel height as it accelerates past the camera, the background streaking by while the motorcycle stays sharp; then it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressing; it stays leaned over until the corner ends, lifts upright smoothly only as the track straightens, and in the final second rides along that straight toward the camera, the whole motorcycle centred in frame in a front three-quarter view. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
       "narration_words": {
         "en": "18-22"
       }
@@ -55,7 +55,7 @@
     {
       "role": "finale",
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. The motorcycle stays fully in frame throughout. {signature_move} Then the rider brakes in a straight line, the fork dips, and the motorcycle comes to a complete stop; both feet go down and the wheels stop turning. It has stopped on a freshly washed, mirror-wet patch of ground that reflects it whole, a thin haze drifting behind. Final hero shot: low front three-quarter view of the stationary motorcycle in warm backlight, a slow push-in as the engine gives one last blip, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
+      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. The motorcycle stays fully in frame throughout. {signature_move} Then the rider brakes in a straight line, the fork dips, and the motorcycle comes to a complete stop; both feet go down and the wheels stop turning. The rider steps off. Hard cut to the final hero shot, matching the opening one: the motorcycle alone on its stands (paddock stands for a race bike, side stand for a road bike) in a mirror-wet puddle reflecting it whole, under a dark roof overhang with bright daylight behind, thick white smoke rolling low behind it, a low camera slowly arcing around its front three-quarter, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
       "narration_words": {
         "en": "18-22"
       }
