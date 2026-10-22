@@ -74,6 +74,10 @@ PHOTO_SWIPE_MAX_START_Y = 2050
 WAKE_ATTEMPTS = 3
 WAKE_SETTLE_SECONDS = 1.5
 
+VISION_INFRA_MARKER = "all vision models failed"   # vision_verify: every model errored (service down), not a content mismatch
+POSTED_VISION_RETRIES = 2                          # extra attempts when the vision service errors
+POSTED_VISION_RETRY_WAIT_S = 20
+
 
 def _screen_state(serial: str) -> str:
     out = run_adb(["shell", "dumpsys", "power"], serial=serial).stdout
@@ -1793,32 +1797,54 @@ def execute_publish(
                     expected_caption=caption_str,
                 )
                 evidence["vision_gates"].append(v_ev)
+                if not v_ok and VISION_INFRA_MARKER in str(v_ev.get("detail", "")):
+                    for _ in range(POSTED_VISION_RETRIES):
+                        time.sleep(POSTED_VISION_RETRY_WAIT_S)
+                        v_ok, v_ev = verify_gate(
+                            serial,
+                            "posted",
+                            expected_author=dest_name,
+                            expected_caption=caption_str,
+                        )
+                        evidence["vision_gates"].append(v_ev)
+                        if v_ok or VISION_INFRA_MARKER not in str(v_ev.get("detail", "")):
+                            break
+
                 if not v_ok:
-                    evidence["resolved_post_id"] = post_id
-                    evidence["resolved_permalink"] = permalink
+                    if VISION_INFRA_MARKER in str(v_ev.get("detail", "")):
+                        evidence["vision_posted_skipped"] = True
+                        stages.append({
+                            "stage": "vision_gate_posted",
+                            "passed": True,
+                            "detail": "skipped: vision service unavailable; post id proven on own profile",
+                        })
+                    else:
+                        evidence["resolved_post_id"] = post_id
+                        evidence["resolved_permalink"] = permalink
+                        stages.append({
+                            "stage": "vision_gate_posted",
+                            "passed": False,
+                            "detail": f"Vision gate posted failed: {v_ev.get('detail')}",
+                        })
+                        evidence["observation_file"] = save_composer_observation(serial, "post_vision_mismatch")
+                        return {
+                            "status": "uncertain",
+                            "facebook_post_id": None,
+                            "permalink": None,
+                            "actor_id": expected_target_id,
+                            "publish_may_have_started": True,
+                            "error_code": "post_vision_mismatch",
+                            "evidence": evidence,
+                            "stages": stages,
+                            "checked_at": checked_at,
+                        }
+                else:
                     stages.append({
                         "stage": "vision_gate_posted",
-                        "passed": False,
-                        "detail": f"Vision gate posted failed: {v_ev.get('detail')}",
+                        "passed": True,
+                        "detail": v_ev.get("detail", "ok"),
                     })
-                    evidence["observation_file"] = save_composer_observation(serial, "post_vision_mismatch")
-                    return {
-                        "status": "uncertain",
-                        "facebook_post_id": None,
-                        "permalink": None,
-                        "actor_id": expected_target_id,
-                        "publish_may_have_started": True,
-                        "error_code": "post_vision_mismatch",
-                        "evidence": evidence,
-                        "stages": stages,
-                        "checked_at": checked_at,
-                    }
 
-                stages.append({
-                    "stage": "vision_gate_posted",
-                    "passed": True,
-                    "detail": v_ev.get("detail", "ok"),
-                })
                 stages.append({
                     "stage": "post_verification",
                     "passed": True,
