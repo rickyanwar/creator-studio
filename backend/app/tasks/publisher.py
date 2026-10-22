@@ -10,6 +10,18 @@ from app.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
+_IMAGE_KEEP_AFTER_GO_LIVE = timedelta(hours=6)  # Repliz fetches the image at go-live
+
+
+def _keep_until(scheduled_for, now):
+    """Naive-UTC time until which the published media must stay on disk: go-live (never before now) + 6 h."""
+    base = scheduled_for or now
+    if base.tzinfo is not None:
+        base = base.astimezone(timezone.utc).replace(tzinfo=None)
+    now_naive = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo else now
+    return max(base, now_naive) + _IMAGE_KEEP_AFTER_GO_LIVE
+
+
 def _fanpage_tz(fanpage) -> ZoneInfo:
     if fanpage and fanpage.timezone:
         try:
@@ -405,7 +417,7 @@ def publish_job(self, job_id: int):
         job.status = PublishJobStatus.published
         job.published_at = now
         job.scheduled_for = scheduled_for
-        job.cleanup_at = now + timedelta(hours=6)
+        job.cleanup_at = _keep_until(scheduled_for, now)
         job.attempt_count = (job.attempt_count or 0) + 1
         db.commit()
 
@@ -500,7 +512,7 @@ def _publish_news_job(db, job):
     job.status = PublishJobStatus.published
     job.published_at = now
     job.scheduled_for = scheduled_for
-    job.cleanup_at = now + timedelta(hours=6)
+    job.cleanup_at = _keep_until(scheduled_for, now)
     job.attempt_count = (job.attempt_count or 0) + 1
 
     if job.source_article_id:

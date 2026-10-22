@@ -31,6 +31,66 @@ _AI_VIDEO_RETENTION_DAYS = 14
 _PUBLISHED_AI_VIDEO_RETENTION_DAYS = 7
 _THUMB_RETENTION_DAYS = 30
 
+# Repliz and the phone fetch post images at go-live, not at scheduling time.
+_KEEP_AFTER_GO_LIVE = timedelta(hours=6)
+_PENDING_JOB_KEEP_HOURS = 48
+_LIVE_DELIVERY_STATES = (
+    "waiting_for_slot",
+    "scheduled",
+    "publishing",
+    "waiting_for_device",
+    "uncertain",
+    "needs_human",
+    "repliz_scheduled",
+)
+
+
+def _post_media_still_needed(db, jobs, now) -> bool:
+    """True while any job of the post may still publish its images (naive UTC `now`)."""
+    if not jobs:
+        return False
+
+    now_naive = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
+
+    for job in jobs:
+        if job.scheduled_for:
+            sf = job.scheduled_for
+            if sf.tzinfo is not None:
+                sf = sf.astimezone(timezone.utc).replace(tzinfo=None)
+            if sf + _KEEP_AFTER_GO_LIVE > now_naive:
+                return True
+
+        if job.status in ("pending_publish", "publishing"):
+            if job.created_at is None:
+                return True
+            ca = job.created_at
+            if ca.tzinfo is not None:
+                ca = ca.astimezone(timezone.utc).replace(tzinfo=None)
+            if (now_naive - ca) <= timedelta(hours=_PENDING_JOB_KEEP_HOURS):
+                return True
+
+    job_ids = [j.id for j in jobs if j.id is not None]
+    if not job_ids:
+        return False
+
+    from sqlalchemy import or_
+    from app.models.social_publishing import PublishDelivery
+
+    cutoff = now_naive - _KEEP_AFTER_GO_LIVE
+    live_delivery = (
+        db.query(PublishDelivery.id)
+        .filter(
+            PublishDelivery.publish_job_id.in_(job_ids),
+            PublishDelivery.state.in_(_LIVE_DELIVERY_STATES),
+            or_(
+                PublishDelivery.scheduled_for.is_(None),
+                PublishDelivery.scheduled_for > cutoff,
+            ),
+        )
+        .first()
+    )
+    return live_delivery is not None
+
 
 @celery_app.task(name="app.tasks.cleanup.cleanup_old_media")
 def cleanup_old_media():
@@ -38,6 +98,7 @@ def cleanup_old_media():
     - Posts where all jobs published and cleanup_at passed (6h after publish)
     - Posts where all jobs failed/skipped (no point keeping files)
     - Posts stuck in stored/pending_fanout for more than 12h
+    - never while a job may still publish (go-live + 6 h, live deliveries, pending jobs < 48 h)
     """
     db = SessionLocal()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -85,6 +146,9 @@ def cleanup_old_media():
                 should_clean = True
 
             if not should_clean:
+                continue
+
+            if _post_media_still_needed(db, jobs, now):
                 continue
 
             post_dir = Path(settings.storage_base_path) / "posts" / str(post.uuid)
