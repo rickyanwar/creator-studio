@@ -28,7 +28,7 @@ from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_ideas import _normalized_topic
 from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language
-from app.services.real_names import find_real_names
+from app.services.real_names import find_person_names, find_real_names
 from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import (
     allowed_video_templates,
@@ -786,6 +786,8 @@ def _narration_text(variables: dict) -> str:
 
 def _check_variant(db, variant, pack, template, row, need_left, accepted, channel_topic_counts=None, used_subjects_cache=None) -> tuple[list[str], object]:
     errors = []
+    names_allowed = bool(template.raw.get("real_names_allowed"))
+    find_names = find_person_names if names_allowed else find_real_names
     channel_id = variant.get("channel_id")
     fp = None
     if isinstance(channel_id, int) and not isinstance(channel_id, bool):
@@ -891,16 +893,22 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
             if preset not in {"f1", "f1_red", "classic_gp", "motogp_livery", "motogp"}:
                 errors.append("team_livery only works with a livery preset")
         for key, value in variables.items():
-            names = find_real_names(value)
+            names = find_names(value)
             if names:
-                errors.append(f"real names are not allowed in {key}: {', '.join(names)}")
+                if names_allowed:
+                    errors.append(f"rider, driver and other person names are not allowed in {key}: {', '.join(names)}")
+                else:
+                    errors.append(f"real names are not allowed in {key}: {', '.join(names)}")
 
     rules = copy_rules(fp)
     title, caption = variant.get("title"), variant.get("caption")
     if not isinstance(title, str) or not title.strip() or len(title) > rules["title_max_chars"]:
         errors.append(f"title must be 1-{rules['title_max_chars']} characters")
-    elif find_real_names(title):
-        errors.append(f"real names are not allowed in title: {', '.join(find_real_names(title))}")
+    elif find_names(title):
+        if names_allowed:
+            errors.append(f"rider, driver and other person names are not allowed in title: {', '.join(find_names(title))}")
+        else:
+            errors.append(f"real names are not allowed in title: {', '.join(find_names(title))}")
     if not isinstance(caption, str) or not caption.strip() or len(caption) > rules["caption_max_chars"]:
         errors.append(f"caption must be 1-{rules['caption_max_chars']} characters")
     else:
@@ -910,9 +918,12 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
         tags = [w for w in caption.split() if w.startswith("#")]
         if len(tags) > rules["hashtags_max"]:
             errors.append(f"caption has {len(tags)} hashtags; max {rules['hashtags_max']}")
-        names = find_real_names(caption)
+        names = find_names(caption)
         if names:
-            errors.append(f"real names are not allowed in caption: {', '.join(names)}")
+            if names_allowed:
+                errors.append(f"rider, driver and other person names are not allowed in caption: {', '.join(names)}")
+            else:
+                errors.append(f"real names are not allowed in caption: {', '.join(names)}")
 
     if variables and isinstance(title, str):
         narration = _narration_text(variables)
