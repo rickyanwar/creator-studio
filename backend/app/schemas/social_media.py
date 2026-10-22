@@ -365,6 +365,22 @@ class SocialDestinationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DayPlanOut(BaseModel):
+    destination_id: int
+    name: str
+    timezone: str
+    local_now: str
+    local_date: str
+    daily_target: int
+    quotas: dict[str, int]
+    used: dict[str, int]
+    remaining: dict[str, int]
+    remaining_total: int
+    upcoming_slots: list[str]
+
+    model_config = {"from_attributes": True}
+
+
 class SchedulePreviewSlot(BaseModel):
     slot_utc: datetime
     slot_local: str

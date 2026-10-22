@@ -33,6 +33,7 @@ import {
   type DeliveryCopy,
 } from "@/lib/deliveriesApi";
 import { useBrandFilter } from "@/contexts/BrandFilterContext";
+import TodayPlanCard from "@/components/history/TodayPlanCard";
 
 const parseUtc = (s: string) =>
   new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
@@ -656,6 +657,11 @@ export default function HistoryPage() {
           </select>
         </div>
       </div>
+
+      {/* Today's plan card (Scheduled tab only) */}
+      {activeStatus === "scheduled" && (
+        <TodayPlanCard brandId={selectedBrandId} />
+      )}
 
       {/* Table Section */}
       <section

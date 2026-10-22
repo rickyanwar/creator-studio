@@ -554,7 +554,7 @@ class TestSyncPendingDeliveries:
             repliz_schedule_id="too_recent",
             scheduled_for=now - timedelta(minutes=1),
         )
-        # 4. Too old (> _POLL_MAX_AGE): 4 days ago -> EXCLUDED
+        # 4. Too old (> _POLL_MAX_AGE): 4 days ago -> re-checked by the stale sweep after the window rows (2026-10-22)
         too_old = PublishDelivery(
             publish_job_id=4,
             destination_id=1,
@@ -579,6 +579,6 @@ class TestSyncPendingDeliveries:
         monkeypatch.setattr("app.tasks.status_sync.get_repliz_client_from_db", lambda db: mock_client)
 
         synced = sync_pending_deliveries(db=delivery_db, now=now)
-        assert synced == 2
-        # Only at_max (older) and at_min (younger) are included
-        assert polled == ["at_max", "at_min"]
+        assert synced == 3
+        # The poll window (at_max older, at_min younger) first, then the stale sweep re-checks too_old
+        assert polled == ["at_max", "at_min", "too_old"]

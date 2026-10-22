@@ -968,6 +968,21 @@ export interface SocialDestination {
   updated_at: string;
 }
 
+export interface DestinationDayPlan {
+  destination_id: number;
+  name: string;
+  timezone: string;
+  local_now: string;
+  local_date: string;
+  daily_target: number;
+  quotas: Record<string, number>;
+  used: Record<string, number>;
+  remaining: Record<string, number>;
+  remaining_total: number;
+  upcoming_slots: string[];
+  content_project_id?: number | null;
+}
+
 export interface SocialDestinationCreate {
   content_project_id: number;
   kind: string;

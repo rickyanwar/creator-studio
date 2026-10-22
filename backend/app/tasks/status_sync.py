@@ -21,6 +21,7 @@ Repliz failure statuses (from live evidence, S1 probe): "failed", "error",
 import logging
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from sqlalchemy import or_, func, cast, String
 from sqlalchemy.orm import Session
 
@@ -192,6 +193,68 @@ def sync_pending_schedules():
         db.close()
 
 
+def _sync_one_delivery(db: Session, client, deliv, now_naive: datetime) -> bool:
+    """Sync a single delivery from Repliz. Returns True if successfully checked/updated."""
+    from app.models.social_publishing import DeliveryEvent
+
+    try:
+        data = client.get_schedule(deliv.repliz_schedule_id)
+        status_val = (data.get("status") or "").lower()
+        if status_val in _REPLIZ_FAILURE_STATUSES:
+            deliv.state = "failed"
+            deliv.last_error = "Repliz: " + _best_error_message(data)
+            db.add(
+                DeliveryEvent(
+                    delivery_id=deliv.id,
+                    event_type="failed",
+                    details={"error": deliv.last_error, "source": "status_sync"},
+                    created_at=now_naive,
+                )
+            )
+            db.add(deliv)
+        elif status_val in _REPLIZ_SUCCESS_STATUSES:
+            deliv.state = "published"
+            deliv.last_error = None
+            if not deliv.published_at:
+                deliv.published_at = now_naive
+            pid = extract_post_id(data)
+            if pid:
+                deliv.facebook_post_id = pid
+                if data.get("url") or data.get("permalink"):
+                    deliv.facebook_permalink = data.get("url") or data.get("permalink")
+                db.add(
+                    DeliveryEvent(
+                        delivery_id=deliv.id,
+                        event_type="published",
+                        details={"facebook_post_id": pid, "source": "status_sync"},
+                        created_at=now_naive,
+                    )
+                )
+                db.add(deliv)
+            elif not deliv.facebook_post_id:
+                reconcile_delivery_repliz(db, deliv, client=client)
+        return True
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            deliv.state = "skipped"
+            deliv.last_error = "Repliz schedule not found (404) — deleted in Repliz"
+            db.add(
+                DeliveryEvent(
+                    delivery_id=deliv.id,
+                    event_type="skipped",
+                    details={"error": deliv.last_error, "source": "status_sync"},
+                    created_at=now_naive,
+                )
+            )
+            db.add(deliv)
+            return True
+        logger.warning("Status sync failed for delivery %s: %s", deliv.id, exc)
+        return False
+    except Exception as exc:
+        logger.warning("Status sync failed for delivery %s: %s", deliv.id, exc)
+        return False
+
+
 @celery_app.task(name="app.tasks.status_sync.sync_pending_deliveries")
 def sync_pending_deliveries(db: Session | None = None, now: datetime | None = None):
     """Poll Repliz for deliveries in repliz_scheduled state."""
@@ -199,7 +262,7 @@ def sync_pending_deliveries(db: Session | None = None, now: datetime | None = No
     if own_session:
         db = SessionLocal()
     try:
-        from app.models.social_publishing import PublishDelivery, DeliveryEvent
+        from app.models.social_publishing import PublishDelivery
 
         if now is None:
             now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -219,7 +282,23 @@ def sync_pending_deliveries(db: Session | None = None, now: datetime | None = No
             .limit(50)
             .all()
         )
-        if not deliveries:
+
+        # Rows older than the poll window are re-checked too, so a schedule deleted in Repliz (404)
+        # cannot stay repliz_scheduled forever.
+        stale_deliveries = (
+            db.query(PublishDelivery)
+            .filter(
+                PublishDelivery.state == "repliz_scheduled",
+                PublishDelivery.repliz_schedule_id.isnot(None),
+                PublishDelivery.scheduled_for.isnot(None),
+                PublishDelivery.scheduled_for < now_naive - _POLL_MAX_AGE,
+            )
+            .order_by(PublishDelivery.scheduled_for.asc())
+            .limit(20)
+            .all()
+        )
+
+        if not deliveries and not stale_deliveries:
             return 0
 
         try:
@@ -230,45 +309,12 @@ def sync_pending_deliveries(db: Session | None = None, now: datetime | None = No
 
         synced = 0
         for deliv in deliveries:
-            try:
-                data = client.get_schedule(deliv.repliz_schedule_id)
-                status_val = (data.get("status") or "").lower()
-                if status_val in _REPLIZ_FAILURE_STATUSES:
-                    deliv.state = "failed"
-                    deliv.last_error = "Repliz: " + _best_error_message(data)
-                    db.add(
-                        DeliveryEvent(
-                            delivery_id=deliv.id,
-                            event_type="failed",
-                            details={"error": deliv.last_error, "source": "status_sync"},
-                            created_at=now_naive,
-                        )
-                    )
-                    db.add(deliv)
-                elif status_val in _REPLIZ_SUCCESS_STATUSES:
-                    deliv.state = "published"
-                    deliv.last_error = None
-                    if not deliv.published_at:
-                        deliv.published_at = now_naive
-                    pid = extract_post_id(data)
-                    if pid:
-                        deliv.facebook_post_id = pid
-                        if data.get("url") or data.get("permalink"):
-                            deliv.facebook_permalink = data.get("url") or data.get("permalink")
-                        db.add(
-                            DeliveryEvent(
-                                delivery_id=deliv.id,
-                                event_type="published",
-                                details={"facebook_post_id": pid, "source": "status_sync"},
-                                created_at=now_naive,
-                            )
-                        )
-                        db.add(deliv)
-                    elif not deliv.facebook_post_id:
-                        reconcile_delivery_repliz(db, deliv, client=client)
+            if _sync_one_delivery(db, client, deliv, now_naive):
                 synced += 1
-            except Exception as exc:
-                logger.warning("Status sync failed for delivery %s: %s", deliv.id, exc)
+
+        for deliv in stale_deliveries:
+            if _sync_one_delivery(db, client, deliv, now_naive):
+                synced += 1
 
         db.commit()
         logger.info("Delivery status sync: checked %d delivery(s)", synced)
