@@ -107,6 +107,24 @@ export function FacebookTab({
               </p>
             </div>
 
+            <div className="flex items-center justify-between p-3 rounded-lg border border-line">
+              <div>
+                <label htmlFor="qa-facebook" className="text-xs font-medium text-text cursor-pointer">
+                  Check AI results
+                </label>
+                <p className="text-[11px] text-text2 mt-0.5">
+                  On: every AI image is checked for the right face and event (series, vehicle, logos) and replaced by the template card when wrong. Off: AI images are used without these checks.
+                </p>
+              </div>
+              <input
+                id="qa-facebook"
+                type="checkbox"
+                className="w-4 h-4 rounded accent-pri shrink-0 cursor-pointer ml-3"
+                checked={(form.qa_facebook_enabled as boolean) ?? true}
+                onChange={(e) => set("qa_facebook_enabled", e.target.checked)}
+              />
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="label">Posts per day</label>

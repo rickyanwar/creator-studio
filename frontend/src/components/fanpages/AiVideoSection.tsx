@@ -114,6 +114,23 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
               <input type="number" min={0} max={100} className="input w-full" placeholder="Empty = never auto-approve" value={form.ai_video_min_score ?? ""} onChange={(e) => set("ai_video_min_score", e.target.value === "" ? null : Number(e.target.value))} />
               <p className="text-[11px] text-text-secondary mt-1">Used only for automatic approval of Hermes ideas.</p>
             </div>
+            <div className="sm:col-span-2 flex items-center justify-between p-3 rounded-lg border border-hairline">
+              <div>
+                <label htmlFor="qa-ai-video" className="text-xs font-medium text-text-primary cursor-pointer">
+                  Check finished videos
+                </label>
+                <p className="text-[11px] text-text-secondary mt-0.5">
+                  On: each finished video is checked by vision QC (logic, logos, the right subject) before it is posted. Off: videos are posted after the technical check only.
+                </p>
+              </div>
+              <input
+                id="qa-ai-video"
+                type="checkbox"
+                className="w-4 h-4 rounded accent-pri shrink-0 cursor-pointer ml-3"
+                checked={(form.qa_ai_video_enabled as boolean) ?? true}
+                onChange={(e) => set("qa_ai_video_enabled", e.target.checked)}
+              />
+            </div>
             <div className="sm:col-span-2">
               <label className="label">Allowed Video Templates</label>
               <p className="text-[11px] text-text-secondary mb-2">

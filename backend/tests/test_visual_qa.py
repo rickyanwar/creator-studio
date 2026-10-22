@@ -4,11 +4,18 @@ from app.services.visual_qa import (
     normalise_text, radio_text_matches, parse_qa_json, evaluate, check_generated, QAResult
 )
 
+
+@pytest.fixture(autouse=True)
+def no_sleep_on_retry(monkeypatch):
+    monkeypatch.setattr("app.services.vision_retry.time.sleep", lambda s: None)
+
+
 def test_normalise_text():
     assert normalise_text("Hello ‘World’!") == "HELLO 'WORLD'!"
     assert normalise_text("“Quotes” … and spaces  ") == '"QUOTES" ... AND SPACES'
     assert normalise_text("No 1!?.,'") == "NO 1!?.,'"
     assert normalise_text("symbols #@$% removed") == "SYMBOLS REMOVED"
+
 
 def test_radio_text_matches():
     ocr = "HAMILTON RADIO 44 'Bono, my tyres are gone...'"
@@ -28,30 +35,27 @@ def test_radio_text_matches():
     ocr2 = "hamilton radio 44 ‘Bono, my tyres are gone…’"
     assert radio_text_matches(ocr2, header, lines) is None
 
+
 def test_parse_qa_json():
     # Markdown
-    raw = """```json\n{"ai_look": 2}\n```"""
-    assert parse_qa_json(raw) == {"ai_look": 2}
+    raw = """```json\n{"identity_hero": true}\n```"""
+    assert parse_qa_json(raw) == {"identity_hero": True}
     
     # Fenced but no 'json'
-    raw2 = """```\n{"ai_look": 3}\n```"""
-    assert parse_qa_json(raw2) == {"ai_look": 3}
+    raw2 = """```\n{"identity_hero": true}\n```"""
+    assert parse_qa_json(raw2) == {"identity_hero": True}
     
     # Raw JSON
-    raw3 = '{"ai_look": 1}'
-    assert parse_qa_json(raw3) == {"ai_look": 1}
+    raw3 = '{"identity_hero": true}'
+    assert parse_qa_json(raw3) == {"identity_hero": True}
+
 
 def test_evaluate():
     # Pass case for non-radio
     qa_pass = {
         "identity_hero": True,
         "identity_inset": True,
-        "invented_or_garbled_logos": [],
-        "missing_real_logos": [],
-        "text_on_image": [],
         "source_branding_visible": False,
-        "ai_look": 2,
-        "bottom_area_empty": True
     }
     assert evaluate(qa_pass, "portrait", None) == (True, ())
     
@@ -59,69 +63,35 @@ def test_evaluate():
     qa_fail_id = {**qa_pass, "identity_hero": False}
     assert evaluate(qa_fail_id, "portrait", None) == (False, ("identity_changed",))
     
-    # Fail logo invented (Now a warning, should pass)
-    qa_fail_logo_inv = {**qa_pass, "invented_or_garbled_logos": ["weird logo"]}
-    assert evaluate(qa_fail_logo_inv, "portrait", None) == (True, ())
-        
-    # Fail logo missing (Now a warning, should pass)
-    qa_fail_logo_miss = {**qa_pass, "missing_real_logos": ["red bull", "honda"]}
-    assert evaluate(qa_fail_logo_miss, "portrait", None) == (True, ())
-    
-# Fail logo missing (must be >1)
-    qa_fail_logo_miss_1 = {**qa_pass, "missing_real_logos": ["one"]}
-    assert evaluate(qa_fail_logo_miss_1, "portrait", None) == (True, ())
-    qa_fail_logo_miss_2 = {**qa_pass, "missing_real_logos": ["one", "two"]}
-    assert evaluate(qa_fail_logo_miss_2, "portrait", None) == (True, ())
-    
-    # Non-blocking text on image (non-radio)
-    qa_fail_text = {**qa_pass, "text_on_image": ["hello"]}
-    assert evaluate(qa_fail_text, "portrait", None) == (True, ("note:text_present",))
-    
-    # Text on image allowed for radio
-    assert evaluate(qa_fail_text, "team_radio", None) == (True, ())
-    
     # Fail source branding
     qa_fail_brand = {**qa_pass, "source_branding_visible": True}
     assert evaluate(qa_fail_brand, "portrait", None) == (False, ("source_branding",))
-    
-    # Non-blocking AI look
-    qa_fail_ai = {**qa_pass, "ai_look": 4}
-    assert evaluate(qa_fail_ai, "portrait", None) == (True, ("note:looks_ai",))
-    
-    # Non-blocking bottom not empty (non-radio)
-    qa_fail_bottom = {**qa_pass, "bottom_area_empty": False}
-    assert evaluate(qa_fail_bottom, "portrait", None) == (True, ("note:bottom_not_empty",))
-    assert evaluate(qa_fail_bottom, "team_radio", None) == (True, ())
     
     # Radio text mismatch
     assert evaluate(qa_pass, "team_radio", "'I am fast'") == (False, ("radio_text_mismatch:'I am fast'",))
 
 
 def test_evaluate_safety_vs_non_blocking_notes():
-    # ai_look 5 + bottom_not_empty + text present -> passed True with note: problems
-    qa_notes = {
+    # plain_whatif_suit is a non-blocking note problem
+    qa_whatif = {
         "identity_hero": True,
         "identity_inset": True,
-        "invented_or_garbled_logos": [],
-        "missing_real_logos": [],
-        "text_on_image": ["some text"],
+        "plain_whatif_suit": True,
         "source_branding_visible": False,
-        "ai_look": 5,
-        "bottom_area_empty": False,
     }
-    passed, problems = evaluate(qa_notes, "portrait", None)
+    passed, problems = evaluate(qa_whatif, "portrait", None, whatif_target_team="Ferrari")
     assert passed is True
-    assert set(problems) == {"note:text_present", "note:looks_ai", "note:bottom_not_empty"}
+    assert set(problems) == {"note:plain_whatif_suit"}
 
     # identity_hero False -> passed False
-    qa_id_fail = {**qa_notes, "identity_hero": False}
-    passed, problems = evaluate(qa_id_fail, "portrait", None)
+    qa_id_fail = {**qa_whatif, "identity_hero": False}
+    passed, problems = evaluate(qa_id_fail, "portrait", None, whatif_target_team="Ferrari")
     assert passed is False
     assert "identity_changed" in problems
 
     # source_branding -> passed False
-    qa_branding_fail = {**qa_notes, "source_branding_visible": True}
-    passed, problems = evaluate(qa_branding_fail, "portrait", None)
+    qa_branding_fail = {**qa_whatif, "source_branding_visible": True}
+    passed, problems = evaluate(qa_branding_fail, "portrait", None, whatif_target_team="Ferrari")
     assert passed is False
     assert "source_branding" in problems
 
@@ -129,16 +99,12 @@ def test_evaluate_safety_vs_non_blocking_notes():
     qa_pass = {
         "identity_hero": True,
         "identity_inset": True,
-        "invented_or_garbled_logos": [],
-        "missing_real_logos": [],
-        "text_on_image": [],
         "source_branding_visible": False,
-        "ai_look": 1,
-        "bottom_area_empty": True,
     }
     passed, problems = evaluate(qa_pass, "team_radio", "MISSING_TEXT")
     assert passed is False
     assert "radio_text_mismatch:MISSING_TEXT" in problems
+
 
 @patch("app.services.visual_qa._vision_chat")
 @patch("app.services.visual_qa._vision_datauri", return_value="data:image/png;base64,xxx")
@@ -158,6 +124,7 @@ def test_check_generated_pass(mock_file, mock_uri, mock_chat):
     assert mock_chat.call_count == 1
     # Check that it opens hero file
     mock_file.assert_called_with("hero.jpg", "rb")
+
 
 @patch("app.services.visual_qa._vision_chat")
 @patch("app.services.visual_qa._vision_datauri", return_value="data:image/png;base64,xxx")
@@ -179,6 +146,7 @@ def test_check_generated_radio(mock_file, mock_uri, mock_chat):
     assert res.passed is True
     assert res.ocr_text == "HAMILTON RADIO 44 'Bono'"
     assert mock_chat.call_count == 2
+
 
 @patch("app.services.visual_qa._vision_chat")
 @patch("app.services.visual_qa._vision_datauri", return_value="data:image/png;base64,xxx")

@@ -5,6 +5,7 @@ from typing import Any
 import re
 
 from app.services.design_images import _vision_chat, _vision_datauri
+from app.services.vision_retry import run_vision_check
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,10 @@ def parse_qa_json(raw: str) -> dict[str, Any]:
         raw = raw.split("```json")[1].split("```")[0]
     elif "```" in raw:
         raw = raw.split("```")[1].split("```")[0]
-    return json.loads(raw.strip())
+    data = json.loads(raw.strip())
+    if not isinstance(data, dict):
+        raise ValueError("QA response is not a JSON object")
+    return data
 
 def evaluate(qa_dict: dict, layout: str, ocr_mismatch: str | None, inset_modes: tuple[str, ...] = (), whatif_target_team: str | None = None) -> tuple[bool, tuple[str, ...]]:
     problems = []
@@ -67,17 +71,8 @@ def evaluate(qa_dict: dict, layout: str, ocr_mismatch: str | None, inset_modes: 
                 if m in ('asset', 'imagined') and qa_dict.get("inset_shows_hero"):
                     problems.append("note:inset_shows_hero")
                     
-    if layout != "team_radio" and qa_dict.get("text_on_image"):
-        problems.append("note:text_present")
-        
     if qa_dict.get("source_branding_visible"):
         problems.append("source_branding")
-        
-    if qa_dict.get("ai_look", 1) >= 4:
-        problems.append("note:looks_ai")
-        
-    if layout != "team_radio" and not qa_dict.get("bottom_area_empty", True):
-        problems.append("note:bottom_not_empty")
         
     if layout == "team_radio" and ocr_mismatch is not None:
         problems.append(f"radio_text_mismatch:{ocr_mismatch}")
@@ -114,9 +109,7 @@ def check_generated(
             "type": "image_url",
             "image_url": {"url": _vision_datauri(hero_bytes)}
         })
-        
 
-            
         for i, ref in enumerate(inset_ref_paths):
             with open(ref, "rb") as f:
                 inset_bytes = f.read()
@@ -132,7 +125,7 @@ def check_generated(
         inset_shows_hero_line = ""
         
         if whatif_target_team:
-            whatif_clause = f'\nNote: This is a "what-if" transfer graphic to {whatif_target_team}. The inset portrait is SUPPOSED to wear the {whatif_target_team} uniform. The {whatif_target_team} logos on the inset clothing are INTENTIONAL. Do NOT list {whatif_target_team} logos as invented/garbled. Do NOT list the hero\'s original logos as missing from the inset.'
+            whatif_clause = f'\nNote: This is a "what-if" transfer graphic to {whatif_target_team}. The inset portrait is SUPPOSED to wear the {whatif_target_team} uniform. The {whatif_target_team} logos on the inset clothing are INTENTIONAL.'
             plain_suit_line = f'\n- "plain_whatif_suit": bool (is the what-if {whatif_target_team} suit plain/sponsorless, missing the target team\'s main sponsor logos shown in the kit reference?)'
         else:
             if inset_modes and any(m in ('asset', 'imagined') for m in inset_modes):
@@ -142,28 +135,21 @@ def check_generated(
 Return STRICT JSON ONLY, no markdown formatting. The JSON must have these exact keys:
 - "identity_hero": bool (is the main person/subject the exact same real person as in the HERO reference?)
 - "identity_inset": bool or null (if there is a real person inset, are they the exact same real person as in the INSET reference? null if no inset){whatif_clause}{plain_suit_line}{inset_shows_hero_line}
-- "invented_or_garbled_logos": list of strings (logos/text on clothing/cars that look invented, misspelled, or melted. Ignore {whatif_target_team or 'nothing'} logos in the inset if what-if. Small garbled text is allowed, list it here)
-- "missing_real_logos": list of strings (clearly visible logos on the reference clothing/car that disappeared. Ignore missing hero logos on the inset if what-if)
-- "text_on_image": list of strings (any letters/words/numbers rendered on the image OUTSIDE of clothing/car liveries)
 - "source_branding_visible": bool (Does the image contain the source account's logo/watermark/branding, e.g. {branding_str}, or any other watermark/overlay?)
-- "ai_look": integer (1 = natural professional photo, to 5 = obviously AI/over-processed/plastic)
-- "bottom_area_empty": bool (is the bottom 35% of the image empty of faces, bodies, objects, and text?)
 
 {{
     "identity_hero": true,
     "identity_inset": null,
-    "invented_or_garbled_logos": [],
-    "missing_real_logos": [],
-    "text_on_image": [],
-    "source_branding_visible": false,
-    "ai_look": 1,
-    "bottom_area_empty": true
+    "source_branding_visible": false
 }}
 """
         content.append({"type": "text", "text": prompt})
         
-        raw_qa = _vision_chat(content, max_tokens=500, temperature=0, context="visual_qa")
-        qa_dict = parse_qa_json(raw_qa)
+        def _do_visual_qa() -> dict[str, Any]:
+            raw_qa = _vision_chat(content, max_tokens=500, temperature=0, context="visual_qa")
+            return parse_qa_json(raw_qa)
+
+        qa_dict = run_vision_check(_do_visual_qa, label=f"visual_qa:{layout}")
         
         ocr_text = ""
         ocr_mismatch = None

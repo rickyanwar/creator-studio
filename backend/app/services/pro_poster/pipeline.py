@@ -18,6 +18,7 @@ from app.services.gptcli_client import GptcliError
 from app.services.pro_poster import art_direction, concept as concept_mod, photos, qa
 from app.services.pro_poster.brief import brief_from_dict, brief_to_dict, build_brief
 from app.services.pro_poster.types import PosterBrief, PosterConcept, ProPosterResult
+from app.services.qa_toggles import qa_enabled
 from app.services.visual_engine import (
     GenerationRequest,
     NoAllowedEngine,
@@ -84,15 +85,18 @@ def _make_attempt_entry(
             "palette": concept.palette,
             "mood": concept.mood,
         }
-    return {
-        "attempt": attempt,
-        "engine": engine or "",
-        "qa": {
+    qa_dict = None
+    if qa_res is not None:
+        qa_dict = {
             "passed": bool(qa_res.passed),
             "scores": dict(qa_res.scores) if getattr(qa_res, "scores", None) else {},
             "issues": list(qa_res.issues) if getattr(qa_res, "issues", None) else [],
             "fix_hint": str(getattr(qa_res, "fix_hint", "") or ""),
-        },
+        }
+    return {
+        "attempt": attempt,
+        "engine": engine or "",
+        "qa": qa_dict,
         "image": image,
         "concept": concept_dict,
     }
@@ -293,18 +297,21 @@ def compose_pro_poster(
     attempts = 1
     current_engine = gen_res.engine
     image = speaker_design._finish(gen_res.image)
-    hero_bytes = _read_hero_ref_bytes(selection)
-    qa_res = qa.check_safety(
-        image,
-        brief,
-        hero_ref_bytes=hero_bytes,
-        headline=headline,
-    )
+    if qa_enabled(fanpage, "news"):
+        hero_bytes = _read_hero_ref_bytes(selection)
+        qa_res = qa.check_safety(
+            image,
+            brief,
+            hero_ref_bytes=hero_bytes,
+            headline=headline,
+        )
+    else:
+        qa_res = None
     attempt_log.append(
         _make_attempt_entry(attempts, current_engine, qa_res, image, concept=concept)
     )
 
-    if not qa_res.passed:
+    if qa_res is not None and not qa_res.passed:
         first_issue = qa_res.issues[0] if qa_res.issues else "safety check failed"
         res = ProPosterResult(
             image=None,

@@ -26,6 +26,7 @@ def finalize_ai_video(video_job_id: int):
     from app.models.settings import Settings
     from app.models.target_fanpages import PublishMode, TargetFanpage
     from app.services.ai_video_qc import contact_sheet, technical_check, vision_check
+    from app.services.qa_toggles import qa_enabled
     from app.config import get_settings
 
     db = SessionLocal()
@@ -39,7 +40,7 @@ def finalize_ai_video(video_job_id: int):
         vision = None
         reasons = list(technical["reasons"])
         settings = db.query(Settings).filter_by(id=1).first()
-        if technical["passed"] and settings and settings.ai_video_vision_qc_enabled:
+        if technical["passed"] and settings and settings.ai_video_vision_qc_enabled and qa_enabled(fanpage, "ai_video"):
             try:
                 expectations = None
                 if idea and isinstance(idea.variables, dict):

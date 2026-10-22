@@ -21,6 +21,7 @@ from app.models.gallery import GalleryImage
 from app.services.gallery_filters import not_keyword_mismatch
 from app.services import design_images, visual_engine
 from app.services.prompt_rules import avoid_block
+from app.services.qa_toggles import qa_enabled, qa_mode_for_content_kind
 from app.services.visual_engine import GenerationRequest, VisualEngineError
 from app.services.visual_sourcing import get_name_variants
 
@@ -608,16 +609,17 @@ def compose_speaker_design(
         res = visual_engine.generate_ex(db, request, fanpage_id=fanpage_id)
         gptcli_rejected = False
         gptcli_reject_reason = ""
-        if res.engine == "gptcli":
-            from app.services.identity_check import check_identity
-            idr = check_identity(speaker_bytes, res.image, subject=speaker, context=content_kind, fanpage_id=fanpage_id)
-            if not idr.passed:
-                logger.info("speaker design: gpt-cli image rejected by face check (%s)", idr.reason)
-                return None
         generated = res.image
-        if res.engine == "9router" and identity_score(speaker_bytes, generated) < IDENTITY_THRESHOLD:
-            logger.warning("speaker design rejected: identity score below threshold")
-            return None
+        if qa_enabled(fanpage, qa_mode_for_content_kind(content_kind)):
+            if res.engine == "gptcli":
+                from app.services.identity_check import check_identity
+                idr = check_identity(speaker_bytes, res.image, subject=speaker, context=content_kind, fanpage_id=fanpage_id)
+                if not idr.passed:
+                    logger.info("speaker design: gpt-cli image rejected by face check (%s)", idr.reason)
+                    return None
+            if res.engine == "9router" and identity_score(speaker_bytes, generated) < IDENTITY_THRESHOLD:
+                logger.warning("speaker design rejected: identity score below threshold")
+                return None
         finished_bytes = _finish(generated)
         used_gallery = [r for r in refs if isinstance(r, GalleryImage)]
 
