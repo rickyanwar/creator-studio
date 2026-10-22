@@ -86,27 +86,42 @@ class JobRunner:
                 return rec
             log.warning("Recovery failed for job %s clip %s (media_id=%s): %s", jid, index, media_id, rec.message or "file missing")
 
-        if hasattr(self.gflow, "wait_for_stranded_clip"):
-            stranded_id = self.gflow.wait_for_stranded_clip(
-                profile=profile,
-                project=project,
-                submit_time=submit_time,
-                timeout_s=STRANDED_WAIT_S,
-                poll_s=STRANDED_POLL_S,
-                sleep=self._sleep,
-                cancelled=lambda: self.cancelled(jid),
+        if hasattr(self.gflow, "stranded_candidates"):
+            elapsed = 0
+            tried = set()
+            attempt = 1
+            while elapsed <= STRANDED_WAIT_S:
+                if self.cancelled(jid):
+                    return None
+                for row in self.gflow.stranded_candidates(profile=profile, project=project, submit_time=submit_time):
+                    mid = row.get("media_id")
+                    if not mid:
+                        continue
+                    rec = self.gflow.download_media(mid, profile=profile, out=out.parent)
+                    rec_path = Path(rec.payload.get("path") or rec.payload.get("local_path") or (out.parent / f"{mid}.mp4"))
+                    if not rec_path.is_absolute():
+                        rec_path = self.cfg.cli_dir / rec_path
+                    if rec.ok and rec_path.is_file() and rec_path.stat().st_size:
+                        log.info(
+                            "Recovered clip %s for job %s clip %s via stranded download (attempt %d)",
+                            mid, jid, index, attempt,
+                        )
+                        rec.payload.setdefault("local_path", str(rec_path))
+                        rec.payload.setdefault("media_id", mid)
+                        return rec
+                    tried.add(mid)
+                if elapsed + STRANDED_POLL_S > STRANDED_WAIT_S:
+                    break
+                self._sleep(STRANDED_POLL_S)
+                elapsed += STRANDED_POLL_S
+                attempt += 1
+                if self.cancelled(jid):
+                    return None
+            log.warning(
+                "No stranded clip could be downloaded for job %s clip %s within %ss (candidates tried: %d)",
+                jid, index, STRANDED_WAIT_S, len(tried),
             )
-            if stranded_id:
-                rec = self.gflow.download_media(stranded_id, profile=profile, out=out.parent)
-                rec_path = Path(rec.payload.get("path") or rec.payload.get("local_path") or (out.parent / f"{stranded_id}.mp4"))
-                if not rec_path.is_absolute():
-                    rec_path = self.cfg.cli_dir / rec_path
-                if rec.ok and rec_path.is_file() and rec_path.stat().st_size:
-                    log.info("Recovered clip %s for job %s clip %s via stranded wait", stranded_id, jid, index)
-                    rec.payload.setdefault("local_path", str(rec_path))
-                    rec.payload.setdefault("media_id", stranded_id)
-                    return rec
-                log.warning("Recovery via stranded wait failed to download clip %s for job %s clip %s: %s", stranded_id, jid, index, rec.message or "file missing")
+            return None
 
         return None
 
