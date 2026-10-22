@@ -32,6 +32,8 @@ MAX_COOLING_SHARE = 0.4                           # never cool down more than 40
 SUBMIT_NO_REPLY = "of clicking submit"
 COMPOSER_AGENT_ONLY = "composer is agent-only"
 CREDITS_API_AUTH_ERROR = "aisandbox-pa authentication failed"
+USAGE_LIMIT_COOLDOWN_HOURS = (6, 8)  # Flow usage limit hit; rest the account 6-8 hours
+AGENT_ONLY_COOLDOWN_HOURS = (2, 3)   # Agent-only composer error; rest the account 2-3 hours
 MIN_CLAIM_GAP_MINUTES = 10
 ACCOUNT_REST_MINUTES = (8, 20)
 WORKER_GAP_SECONDS = (60, 240)
@@ -270,6 +272,16 @@ def effective_credits(db: Session, acc: GflowAccount) -> int | None:
     return max(0, acc.credits - spent)
 
 
+def job_requires_i2v(job: VideoJob) -> bool:
+    """True if any clip in job.clips has index != 1 and mode != 't2v'."""
+    if not job.clips:
+        return False
+    return any(
+        isinstance(clip, dict) and clip.get("index") != 1 and clip.get("mode") != "t2v"
+        for clip in job.clips
+    )
+
+
 def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAccount]]:
     """
     Claim a job for worker_id.
@@ -338,6 +350,8 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
             continue
         acc = candidate_by_id.get(cand_job.account_id)
         if not acc:
+            continue
+        if acc.agent_only and job_requires_i2v(cand_job):
             continue
         clips_count = len(cand_job.clips) if cand_job.clips else 0
         clips_done_count = len(cand_job.clips_done) if cand_job.clips_done else 0
@@ -427,11 +441,13 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
     ))
 
     for cand_job in unpinned_jobs:
+        req_i2v = job_requires_i2v(cand_job)
         # Pick candidate account with largest credits - reserve >= credits_estimate
         # Ties: least recently used (acc.last_used_at is None or older)
         matching_accounts = [
             acc for acc in candidates
             if acc.id not in busy_account_ids
+            and not (acc.agent_only and req_i2v)
             and (eff := effective_credits(db, acc)) is not None
             and (eff - credit_reserve) >= cand_job.credits_estimate
         ]
@@ -679,11 +695,32 @@ def record_failure(
         else:
             job.status = "queued"
 
+    agent_only_msg = COMPOSER_AGENT_ONLY in (message or "") or "agent-only composer" in (message or "").lower()
     is_unusual = reason == "unusual_activity" or "UNUSUAL_ACTIVITY" in (message or "").upper()
-    no_submit_reply = (
-        reason in ("transient", "other") and SUBMIT_NO_REPLY in (message or "")
-    ) or COMPOSER_AGENT_ONLY in (message or "")
-    if is_unusual or no_submit_reply:
+    no_submit_reply = reason in ("transient", "other") and SUBMIT_NO_REPLY in (message or "")
+
+    if reason == "usage_limit":
+        if account:
+            account.cooldown_until = now + timedelta(hours=random.uniform(*USAGE_LIMIT_COOLDOWN_HOURS))
+            account.last_error = (message or reason)[:2000]
+            if agent_only_msg:
+                account.agent_only = True
+        if job.clips_done:
+            _restart()
+        else:
+            _requeue()
+
+    elif reason == "agent_only" or agent_only_msg:
+        if account:
+            account.agent_only = True
+            account.cooldown_until = now + timedelta(hours=random.uniform(*AGENT_ONLY_COOLDOWN_HOURS))
+            account.last_error = (message or reason)[:2000]
+        if job.clips_done:
+            _restart()
+        else:
+            _requeue()
+
+    elif is_unusual or no_submit_reply:
         refused_cooldown = False
         if account:
             refused_cooldown = _strike_account(db, account, now, message or reason)
@@ -841,6 +878,9 @@ def sweep(db: Session):
             elif account and account.enabled and account.authenticated and account.status == "ok" and account.credits is not None:
                 if (account.credits - credit_reserve) >= rem_cost:
                     candidate_ok = True
+            # An agent-only account cannot make the remaining i2v clips: restart now instead of waiting for the pin to go stale.
+            if account and account.agent_only and job_requires_i2v(job):
+                candidate_ok, is_stale_time = False, True
 
             if is_stale_time and not candidate_ok:
                 # restart

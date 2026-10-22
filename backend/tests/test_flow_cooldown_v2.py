@@ -331,9 +331,9 @@ def test_breaker_distinct_accounts_pauses_worker(db_session):
     assert worker.paused_until == now + timedelta(minutes=50)
 
 
-def test_composer_is_agent_only_handled_like_no_reply(db_session, test_fanpage):
+def test_composer_is_agent_only_rests_account_without_strike(db_session, test_fanpage):
     """
-    'composer is agent-only' message is handled like no-reply.
+    An agent-only composer is an account property, not anti-bot: flag it, rest it 2-3 h, no strike (2026-10-22).
     """
     _ensure_settings(db_session, worker_enabled=True)
     worker = GflowWorker(worker_id="w1", version="1.0", running_job_ids=[])
@@ -363,17 +363,16 @@ def test_composer_is_agent_only_handled_like_no_reply(db_session, test_fanpage):
 
     now = ai_video_dispatch._utcnow()
     msg = "Flow CLI error: composer is agent-only for this profile"
-    with patch("random.uniform", side_effect=[90.0, 1.0, 45.0]):
-        ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "other", msg)
+    ai_video_dispatch.record_failure(db_session, claimed_job, "w1", claimed_job.generation, "other", msg)
 
-    assert claimed_job.unusual_hits == 1
+    assert claimed_job.unusual_hits in (0, None)
     assert claimed_job.status == "queued"
-    assert claimed_job.not_before is not None
-    diff_s = (claimed_job.not_before - now).total_seconds()
-    assert 25 * 60 <= diff_s <= 38 * 60
+    assert claimed_job.not_before is None
+    assert claimed_job.account_id is None
 
     db_session.refresh(acc)
-    assert acc.cooldown_until is not None
-    assert acc.unusual_strikes == 1
-    assert abs((acc.last_unusual_at - now).total_seconds()) < 5
+    assert acc.agent_only is True
+    assert acc.unusual_strikes in (0, None)
+    hours = (acc.cooldown_until - now).total_seconds() / 3600
+    assert 2 <= hours <= 3.01
     assert "composer is agent-only" in acc.last_error
