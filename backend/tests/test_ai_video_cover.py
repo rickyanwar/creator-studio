@@ -18,6 +18,7 @@ from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.settings import Settings
 from app.models.target_fanpages import PublishMode, TargetFanpage
 from app.services.ai_video_cover import (
+    MAX_COVER_LINES,
     build_cover_copy_prompt,
     build_cover_html,
     build_cover_image_prompt,
@@ -94,9 +95,9 @@ TINY_PNG = (
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_fallback_cover_copy():
-    # <= 3 lines, uppercase, last highlighted
+    # <= MAX_COVER_LINES lines, uppercase, last highlighted
     res = fallback_cover_copy("Why 2026 F1 Wings Move So Fast On The Straights")
-    assert len(res["lines"]) <= 3
+    assert len(res["lines"]) <= MAX_COVER_LINES
     assert res["lines"] == [l.upper() for l in res["lines"]]
     assert res["highlight"] == [len(res["lines"]) - 1]
 
@@ -121,15 +122,19 @@ def test_parse_cover_copy():
 
     # Garbage input with strict=False returns fallback
     fallback_res = parse_cover_copy("not valid json at all", "Why Wings Move", strict=False)
-    assert len(fallback_res["lines"]) <= 3
+    assert len(fallback_res["lines"]) <= MAX_COVER_LINES
     assert fallback_res["highlight"] == [len(fallback_res["lines"]) - 1]
 
     # Garbage input with strict=True raises ValueError
     with pytest.raises(ValueError, match="cover copy off spec"):
         parse_cover_copy("not valid json at all", "Why Wings Move", strict=True)
 
-    # Off spec lines (> 3 lines) with strict=True raises ValueError
-    off_spec = '{"lines": ["ONE", "TWO", "THREE", "FOUR"], "highlight": [0]}'
+    # A full informative question in 3 lines is on spec
+    question = '{"lines": ["WHY DOES", "YOUR KNEE KICK", "WHEN TAPPED?"], "highlight": [1]}'
+    assert parse_cover_copy(question, "Title", strict=True)["lines"] == ["WHY DOES", "YOUR KNEE KICK", "WHEN TAPPED?"]
+
+    # Off spec lines (> MAX_COVER_LINES lines) with strict=True raises ValueError
+    off_spec = '{"lines": ["ONE", "TWO", "THREE", "FOUR", "FIVE"], "highlight": [0]}'
     with pytest.raises(ValueError):
         parse_cover_copy(off_spec, "Title", strict=True)
 

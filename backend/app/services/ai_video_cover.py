@@ -17,42 +17,49 @@ import re
 
 COVER_HOLD_SECONDS = 0.3
 COVER_FADE_SECONDS = 0.2
-MAX_COVER_LINES = 3
-MAX_LINE_CHARS = 13
-MAX_COVER_WORDS = 5
+MAX_COVER_LINES = 4
+MAX_LINE_CHARS = 14
+MAX_COVER_WORDS = 8
 MAX_SCENE_CHARS = 400
 
 COVER_COPY_PROMPT = """You write the cover (thumbnail) text for a short vertical explainer video on a {niche} fan page.
-The viewer sees the cover for one second while scrolling; the post caption already shows the title.
+A viewer scrolling past sees the cover for under a second. The cover must tell them at once WHAT the video is about
+and make them NEED the answer.
 
 Video title: {title}
 Video caption: {caption}
 
 Write the cover words in the SAME language as the video title.
-What works on covers (studies of breakout videos):
-- VERY short: 2 to 4 words is best, never more than {max_words}. 1 to 3 short lines, each at most {max_chars} characters.
-- Do NOT repeat the title. Add the angle the title does not say: the stakes, the surprising number, the
-  result, the contrast, or the question the video answers.
-- One strong hook, a little clickbait: it opens a curiosity gap that the video closes.
-- Pick the ONE pattern that fits this video best:
-  number shock ("125,000 RPM!"), banned/illegal ("BANNED IN 2027"), contrast ("FAST BUT ILLEGAL"),
-  question ("WHY IT GROWLS?"), warning ("NEVER IGNORE THIS"), payoff tease ("ONE PULL. CLEAR."),
-  hidden detail ("NOBODY SEES THIS").
-- Avoid worn-out words: do not use "secret", "insane", "shocking" or "you won't believe".
-{avoid_line}- Clickbait never means lying: no claim the video does not support, no invented facts, no fake
-  urgency. Use only numbers that appear in the title or caption; keep names, numbers and technical
-  terms exactly as written there.
-- Never end a line on a small word ("the", "a", "of", "le", "la", "de", "yang", ...); no colon, dash or
-  comma at a line end. A final "?" or "!" is fine. No emojis, no hashtags, no quotation marks.
-- Highlight the line with the payoff word.
+The cover is ONE short, plain question that the video answers (the way curious people really ask it):
+- Start with WHY, HOW or WHAT (or the same words in the title's language) and end with "?".
+- Name the subject plainly so it is understood instantly: the body part, the car part, the object. A viewer who
+  only reads the cover knows the topic. Never a vague teaser ("WHO DECIDED?", "HOW?", "THIS PART…").
+- Ask about the surprising or strange part, never give the answer.
+- Make it personal when it fits: for the body use "YOUR" ("WHY DOES YOUR KNEE KICK WHEN TAPPED?").
+- 4 to {max_words} words, everyday words, no jargon the caption does not use. 2 to {max_lines} lines, each at most
+  {max_chars} characters; break lines at natural pauses.
+- SPECIFIC beats generic: use a number or a sharp contrast from the title or caption when there is one.
+{avoid_line}- Clickbait never means lying: no claim the video does not support, no invented facts or numbers, no fake
+  urgency. Use only numbers that appear in the title or caption; keep names, numbers and technical terms exactly as
+  written there. No worn-out words: "secret", "insane", "shocking", "crazy", "you won't believe".
+- Never end a line on a small word ("the", "a", "of", "le", "la", "de", "yang", ...); no colon, dash or comma at a
+  line end. No emojis, no hashtags, no quotation marks.
+- Highlight the ONE line that holds the surprising part (the subject or the strange result).
 
 Examples:
-"Why 2026 F1 Wings Now Move" -> {{"lines": ["THE WING", "MOVES NOW?!"], "highlight": [1]}}
-"Why Your Stomach Growls: The Wave Inside You" -> {{"lines": ["THAT GROWL", "IS A WAVE"], "highlight": [1]}}
-"Le turbo : une turbine à 125 000 tours par minute" -> {{"lines": ["125 000", "TOURS/MIN !"], "highlight": [0]}}
+"Why Your Knee Jerks When the Doctor Taps It" -> {{"lines": ["WHY DOES", "YOUR KNEE KICK", "WHEN TAPPED?"], "highlight": [1]}}
+"Why Your Stomach Growls: The Wave Inside You" -> {{"lines": ["WHY DOES", "YOUR STOMACH", "GROWL?"], "highlight": [1]}}
+"The lever that lifts a Formula 1 car" -> {{"lines": ["HOW DOES", "ONE LEVER LIFT", "AN F1 CAR?"], "highlight": [1]}}
+"The captive wheel nut: the single nut that never leaves the wheel" -> {{"lines": ["WHY THIS", "WHEEL NUT", "NEVER COMES OFF?"], "highlight": [1]}}
+"Le turbo : une turbine à 125 000 tours par minute" -> {{"lines": ["COMMENT UN TURBO", "TOURNE À", "125 000 TR/MIN ?"], "highlight": [2]}}
 
 Also describe ONE picture for the cover background, in English, for an image model:
-- only the hero subject and what it is doing, concrete and visual, matching the title;
+- a dramatic CLOSE-UP of the one object or moment the video is about, at its most intense instant (glowing, sparking,
+  straining, frozen just before something happens), from a striking low angle;
+- close, but the object stays INSTANTLY recognisable: show enough of it and its context (the whole jack under the car
+  nose, the whole knee with the hammer), never an abstract macro of a detail;
+- ONE focal point, nothing else competing: no crowds, no wide scenery, no busy cockpit or garage;
+- a touch of mystery is good (part of it in shadow, the key detail just catching the light);
 - do NOT describe the background, lighting, colours or style (the brand sets those);
 - {scene_rule}
 
@@ -60,22 +67,28 @@ Reply with ONLY this JSON:
 {{"lines": ["LINE 1", "LINE 2"], "highlight": [index of the highlighted line, 0-based], "scene": "one or two sentences"}}"""
 
 SCENE_RULES = {
-    "health": "a clean, realistic 3D anatomy or medical render; no real person's face, no gore.",
-    "default": ("a real-looking motorsport scene; a car or bike in a real team's colours is fine, but no "
+    "health": "a clean, realistic 3D anatomy or medical render of the one body part; no real person's face, no gore.",
+    "default": ("a real-looking motorsport close-up; a car or bike part in a real team's colours is fine, but no "
                 "real driver's or rider's face; no series logos."),
 }
 
 COVER_IMAGE_PROMPT = """Vertical {aspect} cover image (thumbnail) for a short explainer video titled "{title}".
 Scene: {scene}
 Style: {style}
-Composition: one clear hero subject in the LOWER part of the frame, from about 45% to 90% of the height, sharp and well lit with a strong rim light.
-The UPPER 40% of the frame is calm and simple: a soft, out-of-focus background that fades into a smooth, slightly darker gradient toward the top, with no objects, so large title text placed there later stays readable.
-High contrast, rich colour, shallow depth of field, physically believable.
+Composition: a dramatic close-up of ONE hero subject that fills the LOWER part of the frame, from about 40% to 95% of
+the height, razor sharp and fully visible, well lit from the front with a rim light and one bright accent (a glow,
+spark, reflection or hot edge) as the focal point. A viewer must recognise the subject in half a second: no heavy
+shadows over it, not an abstract macro. Everything around it stays quiet and plain; minimal and uncluttered, no people's faces.
+The UPPER 40% of the frame is calm and simple: the SAME continuous background as the rest, out of focus and slightly
+darker toward the top, with no objects, so large title text placed there later stays readable. One seamless picture:
+no band, panel, border, horizontal line or split between the top and the rest.
+Bold contrast, rich colour, shallow depth of field, physically believable, like a premium commercial still.
 Do NOT add any text, letters, numbers, captions, watermarks or logos anywhere in the image. Liveries, signs and screens carry plain colour blocks only, never words or brand names. No series logos."""
 
 STYLES = {
-    "health": "soft, clean, realistic 3D anatomy render, warm studio light on a near-white background, medically plausible.",
-    "default": "cinematic, realistic photo-quality render like a high-end motorsport broadcast, natural textures, no HDR look.",
+    "health": "clean, realistic 3D anatomy render, the one structure glowing softly on a plain near-white background, medically plausible.",
+    "default": ("premium motorsport commercial photo, the subject brightly and clearly lit so every shape and colour reads at a "
+                "glance on a phone, real team colours, clean darker-toned background, natural textures, no HDR look."),
 }
 
 
@@ -94,6 +107,7 @@ def build_cover_copy_prompt(title: str, caption: str | None, niche: str | None,
         title=(title or "").strip(),
         caption=((caption or "").strip()[:400] or "(none)"),
         max_words=MAX_COVER_WORDS,
+        max_lines=MAX_COVER_LINES,
         max_chars=MAX_LINE_CHARS,
         scene_rule=SCENE_RULES[_niche_key(niche)],
     )
