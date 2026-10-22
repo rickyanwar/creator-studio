@@ -2002,7 +2002,14 @@ def collect_own_url_proof_chain(
                 # Tap Copy profile link and read clipboard
                 copied_root_url, err = tap_copy_link_and_read(serial, copy_link_bounds, sentinel_root)
                 if not copied_root_url:
-                    return make_fail("Failed to copy root profile link", "root_url")
+                    timeout_err = check_deadline("copy root link retry")
+                    if timeout_err:
+                        return make_fail(timeout_err, "root_url")
+                    cb_ok, sentinel_root = clear_and_verify_clipboard(serial)
+                    if cb_ok:
+                        copied_root_url, err = tap_copy_link_and_read(serial, copy_link_bounds, sentinel_root)
+                    if not copied_root_url:
+                        return make_fail("Failed to copy root profile link", "root_url")
 
                 resolved_root = resolve_facebook_actor_url(copied_root_url)
                 if not resolved_root and expected_root_id and share_url_matches_expected_id(copied_root_url, str(expected_root_id)):
