@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -7,9 +7,13 @@ import re
 import shlex
 import signal
 import subprocess
+import time
 
 from .lock import LockTimeout, flow_lock
 from .proxy_guard import ensure_proxy_ready
+
+SUCCESS = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+FAILED = "MEDIA_GENERATION_STATUS_FAILED"
 
 
 @dataclass
@@ -59,6 +63,11 @@ def classify(result):
     if result.exit_code in (8, 12, 14, 38, 39):
         return "auth"
     if result.payload.get("status") == "fail" and re.search(r"SAFETY|UNSAFE|POLICY|BLOCKED|PROHIBITED|RAI", text):
+        return "policy"
+    # Flow's content refusals (PUBLIC_ERROR_UNSAFE_CONTENT/_FACE/_IDENTITY/_GENERATION) are caused by the prompt or seed
+    # image, so retrying on other accounts can never succeed: report them as policy so the job and idea are skipped.
+    detail = ((result.message or "") + json.dumps(result.payload.get("error") or {})).upper()
+    if re.search(r"PUBLIC_ERROR_UNSAFE_[A-Z_]+", detail):
         return "policy"
     if result.exit_code in (9, 10, 15, 23, 25, 28, 31, 36) or result.error_class == "TimeoutExpired":
         return "transient"
@@ -181,3 +190,56 @@ class GflowRunner:
                         pass
                 return row.get("media_id")
         return None
+
+    def wait_for_stranded_clip(self, *, profile, project, submit_time, timeout_s, poll_s, sleep=time.sleep, cancelled=lambda: False) -> str | None:
+        try:
+            elapsed = 0.0
+            poll_step = max(float(poll_s), 1.0)
+            while elapsed <= timeout_s:
+                if cancelled():
+                    return None
+                try:
+                    rows = self.list_videos(profile=profile, limit=20)
+                except Exception:
+                    rows = []
+                candidates = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    if row.get("project_id") != project:
+                        continue
+                    if row.get("local_path"):
+                        continue
+                    if not row.get("created_at"):
+                        continue
+                    if submit_time:
+                        try:
+                            created = datetime.fromisoformat(row["created_at"])
+                            if created.tzinfo is None and submit_time.tzinfo is not None:
+                                created = created.replace(tzinfo=timezone.utc)
+                            elif created.tzinfo is not None and submit_time.tzinfo is None:
+                                created = created.astimezone(timezone.utc).replace(tzinfo=None)
+                            if created < submit_time:
+                                continue
+                        except Exception:
+                            continue
+                    candidates.append(row)
+
+                for row in candidates:
+                    if row.get("status") in (SUCCESS, "SUCCESS", "SUCCESSFUL"):
+                        return row.get("media_id")
+
+                if candidates and all(row.get("status") in (FAILED, "FAILED") for row in candidates):
+                    return None
+
+                if elapsed + poll_step > timeout_s:
+                    break
+
+                sleep(poll_step)
+                elapsed += poll_step
+                if cancelled():
+                    return None
+
+            return None
+        except Exception:
+            return None

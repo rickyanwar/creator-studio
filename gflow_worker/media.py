@@ -17,20 +17,21 @@ class Media:
     def probe_duration(self, path):
         return float(self.probe(path)["format"]["duration"])
 
-    def last_frame(self, clip, png, seed_offset_ms):
+    def last_frame(self, clip, out, seed_offset_ms):
+        # JPEG without metadata: Flow's upload sometimes refuses the PNG seed ("maseQ answered 200 without a media id").
         offset = max(seed_offset_ms / 1000, 0.001)
-        png = Path(png)
-        png.unlink(missing_ok=True)
+        out = Path(out)
+        out.unlink(missing_ok=True)
+        encode = ["-frames:v", "1", "-update", "1", "-q:v", "2", "-map_metadata", "-1", str(out)]
         try:
-            self._run([self.ffmpeg, "-y", "-sseof", f"-{offset}", "-i", str(clip), "-frames:v", "1", "-update", "1", str(png)])
+            self._run([self.ffmpeg, "-y", "-sseof", f"-{offset}", "-i", str(clip), *encode])
         except subprocess.CalledProcessError:
             pass
-        if not png.exists() or not png.stat().st_size:
-            self._run([self.ffmpeg, "-y", "-ss", str(max(0, self.probe_duration(clip) - offset)), "-i", str(clip),
-                       "-frames:v", "1", "-update", "1", str(png)])
-        if not png.exists() or not png.stat().st_size:
+        if not out.exists() or not out.stat().st_size:
+            self._run([self.ffmpeg, "-y", "-ss", str(max(0, self.probe_duration(clip) - offset)), "-i", str(clip), *encode])
+        if not out.exists() or not out.stat().st_size:
             raise ValueError("could not extract seed frame")
-        return png
+        return out
 
     def concat(self, clips, out, trim_tail_ms=0):
         args = [self.ffmpeg, "-y"]
