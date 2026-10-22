@@ -64,6 +64,25 @@ services:
       redis:
         condition: service_healthy
 
+  # ── Celery Worker (IG viewer crawls + Viral Radar crawl — headless Chrome.
+  #    Isolated, single slot: a hung browser can never block the default
+  #    queue again, incident 2026-10-22) ──────────────────────────────
+  worker-crawl:
+    init: true
+    image: studio-backend:latest
+    pull_policy: never
+    restart: always
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1 --queues=crawl --max-tasks-per-child=20
+    env_file: .env
+    volumes:
+      - media_data:/opt/studio/media
+    mem_limit: 1200m
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # ── Celery Worker (gallery downloads — isolated so a slow/heavy
   #    download_keyword run can never starve render/publish/crawl tasks
   #    on the main worker, see task_routes in celery_app.py) ──────────

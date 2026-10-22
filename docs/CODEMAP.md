@@ -29,6 +29,7 @@ Size: backend/app ~48k lines, backend/tests ~38k (146 files), alembic 7k (138 mi
 | `worker-video` (queue `video`, conc 1, 1500 MB cap) | VPS docker | `yt_clip.analyze_video`, `yt_clip_render`, `ai_video_finalize` |
 | `worker-visual` (queue `visual`, conc 1) | VPS docker | AI card redesign (`ig_recreate.render_ig_recreate`, `run_preview_redesign`) |
 | `worker-delivery` (queue `delivery`, conc 1) | VPS docker | `social_delivery.dispatch_social_deliveries` (60 s) and `phone_watchdog.check_phone_devices` (600 s), so phone posting never waits behind other tasks |
+| `worker-crawl` (queue `crawl`, conc 1) | VPS docker | `crawler.*` and `radar_crawl.*` (headless Chrome IG viewer crawls), isolated so hung browser never blocks default queue |
 | `beat` | VPS docker | schedule in `backend/app/tasks/celery_app.py` (`beat_schedule`, ~40 entries) |
 | `renderer` (`renderer/`, :3001) | VPS docker | headless Chrome + Fabric.js → PNG; concurrency 1, fresh browser per job. Keep Chrome, not Pillow |
 | `frontend` (Next.js, :3000) | VPS docker | admin UI |

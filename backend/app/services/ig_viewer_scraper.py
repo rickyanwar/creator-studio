@@ -12,13 +12,16 @@ Xvfb headed fallback:
   Default stays headless (lower RAM).
 """
 
+import contextlib
 import json
 import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections import deque
@@ -57,6 +60,16 @@ _CF_PATTERN = re.compile(
 
 class ViewerBusyError(Exception):
     """Another worker holds the browser lock."""
+
+
+class ViewerSessionTimeout(Exception):
+    """The watchdog killed a browser session that ran past its deadline."""
+
+
+def _reraise_if_cancelled(exc: BaseException) -> None:
+    """Re-raise a watchdog timeout or Celery soft time limit instead of treating it as a tier failure."""
+    if isinstance(exc, ViewerSessionTimeout) or type(exc).__name__ == "SoftTimeLimitExceeded":
+        raise exc
 
 
 class ViewerTierError(Exception):
@@ -385,12 +398,13 @@ def _small_mouse_jitter(page) -> None:
 
 # ── Redis lock helper ─────────────────────────────────────────────────────────
 
-def _acquire_lock():
+def _acquire_lock(ttl: int | None = None):
     """Non-blocking Redis lock. Returns (token, redis_client) or raises ViewerBusyError.
 
     Stores a uuid4 token as the lock value so release is safe (compare-and-delete).
     Falls back to no-lock in dev environment when Redis is unreachable.
     """
+    ttl = ttl or _LOCK_TIMEOUT
     from app.config import get_settings
     settings = get_settings()
 
@@ -405,7 +419,7 @@ def _acquire_lock():
         raise ViewerBusyError(f"Cannot connect to Redis: {exc}") from exc
 
     token = str(uuid.uuid4())
-    acquired = r.set(_LOCK_KEY, token, nx=True, ex=_LOCK_TIMEOUT)
+    acquired = r.set(_LOCK_KEY, token, nx=True, ex=ttl)
     if not acquired:
         raise ViewerBusyError("Browser lock held by another worker")
     return token, r
@@ -417,6 +431,101 @@ def _release_lock(token, redis_client):
             redis_client.eval(_RELEASE_LUA, 1, _LOCK_KEY, token)
         except Exception:
             pass
+
+
+# ── Session watchdog ──────────────────────────────────────────────────────────
+
+def _descendant_pids(root_pid: int, proc_dir: str = "/proc") -> list[int]:
+    if not os.path.exists(proc_dir):
+        return []
+    try:
+        entries = os.listdir(proc_dir)
+    except OSError:
+        return []
+
+    children_map: dict[int, list[int]] = {}
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        stat_path = os.path.join(proc_dir, entry, "stat")
+        try:
+            with open(stat_path, "r") as f:
+                stat = f.read()
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+            children_map.setdefault(ppid, []).append(pid)
+        except (OSError, ValueError, IndexError):
+            continue
+
+    descendants: list[int] = []
+    visited: set[int] = {root_pid}
+    queue: deque[int] = deque(children_map.get(root_pid, []))
+    while queue:
+        curr = queue.popleft()
+        if curr in visited:
+            continue
+        visited.add(curr)
+        descendants.append(curr)
+        for child in children_map.get(curr, []):
+            if child not in visited:
+                queue.append(child)
+    return descendants
+
+
+def _is_browser_process(pid: int, proc_dir: str = "/proc") -> bool:
+    cmdline_path = os.path.join(proc_dir, str(pid), "cmdline")
+    try:
+        with open(cmdline_path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return False
+
+    if not data:
+        return False
+
+    first_arg = data.split(b"\0")[0].decode("utf-8", errors="replace").strip()
+    if not first_arg:
+        return False
+
+    basename = os.path.basename(first_arg).lower()
+    return any(marker in basename for marker in _BROWSER_PROCESS_MARKERS)
+
+
+def _kill_browser_processes(proc_dir: str = "/proc") -> int:
+    killed = 0
+    for pid in _descendant_pids(os.getpid(), proc_dir):
+        if _is_browser_process(pid, proc_dir):
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+            except (ProcessLookupError, PermissionError):
+                pass
+    return killed
+
+
+@contextlib.contextmanager
+def _session_watchdog(seconds: int, label: str):
+    """Kill this session's browser processes when it outlives `seconds`, then raise ViewerSessionTimeout."""
+    fired = threading.Event()
+
+    def _fire():
+        fired.set()
+        killed = _kill_browser_processes()
+        logger.error("Viewer watchdog: %s exceeded %ss; killed %d browser processes", label, seconds, killed)
+
+    timer = threading.Timer(seconds, _fire)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield fired
+    except Exception as exc:
+        if fired.is_set():
+            raise ViewerSessionTimeout(f"{label} exceeded {seconds}s") from exc
+        raise
+    finally:
+        timer.cancel()
+    if fired.is_set():
+        raise ViewerSessionTimeout(f"{label} exceeded {seconds}s")
 
 
 # ── Cloudflare detection + solving (sync, ported from reference) ──────────────
@@ -778,6 +887,7 @@ def _tier_anonyig(page, username: str) -> list[dict]:
         exc.kind = _failure_kind(page, exc.kind)
         raise
     except Exception as exc:
+        _reraise_if_cancelled(exc)
         raise ViewerTierError(sanitize_error(f"anonyig: {exc}"),
                               kind=_failure_kind(page, "site_down" if _navigation_failure(exc, on_goto=False)
                                                  else "script")) from exc
@@ -790,6 +900,7 @@ def _tier_gramsnap(page, username: str) -> list[dict]:
         exc.kind = _failure_kind(page, exc.kind)
         raise
     except Exception as exc:
+        _reraise_if_cancelled(exc)
         raise ViewerTierError(sanitize_error(f"gramsnap: {exc}"),
                               kind=_failure_kind(page, "site_down" if _navigation_failure(exc, on_goto=False)
                                                  else "script")) from exc
@@ -855,6 +966,7 @@ def _tier_igstoryviewer(page, username: str) -> list[dict]:
         exc.kind = _failure_kind(page, exc.kind)
         raise
     except Exception as exc:
+        _reraise_if_cancelled(exc)
         raise ViewerTierError(
             f"igstoryviewer: {sanitize_error(str(exc))}; Posts clicked={posts_tab_clicked}; "
             f"last API URLs={list(api_urls)}",
@@ -881,6 +993,18 @@ _TIERS = [
 # Lock exceeds worst-case total: tiers, jitters, browser launch.
 _LOCK_TIMEOUT = max(300, len(_TIERS) * _TIER_TIMEOUT
                     + (len(_TIERS) - 1) * int(_JITTER_MAX) + _BROWSER_LAUNCH)
+
+# Wall-clock budget for one username: every tier at its budget plus jitter, plus slack.
+_PER_USER_BUDGET = len(_TIERS) * (_TIER_TIMEOUT + int(_JITTER_MAX)) + 10
+# Only Chrome itself. NEVER the Playwright node driver: killing the driver makes the sync API
+# spin at 100% CPU forever (seen on the VPS 2026-10-22); killing Chrome makes every pending call
+# fail fast with TargetClosedError, which the code already handles.
+_BROWSER_PROCESS_MARKERS = ("chrome", "chromium")
+
+
+def _session_deadline(n_users: int) -> int:
+    """Seconds a browser session may live before the watchdog kills it."""
+    return _BROWSER_LAUNCH + max(1, n_users) * _PER_USER_BUDGET
 
 
 def _record_result(tier: str, username: str, ok: bool,
@@ -962,6 +1086,7 @@ def _fetch_for_username(context, ig_username: str, amount: int, tiers_to_run: li
             logger.info("Tier %s failed for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
             _record_result(tier_name, ig_username, False, exc.kind, tier_errors[tier_name])
         except Exception as exc:
+            _reraise_if_cancelled(exc)
             tier_errors[tier_name] = sanitize_error(f"{type(exc).__name__}: {exc}")
             logger.warning("Tier %s error for @%s: %s", tier_name, ig_username, tier_errors[tier_name])
             _record_result(tier_name, ig_username, False,
@@ -988,33 +1113,37 @@ def fetch_recent_posts(ig_username: str, amount: int = 12, *, only_tiers: Option
     Args:
         only_tiers: if set, run only these tier names (for debugging).
     """
-    lock_token, redis_client = _acquire_lock()
-    pw = browser = context = None
+    deadline = _session_deadline(1)
+    ttl = max(_LOCK_TIMEOUT, deadline + 30)
+    lock_token, redis_client = _acquire_lock(ttl)
     try:
-        pw, browser, context = _launch_browser()
+        with _session_watchdog(deadline, f"fetch_recent_posts({ig_username})"):
+            pw = browser = context = None
+            try:
+                pw, browser, context = _launch_browser()
 
-        tiers_to_run = _TIERS
-        if only_tiers:
-            tiers_to_run = [(n, f) for n, f in _TIERS if n in only_tiers]
+                tiers_to_run = _TIERS
+                if only_tiers:
+                    tiers_to_run = [(n, f) for n, f in _TIERS if n in only_tiers]
 
-        return _fetch_for_username(context, ig_username, amount, tiers_to_run)
-
+                return _fetch_for_username(context, ig_username, amount, tiers_to_run)
+            finally:
+                if context:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+                if browser:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+                if pw:
+                    try:
+                        pw.stop()
+                    except Exception:
+                        pass
     finally:
-        if context:
-            try:
-                context.close()
-            except Exception:
-                pass
-        if browser:
-            try:
-                browser.close()
-            except Exception:
-                pass
-        if pw:
-            try:
-                pw.stop()
-            except Exception:
-                pass
         _release_lock(lock_token, redis_client)
 
 
@@ -1023,42 +1152,50 @@ def fetch_many_recent_posts(usernames: Sequence[str], amount: int = 12, *, only_
 
     Uses a single browser session to reuse Cloudflare clearance cookies.
     """
-    lock_token, redis_client = _acquire_lock()
-    pw = browser = context = None
+    deadline = _session_deadline(len(usernames))
+    ttl = max(_LOCK_TIMEOUT, deadline + 30)
+    lock_token, redis_client = _acquire_lock(ttl)
     try:
-        pw, browser, context = _launch_browser()
-
-        tiers_to_run = _TIERS
-        if only_tiers:
-            tiers_to_run = [(n, f) for n, f in _TIERS if n in only_tiers]
-
-        results: dict[str, list[IGMedia] | Exception] = {}
-        for idx, username in enumerate(usernames):
-            if idx > 0:
-                time.sleep(uniform(3.0, 8.0))
+        with _session_watchdog(deadline, f"fetch_many_recent_posts({len(usernames)} users)") as fired:
+            pw = browser = context = None
             try:
-                results[username] = _fetch_for_username(context, username, amount, tiers_to_run)
-            except Exception as exc:
-                results[username] = exc
+                pw, browser, context = _launch_browser()
 
-        return results
+                tiers_to_run = _TIERS
+                if only_tiers:
+                    tiers_to_run = [(n, f) for n, f in _TIERS if n in only_tiers]
 
+                results: dict[str, list[IGMedia] | Exception] = {}
+                for idx, username in enumerate(usernames):
+                    if fired.is_set():
+                        results[username] = ViewerSessionTimeout("session killed by watchdog")
+                        continue
+                    if idx > 0:
+                        time.sleep(uniform(3.0, 8.0))
+                    try:
+                        results[username] = _fetch_for_username(context, username, amount, tiers_to_run)
+                    except Exception as exc:
+                        _reraise_if_cancelled(exc)
+                        results[username] = exc
+
+                return results
+            finally:
+                if context:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+                if browser:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+                if pw:
+                    try:
+                        pw.stop()
+                    except Exception:
+                        pass
     finally:
-        if context:
-            try:
-                context.close()
-            except Exception:
-                pass
-        if browser:
-            try:
-                browser.close()
-            except Exception:
-                pass
-        if pw:
-            try:
-                pw.stop()
-            except Exception:
-                pass
         _release_lock(lock_token, redis_client)
 
 

@@ -45,6 +45,7 @@ celery_app = Celery(
         "app.tasks.f1_drivers_sync",
         "app.tasks.social_delivery",
         "app.tasks.phone_watchdog",
+        "app.tasks.queue_watchdog",
     ],
 )
 
@@ -82,6 +83,11 @@ celery_app.conf.update(
         "app.tasks.phone_watchdog.check_phone_devices": {"queue": "delivery"},
         # Always an AI redesign; explicit apply_async(queue="visual") everywhere, this is the safety net.
         "app.tasks.ig_recreate.run_preview_redesign": {"queue": "visual"},
+        # Headless Chrome IG viewer crawls: own single-slot worker so a hung browser never blocks the default queue (incident 2026-10-22).
+        "app.tasks.crawler.*": {"queue": "crawl"},
+        "app.tasks.radar_crawl.*": {"queue": "crawl"},
+        # Runs off the default queue so it still fires when that queue is stuck.
+        "app.tasks.queue_watchdog.*": {"queue": "delivery"},
     },
 )
 
@@ -347,5 +353,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.phone_watchdog.check_phone_devices",
         "schedule": 600,
         "options": {"expires": 590},
+    },
+    # Queue backlog watchdog: every 5m
+    "check-queue-backlog": {
+        "task": "app.tasks.queue_watchdog.check_queue_backlog",
+        "schedule": 300,
+        "options": {"expires": 290},
     },
 }
