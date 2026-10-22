@@ -180,6 +180,16 @@ def build_caption_prompt(
             )
 
     attribution_part = f"{attribution_line}\n" if attribution_line else ""
+    # The source account is never a person in the story. Without an attribution line the model must not
+    # credit it either: "is only credited" alone made it add "Credit: @source" on pages with credits off.
+    if attribution_line:
+        source_rule = f"- The source account @{source_username} is only credited. Do not treat its name as a person in the story."
+    else:
+        source_rule = (
+            f"- @{source_username} is only where this post was found. Do not treat its name as a person in the story, "
+            "and do not mention, tag or credit it. Add no credit line for any account: no \"Credit:\", \"Via\", "
+            "\"Source:\", \"Sumber:\" or \"cr\" line."
+        )
 
     return f"""You are a social media copywriter for the Facebook Fanpage "{fanpage.name}".
 
@@ -193,7 +203,7 @@ TASK: Rewrite the caption for the Facebook Fanpage above with these criteria:
 - The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
 - "{fanpage.name}" is only the name of this Facebook page. It is NOT the topic. Never write about it as a place, person or thing.
 - Use ONLY facts stated in the ORIGINAL POST CONTEXT (and the IMAGE DESCRIPTION if one is given). Never invent people, places, numbers, dates, results or events. If something is not stated, leave it out.
-- The source account @{source_username} is only credited. Do not treat its name as a person in the story.
+{source_rule}
 - Must include keywords: {must_include}
 - Must avoid words: {must_avoid}
 - Include {hashtag_count} relevant hashtags at the end
