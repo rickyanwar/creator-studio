@@ -6,7 +6,7 @@ longer unambiguous form ("Joan Mir", "Ross Brawn").
 """
 import re
 
-REAL_NAMES = (
+MAKER_TEAM_SPONSOR_NAMES = (
     # F1 teams, constructors and engine makers, current and historic
     "Alpine", "Aston Martin", "Audi", "Cadillac", "Ferrari", "Scuderia", "Haas", "McLaren", "Mercedes", "AMG",
     "Racing Bulls", "Red Bull", "Williams", "Sauber", "Lotus", "Brabham", "Tyrrell", "Benetton", "Renault",
@@ -21,6 +21,9 @@ REAL_NAMES = (
     "Brembo", "Öhlins", "Ohlins", "Akrapovič", "Akrapovic", "Alpinestars", "Dainese", "Rolex", "TAG Heuer",
     "Tag Heuer", "DHL", "Heineken", "Lenovo", "Santander", "MoneyGram", "BWT", "Castrol", "Marlboro",
     "Mobil 1", "Liqui Moly", "Qatar Airways", "Crypto.com", "Hugo Boss",
+)
+
+PERSON_NAMES = (
     # Drivers, riders and team figures
     "Verstappen", "Hamilton", "Leclerc", "Norris", "Piastri", "Russell", "Antonelli", "Alonso", "Stroll",
     "Gasly", "Colapinto", "Albon", "Sainz", "Ocon", "Bearman", "Hulkenberg", "Hülkenberg", "Bortoleto",
@@ -32,6 +35,9 @@ REAL_NAMES = (
     "Stoner", "Pedrosa", "Bastianini", "Morbidelli", "Vinales", "Viñales", "Zarco", "Oliveira", "Ogura",
     "Aldeguer", "Di Giannantonio", "Jorge Martin", "Jorge Martín", "Joan Mir", "Rins", "Jack Miller",
     "Espargaro", "Espargaró", "Dovizioso", "Crutchlow", "Nakagami", "Marini",
+)
+
+CIRCUIT_NAMES = (
     # Circuits and named corners
     "Monza", "Spa-Francorchamps", "Silverstone", "Monaco", "Monte Carlo", "Suzuka", "Interlagos", "Imola",
     "Zandvoort", "Baku", "Jeddah", "Sakhir", "Albert Park", "Mugello", "Assen", "Jerez", "Misano", "Sepang",
@@ -41,15 +47,32 @@ REAL_NAMES = (
     "Raidillon", "Parabolica", "Maggotts", "Becketts", "Degner", "Rascasse", "Tamburello",
 )
 
-_PATTERN = re.compile(
-    r"(?<![\w-])(" + "|".join(re.escape(name) for name in sorted(REAL_NAMES, key=len, reverse=True)) + r")(?![\w-])"
-)
+REAL_NAMES = MAKER_TEAM_SPONSOR_NAMES + PERSON_NAMES + CIRCUIT_NAMES
+
+
+def _pattern(names: tuple[str, ...]) -> re.Pattern:
+    return re.compile(
+        r"(?<![\w-])(" + "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True)) + r")(?![\w-])"
+    )
+
+
+_PATTERN = _pattern(REAL_NAMES)
+_PERSON_PATTERN = _pattern(PERSON_NAMES)
 
 
 def find_real_names(text: str) -> list[str]:
     """Distinct real names found in text, in order of first appearance."""
     found: list[str] = []
     for match in _PATTERN.finditer(text or ""):
+        if match.group(1) not in found:
+            found.append(match.group(1))
+    return found
+
+
+def find_person_names(text: str) -> list[str]:
+    """Distinct person names found in text, in order of first appearance."""
+    found: list[str] = []
+    for match in _PERSON_PATTERN.finditer(text or ""):
         if match.group(1) not in found:
             found.append(match.group(1))
     return found
