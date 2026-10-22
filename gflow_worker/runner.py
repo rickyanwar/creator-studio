@@ -13,16 +13,31 @@ from .state import JobState
 log = logging.getLogger(__name__)
 
 SUBMIT_NO_REPLY = "of clicking submit"
+SUBMITTED_ERRORS = ("clicking submit", "no signed media URL")   # Flow got the prompt; the clip may still appear
+STRANDED_WAIT_S = 240        # how long to wait for a stranded clip to finish
+STRANDED_POLL_S = 30         # interval in seconds between checks for a stranded clip
+PRE_SUBMIT_RETRY_DELAY_S = (45, 120)   # random pause before the one in-process retry (anti-bot jitter)
+PRE_SUBMIT_EXIT_CODES = (9, 23)        # transport timeout, UI selector drift
+SEED_RETRY_EXTRA_MS = 200    # take the retry seed this much earlier
+SUCCESS = "MEDIA_GENERATION_STATUS_SUCCESSFUL"  # status indicating successful clip generation
+FAILED = "MEDIA_GENERATION_STATUS_FAILED"        # status indicating failed clip generation
 
 
 class JobRunner:
-    def __init__(self, cfg, api, gflow, media):
+    def __init__(self, cfg, api, gflow, media, sleep=None):
         self.cfg, self.api, self.gflow, self.media = cfg, api, gflow, media
+        self._custom_sleep = sleep
         self.cancel_ids = set()
         self.busy_profiles = set()
         self.credits_stale = False
         self.stale_profiles = set()  # profiles whose balance should be re-read after a no-reply submit
         self.lock = threading.Lock()
+
+    def _sleep(self, seconds):
+        if self._custom_sleep is not None:
+            self._custom_sleep(seconds)
+        else:
+            time.sleep(seconds)
 
     def _fail(self, jid, generation, result, profile=None):
         """Report a failed CLI step; a submit that got no usable reply often means the account ran out of credits."""
@@ -33,7 +48,7 @@ class JobRunner:
                     self.stale_profiles.add(profile)
         self.api.fail(jid, generation, classify(result), result.message)
 
-    def _find_media_id(self, result, *, profile, project, submit_time=None):
+    def _find_media_id(self, result, *, profile=None, project=None, submit_time=None, stranded=True):
         if isinstance(result.payload, dict):
             media_id = result.payload.get("media_id")
             if not media_id and isinstance(result.payload.get("error"), dict):
@@ -48,8 +63,51 @@ class JobRunner:
             match = re.search(r"\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b", result.message)
             if match:
                 return match.group(1)
-        if hasattr(self.gflow, "find_stranded_media_id"):
+        if stranded and hasattr(self.gflow, "find_stranded_media_id"):
             return self.gflow.find_stranded_media_id(profile=profile, project=project, submit_time=submit_time)
+        return None
+
+    def _recover_clip(self, result, *, jid, index, profile, project, submit_time, out):
+        msg = result.message or ""
+        if not any(err in msg for err in SUBMITTED_ERRORS):
+            return None
+
+        # Try payload/message first (existing first two branches, not stranded search)
+        media_id = self._find_media_id(result, stranded=False)
+        if media_id:
+            rec = self.gflow.download_media(media_id, profile=profile, out=out.parent)
+            rec_path = Path(rec.payload.get("path") or rec.payload.get("local_path") or (out.parent / f"{media_id}.mp4"))
+            if not rec_path.is_absolute():
+                rec_path = self.cfg.cli_dir / rec_path
+            if rec.ok and rec_path.is_file() and rec_path.stat().st_size:
+                log.info("Recovered clip %s for job %s clip %s via data download (%s)", media_id, jid, index, rec_path)
+                rec.payload.setdefault("local_path", str(rec_path))
+                rec.payload.setdefault("media_id", media_id)
+                return rec
+            log.warning("Recovery failed for job %s clip %s (media_id=%s): %s", jid, index, media_id, rec.message or "file missing")
+
+        if hasattr(self.gflow, "wait_for_stranded_clip"):
+            stranded_id = self.gflow.wait_for_stranded_clip(
+                profile=profile,
+                project=project,
+                submit_time=submit_time,
+                timeout_s=STRANDED_WAIT_S,
+                poll_s=STRANDED_POLL_S,
+                sleep=self._sleep,
+                cancelled=lambda: self.cancelled(jid),
+            )
+            if stranded_id:
+                rec = self.gflow.download_media(stranded_id, profile=profile, out=out.parent)
+                rec_path = Path(rec.payload.get("path") or rec.payload.get("local_path") or (out.parent / f"{stranded_id}.mp4"))
+                if not rec_path.is_absolute():
+                    rec_path = self.cfg.cli_dir / rec_path
+                if rec.ok and rec_path.is_file() and rec_path.stat().st_size:
+                    log.info("Recovered clip %s for job %s clip %s via stranded wait", stranded_id, jid, index)
+                    rec.payload.setdefault("local_path", str(rec_path))
+                    rec.payload.setdefault("media_id", stranded_id)
+                    return rec
+                log.warning("Recovery via stranded wait failed to download clip %s for job %s clip %s: %s", stranded_id, jid, index, rec.message or "file missing")
+
         return None
 
     def apply_cancels(self, ids):
@@ -119,10 +177,17 @@ class JobRunner:
             return
         if not project:
             result = self.gflow.create_project(job["account"]["profile"], job["project_name"])
-            if not result.ok:
+            # Flow can create the project and then time out on a follow-up call; its id is in the error URL.
+            orphan = re.search(r"/project/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", result.message or "")
+            if not result.ok and not orphan:
                 self._fail(jid, generation, result, profile=job["account"]["profile"])
                 return
-            project = result.payload["project_id"]
+            project = result.payload.get("project_id") if result.ok else orphan.group(1)
+            if orphan and not result.ok:
+                log.info("Project create for job %s reported %s but created %s; reusing it", jid, result.error_class, project)
+            if not project or str(project).strip() in ("", "None"):
+                self.api.fail(jid, generation, "transient", "project create returned no project id")
+                return
         state.data["project_id"] = project
         state.data["profile"] = job["account"]["profile"]
         state.save()
@@ -140,39 +205,81 @@ class JobRunner:
                 return
             if not checkpoint:
                 out = (state.directory / f"clip-{index}.mp4").resolve()
-                kwargs = dict(profile=job["account"]["profile"], project=project, model=job["model"],
+                profile = job["account"]["profile"]
+                kwargs = dict(profile=profile, project=project, model=job["model"],
                               aspect=job["aspect"], duration=job["clip_seconds"], out=out)
                 submit_time = datetime.now(timezone.utc)
-                if index == 1 or clip.get("mode") == "t2v":
+                is_t2v = (index == 1 or clip.get("mode") == "t2v")
+                if is_t2v:
                     # Cut-style templates (e.g. health) make every clip as its own t2v shot list.
                     result = self.gflow.t2v(clip["prompt"], **kwargs)
                 else:
-                    frame = self.media.last_frame(paths[-1], state.directory / f"seed-{index}.png", self.cfg.seed_offset_ms)
+                    frame = self.media.last_frame(paths[-1], state.directory / f"seed-{index}.jpg", self.cfg.seed_offset_ms)
                     if self.cancelled(jid):
                         return
                     result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
                 if not result.ok:
-                    recovered = False
-                    if "no signed media URL" in (result.message or ""):
-                        media_id = self._find_media_id(result, profile=job["account"]["profile"], project=project, submit_time=submit_time)
-                        if media_id:
-                            rec = self.gflow.download_media(media_id, profile=job["account"]["profile"], out=out.parent)
-                            rec_path = Path(rec.payload.get("path") or rec.payload.get("local_path") or (out.parent / f"{media_id}.mp4"))
-                            if not rec_path.is_absolute():
-                                rec_path = self.cfg.cli_dir / rec_path
-                            if rec.ok and rec_path.is_file() and rec_path.stat().st_size:
-                                log.info("Recovered clip %s for job %s clip %s via data download (%s)", media_id, jid, index, rec_path)
-                                rec.payload.setdefault("local_path", str(rec_path))
-                                rec.payload.setdefault("media_id", media_id)
-                                result = rec
-                                recovered = True
-                            else:
-                                log.warning("Recovery failed for job %s clip %s (media_id=%s): %s", jid, index, media_id, rec.message or "file missing")
-                        else:
-                            log.warning("Clip generation finished without signed media URL, but media id could not be found for job %s clip %s", jid, index)
-                    if not recovered:
-                        self._fail(jid, generation, result, profile=job["account"]["profile"])
+                    recovered = self._recover_clip(result, jid=jid, index=index,
+                                                   profile=profile, project=project,
+                                                   submit_time=submit_time, out=out)
+                    if self.cancelled(jid):
                         return
+                    if recovered:
+                        result = recovered
+                    else:
+                        msg = result.message or ""
+                        # Pre-submit retry
+                        if (result.exit_code in PRE_SUBMIT_EXIT_CODES and
+                                not any(err in msg for err in SUBMITTED_ERRORS)):
+                            delay = random.uniform(*PRE_SUBMIT_RETRY_DELAY_S)
+                            remaining = delay
+                            while remaining > 0:
+                                if self.cancelled(jid):
+                                    return
+                                step = min(5.0, remaining)
+                                self._sleep(step)
+                                remaining -= step
+                            if self.cancelled(jid):
+                                return
+                            submit_time = datetime.now(timezone.utc)
+                            if is_t2v:
+                                result = self.gflow.t2v(clip["prompt"], **kwargs)
+                            else:
+                                result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
+                            if self.cancelled(jid):
+                                return
+                            if not result.ok:
+                                recovered = self._recover_clip(result, jid=jid, index=index,
+                                                               profile=profile, project=project,
+                                                               submit_time=submit_time, out=out)
+                                if self.cancelled(jid):
+                                    return
+                                if recovered:
+                                    result = recovered
+
+                        # Seed retry
+                        elif (not is_t2v and result.error_class == "MediaUploadRejectedError" and
+                              "upload-terms" not in msg):
+                            frame = self.media.last_frame(paths[-1], state.directory / f"seed-{index}-b.jpg",
+                                                          self.cfg.seed_offset_ms + SEED_RETRY_EXTRA_MS)
+                            if self.cancelled(jid):
+                                return
+                            submit_time = datetime.now(timezone.utc)
+                            result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
+                            if self.cancelled(jid):
+                                return
+                            if not result.ok:
+                                recovered = self._recover_clip(result, jid=jid, index=index,
+                                                               profile=profile, project=project,
+                                                               submit_time=submit_time, out=out)
+                                if self.cancelled(jid):
+                                    return
+                                if recovered:
+                                    result = recovered
+
+                        if not result.ok:
+                            self._fail(jid, generation, result, profile=profile)
+                            return
                 path = Path(result.payload.get("local_path") or result.payload.get("path") or out)
                 if not path.is_absolute():
                     path = self.cfg.cli_dir / path
@@ -233,7 +340,7 @@ class JobRunner:
                 if cached_path.is_file() and cached_path.stat().st_size > 0:
                     return cached_path
             min_sec, max_sec = self.cfg.cover_gap_seconds
-            time.sleep(random.uniform(min_sec, max_sec))
+            self._sleep(random.uniform(min_sec, max_sec))
             raw_out = (state.directory / "cover_raw.png").resolve()
             result = self.gflow.t2i(
                 prompt,

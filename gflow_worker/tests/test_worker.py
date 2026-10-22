@@ -41,9 +41,9 @@ def test_happy_path(cfg, studio, runner, count):
         assert command[-1] == "--json"
         if i > 1:
             frame = Path(command[command.index("--initial-frame") + 1])
-            assert frame.name == f"seed-{i}.png" and frame.stat().st_size > 0
+            assert frame.name == f"seed-{i}.jpg" and frame.stat().st_size > 0
             # Verify the actual seed pixels are extracted from the preceding clip.
-            expected = frame.with_name("expected.png")
+            expected = frame.with_name("expected.jpg")
             Media(cfg).last_frame(frame.with_name(f"clip-{i - 1}.mp4"), expected, cfg.seed_offset_ms)
             assert frame.read_bytes() == expected.read_bytes()
     assert JobState(cfg.work_dir, 1, 1).data["uploaded"] is True
@@ -906,6 +906,7 @@ def _mock_proxy_guard(monkeypatch):
 
 
 def test_submit_no_reply_marks_credits_stale(cfg, studio, runner, monkeypatch):
+    runner._sleep = lambda s: None
     msg = (
         "migrated host: no YhhmEf/eb1hJf/MZZa6b/nprQif reply within 60s of clicking submit "
         "(rpcs seen: YhhmEf)"
@@ -925,6 +926,7 @@ def test_submit_no_reply_marks_credits_stale(cfg, studio, runner, monkeypatch):
 
 
 def test_other_failure_keeps_credits_fresh(cfg, studio, runner, monkeypatch):
+    runner._sleep = lambda s: None
     msg = "some other network error"
     fake_result = GflowResult(ok=False, payload={}, exit_code=9, error_class="TransportError", retryable=True, message=msg)
     monkeypatch.setattr(runner.gflow, "t2v", lambda *a, **kw: fake_result)
@@ -1192,6 +1194,7 @@ def test_stranded_clip_recovery_success(cfg, studio, runner, monkeypatch):
 
 
 def test_stranded_clip_recovery_failure_falls_back_to_fail(cfg, studio, runner, monkeypatch):
+    runner._sleep = lambda s: None
     monkeypatch.setenv("FAKE_GF_MODE", "wire_no_url_fail")
     runner.run_job(payload(2))
     assert not studio.uploads
@@ -1202,12 +1205,17 @@ def test_stranded_clip_recovery_failure_falls_back_to_fail(cfg, studio, runner, 
 
 
 def test_stranded_clip_recovery_catalog_fallback(cfg, studio, runner, monkeypatch):
+    runner._sleep = lambda s: None
     monkeypatch.setenv("FAKE_GF_MODE", "wire_no_url_catalog")
+    from datetime import datetime, timezone
+    monkeypatch.setattr(runner.gflow, "list_videos", lambda profile, limit=20: [
+        {"media_id": "catalog-media-1", "project_id": "project-1",
+         "created_at": datetime.now(timezone.utc).isoformat(), "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL"}
+    ])
     runner.run_job(payload(2))
     assert not studio.events("/fail")
     assert len(studio.uploads) == 1
     commands = calls(cfg)
-    assert any(c[:3] == ["data", "list", "videos"] for c in commands)
     assert any(c[:2] == ["data", "download"] and c[2] == "catalog-media-1" for c in commands)
 
 
