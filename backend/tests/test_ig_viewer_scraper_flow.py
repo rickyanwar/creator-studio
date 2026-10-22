@@ -150,10 +150,10 @@ def _run_patched(tiers, sleep_mock=None, lock_token="tok", lock_redis=None, busy
     fake_redis = lock_redis or MagicMock(name="redis")
 
     if busy:
-        def _fake_acquire():
+        def _fake_acquire(ttl=None):
             raise ViewerBusyError("locked")
     else:
-        def _fake_acquire():
+        def _fake_acquire(ttl=None):
             return lock_token, fake_redis
 
     def _fake_launch():

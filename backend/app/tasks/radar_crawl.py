@@ -16,14 +16,15 @@ settings = get_settings()
 def _redis():
     return redis.from_url(settings.redis_url, decode_responses=True)
 
-@celery_app.task(name="app.tasks.radar_crawl.radar_crawl_tick", bind=True, max_retries=0)
+@celery_app.task(name="app.tasks.radar_crawl.radar_crawl_tick", bind=True, max_retries=0, soft_time_limit=1200, time_limit=1260)
 def radar_crawl_tick(self):
     from app.models.settings import Settings as DBSettings
     
     r = _redis()
     lock_key = "radar:tick_running"
     token = str(uuid.uuid4())
-    if not r.set(lock_key, token, nx=True, ex=900):
+    # Lock outlives the hard time limit so two ticks never overlap.
+    if not r.set(lock_key, token, nx=True, ex=1320):
         logger.info("radar_crawl_tick already running, skipping")
         return
 

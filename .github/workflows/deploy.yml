@@ -253,7 +253,7 @@ jobs:
               [ -n "$PREV_RENDERER_IMG" ] && docker tag "$PREV_RENDERER_TAG" "$PREV_RENDERER_TARGET"
               [ -n "$PREV_FRONTEND_IMG" ] && docker tag "$PREV_FRONTEND_TAG" "$PREV_FRONTEND_TARGET"
 
-              APP_SERVICES="api worker worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx"
+              APP_SERVICES="api worker worker-crawl worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx"
               if ! docker compose -p studio -f docker-compose.server.yml up -d --no-deps --force-recreate --no-build $APP_SERVICES; then
                 echo "✗ Rollback service recreation failed." >&2
                 exit 1
@@ -297,7 +297,7 @@ jobs:
             fi
 
             echo "── Verifying running containers are revision $DEPLOY_SHA ──"
-            for svc in api worker worker-visual worker-delivery beat renderer frontend; do
+            for svc in api worker worker-crawl worker-visual worker-delivery beat renderer frontend; do
               cid=$(docker compose -p studio -f docker-compose.server.yml ps -q "$svc" | head -n1)
               rev=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$cid" 2>/dev/null || true)
               if [ "$rev" != "$DEPLOY_SHA" ]; then

@@ -282,11 +282,11 @@ def test_deploy_workflow_ingress_and_app_services_contract(workflow_script):
 
     # Application service isolation in rollback
     assert "--no-deps --force-recreate" in workflow_script
-    assert 'APP_SERVICES="api worker worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx"' in workflow_script
+    assert 'APP_SERVICES="api worker worker-crawl worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx"' in workflow_script
 
     # Database & Redis protection
-    assert "db" not in 'api worker worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx'.split()
-    assert "redis" not in 'api worker worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx'.split()
+    assert "db" not in 'api worker worker-crawl worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx'.split()
+    assert "redis" not in 'api worker worker-crawl worker-gallery worker-visual worker-video worker-delivery beat frontend renderer nginx'.split()
 
 
 def test_simulated_startup_up_failure_triggers_rollback(tmp_path, workflow_script):
@@ -304,7 +304,7 @@ def test_simulated_startup_up_failure_triggers_rollback(tmp_path, workflow_scrip
     rec_cmd = recreate_lines[0].split()
     assert "db" not in rec_cmd, "db must NEVER be in --force-recreate"
     assert "redis" not in rec_cmd, "redis must NEVER be in --force-recreate"
-    for svc in ["api", "worker", "worker-gallery", "worker-visual", "worker-video", "worker-delivery", "beat", "frontend", "renderer", "nginx"]:
+    for svc in ["api", "worker", "worker-crawl", "worker-gallery", "worker-visual", "worker-video", "worker-delivery", "beat", "frontend", "renderer", "nginx"]:
         assert svc in rec_cmd, f"Expected {svc} in rollback recreation"
 
     assert "tag studio-backend:rollback-20261016_120000 studio-backend:latest" in log_content

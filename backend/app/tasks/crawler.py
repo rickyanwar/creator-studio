@@ -135,7 +135,7 @@ def crawl_all_sources(self, manual: bool = False):
         db.close()
 
 
-@celery_app.task(name="app.tasks.crawler.crawl_single_source", bind=True, max_retries=2)
+@celery_app.task(name="app.tasks.crawler.crawl_single_source", bind=True, max_retries=2, soft_time_limit=420, time_limit=480)
 def crawl_single_source(self, source_id: int):
     """Crawl one IG source and enqueue image-save for any new posts."""
     db = SessionLocal()
@@ -168,7 +168,7 @@ def _record_crawl_error(db, source_id: int, exc: Exception) -> None:
         db.rollback()
 
 
-@celery_app.task(name="app.tasks.crawler.crawl_wave_step")
+@celery_app.task(name="app.tasks.crawler.crawl_wave_step", soft_time_limit=420, time_limit=480)
 def crawl_wave_step(wave_id: str, ids: list[int], index: int, manual: bool,
                     started_at: float, failed: int = 0, busy_attempts: int = 0):
     """Crawl one source, then enqueue the next step without occupying a worker."""
