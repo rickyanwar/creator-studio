@@ -9,6 +9,8 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+from app.services.vision_retry import run_vision_check
+
 logger = logging.getLogger(__name__)
 
 
@@ -180,13 +182,18 @@ def vision_check(sheet_bytes: bytes, title: str, expectations: dict | None = Non
             "severe AI artifacts, vehicle design or colour changes between frames, and NSFW. "
             'Return JSON only: {"pass": bool, "issues": [string]} with short issue strings.'
         )
-        raw = _vision_chat([
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": _vision_datauri(sheet_bytes, max_dim=1024)}},
-        ], max_tokens=1500, context="ai_video_qc")
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        data = json.loads(match.group(0) if match else raw)
-        issues = data.get("issues", [])
-        return {"passed": bool(data.get("pass")), "issues": issues, "raw": raw}
+        def _do_vision_qc() -> dict:
+            raw = _vision_chat([
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": _vision_datauri(sheet_bytes, max_dim=1024)}},
+            ], max_tokens=1500, context="ai_video_qc")
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            data = json.loads(match.group(0) if match else raw)
+            if not isinstance(data, dict):
+                raise ValueError("JSON is not an object")
+            issues = data.get("issues", [])
+            return {"passed": bool(data.get("pass")), "issues": issues, "raw": raw}
+
+        return run_vision_check(_do_vision_qc, label=f"ai_video_qc:{title}")
     except Exception as exc:
         return {"passed": False, "issues": [f"vision QC unavailable: {exc}"], "raw": None}

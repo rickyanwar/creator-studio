@@ -26,6 +26,7 @@ from app.services.identity_check import check_identity, IdentityResult
 from app.services.design_images import _vision_chat, _vision_datauri
 from app.services.upscaler import upscale_image_bytes
 from app.services.brand_look import brand_look
+from app.services.qa_toggles import qa_enabled
 
 
 def _radio_ocr_ok(image_bytes: bytes, expected_header: tuple, expected_lines: tuple) -> tuple[bool, str]:
@@ -301,27 +302,38 @@ def redesign_card(
         skip_full_qa = False
         gptcli_rejected = False
         gptcli_reject_note = ""
+        qa_on = qa_enabled(fanpage, "ig")
+        if not qa_on:
+            notes.append("qa off for this brand")
+            skip_full_qa = True
+
         if res.engine == "gptcli":
-            hero_ref_bytes = None
-            if refs:
-                try:
-                    with open(refs[0], "rb") as fh:
-                        hero_ref_bytes = fh.read()
-                except Exception:
-                    hero_ref_bytes = None
-            if hero_ref_bytes is not None:
-                idr = check_identity(hero_ref_bytes, res.image, subject=analysis.main_subject, context="ig", fanpage_id=fanpage.id)
+            if qa_on:
+                hero_ref_bytes = None
+                if refs:
+                    try:
+                        with open(refs[0], "rb") as fh:
+                            hero_ref_bytes = fh.read()
+                    except Exception:
+                        hero_ref_bytes = None
+                if hero_ref_bytes is not None:
+                    idr = check_identity(hero_ref_bytes, res.image, subject=analysis.main_subject, context="ig", fanpage_id=fanpage.id)
+                else:
+                    idr = IdentityResult(passed=False, sface=None, gemini="skipped", reason="failed reading hero ref")
+                identity_passed = idr.passed
+                identity_reason = idr.reason
             else:
-                idr = IdentityResult(passed=False, sface=None, gemini="skipped", reason="failed reading hero ref")
+                identity_passed = True
+                identity_reason = "qa off"
             radio_ok, radio_note = (True, "") if layout != "team_radio" else _radio_ocr_ok(res.image, expected_header, expected_lines)
-            if idr.passed and radio_ok:
-                notes.append(f"engine=gptcli; identity ok ({idr.reason})")
+            if identity_passed and radio_ok:
+                notes.append(f"engine=gptcli; identity ok ({identity_reason})")
                 skip_full_qa = True
             else:
                 gptcli_rejected = True
-                gptcli_reject_note = (f"ChatGPT rejected: {idr.reason}" + (f"; {radio_note}" if radio_note else ""))[:200]
-                notes.append(f"engine=gptcli rejected: {idr.reason}; {radio_note}".strip("; "))
-                if not idr.passed:
+                gptcli_reject_note = (f"ChatGPT rejected: {identity_reason}" + (f"; {radio_note}" if radio_note else ""))[:200]
+                notes.append(f"engine=gptcli rejected: {identity_reason}; {radio_note}".strip("; "))
+                if not identity_passed:
                     problems.append("identity")
                 if not radio_ok:
                     problems.append(f"radio_text_mismatch:{radio_note}" if radio_note else "radio_text_mismatch")

@@ -252,6 +252,10 @@ class TargetFanpage(Base):
     news_visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
     fb_visual_engine = Column(String(16), default="off", nullable=False, server_default="off")
     quote_shorten_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    qa_news_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    qa_ig_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    qa_facebook_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    qa_ai_video_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

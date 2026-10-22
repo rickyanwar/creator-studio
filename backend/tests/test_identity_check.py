@@ -8,6 +8,11 @@ OUT_BYTES = b"fake-out-image"
 
 
 @pytest.fixture(autouse=True)
+def no_sleep_on_retry(monkeypatch):
+    monkeypatch.setattr("app.services.vision_retry.time.sleep", lambda s: None)
+
+
+@pytest.fixture(autouse=True)
 def mock_vision_datauri():
     with patch("app.services.identity_check.design_images._vision_datauri", return_value="data:image/jpeg;base64,fake"):
         yield

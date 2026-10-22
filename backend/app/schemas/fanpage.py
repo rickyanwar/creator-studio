@@ -210,6 +210,21 @@ class FanpageBase(BaseModel):
     news_visual_engine: str = Field("off", pattern="^(off|chatgpt)$")
     fb_visual_engine: str = Field("off", pattern="^(off|chatgpt)$")
     quote_shorten_enabled: bool = False
+    qa_news_enabled: bool = True
+    qa_ig_enabled: bool = True
+    qa_facebook_enabled: bool = True
+    qa_ai_video_enabled: bool = True
+
+    @field_validator(
+        "qa_news_enabled",
+        "qa_ig_enabled",
+        "qa_facebook_enabled",
+        "qa_ai_video_enabled",
+        mode="before",
+    )
+    @classmethod
+    def clean_qa_toggles(cls, v):
+        return True if v is None else v
 
     @field_validator("radar_niches", mode="before")
     @classmethod
