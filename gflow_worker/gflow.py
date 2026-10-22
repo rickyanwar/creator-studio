@@ -195,55 +195,51 @@ class GflowRunner:
                 return row.get("media_id")
         return None
 
-    def wait_for_stranded_clip(self, *, profile, project, submit_time, timeout_s, poll_s, sleep=time.sleep, cancelled=lambda: False) -> str | None:
+    def stranded_candidates(self, *, profile, project, submit_time) -> list[dict]:
         try:
-            elapsed = 0.0
-            poll_step = max(float(poll_s), 1.0)
-            while elapsed <= timeout_s:
-                if cancelled():
-                    return None
-                try:
-                    rows = self.list_videos(profile=profile, limit=20)
-                except Exception:
-                    rows = []
-                candidates = []
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    if row.get("project_id") != project:
-                        continue
-                    if row.get("local_path"):
-                        continue
-                    if not row.get("created_at"):
-                        continue
-                    if submit_time:
-                        try:
-                            created = datetime.fromisoformat(row["created_at"])
-                            if created.tzinfo is None and submit_time.tzinfo is not None:
-                                created = created.replace(tzinfo=timezone.utc)
-                            elif created.tzinfo is not None and submit_time.tzinfo is None:
-                                created = created.astimezone(timezone.utc).replace(tzinfo=None)
-                            if created < submit_time:
-                                continue
-                        except Exception:
-                            continue
-                    candidates.append(row)
-
-                for row in candidates:
-                    if row.get("status") in (SUCCESS, "SUCCESS", "SUCCESSFUL"):
-                        return row.get("media_id")
-
-                if candidates and all(row.get("status") in (FAILED, "FAILED") for row in candidates):
-                    return None
-
-                if elapsed + poll_step > timeout_s:
-                    break
-
-                sleep(poll_step)
-                elapsed += poll_step
-                if cancelled():
-                    return None
-
-            return None
+            rows = self.list_videos(profile=profile, limit=20)
         except Exception:
-            return None
+            return []
+        if not isinstance(rows, list):
+            return []
+        candidates = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if row.get("project_id") != project:
+                continue
+            if row.get("local_path"):
+                continue
+            if not row.get("created_at"):
+                continue
+            if row.get("status") in (FAILED, "FAILED"):
+                continue
+            try:
+                raw_created = row["created_at"]
+                if isinstance(raw_created, datetime):
+                    created = raw_created
+                else:
+                    created = datetime.fromisoformat(str(raw_created))
+            except Exception:
+                continue
+            if submit_time:
+                try:
+                    created_cmp = created
+                    if created_cmp.tzinfo is None and submit_time.tzinfo is not None:
+                        created_cmp = created_cmp.replace(tzinfo=timezone.utc)
+                    elif created_cmp.tzinfo is not None and submit_time.tzinfo is None:
+                        created_cmp = created_cmp.astimezone(timezone.utc).replace(tzinfo=None)
+                    if created_cmp < submit_time:
+                        continue
+                except Exception:
+                    continue
+            candidates.append((created, row))
+
+        def _sort_key(item):
+            dt = item[0]
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
+        candidates.sort(key=_sort_key, reverse=True)
+        return [row for _, row in candidates]

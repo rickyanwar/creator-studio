@@ -29,17 +29,28 @@ def test_i2v_no_reply_recovered_via_stranded_wait(cfg, studio, runner, monkeypat
     def mock_list_videos(profile, limit=20):
         nonlocal list_calls
         list_calls += 1
-        status = "pending" if list_calls == 1 else "MEDIA_GENERATION_STATUS_SUCCESSFUL"
         return [
             {
                 "media_id": "stranded-media-2",
                 "project_id": "project-1",
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "status": status,
+                "status": "pending",
             }
         ]
 
     monkeypatch.setattr(runner.gflow, "list_videos", mock_list_videos)
+
+    dl_calls = 0
+    orig_download = runner.gflow.download_media
+
+    def mock_download(media_id, profile, out):
+        nonlocal dl_calls
+        dl_calls += 1
+        if dl_calls == 1:
+            return GflowResult(ok=False, payload={}, exit_code=7, message="no signed media URL within 45s")
+        return orig_download(media_id, profile=profile, out=out)
+
+    monkeypatch.setattr(runner.gflow, "download_media", mock_download)
 
     runner.run_job(payload(2))
 
@@ -47,6 +58,7 @@ def test_i2v_no_reply_recovered_via_stranded_wait(cfg, studio, runner, monkeypat
     assert len(studio.uploads) == 1
     assert len(i2v_calls) == 1
     assert list_calls >= 2
+    assert dl_calls == 2
     clip_done_events = [e for e in studio.events("/progress") if e["event"] == "clip_done"]
     assert len(clip_done_events) == 2
     assert clip_done_events[1]["media_id"] == "stranded-media-2"
@@ -254,11 +266,11 @@ def test_cancellation_during_stranded_wait(cfg, studio, runner, monkeypatch):
 
     monkeypatch.setattr(runner.gflow, "i2v", mock_i2v)
 
-    def mock_wait(*args, **kwargs):
+    def mock_candidates(*args, **kwargs):
         runner.apply_cancels([1])
-        return None
+        return []
 
-    monkeypatch.setattr(runner.gflow, "wait_for_stranded_clip", mock_wait)
+    monkeypatch.setattr(runner.gflow, "stranded_candidates", mock_candidates)
 
     runner.run_job(payload(2))
 

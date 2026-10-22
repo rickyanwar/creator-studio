@@ -913,6 +913,8 @@ def test_submit_no_reply_marks_credits_stale(cfg, studio, runner, monkeypatch):
     )
     fake_result = GflowResult(ok=False, payload={}, exit_code=9, error_class="TransportError", retryable=True, message=msg)
     monkeypatch.setattr(runner.gflow, "t2v", lambda *a, **kw: fake_result)
+    # No clip was made in Flow, so the stranded-clip recovery finds nothing to download.
+    monkeypatch.setattr(runner.gflow, "stranded_candidates", lambda **kw: [])
 
     assert runner.credits_stale is False
     runner.run_job(payload())
