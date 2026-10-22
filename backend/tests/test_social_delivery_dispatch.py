@@ -705,6 +705,62 @@ def test_publish_job_with_destinations_idempotent(db_session, monkeypatch):
     assert db_session.query(PublishDelivery).filter_by(publish_job_id=job.id).count() == 1
 
 
+def test_all_accepted_sets_cleanup_at_from_max_scheduled_for(db_session):
+    fanpage, dest1 = _create_project_and_dest(
+        db_session, name="Cleanup Proj 1", kind="facebook_page", mode="repliz", repliz_id="acc_cleanup_1"
+    )
+    _, dest2 = _create_project_and_dest(
+        db_session, name="Cleanup Proj 2", kind="facebook_page", mode="repliz", repliz_id="acc_cleanup_2"
+    )
+    job = PublishJob(
+        fanpage_id=fanpage.id,
+        content_type=ContentType.news_content,
+        design_image_url="https://cdn.example.com/img.png",
+        ai_generated_caption="Cleanup test",
+        status=PublishJobStatus.pending_publish,
+    )
+    db_session.add(job)
+    db_session.flush()
+
+    sched_1 = datetime(2026, 10, 15, 14, 0, 0)
+    sched_2 = datetime(2026, 10, 15, 20, 0, 0)
+    d1 = PublishDelivery(
+        publish_job_id=job.id,
+        destination_id=dest1.id,
+        state="scheduled",
+        intended_method="repliz",
+        scheduled_for=sched_1,
+        caption_snapshot="Cleanup test",
+        media_snapshot=["https://cdn.example.com/img.png"],
+        media_kind="image",
+    )
+    d2 = PublishDelivery(
+        publish_job_id=job.id,
+        destination_id=dest2.id,
+        state="scheduled",
+        intended_method="repliz",
+        scheduled_for=sched_2,
+        caption_snapshot="Cleanup test",
+        media_snapshot=["https://cdn.example.com/img.png"],
+        media_kind="image",
+    )
+    db_session.add_all([d1, d2])
+    db_session.commit()
+
+    mock_repliz = MagicMock()
+    mock_repliz.create_image_schedule.side_effect = lambda **kw: {"id": f"sched_{kw.get('description', '1')}"}
+
+    now = datetime(2026, 10, 15, 10, 0, 0, tzinfo=timezone.utc)
+    processed = dispatch_due_deliveries(db_session, now_utc=now, repliz_client=mock_repliz)
+    assert len(processed) == 2
+    assert all(d.state == "repliz_scheduled" for d in processed)
+
+    db_session.expire_all()
+    j = db_session.query(PublishJob).filter_by(id=job.id).first()
+    assert j.status == PublishJobStatus.published
+    assert j.cleanup_at == max([sched_1, sched_2]) + timedelta(hours=6)
+
+
 def test_publish_job_legacy_fallback_no_destinations(db_session, monkeypatch):
     # Fanpage with NO destinations
     fanpage = TargetFanpage(

@@ -2085,6 +2085,9 @@ def dispatch_due_deliveries(
         if all_accepted:
             job.status = PublishJobStatus.published
             job.published_at = naive_now
+            go_lives = [d.scheduled_for.replace(tzinfo=None) for d in all_deliveries if d.scheduled_for]
+            # Repliz fetches the media at go-live: keep it until the last go-live + 6 h.
+            job.cleanup_at = max([naive_now, *go_lives]) + timedelta(hours=6)
             # Copy compatibility schedule fields if exactly one Page Repliz destination
             repliz_delivs = [d for d in all_deliveries if d.actual_method == "repliz"]
             if len(all_deliveries) == 1 and len(repliz_delivs) == 1:
