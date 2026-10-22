@@ -28,6 +28,7 @@ from app.models.social_publishing import (
 )
 from app.models.target_fanpages import TargetFanpage
 from app.schemas.social_media import (
+    DayPlanOut,
     DeliveryActivityOut,
     DeliveryEventOut,
     DestinationDeviceAssignmentCreate,
@@ -45,6 +46,7 @@ from app.schemas.social_media import (
     SocialDestinationUpdate,
 )
 from app.services.phone_runner_client import PhoneRunnerClient
+from app.services.day_plan import destination_day_plan
 from app.services.publishing_schedule import (
     compute_audience_slot,
     get_destination_reservations_utc,
@@ -104,6 +106,27 @@ def list_destinations(
     if is_active is not None:
         q = q.filter(SocialDestination.is_active == is_active)
     return q.order_by(SocialDestination.name).all()
+
+
+@router.get("/day-plan", response_model=list[DayPlanOut])
+def get_day_plan(
+    db: DB,
+    _: CurrentUser,
+    destination_id: Optional[int] = Query(None),
+    content_project_id: Optional[int] = Query(None),
+) -> list[DayPlanOut]:
+    """Get today's plan for each active destination."""
+    q = db.query(SocialDestination).filter(SocialDestination.is_active.is_(True))
+    if destination_id is not None:
+        q = q.filter(SocialDestination.id == destination_id)
+    if content_project_id is not None:
+        q = q.filter(SocialDestination.content_project_id == content_project_id)
+    destinations = q.order_by(SocialDestination.id.asc()).all()
+    now_utc = datetime.now(timezone.utc)
+    return [
+        DayPlanOut(**destination_day_plan(db, dest, now_utc=now_utc))
+        for dest in destinations
+    ]
 
 
 @router.get("/destinations/{destination_id}", response_model=SocialDestinationOut)
