@@ -141,6 +141,7 @@ def get_settings(db: DB, _: CurrentUser):
         gptcli_thread=getattr(row, "gptcli_thread", "studio") or "studio",
         gptcli_size=getattr(row, "gptcli_size", "1080x1350") or "1080x1350",
         ai_day_start=getattr(row, "ai_day_start", "05:30") or "05:30",
+        ai_night_start=getattr(row, "ai_night_start", "00:00") or "00:00",
         codex_share_percent=getattr(row, "codex_share_percent", 35) if getattr(row, "codex_share_percent", None) is not None else 35,
         codex_share_window_jobs=getattr(row, "codex_share_window_jobs", 40) if getattr(row, "codex_share_window_jobs", None) is not None else 40,
         codex_overflow_queue_len=getattr(row, "codex_overflow_queue_len", 3) if getattr(row, "codex_overflow_queue_len", None) is not None else 3,

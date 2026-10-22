@@ -586,6 +586,7 @@ export interface AppSettings {
   gptcli_thread?: string;
   gptcli_size?: string;
   ai_day_start?: string;
+  ai_night_start?: string;
   codex_share_percent?: number;
   codex_share_window_jobs?: number;
   codex_overflow_queue_len?: number;

@@ -20,6 +20,12 @@ LAST_JOB_KEY = "visual_fair:news:last_job"
 JIT_LEAD_MINUTES = 30
 CLAIM_KEY = "visual_fair:news:claim:{fanpage_id}"
 
+# While ChatGPT is awake and idle, design news for slots this far ahead so it never sits idle (owner 2026-10-22).
+LOOKAHEAD_HOURS = 6
+MAX_AHEAD_PER_PAGE = 6          # designed-but-not-yet-live news cards per page
+GPTCLI_WINDOW_HOURS = 3         # gpt serve allows GPT_SERVE_WINDOW_CAP images per 3 h (45 from 2026-10-22)
+GPTCLI_WINDOW_BUDGET = 42       # gpt serve GPT_SERVE_WINDOW_CAP=45 per 3 h; leave 3 for JIT work
+
 
 def news_job_waiting(db, r) -> bool:
     """Return True if last dispatched news job is still waiting in queue (pending_design + lock held)."""
@@ -133,6 +139,133 @@ def release_page(r, fanpage_id: int) -> None:
         logger.warning("Failed releasing fanpage %s: %s", fanpage_id, exc)
 
 
+def night_settings(db) -> tuple[str, str]:
+    """Return (night_start, day_start) as HH:MM WIB strings from Settings, or default ('00:00', '05:30')."""
+    try:
+        from app.models.settings import Settings
+
+        row = db.query(Settings).first() if db is not None else None
+        if not row:
+            return ("00:00", "05:30")
+        night_start = getattr(row, "ai_night_start", None) or "00:00"
+        day_start = getattr(row, "ai_day_start", None) or "05:30"
+        return (str(night_start), str(day_start))
+    except Exception as exc:
+        logger.warning("Failed reading night settings: %s", exc)
+        return ("00:00", "05:30")
+
+
+def chatgpt_can_look_ahead(db, now_utc: datetime) -> bool:
+    """Return True if ChatGPT can look ahead to design upcoming news slots."""
+    try:
+        if db is None:
+            return False
+        from app.models.ai_copy_events import AICopyEvent
+        from app.services import engine_router, gptcli_client
+
+        night_start, day_start = night_settings(db)
+        if engine_router.is_night(now_utc, day_start, night_start):
+            return False
+
+        if engine_router.gptcli_queue_len(db) > 0:
+            return False
+
+        if gptcli_client.gptcli_unavailable_until(now_utc) is not None:
+            return False
+
+        now_naive = now_utc.astimezone(timezone.utc).replace(tzinfo=None) if now_utc.tzinfo else now_utc
+        cutoff = now_naive - timedelta(hours=GPTCLI_WINDOW_HOURS)
+        cnt = (
+            db.query(AICopyEvent)
+            .filter(
+                AICopyEvent.context == "image_gen",
+                AICopyEvent.final_provider == "gptcli",
+                AICopyEvent.created_at >= cutoff,
+            )
+            .count()
+        )
+        if cnt >= GPTCLI_WINDOW_BUDGET:
+            return False
+
+        return True
+    except Exception as exc:
+        logger.warning("chatgpt_can_look_ahead error: %s", exc)
+        return False
+
+
+# ChatGPT first; Codex only for slots ChatGPT cannot reach.
+def lookahead_horizon(db, now_utc: datetime) -> datetime | None:
+    """Latest slot (aware UTC) that may be designed early now, or None when no lookahead is allowed."""
+    try:
+        now_aware = now_utc if now_utc.tzinfo is not None else now_utc.replace(tzinfo=timezone.utc)
+        now_aware = now_aware.astimezone(timezone.utc)
+
+        if chatgpt_can_look_ahead(db, now_utc):
+            return now_aware + timedelta(hours=LOOKAHEAD_HOURS)
+
+        from app.services import engine_router, gptcli_client
+
+        night_start, day_start = night_settings(db)
+        is_night = engine_router.is_night(now_utc, day_start, night_start)
+
+        if is_night:
+            nds = engine_router.today_day_start(now_utc, day_start)
+            if nds <= now_aware:
+                nds += timedelta(days=1)
+            cand_horizon = min(now_aware + timedelta(hours=LOOKAHEAD_HOURS), nds)
+            allowed = engine_router.codex_allowed(db, now_utc, night=True)[0]
+            if not allowed or engine_router.visual_queue_len() != 0:
+                return None
+            return cand_horizon
+
+        until = gptcli_client.gptcli_unavailable_until(now_utc)
+        if until is not None:
+            until_aware = until if until.tzinfo is not None else until.replace(tzinfo=timezone.utc)
+            until_aware = until_aware.astimezone(timezone.utc)
+            cand_horizon = min(now_aware + timedelta(hours=LOOKAHEAD_HOURS), until_aware)
+            allowed = engine_router.codex_allowed(db, now_utc, night=False)[0]
+            if not allowed or engine_router.visual_queue_len() != 0:
+                return None
+            return cand_horizon
+
+        return None
+    except Exception as exc:
+        logger.warning("lookahead_horizon error: %s", exc)
+        return None
+
+
+def ahead_count(db, fanpage_id: int, now_utc: datetime) -> int:
+    """Return number of distinct news jobs of that page designed but not live yet."""
+    try:
+        if db is None:
+            return MAX_AHEAD_PER_PAGE
+        from sqlalchemy import and_, distinct, func, or_
+        from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
+        from app.models.social_publishing import PublishDelivery
+
+        now_naive = now_utc.astimezone(timezone.utc).replace(tzinfo=None) if now_utc.tzinfo else now_utc
+
+        delivery_cond = and_(
+            PublishDelivery.state.in_(("waiting_for_slot", "scheduled", "repliz_scheduled")),
+            PublishDelivery.scheduled_for > now_naive,
+        )
+        status_cond = PublishJob.status.in_((PublishJobStatus.pending_publish, PublishJobStatus.publishing))
+
+        q = (
+            db.query(func.count(distinct(PublishJob.id)))
+            .outerjoin(PublishDelivery, PublishDelivery.publish_job_id == PublishJob.id)
+            .filter(
+                PublishJob.fanpage_id == fanpage_id,
+                PublishJob.content_type == ContentType.news_content,
+                or_(status_cond, delivery_cond),
+            )
+        )
+        return int(q.scalar() or 0)
+    except Exception as exc:
+        logger.warning("ahead_count failed for fanpage %s: %s", fanpage_id, exc)
+        return MAX_AHEAD_PER_PAGE
+
+
 def visual_news_fanpage_ids(db) -> set[int]:
     """Return all TargetFanpage IDs in auto mode routing news to 'visual'."""
     fps = db.query(TargetFanpage).filter(TargetFanpage.mode2_publish_mode == PublishMode.auto).all()
@@ -227,10 +360,13 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             continue
         return job
 
+    horizon = lookahead_horizon(db, now_utc)
+    look_ahead = horizon is not None
+
     for fid in sorted_fps:
         if candidates_checked >= 20:
             return None
-        if page_claimed(r, fid):
+        if page_claimed(r, fid) and not look_ahead:
             continue
 
         for job in jobs_by_fp[fid]:
@@ -255,7 +391,12 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             slot_aware = slot if slot.tzinfo else slot.replace(tzinfo=timezone.utc)
             now_aware = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
             if (slot_aware - now_aware) > timedelta(minutes=JIT_LEAD_MINUTES):
-                break
+                if not (look_ahead
+                        and horizon is not None
+                        and slot_aware <= horizon
+                        and ahead_count(db, fid, now_utc) < MAX_AHEAD_PER_PAGE):
+                    break
+                job._lookahead = True
 
             if not _has_news_slot(db, job, now_utc):
                 job.status = PublishJobStatus.skipped

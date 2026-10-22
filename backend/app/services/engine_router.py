@@ -57,11 +57,16 @@ def parse_hhmm(value: str | None, default: str = "05:30") -> tuple[int, int]:
     return 5, 30
 
 
-def is_night(now: datetime, day_start: str) -> bool:
+def is_night(now: datetime, day_start: str, night_start: str = "00:00") -> bool:
     ref_now = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
-    wib_dt = ref_now.astimezone(WIB)
-    h, m = parse_hhmm(day_start)
-    return wib_dt.time() < time(h, m)
+    t = ref_now.astimezone(WIB).time()
+    ns = time(*parse_hhmm(night_start, "00:00"))
+    ds = time(*parse_hhmm(day_start))
+    if ns < ds:
+        return ns <= t < ds
+    if ns > ds:
+        return t >= ns or t < ds
+    return False
 
 
 def today_day_start(now: datetime, day_start: str) -> datetime:
@@ -222,8 +227,9 @@ def plan_engines(
 
     settings = db.query(Settings).first() if db is not None else None
     day_start = getattr(settings, "ai_day_start", "05:30") or "05:30"
+    night_start = getattr(settings, "ai_night_start", "00:00") or "00:00"
 
-    if is_night(now, day_start):
+    if is_night(now, day_start, night_start):
         ok, _why = codex_allowed(db, now, night=True, settings=settings)
         if ok and "9router" not in exclude:
             return EnginePlan(("9router",), "night")
