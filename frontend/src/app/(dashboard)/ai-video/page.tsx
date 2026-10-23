@@ -11,6 +11,7 @@ import {
   approveAiVideoIdea,
   rejectAiVideoIdea,
   listAiVideoJobs,
+  getAiVideoCounts,
   retryAiVideoJob,
   cancelAiVideoJob,
   listGflowAccounts,
@@ -21,6 +22,7 @@ import {
   getPromptPolishJob,
 } from "@/lib/api";
 import type {
+  AiVideoCounts,
   AiVideoIdea,
   AiVideoJob,
   AiVideoTemplate,
@@ -36,6 +38,7 @@ import { PromptPolishView } from "@/components/ai-video/PromptPolishView";
 import { useFanpages } from "@/lib/useFanpages";
 
 const statusOptions = [
+  "active",
   "pilot",
   "proposed",
   "approved",
@@ -523,7 +526,7 @@ function JobPolishSection({ jobId }: { jobId: number }) {
 
 export default function AiVideoPage() {
   const [tab, setTab] = useState<"ideas" | "jobs" | "accounts">("ideas");
-  const [ideaStatus, setIdeaStatus] = useState("proposed");
+  const [ideaStatus, setIdeaStatus] = useState("active");
   const [fanpageId, setFanpageId] = useState<number | "">("");
   const [busy, setBusy] = useState<number | null>(null);
   const [actionError, setActionError] = useState<{ id: number; message: string } | null>(null);
@@ -564,6 +567,16 @@ export default function AiVideoPage() {
     () => listGflowWorkers().then((r) => r.data as GflowWorker[]),
     { refreshInterval: 5000 }
   );
+  const { data: counts } = useSWR(
+    ["ai-video-counts", fanpageId],
+    () => getAiVideoCounts(fanpageId ? { fanpage_id: fanpageId } : undefined).then((r) => r.data as AiVideoCounts),
+    { refreshInterval: 15000 }
+  );
+
+  // Load-more state for jobs (first page kept by the SWR above; extra pages appended here)
+  const [extraJobs, setExtraJobs] = useState<AiVideoJob[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 100;
 
   const [ticker, setTicker] = useState(() => Date.now());
   useEffect(() => {
@@ -579,6 +592,22 @@ export default function AiVideoPage() {
   const toDecideCount = ideas.filter(
     (i) => i.status === "proposed" || i.status === "pilot"
   ).length;
+
+  // Merge first-page jobs (auto-refreshed) with any extra pages loaded manually
+  const allJobs = [...jobs, ...extraJobs];
+  const jobsTotal = counts?.jobs_total ?? allJobs.length;
+  const ideasActive = counts?.ideas_active ?? ideas.length;
+
+  async function loadMoreJobs() {
+    setLoadingMore(true);
+    try {
+      const next = await listAiVideoJobs({ limit: PAGE_SIZE, offset: allJobs.length });
+      const newJobs = next.data as AiVideoJob[];
+      setExtraJobs((prev) => [...prev, ...newJobs]);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function act(id: number, action: () => Promise<unknown>, mutate: () => void) {
     setBusy(id);
@@ -635,7 +664,7 @@ export default function AiVideoPage() {
         >
           <span>Ideas</span>
           <span className="text-xs text-text2">
-            {toDecideCount > 0 ? `${toDecideCount} to decide` : ideas.length}
+            {toDecideCount > 0 ? `${toDecideCount} to decide` : ideasActive}
           </span>
         </button>
 
@@ -649,7 +678,7 @@ export default function AiVideoPage() {
           }`}
         >
           <span>Videos</span>
-          <span className="text-xs text-text2">{jobs.length}</span>
+          <span className="text-xs text-text2">{jobsTotal}</span>
         </button>
 
         <button
@@ -684,7 +713,7 @@ export default function AiVideoPage() {
               >
                 {statusOptions.map((s) => (
                   <option key={s} value={s}>
-                    {s[0].toUpperCase() + s.slice(1)}
+                    {s === "active" ? "Active (pilot, proposed, approved)" : s[0].toUpperCase() + s.slice(1)}
                   </option>
                 ))}
               </select>
@@ -859,8 +888,14 @@ export default function AiVideoPage() {
             Job steps: queued, claimed, generating, uploaded, done. A job can also end as failed or cancelled. A video that fails vision QC or the overlay is held for review, never marked failed. A retry spends credits again.
           </p>
 
+          {allJobs.length > 0 && (
+            <p className="text-xs text-text2">
+              Showing {allJobs.length} of {jobsTotal} videos
+            </p>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {jobs.map((job) => {
+            {allJobs.map((job) => {
               const progressPct =
                 job.clips_total > 0 ? Math.round((job.clips_done / job.clips_total) * 100) : 0;
 
@@ -971,12 +1006,25 @@ export default function AiVideoPage() {
               );
             })}
 
-            {jobs.length === 0 && (
+            {allJobs.length === 0 && (
               <div className="col-span-full p-12 text-center text-sm text-text2 bg-surface border border-line rounded-xl">
                 No video jobs found.
               </div>
             )}
           </div>
+
+          {allJobs.length < jobsTotal && (
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                className="h-9 px-4 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-medium transition-colors disabled:opacity-50"
+                disabled={loadingMore}
+                onClick={loadMoreJobs}
+              >
+                {loadingMore ? "Loading…" : `Load more (${jobsTotal - allJobs.length} remaining)`}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

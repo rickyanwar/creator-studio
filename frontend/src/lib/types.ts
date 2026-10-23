@@ -633,6 +633,13 @@ export interface AiEngineStatus {
 
 export type AiVideoIdeaStatus = "pilot" | "proposed" | "approved" | "rejected" | "queued" | "done" | "failed";
 
+export interface AiVideoCounts {
+  jobs_total: number;
+  jobs_by_status: Record<string, number>;
+  ideas_by_status: Record<string, number>;
+  ideas_active: number;
+}
+
 export interface ResearchLink {
   url: string;
   note?: string;

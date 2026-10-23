@@ -467,8 +467,10 @@ export const listIdeaFeedback = (id: number) => api.get(`/ai-video/ideas/${id}/f
 export const addIdeaFeedback = (id: number, message: string) =>
   api.post(`/ai-video/ideas/${id}/feedback`, { message });
 export const getResearchActivity = (limit = 50) => api.get("/settings/research-activity", { params: { limit } });
-export const listAiVideoJobs = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
+export const listAiVideoJobs = (params?: { status?: string; fanpage_id?: number; limit?: number; offset?: number }) =>
   api.get("/ai-video/jobs", { params });
+export const getAiVideoCounts = (params?: { fanpage_id?: number }) =>
+  api.get<import("./types").AiVideoCounts>("/ai-video/counts", { params });
 export const retryAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/retry`);
 export const cancelAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/cancel`);
 export const listGflowAccounts = () => api.get("/ai-video/accounts");
