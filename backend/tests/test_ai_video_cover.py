@@ -185,12 +185,16 @@ def test_default_prompts_byte_for_byte_unchanged():
         'Video title: Why The Rear Wing Flexes\n'
         'Video caption: Aerodynamic downforce explainer\n\n'
         'Write the cover words in the SAME language as the video title.\n'
-        'The cover is ONE short, plain question that the video answers (the way curious people really ask it):\n'
+        'The cover is ONE short question that the video answers, written as a natural, grammatical sentence a curious person\n'
+        'would really say out loud: it has its verb and its small words ("WHY DO YOU GET SICK READING IN A CAR?"), never\n'
+        'broken shorthand ("WHY SICK READING, NOT DRIVING?"). Keep it as SHORT as a natural sentence allows.\n'
         '- Start with WHY, HOW or WHAT (or the same words in the title\'s language) and end with "?".\n'
         '- Name the subject plainly so it is understood instantly: the body part, the car part, the object. A viewer who\n'
         '  only reads the cover knows the topic. Never a vague teaser ("WHO DECIDED?", "HOW?", "THIS PART…").\n'
         '- Ask about the surprising or strange part, never give the answer.\n'
-        '- Make it personal when it fits: for the body use "YOUR" ("WHY DOES YOUR KNEE KICK WHEN TAPPED?").\n'
+        '- Who the question is about: use "YOU"/"YOUR" only for everyday things that happen to every viewer\'s own body or\n'
+        '  life ("WHY DOES YOUR KNEE KICK WHEN TAPPED?"). In motorsport the question is about the driver, the rider, the car\n'
+        '  or the bike, never the viewer: "WHY IS AN F1 DRIVER\'S HEAD 40 KG?", never "WHY DOES YOUR HEAD HIT 40 KILOS?".\n'
         '- 4 to 8 words, everyday words, no jargon the caption does not use. 2 to 4 lines, each at most\n'
         '  14 characters; break lines at natural pauses.\n'
         '- SPECIFIC beats generic: use a number or a sharp contrast from the title or caption when there is one.\n'
@@ -205,6 +209,8 @@ def test_default_prompts_byte_for_byte_unchanged():
         '"Why Your Knee Jerks When the Doctor Taps It" -> {"lines": ["WHY DOES", "YOUR KNEE KICK", "WHEN TAPPED?"], "highlight": [1]}\n'
         '"Why Your Stomach Growls: The Wave Inside You" -> {"lines": ["WHY DOES", "YOUR STOMACH", "GROWL?"], "highlight": [1]}\n'
         '"The lever that lifts a Formula 1 car" -> {"lines": ["HOW DOES", "ONE LEVER LIFT", "AN F1 CAR?"], "highlight": [1]}\n'
+        '"Reading in the back seat makes you carsick" -> {"lines": ["WHY DO YOU", "GET SICK READING", "IN A CAR?"], "highlight": [1]}\n'
+        '"The 40-kilo head: why an F1 driver\'s head gets heavier under braking" -> {"lines": ["WHY IS AN F1", "DRIVER\'S HEAD", "40 KG?"], "highlight": [2]}\n'
         '"The captive wheel nut: the single nut that never leaves the wheel" -> {"lines": ["WHY THIS", "WHEEL NUT", "NEVER COMES OFF?"], "highlight": [1]}\n'
         '"Le turbo : une turbine à 125 000 tours par minute" -> {"lines": ["COMMENT UN TURBO", "TOURNE À", "125 000 TR/MIN ?"], "highlight": [2]}\n\n'
         'Also describe ONE picture for the cover background, in English, for an image model:\n'
@@ -277,7 +283,7 @@ def test_f1_and_health_cover_prompts_unchanged():
     assert "brochure photo" not in f1_img
 
     health_copy = build_cover_copy_prompt("Knee Joint", "caption", "health")
-    assert "3D anatomy or medical render" in health_copy
+    assert "3D anatomy " in health_copy and "everyday situation" in health_copy
     assert "a dramatic CLOSE-UP" in health_copy
     assert "WHOLE motorcycle" not in health_copy
 
@@ -823,3 +829,20 @@ def test_complete_endpoint_cover_bg_too_large_ignored(sqlite_db, tmp_path, monke
     finally:
         app.dependency_overrides.pop(get_db, None)
 
+
+
+# Owner 2026-10-24: natural, short questions; never "YOUR" for motorsport; bikes show their name and year.
+from app.services.ai_video_cover import build_cover_copy_prompt, motorcycle_cover_copy
+
+
+def test_cover_prompt_asks_for_natural_short_questions_about_the_driver():
+    prompt = build_cover_copy_prompt("The 40-kilo head", "", "f1")
+    assert "natural, grammatical sentence" in prompt and "as SHORT as a natural sentence allows" in prompt
+    assert "never the viewer" in prompt and "WHY IS AN F1 DRIVER'S HEAD 40 KG?" in prompt
+
+
+def test_motorcycle_cover_is_the_bike_name_and_year():
+    assert motorcycle_cover_copy("Honda RC166 (1966): the six-cylinder 250cc") == {"lines": ["HONDA RC166", "(1966)"], "highlight": [0]}
+    assert motorcycle_cover_copy("1993 Honda NSR500: The Two-Stroke V4") == {"lines": ["HONDA NSR500", "(1993)"], "highlight": [0]}
+    assert motorcycle_cover_copy("Ducati Desmosedici GP7 (2007) - Stoner")["lines"] == ["DUCATI", "DESMOSEDICI GP7", "(2007)"]
+    assert motorcycle_cover_copy("Why the 2027 rules change bikes") is None

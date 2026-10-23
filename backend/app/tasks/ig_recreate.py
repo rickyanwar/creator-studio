@@ -20,7 +20,7 @@ from app.tasks.celery_app import celery_app
 from celery.exceptions import SoftTimeLimitExceeded
 from app.database import SessionLocal
 from app.config import get_settings
-from app.services.fanpage_language import fanpage_language
+from app.services.fanpage_language import fanpage_language, language_name
 from app.services.brand_look import brand_look
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ def _rewrite_news_title(text: str, caption: str, fanpage, other_titles: list[str
         f'Rewrite this news headline for the Facebook page "{fanpage.name}".\n'
         f'HEADLINE: "{text}"\n'
         f'CAPTION: "{caption}"\n'
-        f"- Language: {fanpage_language(fanpage)}\n"
+        f"- Language: {fanpage_language(fanpage)}. Use the correct native spelling of {language_name(fanpage_language(fanpage))}, with every accent and special letter (for example German ä, ö, ü, ß; French é, è, ç; Spanish ñ, á); never replace them with plain letters.\n"
         f"- Identify the single NEW fact of the story.\n"
         f"- Keep every key number/name/team exactly as in the source (prefer the source headline's figure; never drop or change totals).\n"
         f"- Do not add \"BREAKING\"/\"JUST IN\"/\"OFFICIAL\" unless the source itself says so AND the event is the new fact.\n"
@@ -89,6 +89,7 @@ def _translate_quote(text: str, fanpage) -> str:
         f'QUOTE: {text}\n'
         f"- Preserve the exact meaning and the speaker's name/attribution — do not paraphrase or embellish.\n"
         f"- If it's already in {lang}, return it unchanged.\n"
+        f"- Use the correct native spelling of {language_name(lang)}, with every accent and special letter (for example German ä, ö, ü, ß); never replace them with plain letters.\n"
         f"- Keep the same `Speaker: \"the quote\"` format if the source has one.\n"
         f"Output ONLY the translated quote — no explanation."
     )

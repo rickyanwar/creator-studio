@@ -40,10 +40,32 @@ function getBrandColor(id: number) {
   return BRAND_PALETTES[Math.abs(id) % BRAND_PALETTES.length];
 }
 
+function parseServerTime(isoString: string): number {
+  // Server timestamps are naive UTC; without a zone the browser would read them as local time.
+  return new Date(/([zZ]|[+-]\d\d:?\d\d)$/.test(isoString) ? isoString : isoString + "Z").getTime();
+}
+
+// "in 40m" for a post that is scheduled but not live yet, otherwise "5m ago".
+function fmtPostTime(isoString: string | null | undefined): string {
+  if (!isoString) return "";
+  const diffMs = parseServerTime(isoString) - Date.now();
+  if (diffMs <= 60000) return fmtTimeAgo(isoString);
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `in ${hours}h`;
+  return `in ${Math.floor(hours / 24)}d`;
+}
+
+// A post handed to Repliz/phone but whose slot is still ahead is "scheduled", not "published".
+function isScheduled(post: { go_live_at?: string | null }): boolean {
+  return !!post.go_live_at && parseServerTime(post.go_live_at) - Date.now() > 60000;
+}
+
 function fmtTimeAgo(isoString: string | null | undefined): string {
   if (!isoString) return "";
   try {
-    const diffMs = Date.now() - new Date(isoString).getTime();
+    const diffMs = Date.now() - parseServerTime(isoString);
     if (diffMs < 0) return "just now";
     const mins = Math.floor(diffMs / 60000);
     if (mins < 1) return "just now";
@@ -895,7 +917,7 @@ export default function DashboardPage() {
                         />
                         <span className="absolute left-1.5 bottom-1.5 pointer-events-none">
                           <StatusBadge
-                            status="published"
+                            status={mounted && isScheduled(post) ? "scheduled" : "published"}
                             className="shadow-sm !text-[10px] !px-2 !py-0.5"
                           />
                         </span>
@@ -912,7 +934,7 @@ export default function DashboardPage() {
                         />
                         <span className="absolute left-1.5 bottom-1.5">
                           <StatusBadge
-                            status="published"
+                            status={mounted && isScheduled(post) ? "scheduled" : "published"}
                             className="shadow-sm !text-[10px] !px-2 !py-0.5"
                           />
                         </span>
@@ -926,10 +948,10 @@ export default function DashboardPage() {
                         {post.fanpage_name}
                       </span>
                       <span className="text-[11px] text-text2 line-clamp-2 leading-tight">
-                        {post.title || post.content_type}
+                        {post.title ? post.title.replace(/\*\*/g, "") : post.content_type}
                       </span>
                       <span className="text-[10px] text-text2/70 mt-auto" suppressHydrationWarning>
-                        {mounted ? fmtTimeAgo(post.published_at) : ""}
+                        {mounted ? fmtPostTime(post.go_live_at ?? post.published_at) : ""}
                       </span>
                     </Link>
                   </div>

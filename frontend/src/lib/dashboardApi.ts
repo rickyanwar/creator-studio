@@ -22,6 +22,7 @@ export interface LatestPost {
   content_type: string;
   title: string;
   published_at: string | null;
+  go_live_at?: string | null;   // when the post really goes live (delivery slot)
   thumbnail_url: string | null;
 }
 

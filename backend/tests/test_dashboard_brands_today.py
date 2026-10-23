@@ -13,6 +13,7 @@ from sqlalchemy.schema import DefaultClause
 from app.api.deps import get_current_user, get_db
 from app.api import dashboard
 from app.main import app
+from app.models.social_publishing import PublishDelivery
 from app.models.ai_copy_events import AICopyEvent
 from app.models.gallery_fetch_events import GalleryFetchEvent
 from app.models.posts import Post, MediaType, PostStatus
@@ -54,6 +55,7 @@ def db_session():
     tables = [
         TargetFanpage.__table__,
         SocialDestination.__table__,
+        PublishDelivery.__table__,
         Post.__table__,
         PublishJob.__table__,
         AICopyEvent.__table__,
@@ -368,3 +370,25 @@ def test_latest_posts_caption_and_thumbnail_fallbacks(db_session, client):
     assert p_vid["title"] == "A great clip from YouTube recap video"
     assert p_vid["thumbnail_url"] == "https://cdn.example.com/thumb.jpg"
 
+
+
+def test_latest_posts_report_the_real_go_live_time(db_session, client):
+    """A post handed to Repliz is listed with its delivery slot, so the UI can say "scheduled" until it is live."""
+    fp = TargetFanpage(id=1, name="Go Live Brand", is_active=True)
+    db_session.add(fp)
+    db_session.commit()
+    dest = SocialDestination(id=20, content_project_id=fp.id, kind="facebook_page", name="Page", is_active=True, daily_target=5)
+    db_session.add(dest)
+    db_session.commit()
+    handed = datetime(2026, 10, 24, 0, 22)
+    slot = datetime(2026, 10, 24, 1, 6)
+    job = PublishJob(id=501, fanpage_id=fp.id, content_type=ContentType.news_content, design_title="**Antonelli** news",
+                     status=PublishJobStatus.published, published_at=handed, is_deleted=False)
+    db_session.add(job)
+    db_session.commit()
+    db_session.add(PublishDelivery(publish_job_id=job.id, destination_id=dest.id, state="repliz_scheduled", scheduled_for=slot,
+                                   intended_method="repliz"))
+    db_session.commit()
+    post = next(p for p in client.get("/dashboard/stats").json()["latest_posts"] if p["id"] == 501)
+    assert post["published_at"].startswith("2026-10-24T00:22")
+    assert post["go_live_at"].startswith("2026-10-24T01:06")

@@ -327,6 +327,16 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         .all()
     )
 
+    # When each post really goes live: the latest delivery slot (a Repliz/phone schedule), else the job's own.
+    from sqlalchemy import func as _func
+    from app.models.social_publishing import PublishDelivery
+    go_live_by_job = dict(
+        db.query(PublishDelivery.publish_job_id, _func.max(PublishDelivery.scheduled_for))
+        .filter(PublishDelivery.publish_job_id.in_([j.id for j in latest_jobs] or [0]))
+        .group_by(PublishDelivery.publish_job_id)
+        .all()
+    )
+
     latest_posts = []
     for job in latest_jobs:
         raw_title = (
@@ -353,6 +363,8 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
             "content_type": content_type,
             "title": title,
             "published_at": job.published_at.isoformat() if job.published_at else None,
+            "go_live_at": (go_live_by_job.get(job.id) or job.scheduled_for or job.published_at).isoformat()
+            if (go_live_by_job.get(job.id) or job.scheduled_for or job.published_at) else None,
             "thumbnail_url": thumb,
         })
 
