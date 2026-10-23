@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 
 from app.api.deps import DB, CurrentUser, get_current_user
-from app.models.ai_video import VideoJob, GflowAccount, GflowWorker
+from app.models.ai_video import VideoIdea, VideoJob, GflowAccount, GflowWorker
 from app.models.target_fanpages import TargetFanpage
 from app.services import ai_video_dispatch
 from app.services.ai_video_dispatch import ConflictError
@@ -105,6 +105,49 @@ def _serialize_job(job: VideoJob, fanpage_name: Optional[str], account: Optional
     }
 
 
+@router.get("/counts")
+def get_counts(
+    db: DB,
+    user: CurrentUser,
+    fanpage_id: Optional[int] = None,
+):
+    from sqlalchemy import case
+
+    job_q = db.query(VideoJob)
+    idea_q = db.query(VideoIdea)
+    if fanpage_id:
+        job_q = job_q.filter(VideoJob.fanpage_id == fanpage_id)
+        idea_q = idea_q.filter(VideoIdea.fanpage_id == fanpage_id)
+
+    jobs_total = job_q.count()
+
+    jobs_by_status_rows = (
+        db.query(VideoJob.status, func.count(VideoJob.id))
+        .filter(VideoJob.fanpage_id == fanpage_id if fanpage_id else True)
+        .group_by(VideoJob.status)
+        .all()
+    )
+    jobs_by_status = {s: n for s, n in jobs_by_status_rows}
+
+    ideas_by_status_rows = (
+        db.query(VideoIdea.status, func.count(VideoIdea.id))
+        .filter(VideoIdea.fanpage_id == fanpage_id if fanpage_id else True)
+        .group_by(VideoIdea.status)
+        .all()
+    )
+    ideas_by_status = {s: n for s, n in ideas_by_status_rows}
+
+    active_statuses = ("pilot", "proposed", "approved")
+    ideas_active = sum(ideas_by_status.get(s, 0) for s in active_statuses)
+
+    return {
+        "jobs_total": jobs_total,
+        "jobs_by_status": jobs_by_status,
+        "ideas_by_status": ideas_by_status,
+        "ideas_active": ideas_active,
+    }
+
+
 @router.get("/jobs")
 def list_jobs(
     db: DB,
@@ -112,6 +155,7 @@ def list_jobs(
     status: Optional[str] = None,
     fanpage_id: Optional[int] = None,
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ):
     query = db.query(VideoJob)
     if status:
@@ -119,7 +163,7 @@ def list_jobs(
     if fanpage_id:
         query = query.filter(VideoJob.fanpage_id == fanpage_id)
 
-    jobs = query.order_by(VideoJob.created_at.desc()).limit(limit).all()
+    jobs = query.order_by(VideoJob.created_at.desc(), VideoJob.id.desc()).offset(offset).limit(limit).all()
 
     # Pre-fetch fanpage names and accounts
     fp_ids = list({j.fanpage_id for j in jobs})

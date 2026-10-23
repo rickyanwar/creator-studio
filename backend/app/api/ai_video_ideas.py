@@ -37,7 +37,11 @@ def templates(_: CurrentUser):
 @router.get("/ideas")
 def list_ideas(db: DB, _: CurrentUser, status: Optional[str] = None, fanpage_id: Optional[int] = None, limit: int = Query(50, ge=1, le=200)):
     q = db.query(VideoIdea)
-    if status: q = q.filter(VideoIdea.status == status)
+    if status:
+        if status == "active":
+            q = q.filter(VideoIdea.status.in_(("pilot", "proposed", "approved")))
+        else:
+            q = q.filter(VideoIdea.status == status)
     if fanpage_id: q = q.filter(VideoIdea.fanpage_id == fanpage_id)
     return [_item(db, idea) for idea in q.order_by(VideoIdea.created_at.desc()).limit(limit).all()]
 
