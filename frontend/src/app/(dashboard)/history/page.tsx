@@ -32,7 +32,6 @@ import {
   cancelDelivery,
   type DeliveryCopy,
 } from "@/lib/deliveriesApi";
-import { useBrandFilter } from "@/contexts/BrandFilterContext";
 import TodayPlanCard from "@/components/history/TodayPlanCard";
 
 const parseUtc = (s: string) =>
@@ -261,7 +260,8 @@ function formatRelativeHint(isoString: string): string {
 
 export default function HistoryPage() {
   const [activeStatus, setActiveStatus] = useState<ActivityTab>("published");
-  const { selectedBrandId, setSelectedBrandId } = useBrandFilter();
+  // Activity opens on All brands (owner 2026-10-24); it does not follow the brand picked on other pages.
+  const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null);
   const fanpageFilter = selectedBrandId !== null ? String(selectedBrandId) : "";
   const [searchQuery, setSearchQuery] = useState("");
   const [blurred, setBlurred] = useState(false);
@@ -283,9 +283,9 @@ export default function HistoryPage() {
   }, [fanpages]);
 
   const { data: jobStats } = useSWR(
-    fanpageFilter ? ["history-fanpage-stats", fanpageFilter] : null,
+    ["history-fanpage-stats", fanpageFilter || "all"],
     () =>
-      getJobStats({ fanpage_id: Number(fanpageFilter) }).then((r) => r.data),
+      getJobStats(fanpageFilter ? { fanpage_id: Number(fanpageFilter) } : {}).then((r) => r.data),
     { refreshInterval: 60000 }
   );
 
@@ -569,7 +569,7 @@ export default function HistoryPage() {
       </div>
 
       {/* Stat Cards */}
-      {fanpageFilter && jobStats && (
+      {jobStats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="p-3.5 rounded-xl bg-surface border border-line">
             <div className="text-xs text-text2">Published today</div>
