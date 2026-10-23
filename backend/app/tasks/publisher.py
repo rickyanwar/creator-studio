@@ -630,7 +630,9 @@ def recover_stuck_auto_publishes():
 
     Safe to run frequently — publish_job's own atomic pending_publish→
     publishing claim means a job already mid-publish (or already picked up
-    by this same sweep concurrently) is just a no-op the second time."""
+    by this same sweep concurrently) is just a no-op the second time.
+
+    Covers discussion, news, pinterest, facebook_recreate, youtube_clip, ai_video, and ig_recreate."""
     db = SessionLocal()
     try:
         from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
@@ -696,10 +698,21 @@ def recover_stuck_auto_publishes():
             )
             .all()
         )
+        ig_recreate_jobs = (
+            db.query(PublishJob.id)
+            .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.content_type == ContentType.ig_recreate,
+                TargetFanpage.publish_mode == PublishMode.auto,
+            )
+            .all()
+        )
         job_ids = (
             [j for (j,) in discussion_jobs] + [j for (j,) in news_jobs]
             + [j for (j,) in pinterest_jobs] + [j for (j,) in facebook_photo_jobs]
             + [j for (j,) in yt_clip_jobs] + [j for (j,) in ai_video_jobs]
+            + [j for (j,) in ig_recreate_jobs]
         )
         for job_id in job_ids:
             publish_job.delay(job_id)

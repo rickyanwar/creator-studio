@@ -551,6 +551,11 @@ def render_ig_recreate(self, job_id: int):
                     decision.preview_status = "done"
                     decision.preview_error = None
                 db.commit()
+                logger.info("IG-recreate: job %d AI design ready (%s)", job_id, job.design_engine)
+
+                if fanpage.publish_mode == PublishMode.auto:
+                    from app.tasks.publisher import publish_job
+                    publish_job.delay(job.id)
                 return
             else:
                 short_err = "; ".join(res.problems)[:200]

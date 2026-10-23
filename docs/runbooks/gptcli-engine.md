@@ -30,8 +30,8 @@ All settings are in **Settings → AI Image Engine (ChatGPT / Codex)** (`/api/se
 | Night 00:00–`ai_day_start` | Codex only, with a gap of `codex_night_min_gap_s` ± jitter | `night` |
 | Night, Codex not allowed | none: the job is **deferred** to the earlier of the Codex reset and `ai_day_start` | `night` + `deferred` event |
 | Day, gpt serve temporarily unavailable (Redis `gptcli:unavailable_until`) | Codex | `gptcli_unavailable` |
-| Day, Codex share below `codex_share_percent` and the `visual` queue ≥ `codex_overflow_queue_len` | Codex → ChatGPT | `overflow` |
-| Day, Codex share below target (random draw) | Codex → ChatGPT | `share` |
+| Day, the visual queue or gpt serve queue >= codex_overflow_queue_len and Codex usage < 70 % (CODEX_OVERFLOW_MAX_PCT), not resting, weekly not ahead of pace | Codex → ChatGPT | `overflow` |
+| Day, Codex share below codex_share_percent and usage < codex_share_max_pct (random draw) | Codex → ChatGPT | `share` |
 | Day otherwise | ChatGPT → Codex | `gptcli_first` |
 
 Codex is removed from the order when its 5-hour usage reaches `codex_fallback_max_pct` (day) or `codex_night_max_pct` (night), when it is resting (`codex:rest_until`, set after a 429 or at ≥ `codex_rest_pct`), or when the Codex daily cap is reached. Its share is only used while usage is below `codex_share_max_pct`.

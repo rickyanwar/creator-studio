@@ -35,6 +35,7 @@ SHARE_REASONS = ("share", "overflow")
 CHOICE_REASONS = ("share", "overflow", "gptcli_first")
 GPTCLI_QUEUE_LEN_CACHE_KEY = "gptcli:queue_len_cache"
 GPTCLI_QUEUE_LEN_TTL_S = 30
+CODEX_OVERFLOW_MAX_PCT = 70  # owner 2026-10-23: a long queue may use Codex up to 70 % of its 5-hour window
 
 
 @dataclass(frozen=True)
@@ -265,7 +266,8 @@ def plan_engines(
 
         ref_now = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
         wib = ref_now.astimezone(WIB)
-        if usage.weekly_pct is not None and usage.weekly_pct > (wib.weekday() + 1) / 7.0 * 100.0 + 15.0:
+        weekly_ahead = usage.weekly_pct is not None and usage.weekly_pct > (wib.weekday() + 1) / 7.0 * 100.0 + 15.0
+        if weekly_ahead:
             left = 0.0
 
         share_max_pct = getattr(settings, "codex_share_max_pct", 60)
@@ -275,19 +277,18 @@ def plan_engines(
         if overflow_queue_len is None:
             overflow_queue_len = 3
 
-        if left > 0.0 and usage.window_pct < share_max_pct and not codex_resting(db, now):
-            if visual_queue_len() >= overflow_queue_len or gptcli_queue_len(db) >= overflow_queue_len:
-                order = ("9router", "gptcli")
-                reason = "overflow"
-            elif rand() < left:
-                order = ("9router", "gptcli")
-                reason = "share"
-            else:
-                order = ("gptcli", "9router")
-                reason = "gptcli_first"
+        resting = codex_resting(db, now)
+        queue_long = (
+            visual_queue_len() >= overflow_queue_len or gptcli_queue_len(db) >= overflow_queue_len
+            if not resting and not weekly_ahead and usage.window_pct < CODEX_OVERFLOW_MAX_PCT
+            else False
+        )
+        if not resting and not weekly_ahead and queue_long and usage.window_pct < CODEX_OVERFLOW_MAX_PCT:
+            order, reason = ("9router", "gptcli"), "overflow"
+        elif not resting and left > 0.0 and usage.window_pct < share_max_pct and rand() < left:
+            order, reason = ("9router", "gptcli"), "share"
         else:
-            order = ("gptcli", "9router")
-            reason = "gptcli_first"
+            order, reason = ("gptcli", "9router"), "gptcli_first"
 
     order = tuple(eng for eng in order if eng not in exclude)
 
