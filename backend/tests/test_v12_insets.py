@@ -88,7 +88,7 @@ def test_visual_engine_inset_prompt_modes():
         accent="a",
         hero_path="hero.jpg"
     )
-    assert "ASSET SCENE" in prompt
+    assert "BRAND SCENE" in prompt
     assert "Image 2" in prompt
     assert len(refs) == 2
 
@@ -99,7 +99,7 @@ def test_visual_engine_inset_prompt_modes():
         accent="a",
         hero_path="hero.jpg"
     )
-    assert "FULLY AI-IMAGINED SCENE" in prompt
+    assert "GENERATED PLACE OR OBJECT" in prompt
     assert "Image 2" not in prompt
     assert len(refs) == 1
 

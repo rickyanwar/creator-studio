@@ -123,6 +123,13 @@ def _build_quote_attribution(speaker: str, secondary: str, topic: str = "") -> s
     return topic_str
 
 
+def _quote_subtitle(analysis, *, from_radar: bool) -> str:
+    """Speaker line under a quote card: "SURNAME ON TOPIC" for Radar cards, the full name otherwise."""
+    if from_radar:
+        return _build_quote_attribution(analysis.speaker, analysis.secondary, analysis.topic)
+    return (analysis.speaker or "").strip().upper()[:40]
+
+
 def _recreate_niche(ig_source, fanpage) -> str:
     niche = getattr(ig_source, "niche", None) if ig_source else None
     if niche:
@@ -342,10 +349,11 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
             is_breaking=True if (decision and decision.rule in ("fast", "burst")) else False,
             design_analysis_json=__import__("dataclasses").asdict(analysis),
         )
-        # Radar quote/team_radio cards: set attribution subtitle from speaker + secondary
-        # so the "SPEAKER ON TOPIC" line renders correctly on the quote template.
-        if decision and ctype in ("quote", "team_radio"):
-            attr = _build_quote_attribution(analysis.speaker, analysis.secondary, analysis.topic)
+        # Quote/team_radio cards carry the speaker line under the quote. Radar cards keep the
+        # "SPEAKER ON TOPIC" line; every other IG recreate quote shows the speaker's full name
+        # (owner 2026-10-23: a Hamilton quote went out with no name under it).
+        if ctype in ("quote", "team_radio"):
+            attr = _quote_subtitle(analysis, from_radar=decision is not None)
             if attr:
                 job.design_subtitle = attr
         db.add(job)

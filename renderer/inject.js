@@ -160,11 +160,12 @@ function adaptTemplateForAccent(templateJson, lookOrHex) {
     if (!obj) continue;
     const role = obj.placeholderRole;
     if (role === "title") {
-      const blur = (obj.titleHighlightGlow && typeof obj.titleHighlightGlow.blur === "number")
-        ? obj.titleHighlightGlow.blur
-        : 10;
       obj.titleAccentColor = look.secondary;
-      obj.titleHighlightGlow = { color: glow, blur };
+      // Recolour a glow only when the template has one; never add it (owner 2026-10-23: no glow on text).
+      if (obj.titleHighlightGlow) {
+        const blur = typeof obj.titleHighlightGlow.blur === "number" ? obj.titleHighlightGlow.blur : 10;
+        obj.titleHighlightGlow = { color: glow, blur };
+      }
     } else if (role === "caption") {
       if (obj.titleAccentColor) {
         obj.titleAccentColor = look.secondary;

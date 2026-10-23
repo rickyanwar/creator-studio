@@ -87,21 +87,21 @@ def test_names_are_same_person_short_surname_not_matched():
 # --- V5: parse_inset_pick ---
 
 def test_parse_inset_pick_valid():
-    idx, shows = parse_inset_pick('{"index": 2, "shows_hero_person": false}', 3)
+    idx, shows, _ = parse_inset_pick('{"index": 2, "shows_hero_person": false}', 3)
     assert idx == 1
     assert shows is False
 
 def test_parse_inset_pick_shows_hero():
-    idx, shows = parse_inset_pick('{"index": 1, "shows_hero_person": true}', 3)
+    idx, shows, _ = parse_inset_pick('{"index": 1, "shows_hero_person": true}', 3)
     assert idx == 0
     assert shows is True
 
 def test_parse_inset_pick_garbage_conservative():
-    idx, shows = parse_inset_pick("sorry I cannot determine", 3)
+    idx, shows, _ = parse_inset_pick("sorry I cannot determine", 3)
     assert shows is True  # conservative reject
 
 def test_parse_inset_pick_out_of_range():
-    idx, shows = parse_inset_pick('{"index": 99, "shows_hero_person": false}', 3)
+    idx, shows, _ = parse_inset_pick('{"index": 99, "shows_hero_person": false}', 3)
     assert idx == 0  # clamped to 0
 
 # --- V5: plan_photos inset rejection ---
@@ -261,7 +261,7 @@ def test_plan_photos_unique_moment_crop_small_area(mock_fetch, mock_datauri, moc
     mock_fetch.return_value = ("datauri", mock_gi)
     mock_datauri.return_value = "mockuri"
     # Jina vision check: shows_hero_person=False → accepted
-    mock_chat.return_value = '{"index": 1, "shows_hero_person": false}'
+    mock_chat.return_value = '{"index": 1, "shows_hero_person": false, "same_sport": true, "matches_context": true}'
     mock_in_event.return_value = True
 
     analysis = PostAnalysis(

@@ -399,10 +399,11 @@ def test_compose_speaker_design_story_photo_with_matching_moment(monkeypatch):
     assert len(generate_requests) == 1
     req = generate_requests[0]
     assert req.layout == "inset"
-    assert req.refs == ("speaker.jpg", "/tmp/story_photo.jpg", "/tmp/gallery_crash.jpg")
-    assert "TWO circles" in req.prompt
+    # Owner 2026-10-24: one inset by default, so only the best moment photo is sent.
+    assert req.refs == ("speaker.jpg", "/tmp/story_photo.jpg")
+    assert "ONE large circle" in req.prompt
     assert "INSET 1: REAL PHOTO of Marc on gravel trap after crash" in req.prompt
-    assert "INSET 2: REAL PHOTO of crash in turn 4" in req.prompt
+    assert "INSET 2" not in req.prompt
 
 
 def test_compose_speaker_design_story_photo_none_unchanged(monkeypatch):
@@ -696,8 +697,9 @@ def test_prompt_uses_actual_photo_descriptions_and_reference_layout_wording():
     assert "face about 30-35 percent of the card width" in prompt
     assert "eyes at about 25-30 percent of the card height" in prompt
     assert "Marc celebrates the heat win" in prompt
-    assert "pecco podium 2026" in prompt
-    assert "TWO circles of different sizes" in prompt
+    # Owner 2026-10-24: one inset by default; the second moment photo is not used.
+    assert "pecco podium 2026" not in prompt
+    assert "ONE large circle" in prompt
     assert "real background from Image 1, extended to fill the card" in prompt
     assert "The light on the speaker's face matches Image 1" in prompt
     assert "Bottom 42% MUST" not in prompt

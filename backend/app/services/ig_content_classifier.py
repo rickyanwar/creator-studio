@@ -238,7 +238,7 @@ def analyze_ig_post(image_bytes: bytes, caption: str, niche: str = "general", al
         f"- main_subject: person/team/car the post is about.\n"
         f"- secondary_kind: 'person', 'event', or 'none'.\n"
         f"- secondary: second person's name, or a short description of the event being talked about.\n"
-        f"- inset_contexts: list of up to 2 distinct visual contexts (e.g., second person, circuit, team/livery, trophy). Each item is a dictionary with 'description' (short text) and 'query' (web image-search query). Only include highly relevant contexts. MUST NEVER show the hero person.\n"
+        f"- inset_contexts: Give ONE inset_context that best explains the story. Add a second only when the story needs two different things side by side (two drivers compared, before/after, two cars); never two insets about the same thing. Each item is a dictionary with 'description' (short text) and 'query' (web image-search query). MUST NEVER show the hero person.\n"
         f"- inset_context: (legacy) short description...\n"
         f"- inset_query: a web image-search query for the inset_context (e.g. 'Lusail International Circuit night race F1'). Empty if inset_context is empty.\n"
         f"- moment_summary: one sentence summary of what happened.\n"

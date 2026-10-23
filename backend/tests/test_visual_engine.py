@@ -174,7 +174,7 @@ def test_build_team_radio_prompt_rain():
 def test_build_inset_prompt():
     prompt, refs = build_inset_prompt("hero", [{"mode": "real", "desc": "inset", "path": "path.jpg"}], "purpose", "blue", "hero.jpg", sport="MotoGP")
     assert "HERO (Image 1): hero" in prompt
-    assert "INSET 1 (Image 2): REAL PHOTO. inset" in prompt
+    assert "INSET 1 (Image 2): REAL PHOTO of inset" in prompt
     assert "MotoGP social media graphic" in prompt
     assert "best MotoGP media pages" in prompt
     assert "The bottom 35% will be covered later by the fan page's badge and headline text" in prompt

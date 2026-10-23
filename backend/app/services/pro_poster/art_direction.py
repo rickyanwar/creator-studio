@@ -58,6 +58,14 @@ def clean_story(story_text: str | None) -> str | None:
     return cleaned or None
 
 
+STRICT_REFERENCE_SERIES = ("motogp",)  # owner 2026-10-24: ChatGPT may only use the reference images we send, never search or imagine
+
+
+def strict_references(brief: PosterBrief) -> bool:
+    series = (brief.event.series or "").lower().replace(" ", "")
+    return any(s in series for s in STRICT_REFERENCE_SERIES)
+
+
 def choose_layout(brief: PosterBrief, selection: PhotoSelection) -> str:
     """Choose card layout based on available verified references."""
     if selection.hero is not None:
@@ -79,6 +87,7 @@ def direct(
 ) -> ArtDirection:
     """Generate story-driven designer brief prompt and ordered reference images."""
     layout = choose_layout(brief, selection)
+    strict = strict_references(brief)
     if layout == "typographic":
         return ArtDirection(layout="typographic", prompt="", refs=(), allowed_text=())
 
@@ -138,12 +147,19 @@ def direct(
         if brief.event.year is not None:
             loc_parts.append(str(brief.event.year))
         at_event = " ".join(loc_parts)
-        ref_lines.append(
-            f"- Image {img_num}: a real photo of {hero} from a different event. "
-            "Use it ONLY for his face and likeness; ignore his clothing, vehicle and background. "
-            f"Search the web for real photos of {hero} at {at_event} so his kit, helmet and vehicle are accurate for this event. "
-            "Show his face from the front like this photo."
-        )
+        if strict:
+            ref_lines.append(
+                f"- Image {img_num}: a real photo of {hero} from a different event. "
+                "Use it for his exact face and likeness, and keep his kit, helmet and bike exactly as this photo shows them; "
+                "do not change them to another season's design you are not shown. Show his face from the front like this photo."
+            )
+        else:
+            ref_lines.append(
+                f"- Image {img_num}: a real photo of {hero} from a different event. "
+                "Use it ONLY for his face and likeness; ignore his clothing, vehicle and background. "
+                f"Search the web for real photos of {hero} at {at_event} so his kit, helmet and vehicle are accurate for this event. "
+                "Show his face from the front like this photo."
+            )
         img_num += 1
 
     for ctx in selection.context:
@@ -161,9 +177,16 @@ def direct(
         )
         img_num += 1
 
-    ref_lines.append(
-        "If you are not sure how the venue, the kit or the vehicle look at this event, search the web for recent real photos of them first."
-    )
+    if strict:
+        ref_lines.append(
+            "Use ONLY these reference images. Do not search for, copy or invent any other photo, person, bike, kit or venue. "
+            "If something is not shown in a reference image, leave it out or keep it plain."
+        )
+    else:
+        ref_lines.append(
+            "If you are not sure how the venue, the kit or the vehicle look at this event, search the web for recent real photos of them first. "
+            "Never invent a person, a face or a vehicle that is not in the reference images."
+        )
 
     must_do_lines = [
         "What the poster must do:",
@@ -178,9 +201,31 @@ def direct(
         must_do_lines.append(
             "- Do not show any identifiable person's face. Tell the story with the vehicles, the venue, the trophy and graphics."
         )
+    if hero_subj is not None and (selection.hero is not None or selection.face_ref is not None):
+        must_do_lines.append(
+            f"- Show {hero} at exactly the age he has in the reference photos: never older, younger, slimmer or restyled, and never a different person who looks similar. "
+            "If he is framed from the waist up, keep the whole upper body visible (head, both shoulders, any raised arm, hand or trophy) and never slice him at the neck, chest or elbows."
+        )
     main_subject_str = hero_subj.name if hero_subj is not None else "the main subject"
+    context_count = len(selection.context)
+    if strict:
+        if context_count:
+            must_do_lines.append(
+                f"- House style, when it helps the story: {main_subject_str} large in the frame, plus at most ONE circular inset with a thin white ring in the upper part of the image. "
+                "The inset must be cropped from one of the event reference images above (say which in your design), showing a different moment or detail than the main image. "
+                "Never generate an inset that is not in a reference image, and never repeat the same person or pose."
+            )
+        else:
+            must_do_lines.append(
+                f"- No inset: {main_subject_str} large in the frame on the real setting of the reference photo."
+            )
+    else:
+        must_do_lines.append(
+            f"- House style, when it helps the story: {main_subject_str} large in the frame, plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
+            "One inset is enough; never add a second. An inset showing a person must come from a reference image; without one, show only a place or object named in the story. Never repeat the same person or pose in the inset."
+        )
     must_do_lines.append(
-        f"- House style, when it helps the story: {main_subject_str} large in the frame, plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). Never repeat the same person or pose in the inset."
+        f"- Everything in the poster belongs to {brief.event.series}: no athletes, venues or equipment from another sport (no octagon, ring, fighter, football pitch or court)."
     )
     if concept is not None:
         if concept.graphic_words:
