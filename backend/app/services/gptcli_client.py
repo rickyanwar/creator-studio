@@ -43,6 +43,7 @@ DEFAULT_UNAVAILABLE_S = {
 }
 HTTP_MARGIN_S = 120
 MAX_WAIT_S = 1800  # gpt serve runs one job at a time; the wait includes the queue
+TEXT_MAX_WAIT_S = 900  # 15 minutes total wait cap for text jobs
 POST_WAIT_S = 90
 FOLLOW_POLL_S = 15
 RUN_LIMIT_S = 600
@@ -84,6 +85,21 @@ class GptcliError(Exception):
 class GptcliResult:
     png: bytes
     meta: dict      # the response's "gptcli" block as-is
+
+
+@dataclass(frozen=True)
+class GptcliTextResponse:
+    text: str
+    account: str
+    seconds: float
+    status_code: int = 200
+
+    def json(self) -> dict:
+        return {
+            "text": self.text,
+            "account": self.account,
+            "seconds": self.seconds,
+        }
 
 
 def _redis():
@@ -474,4 +490,206 @@ def generate_image(
         unknown_streak += 1
         if unknown_streak >= 2:
             _fail("timeout", "gpt serve lost the job")
+        time.sleep(FOLLOW_POLL_S)
+
+
+def generate_text(
+    cfg: GptcliConfig,
+    prompt: str,
+    *,
+    request_id: str | None = None,
+    http_post=None,
+    max_wait_s: float | None = None,
+) -> GptcliTextResponse:
+    from app.services.prompt_polish import PolishUnavailable
+
+    if not cfg or not cfg.token or not cfg.base_url:
+        raise PolishUnavailable("chatgpt_disabled", "ChatGPT is not configured")
+
+    if not request_id:
+        request_id = "polish-" + hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:16]
+
+    url = f"{cfg.base_url.rstrip('/')}/v1/text"
+    payload = {
+        "prompt": prompt,
+        "thread": "polish",
+    }
+    headers = {
+        "Authorization": f"Bearer {cfg.token}",
+        "Content-Type": "application/json",
+        "X-Request-Id": request_id,
+    }
+
+    effective_max_wait = max_wait_s if max_wait_s is not None else TEXT_MAX_WAIT_S
+    gc1_total = max(RUN_LIMIT_S + HTTP_MARGIN_S, effective_max_wait)
+    gc1_timeout = httpx.Timeout(gc1_total, connect=10.0)
+    initial_timeout = httpx.Timeout(POST_WAIT_S, connect=10.0)
+
+    post_fn = http_post or httpx.post
+
+    def _fail_text(
+        kind: str,
+        message: str,
+        *,
+        retry_after_s: int | None = None,
+    ):
+        clean_msg = _sanitize(message, cfg.token)
+        raise PolishUnavailable(kind, clean_msg, retry_after_s=retry_after_s)
+
+    def _handle_response(resp: httpx.Response) -> GptcliTextResponse:
+        if resp.status_code == 200:
+            try:
+                body = resp.json()
+            except Exception as e:
+                _fail_text("chatgpt_failed", f"Invalid json response: {e}")
+
+            if not isinstance(body, dict):
+                _fail_text("chatgpt_failed", "Response body is not a dict")
+
+            answer = str(body.get("text") or "")
+            meta = body.get("gptcli") if isinstance(body.get("gptcli"), dict) else {}
+            profile = meta.get("profile", "")
+            duration_s = float(meta.get("duration_s") or 0.0)
+            account = f"chatgpt:{profile}"
+            return GptcliTextResponse(text=answer, account=account, seconds=duration_s)
+
+        # non-200
+        try:
+            body = resp.json()
+            error_obj = body.get("error") if isinstance(body, dict) else {}
+            error = error_obj if isinstance(error_obj, dict) else {}
+        except Exception:
+            error = {}
+
+        type_ = str(error.get("type") or "").strip()
+        message = str(error.get("message") or "").strip() or (getattr(resp, "text", "")[:500] if hasattr(resp, "text") else "")
+
+        retry_after_s = None
+        headers_obj = getattr(resp, "headers", {}) or {}
+        if "Retry-After" in headers_obj:
+            try:
+                retry_after_s = int(headers_obj["Retry-After"])
+            except (ValueError, TypeError):
+                retry_after_s = None
+        if retry_after_s is None:
+            ra = error.get("retry_after") or error.get("retry_after_s")
+            if ra is not None:
+                try:
+                    retry_after_s = int(ra)
+                except (ValueError, TypeError):
+                    retry_after_s = None
+
+        sc = resp.status_code
+        if sc == 401 or type_ == "unauthorized":
+            kind = "chatgpt_unauthorized"
+        elif sc == 404 or type_ == "disabled":
+            kind = "chatgpt_disabled"
+        elif sc == 429 or type_ in ("queue_full", "quota", "text_cap_reached"):
+            kind = "chatgpt_busy"
+        elif sc == 503 or type_ == "sleeping":
+            kind = "chatgpt_sleeping"
+        elif sc == 502 and (type_ == "refused" or "refused" in message.lower()):
+            kind = "chatgpt_refused"
+        else:
+            kind = "chatgpt_failed"
+
+        _fail_text(kind, message or type_ or f"HTTP {sc}", retry_after_s=retry_after_s)
+
+    def _repost_and_return() -> GptcliTextResponse:
+        try:
+            re_resp = post_fn(url, json=payload, headers=headers, timeout=gc1_timeout)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as ce:
+            _fail_text("chatgpt_unreachable", f"Connect error: {ce}")
+        except httpx.TimeoutException as te:
+            _fail_text("chatgpt_unreachable", f"Timeout: {te}")
+        except httpx.HTTPError as he:
+            _fail_text("chatgpt_unreachable", f"Transport error: {he}")
+        except OSError as oe:
+            _fail_text("chatgpt_unreachable", f"Socket error: {oe}")
+        except Exception as e:
+            _fail_text("chatgpt_failed", f"Unexpected error: {e}")
+        return _handle_response(re_resp)
+
+    t_start = time.monotonic()
+    resp = None
+    try:
+        resp = post_fn(url, json=payload, headers=headers, timeout=initial_timeout)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        _fail_text("chatgpt_unreachable", f"Connect error: {e}")
+    except httpx.ReadTimeout:
+        pass
+    except httpx.TimeoutException as e:
+        _fail_text("chatgpt_unreachable", f"Timeout: {e}")
+    except httpx.HTTPError as e:
+        _fail_text("chatgpt_unreachable", f"Transport error: {e}")
+    except OSError as e:
+        _fail_text("chatgpt_unreachable", f"Socket error: {e}")
+
+    if resp is not None:
+        return _handle_response(resp)
+
+    # Follow loop on ReadTimeout
+    first_poll = True
+    none_streak = 0
+    unknown_streak = 0
+    last_log_s: float | None = None
+
+    while True:
+        now = time.monotonic()
+        if now - t_start > effective_max_wait:
+            _fail_text("chatgpt_unreachable", f"waited {int(effective_max_wait)} s")
+
+        st = job_status(cfg, request_id)
+        if st is None:
+            if first_poll:
+                return _repost_and_return()
+            none_streak += 1
+            if none_streak >= 4:
+                _fail_text("chatgpt_failed", "gpt serve lost the job")
+            time.sleep(FOLLOW_POLL_S)
+            continue
+
+        first_poll = False
+        none_streak = 0
+        state = st.get("state")
+
+        if state == "unknown":
+            unknown_streak += 1
+            if unknown_streak >= 2:
+                _fail_text("chatgpt_failed", "gpt serve lost the job")
+            time.sleep(FOLLOW_POLL_S)
+            continue
+        else:
+            unknown_streak = 0
+
+        if state in ("done", "failed"):
+            return _repost_and_return()
+
+        if state in ("queued", "running"):
+            running_s = st.get("running_s")
+            if running_s is not None:
+                try:
+                    if float(running_s) > RUN_LIMIT_S:
+                        _fail_text("chatgpt_unreachable", f"job ran longer than {RUN_LIMIT_S} s")
+                except (ValueError, TypeError):
+                    pass
+
+            now = time.monotonic()
+            if last_log_s is None or (now - last_log_s) >= 60.0:
+                queue_pos = st.get("queue_position")
+                logger.info(
+                    "gptcli text: job %s %s (queue_position=%s, running_s=%s)",
+                    request_id,
+                    state,
+                    queue_pos,
+                    running_s,
+                )
+                last_log_s = now
+
+            time.sleep(FOLLOW_POLL_S)
+            continue
+
+        unknown_streak += 1
+        if unknown_streak >= 2:
+            _fail_text("chatgpt_failed", "gpt serve lost the job")
         time.sleep(FOLLOW_POLL_S)

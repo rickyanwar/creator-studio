@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -11,6 +12,12 @@ import httpx
 
 from app.models.settings import Settings
 from app.services.encryption import decrypt
+from app.services.gptcli_client import (
+    GptcliConfig,
+    generate_text,
+    get_gptcli_config,
+    gptcli_unavailable_until,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +115,7 @@ class PolishConfig:
     base_url: str
     token: str
     model: str
+    chatgpt: GptcliConfig | None = None
 
 
 @dataclass
@@ -139,7 +147,17 @@ def get_polish_config(db) -> PolishConfig | None:
         return None
     base_url = str(getattr(row, "prompt_polish_base_url", "http://172.17.0.1:8098") or "http://172.17.0.1:8098").rstrip("/")
     model = str(getattr(row, "prompt_polish_model", "gemini-argon") or "gemini-argon")
-    return PolishConfig(base_url=base_url, token=token, model=model)
+
+    chatgpt_cfg = None
+    try:
+        gcfg = get_gptcli_config(db)
+        if gcfg and gcfg.token and gcfg.base_url:
+            chatgpt_cfg = gcfg
+    except Exception as e:
+        logger.warning("Failed to load gptcli config for prompt polish: %s", e)
+        chatgpt_cfg = None
+
+    return PolishConfig(base_url=base_url, token=token, model=model, chatgpt=chatgpt_cfg)
 
 
 def build_instruction(clips: list[dict], *, template, niche: str | None) -> str:
@@ -357,6 +375,26 @@ def _post_generate(config: PolishConfig, prompt: str, http_post=None):
     return resp
 
 
+def _post_generate_chatgpt(gcfg: GptcliConfig, prompt: str, http_post=None):
+    req_id = "polish-" + hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:16]
+    return generate_text(gcfg, prompt, request_id=req_id, http_post=http_post)
+
+
+def _ask(config: PolishConfig, prompt: str, http_post=None, attempt: int = 1):
+    try:
+        return _post_generate(config, prompt, http_post=http_post)
+    except PolishUnavailable as exc:
+        if config.chatgpt and gptcli_unavailable_until() is None:
+            logger.info("prompt_polish attempt %d: Argon unavailable (%s); asking ChatGPT", attempt, exc.kind)
+            try:
+                return _post_generate_chatgpt(config.chatgpt, prompt, http_post=http_post)
+            except PolishUnavailable as chatgpt_exc:
+                detail_base = exc.detail or exc.kind
+                new_detail = f"{detail_base} | chatgpt: {chatgpt_exc.kind}"
+                raise PolishUnavailable(exc.kind, new_detail, exc.retry_after_s) from chatgpt_exc
+        raise
+
+
 def polish_clips(clips: list[dict], *, template, niche: str | None, config: PolishConfig,
                  max_attempts: int = 3, resume: dict | None = None, http_post=None) -> PolishResult:
     """Rewrite clip prompts via Argon. Raises PolishUnavailable on infra errors."""
@@ -400,7 +438,7 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
             prompt = prompt + "\n" + "\n".join(feedback_lines)
 
         try:
-            resp = _post_generate(config, prompt, http_post=http_post)
+            resp = _ask(config, prompt, http_post=http_post, attempt=attempt)
         except PolishUnavailable as exc:
             if prev_answer_text is not None:
                 logger.info(
