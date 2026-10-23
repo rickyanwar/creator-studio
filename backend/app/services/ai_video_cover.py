@@ -6,8 +6,9 @@ Owner decisions (2026-10-21):
   video overlay puts it. The text is never drawn by the image model.
 - The background is a Google Flow text-to-image picture with the same meaning as the video; it does
   not have to be a frame of the video. Its top ~40% stays calm so the title reads.
-- The cover is the video's first frame (FB Reels ignores API cover images), shown ~0.3 s then faded
-  out over 0.2 s while the narration keeps playing.
+- The cover is the video's first frame (FB Reels ignores API cover images), shown ~1 s then faded
+  out over 0.4 s while the narration keeps playing. 0.3 s was too short: FB Reels often picked a
+  frame after the cover as the thumbnail (owner report 2026-10-24).
 """
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ import html
 import json
 import re
 
-COVER_HOLD_SECONDS = 0.3
-COVER_FADE_SECONDS = 0.2
+COVER_HOLD_SECONDS = 1.0
+COVER_FADE_SECONDS = 0.4
 MAX_COVER_LINES = 4
 MAX_LINE_CHARS = 14
 MAX_COVER_WORDS = 8

@@ -1,8 +1,26 @@
 import enum
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Enum, Float, JSON, func
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Enum, Float, JSON, func, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.database import Base
+
+
+@event.listens_for(Engine, "before_cursor_execute", retval=True)
+def _ensure_sqlite_fanpage_columns(conn, cursor, statement, parameters, context, executemany):
+    if statement and "INSERT INTO target_fanpages" in statement and conn.dialect.name == "sqlite":
+        try:
+            cursor.execute("PRAGMA table_info(target_fanpages)")
+            cols = {row[1] for row in cursor.fetchall()}
+            if cols and "badge_breaking_enabled" not in cols:
+                cursor.execute("ALTER TABLE target_fanpages ADD COLUMN badge_breaking_enabled INTEGER NOT NULL DEFAULT 1")
+            if cols and "badge_discussion_enabled" not in cols:
+                cursor.execute("ALTER TABLE target_fanpages ADD COLUMN badge_discussion_enabled INTEGER NOT NULL DEFAULT 1")
+            if cols and "news_badge_percent" not in cols:
+                cursor.execute("ALTER TABLE target_fanpages ADD COLUMN news_badge_percent INTEGER NOT NULL DEFAULT 100")
+        except Exception:
+            pass
+    return statement, parameters
 
 
 class PublishMode(str, enum.Enum):
@@ -94,6 +112,9 @@ class TargetFanpage(Base):
     # fallback. Renderer hides the badge entirely (see inject.js's "label"
     # handling) when there's neither an override nor a niche to fall back to.
     mode2_badge_text = Column(String(64), nullable=True)
+    badge_breaking_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    badge_discussion_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    news_badge_percent = Column(Integer, default=100, nullable=False, server_default="100")
     mode2_source_attribution = Column(Boolean, default=True, nullable=False, server_default="true")
     # Opt-in editorial AI gate: before copywriting, 9Router web-search-fact-checks
     # the article and judges whether it's worth posting/likely engagement — a

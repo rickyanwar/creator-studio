@@ -285,6 +285,85 @@ export function DesignTab({
       {/* ── Section: Design Templates ────────────────────── */}
       <DesignTemplatesSection fanpage={fp} onSaved={() => mutate()} />
 
+      {/* ── Section: Badge Switches ──────────────────────── */}
+      <section className="bg-surface border border-line rounded-2xl p-6 space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-text">Badge Switches</h2>
+          <p className="text-xs text-text2 mt-0.5">
+            Control which badge labels appear on rendered template cards.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between p-3 rounded-lg border border-line">
+            <div>
+              <label htmlFor="badge-breaking-enabled" className="text-xs font-medium text-text cursor-pointer">
+                Show BREAKING badge on breaking news
+              </label>
+              <p className="text-[11px] text-text2 mt-0.5">
+                Off: breaking news shows the normal news badge.
+              </p>
+            </div>
+            <input
+              id="badge-breaking-enabled"
+              type="checkbox"
+              className="w-4 h-4 rounded accent-pri shrink-0 cursor-pointer ml-3"
+              checked={(form.badge_breaking_enabled as boolean) ?? true}
+              onChange={(e) => set("badge_breaking_enabled", e.target.checked)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-lg border border-line">
+            <div>
+              <label htmlFor="badge-discussion-enabled" className="text-xs font-medium text-text cursor-pointer">
+                Show DISCUSSION / HOT TAKE badge
+              </label>
+              <p className="text-[11px] text-text2 mt-0.5">
+                Off: discussion cards show no label badge.
+              </p>
+            </div>
+            <input
+              id="badge-discussion-enabled"
+              type="checkbox"
+              className="w-4 h-4 rounded accent-pri shrink-0 cursor-pointer ml-3"
+              checked={(form.badge_discussion_enabled as boolean) ?? true}
+              onChange={(e) => set("badge_discussion_enabled", e.target.checked)}
+            />
+          </div>
+
+          <div className="p-3 rounded-lg border border-line space-y-2">
+            <div className="flex items-center justify-between">
+              <label htmlFor="news-badge-percent" className="text-xs font-medium text-text cursor-pointer">
+                News badge on (% of news cards)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="news-badge-percent"
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="input-rect w-20 text-right text-xs py-1 px-2"
+                  value={form.news_badge_percent ?? 100}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === "") {
+                      set("news_badge_percent", 100);
+                      return;
+                    }
+                    const val = parseInt(raw, 10);
+                    set("news_badge_percent", isNaN(val) ? 100 : Math.max(0, Math.min(100, val)));
+                  }}
+                />
+                <span className="text-xs text-text2">%</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-text2">
+              100 = every card, 0 = no badge at all, 50 = about half of the cards.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* ── Section: Image Framing ───────────────────────── */}
       <section className="bg-surface border border-line rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between">

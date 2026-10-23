@@ -103,6 +103,9 @@ export interface Fanpage {
   mode2_caption_custom_prompt: string;
   mode2_title_max_chars: number;
   mode2_badge_text: string | null;
+  badge_breaking_enabled?: boolean;
+  badge_discussion_enabled?: boolean;
+  news_badge_percent?: number;
   mode2_source_attribution: boolean;
   mode2_editorial_gate_enabled: boolean;
   // ── Mode 4: Discussion / hot-take content ──
