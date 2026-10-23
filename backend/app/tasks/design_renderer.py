@@ -12,6 +12,7 @@ mode; render_design itself can also be triggered manually from the UI.
 """
 
 import base64
+import hashlib
 import logging
 import os
 import re
@@ -475,12 +476,21 @@ def render_card_png(
     if is_split:
         focus_points = align_split_focus_points(focus_points)
 
+    job_id = getattr(job, "id", None)
     if label is not None:
         news_badge_text = label
+        if news_badge_text.upper() in _FB_DISCUSSION_LABELS:
+            # Discussion labels follow only the discussion switch, never the news percentage.
+            news_badge_text = _discussion_badge_text(fanpage, news_badge_text)
+        elif news_badge_text:
+            if not _is_badge_selected(job_id, _badge_percent(fanpage)):
+                news_badge_text = ""
+            elif news_badge_text == "BREAKING" and getattr(fanpage, "badge_breaking_enabled", None) is False:
+                news_badge_text = _news_badge_text(fanpage, breaking=False, job_id=job_id)
     else:
         category = getattr(template, "category", "news") or "news"
         breaking = getattr(job, "is_breaking", False)
-        news_badge_text = _news_badge_text(fanpage, breaking=breaking) if category == "news" else ""
+        news_badge_text = _news_badge_text(fanpage, breaking=breaking, job_id=job_id) if category == "news" else ""
 
     title = clean_title_for_render(title)
     template_json = clear_template_text_objects(template_json)
@@ -930,7 +940,7 @@ def render_discussion(self, job_id: int):
                 "width": template.canvas_width,
                 "height": template.canvas_height,
                 "title": d_title,
-                "label": job.design_subtitle or "DISCUSSION",
+                "label": _discussion_badge_text(fanpage, job.design_subtitle),
                 "watermark": fanpage.watermark_text or "",
                 "watermark_image": watermark_datauri(fanpage),
                 "image_srcs": image_srcs,
@@ -1193,16 +1203,57 @@ def render_pinterest(self, job_id: int):
         db.close()
 
 
-def _news_badge_text(fanpage, breaking: bool = False) -> str:
+def _badge_percent(fanpage) -> int:
+    """news_badge_percent as an int 0-100; anything else (missing, None, a mock) counts as 100 (always a badge)."""
+    value = getattr(fanpage, "news_badge_percent", None)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 100
+    return max(0, min(100, value))
+
+
+def _is_badge_selected(job_id: int | None, percent: int) -> bool:
+    if job_id is None:
+        return True
+    if percent >= 100:
+        return True
+    if percent <= 0:
+        return False
+    slot = int(hashlib.sha1(f"badge:{job_id}".encode()).hexdigest(), 16) % 100
+    return slot < percent
+
+
+def _news_badge_text(fanpage, breaking: bool = False, job_id: int | None = None) -> str:
     """The small pill badge above a News template's headline (e.g. "F1
     NEWS" or "BREAKING")."""
-    if breaking:
+    if not _is_badge_selected(job_id, _badge_percent(fanpage)):
+        return ""
+    breaking_enabled = getattr(fanpage, "badge_breaking_enabled", None) is not False
+    if breaking and breaking_enabled:
         return "BREAKING"
     if getattr(fanpage, "mode2_badge_text", None):
         return fanpage.mode2_badge_text
     if getattr(fanpage, "mode2_gallery_niches", None):
         return f"{fanpage.mode2_gallery_niches[0]} NEWS"
     return ""
+
+
+def _discussion_badge_text(fanpage, label: str | None = None) -> str:
+    """The label badge on a Discussion template ("DISCUSSION" or "HOT TAKE"),
+    or empty string when badge_discussion_enabled is False."""
+    if getattr(fanpage, "badge_discussion_enabled", None) is False:
+        return ""
+    return label or "DISCUSSION"
+
+
+def badge_label_for(
+    fanpage, *, kind: str, label: str = "", breaking: bool = False, job_id: int | None = None
+) -> str:
+    """Resolve card badge label for a fanpage by kind ('news' or 'discussion')."""
+    if kind == "news":
+        return _news_badge_text(fanpage, breaking=breaking, job_id=job_id)
+    if kind in ("discussion", "hot_take"):
+        return _discussion_badge_text(fanpage, label)
+    return label
 
 
 def _facebook_photo_category(db, job) -> str:
@@ -1411,11 +1462,15 @@ def render_facebook_photo(self, job_id: int):
         # is the subject (used for the photo only, never rendered); the News
         # pill badge only on news cards.
         if category == "discussion":
-            subtitle, label = "", job.design_subtitle or "DISCUSSION"
+            subtitle, label = "", _discussion_badge_text(fanpage, job.design_subtitle)
         elif category == "quote":
             subtitle, label = job.design_subtitle or "", ""
         else:
-            subtitle, label = "", _news_badge_text(fanpage)
+            subtitle, label = "", _news_badge_text(
+                fanpage,
+                breaking=getattr(job, "is_breaking", False),
+                job_id=getattr(job, "id", None),
+            )
 
         template_json = clear_template_text_objects(template_json)
         d_title = clean_title_for_render(job.design_title or "")

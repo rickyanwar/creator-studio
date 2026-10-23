@@ -64,6 +64,9 @@ class FanpageBase(BaseModel):
     # design_renderer.render_design. None/empty falls back to
     # "{mode2_gallery_niches[0]} NEWS" at render time.
     mode2_badge_text: Optional[str] = None
+    badge_breaking_enabled: bool = True
+    badge_discussion_enabled: bool = True
+    news_badge_percent: int = Field(100, ge=0, le=100)
     mode2_source_attribution: bool = True
     mode2_editorial_gate_enabled: bool = False
 
@@ -248,6 +251,9 @@ class FanpageBase(BaseModel):
 class FanpageUpdate(FanpageBase):
     brand_override: Optional[bool] = None
     ig_mode: Optional[Literal["repost", "recreate_template", "recreate_chatgpt"]] = None
+    badge_breaking_enabled: Optional[bool] = None
+    badge_discussion_enabled: Optional[bool] = None
+    news_badge_percent: Optional[int] = Field(None, ge=0, le=100)
 
     @field_validator("timezone", mode="before")
     def validate_timezone(cls, v):
@@ -308,6 +314,16 @@ class FanpageOut(FanpageBase):
     @classmethod
     def clean_brand_override(cls, v):
         return False if v is None else v
+
+    @field_validator("badge_breaking_enabled", "badge_discussion_enabled", mode="before")
+    @classmethod
+    def clean_badge_enabled(cls, v):
+        return True if v is None else v
+
+    @field_validator("news_badge_percent", mode="before")
+    @classmethod
+    def clean_news_badge_percent(cls, v):
+        return 100 if v is None else v
 
     @computed_field
     @property
