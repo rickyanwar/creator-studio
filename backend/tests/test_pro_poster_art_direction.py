@@ -213,7 +213,7 @@ def test_hero_prompt_contents():
     assert "**" not in p
     assert 'Story text (from the source article):\n"""Nicolo Bulega claimed three race wins at Jerez. He is now fifth in all-time WorldSBK victories."""' in p
     assert "ONE strongest visual idea" in p
-    assert "Tell THIS story" in p
+    assert "the page's house style, the same as its Instagram cards" in p
     assert "- The bottom 35% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork." in p
     assert "bottom 42%" not in p
     assert "Keep the top 12% of the image free of insets" in p
@@ -314,10 +314,9 @@ def test_house_style_inset_line_always_present():
     brief_hero = _make_brief(subjects=(Subject(name="Max Verstappen", role="hero"),))
     p_hero = direct(brief_hero, PhotoSelection(hero=None, context=(ctx,))).prompt
     assert (
-        "- House style, when it helps the story: Max Verstappen large in the frame, "
-        "plus ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners) showing a DIFFERENT moment "
-        "or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
-        "One inset is enough; never add a second."
+        "- Layout: Max Verstappen large in the frame, plus ONE inset inside a large circle (about 40-45% of the card width) "
+        "with a clean solid white ring and a soft drop shadow, upper-left, its top edge no higher than 12% of the image height "
+        "(the page logo sits in the top corners); the hero overlaps the edge of the circle, in front of it, with a soft contact shadow."
     ) in p_hero
     assert "Put the inset in the upper 40%" not in p_hero
 
@@ -325,10 +324,9 @@ def test_house_style_inset_line_always_present():
     brief_no_hero = _make_brief(subjects=())
     p_no_hero = direct(brief_no_hero, PhotoSelection(hero=None, context=(ctx,))).prompt
     assert (
-        "- House style, when it helps the story: the main subject large in the frame, "
-        "plus ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners) showing a DIFFERENT moment "
-        "or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
-        "One inset is enough; never add a second."
+        "- Layout: the main subject large in the frame, plus ONE inset inside a large circle (about 40-45% of the card width) "
+        "with a clean solid white ring and a soft drop shadow, upper-left, its top edge no higher than 12% of the image height "
+        "(the page logo sits in the top corners); the hero overlaps the edge of the circle, in front of it, with a soft contact shadow."
     ) in p_no_hero
     assert "Put the inset in the upper 40%" not in p_no_hero
 
@@ -356,7 +354,7 @@ def test_realism_and_template_space_sections_present():
     assert "Space for the fan page template:" in p
     assert "- The bottom 35% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork." in p
     assert "bottom 42%" not in p
-    assert "- Keep the top 12% of the image free of insets, faces and graphic words: the page logo and name sit in the top corners." in p
+    assert "- Keep the top 12% of the image free of insets and faces: the page logo and name sit in the top corners." in p
 
     # Avoid section
     assert "Do NOT include anything below (very important):" in p
@@ -496,7 +494,8 @@ def test_concept_section_present_when_given_and_absent_without():
 
     assert "Visual concept (decided by the art director — follow it):" in p
     assert "- Key moment: Max wins championship" in p
-    assert "- Main image: Max standing on car with #1 sign matching Image 1" in p
+    # Owner 2026-10-24: hero cards use the Instagram house style, so the concept never stages a new main scene.
+    assert "- Main image:" not in p
     assert "- Inset: Trophy on pedestal" in p
     assert "- Colour palette: Navy blue, red, gold" in p
     assert "- Mood: celebratory and intense" in p
@@ -504,7 +503,7 @@ def test_concept_section_present_when_given_and_absent_without():
     # Verify positioning: after Reference photos, before What the poster must do
     pos_refs = p.index("Reference photos")
     pos_concept = p.index("Visual concept (decided by the art director — follow it):")
-    pos_must_do = p.index("What the poster must do:")
+    pos_must_do = p.index("What the poster must do")
     assert pos_refs < pos_concept < pos_must_do
 
 
@@ -551,10 +550,9 @@ def test_concept_graphic_words_line_cases():
         graphic_words=("P9", "2X"),
     )
     p_words = direct(brief, selection, concept=concept_words).prompt
-    assert (
-        '- Graphic words: use exactly these and nothing else, each at most once, spelled exactly letter by letter: "P9", "2X". '
-        'Place them in the upper half of the image, well above the bottom 35% (the page badge sits just above that area).'
-    ) in p_words
+    # Owner 2026-10-24: the artwork never carries words, even when the concept suggests some.
+    assert "- Graphic words:" not in p_words and '"P9"' not in p_words
+    assert "- No words, letters or numbers anywhere in the artwork" in p_words
     assert generic_line not in p_words
 
     # 2. Without graphic words (empty tuple)
@@ -565,12 +563,13 @@ def test_concept_graphic_words_line_cases():
         graphic_words=(),
     )
     p_no_words = direct(brief, selection, concept=concept_no_words).prompt
-    assert "- Do not add any words or numbers." in p_no_words
+    assert "- No words, letters or numbers anywhere in the artwork" in p_no_words
     assert generic_line not in p_no_words
 
     # 3. No concept given -> generic line kept
     p_generic = direct(brief, selection, concept=None).prompt
-    assert generic_line in p_generic
+    assert generic_line not in p_generic
+    assert "- No words, letters or numbers anywhere in the artwork" in p_generic
     assert "- Graphic words: use exactly these" not in p_generic
     assert "- Do not add any words or numbers." not in p_generic
 

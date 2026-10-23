@@ -6,6 +6,7 @@ poster prompt and ordered reference images for the visual engine.
 from __future__ import annotations
 
 from app.services.prompt_rules import NO_SPLIT_LINE, TEMPLATE_TEXT_ZONE_PCT
+from app.services.visual_engine import hero_framing_clause
 from app.services.pro_poster.types import (
     ArtDirection,
     PhotoSelection,
@@ -188,14 +189,25 @@ def direct(
             "Never invent a person, a face or a vehicle that is not in the reference images."
         )
 
-    must_do_lines = [
-        "What the poster must do:",
-        "- Tell THIS story, not just show the athlete on a new background. Show the moment, the result or what is at stake as the story describes it (for example the decisive move, the win, the trophy or podium, the penalty, the comeback, the record), in the real setting of this event.",
-        "- Stay true to the story: do not invent results, places, people or objects that contradict it. It must be physically logical and believable as a real photo.",
-    ]
+    has_person = hero_subj is not None and (selection.hero is not None or selection.face_ref is not None)
+    if has_person:
+        # Owner 2026-10-24: news cards look like the page's Instagram recreate cards - a big close hero, one inset, no words.
+        must_do_lines = [
+            "What the poster must do (the page's house style, the same as its Instagram cards):",
+            f"- {hero} is the hero: a professional cut-out with clean hair edges, close and BIG, placed center-right. " + hero_framing_clause("center-right").split(". ", 1)[1],
+            "- Behind him: the real event background from the reference photos, extended to fill the card, softly out of focus and slightly darkened, so he stands out. No extra scenery, objects or effects added.",
+            "- The inset carries the story's context (what the headline is about); the hero is simply the person the story is about. Do not stage a new scene or pose for him.",
+            "- Stay true to the story: do not invent results, places, people or objects. It must look like a real photo composited by a professional designer.",
+        ]
+    else:
+        must_do_lines = [
+            "What the poster must do:",
+            "- Tell THIS story, not just show a vehicle on a new background. Show the moment, the result or what is at stake as the story describes it, in the real setting of this event.",
+            "- Stay true to the story: do not invent results, places, people or objects that contradict it. It must be physically logical and believable as a real photo.",
+        ]
     if hero_subj is not None and (selection.hero is not None or selection.face_ref is not None):
         must_do_lines.append(
-            f"- {hero} must be recognisably himself: show his face clearly, turned toward the camera (front or three-quarter view), with his real face and likeness from the reference photos; never show him only from behind or with his face hidden. Keep his face high in the image: eyes at about 25-35% of the image height and the chin above the middle of the image, so the headline never covers it."
+            f"- {hero} must be recognisably himself: show his face clearly, turned toward the camera (front or three-quarter view), with his real face and likeness from the reference photos; never show him only from behind or with his face hidden."
         )
     if selection.hero is None and selection.face_ref is None:
         must_do_lines.append(
@@ -211,7 +223,7 @@ def direct(
     if strict:
         if context_count:
             must_do_lines.append(
-                f"- House style, when it helps the story: {main_subject_str} large in the frame, plus at most ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners). "
+                f"- Layout: {main_subject_str} large in the frame, plus at most ONE inset inside a large circle (about 40-45% of the card width) with a clean solid white ring and a soft drop shadow, upper-left, its top edge no higher than 12% of the image height (the page logo sits in the top corners); the hero overlaps the edge of the circle, in front of it, with a soft contact shadow. "
                 "The inset must be cropped from one of the event reference images above (say which in your design), showing a different moment or detail than the main image. "
                 "Never generate an inset that is not in a reference image, and never repeat the same person or pose."
             )
@@ -221,25 +233,15 @@ def direct(
             )
     else:
         must_do_lines.append(
-            f"- House style, when it helps the story: {main_subject_str} large in the frame, plus ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners) showing a DIFFERENT moment or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
+            f"- Layout: {main_subject_str} large in the frame, plus ONE inset inside a large circle (about 40-45% of the card width) with a clean solid white ring and a soft drop shadow, upper-left, its top edge no higher than 12% of the image height (the page logo sits in the top corners); the hero overlaps the edge of the circle, in front of it, with a soft contact shadow. The inset shows a DIFFERENT moment or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
             "One inset is enough; never add a second. An inset showing a person must come from a reference image; without one, show only a place or object named in the story. Never repeat the same person or pose in the inset."
         )
     must_do_lines.append(
         f"- Everything in the poster belongs to {brief.event.series}: no athletes, venues or equipment from another sport (no octagon, ring, fighter, football pitch or court)."
     )
-    if concept is not None:
-        if concept.graphic_words:
-            words_joined = ", ".join(f'"{w}"' for w in concept.graphic_words)
-            must_do_lines.append(
-                f'- Graphic words: use exactly these and nothing else, each at most once, spelled exactly letter by letter: {words_joined}. '
-                f'Place them in the upper half of the image, well above the bottom {TEMPLATE_TEXT_ZONE_PCT}% (the page badge sits just above that area).'
-            )
-        else:
-            must_do_lines.append("- Do not add any words or numbers.")
-    else:
-        must_do_lines.append(
-            f"- You may add at most three short graphic words or numbers that come from the story (for example a finishing position, a race count or a record), spelled exactly letter by letter, placed in the upper half of the image, well above the bottom {TEMPLATE_TEXT_ZONE_PCT}%. No other text."
-        )
+    must_do_lines.append(
+        "- No words, letters or numbers anywhere in the artwork (no graphic words, no scores, no years): the page template adds the headline later."
+    )
 
     realism_lines = [
         "Photographic realism (very important):",
@@ -251,7 +253,7 @@ def direct(
     template_lines = [
         "Space for the fan page template:",
         f"- The bottom {TEMPLATE_TEXT_ZONE_PCT}% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork.",
-        "- Keep the top 12% of the image free of insets, faces and graphic words: the page logo and name sit in the top corners.",
+        "- Keep the top 12% of the image free of insets and faces: the page logo and name sit in the top corners.",
     ]
 
     avoid_lines = [
@@ -278,8 +280,9 @@ def direct(
         concept_block_lines = [
             "Visual concept (decided by the art director — follow it):",
             f"- Key moment: {concept.key_moment.strip()}",
-            f"- Main image: {concept.scene.strip()}",
         ]
+        if not has_person:
+            concept_block_lines.append(f"- Main image: {concept.scene.strip()}")
         if concept.inset and concept.inset.strip().lower() != "none":
             concept_block_lines.append(f"- Inset: {concept.inset.strip()}")
         if concept.palette and concept.palette.strip():

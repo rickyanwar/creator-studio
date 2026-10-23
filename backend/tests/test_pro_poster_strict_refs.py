@@ -49,3 +49,17 @@ def test_concept_prompt_is_strict_for_motogp_only():
     f1 = build_concept_prompt(_make_brief(), sel, headline="Verstappen wins", story_text="Verstappen won.")
     assert "STRICT for this series" in moto and "STRICT for this series" not in f1
     assert "Use one inset at most." in f1 and "nothing from another sport" in f1
+
+
+def test_hero_news_card_uses_the_instagram_house_style_without_words():
+    """Owner 2026-10-24: a news card with a person looks like the IG recreate card - big close hero, one inset, no words."""
+    from app.services.pro_poster.types import PosterConcept
+    concept = PosterConcept(key_moment="Antonelli leads", scene="Antonelli on a podium in Texas", inset="the Mercedes on track",
+                            graphic_words=("102", "TEXAS"))
+    prompt = direct(_make_brief(), PhotoSelection(hero=_make_check(), context=(_make_check(role="context", path="/c.jpg"),)),
+                    concept=concept).prompt
+    assert "the same as its Instagram cards" in prompt and "close and BIG" in prompt
+    assert "softly out of focus" in prompt and "Do not stage a new scene" in prompt
+    assert "- Main image:" not in prompt and '"102"' not in prompt and "- Graphic words:" not in prompt
+    assert "- No words, letters or numbers anywhere in the artwork" in prompt
+    assert "large circle (about 40-45% of the card width)" in prompt
