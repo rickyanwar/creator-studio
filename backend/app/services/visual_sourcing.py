@@ -29,7 +29,7 @@ from sqlalchemy import func, cast, String
 from app.models.gallery import GalleryKeyword, GalleryImage
 from app.models.f1_drivers import F1Driver
 from app.services.gallery_filters import not_keyword_mismatch
-from app.services.ig_content_classifier import PostAnalysis
+from app.services.ig_content_classifier import PostAnalysis, is_f1_niche
 from app.services.design_images import (
     fetch_subject_datauri,
     _vision_datauri,
@@ -64,7 +64,90 @@ class PhotoPlan:
     notes: tuple[str, ...]
     inset_is_distinct: bool = True
 
-def wanted_labels(analysis: PostAnalysis, layout: str) -> dict[str, str]:
+def _gallery_niche_condition(niche: str | None):
+    if not niche or niche.strip().lower() in ("", "general"):
+        return None
+    niche_clean = niche.strip().lower()
+    if niche_clean == "motorsport":
+        return or_(
+            GalleryKeyword.niche.is_(None),
+            func.lower(GalleryKeyword.niche).in_(["motorsport", "f1", "motogp"])
+        )
+    return or_(
+        GalleryKeyword.niche.is_(None),
+        func.lower(GalleryKeyword.niche) == niche_clean
+    )
+
+def _derive_sport(niche: str) -> str:
+    n = (niche or "").strip().lower()
+    if is_f1_niche([n]) or "f1" in n or "formula 1" in n or "formula1" in n:
+        return "Formula 1"
+    if "motogp" in n:
+        return "MotoGP"
+    if "ufc" in n:
+        return "UFC"
+    return niche or "Formula 1"
+
+def _is_in_f1_grid(db, name: str) -> bool:
+    if not db or not name or not name.strip():
+        return False
+    clean = name.strip()
+    conds = [
+        func.lower(F1Driver.surname) == clean.lower(),
+        func.lower(F1Driver.full_name) == clean.lower(),
+    ]
+    parts = clean.split()
+    if len(parts) >= 2 and len(parts[-1]) >= 3:
+        conds.append(func.lower(F1Driver.surname) == parts[-1].lower())
+    try:
+        return db.query(F1Driver).filter(or_(*conds)).first() is not None
+    except Exception:
+        return False
+
+def _is_person_subject(db, analysis: PostAnalysis | None, subject: str) -> bool:
+    """Decide whether subject is a person.
+    A subject that matches a team (F1Driver.team_name ILIKE '%subject%') is NOT a person.
+    A subject is a person if it equals (case-insensitive) analysis.people or analysis.speaker,
+    or appears as a driver in f1_drivers.
+    """
+    if not subject or not subject.strip():
+        return False
+    s = subject.strip()
+
+    if db is not None:
+        try:
+            team_match = db.query(F1Driver).filter(
+                F1Driver.team_name.ilike(f"%{s}%")
+            ).first()
+            if team_match is not None:
+                return False
+        except Exception:
+            pass
+
+    if analysis:
+        if analysis.speaker and s.lower() == analysis.speaker.strip().lower():
+            return True
+        for p in (analysis.people or ()):
+            if p and s.lower() == p.strip().lower():
+                return True
+        if analysis.secondary_kind == 'person' and analysis.secondary and s.lower() == analysis.secondary.strip().lower():
+            return True
+        if analysis.main_subject and s.lower() == analysis.main_subject.strip().lower():
+            if len(s.split()) >= 2:
+                return True
+
+    if db is not None:
+        try:
+            from app.services.f1_drivers import get_driver
+            driver = get_driver(db, s)
+            if driver is not None:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+def wanted_labels(analysis: PostAnalysis, layout: str, db=None, niche: str = "f1") -> dict[str, str]:
     labels = {}
     
     if layout == 'action':
@@ -72,7 +155,7 @@ def wanted_labels(analysis: PostAnalysis, layout: str) -> dict[str, str]:
     else:
         labels['hero'] = 'face'
         
-    if layout == 'inset':
+    if layout in ('inset', 'inset2'):
         if analysis.secondary_kind == 'person':
             summary_lower = analysis.moment_summary.lower()
             racing_keywords = ['crash', 'overtake', 'incident', 'lap', 'track', 'race', 'qualifying', 'practice', 'session', 'sector', 'straight']
@@ -85,7 +168,18 @@ def wanted_labels(analysis: PostAnalysis, layout: str) -> dict[str, str]:
             
     if analysis.type == 'team_radio':
         labels['extra'] = 'action'
-        
+
+    if db is not None:
+        is_f1 = is_f1_niche([niche]) or "f1" in (niche or "").lower() or "formula" in (niche or "").lower()
+        if is_f1:
+            hero_subj = analysis.speaker or analysis.main_subject
+            if _is_person_subject(db, analysis, hero_subj) and not _is_in_f1_grid(db, hero_subj):
+                labels['hero'] = 'face'
+            if layout in ('inset', 'inset2'):
+                inset_subj = analysis.secondary or analysis.inset_context
+                if (_is_person_subject(db, analysis, inset_subj) or analysis.secondary_kind == 'person') and not _is_in_f1_grid(db, inset_subj):
+                    labels['inset'] = 'face'
+
     return labels
 
 def build_pick_prompt(num_candidates: int, moment_summary: str, secondary: str, layout: str, role: str) -> str:
@@ -98,21 +192,25 @@ def build_pick_prompt(num_candidates: int, moment_summary: str, secondary: str, 
         "the mood, subject, and action of the summary. If unsure, reply '1'."
     )
 
-def build_inset_pick_prompt(num_candidates: int, moment_summary: str, inset_context: str, hero_name: str) -> str:
+def build_inset_pick_prompt(num_candidates: int, moment_summary: str, inset_context: str, hero_name: str, niche: str = "") -> str:
+    sport = _derive_sport(niche)
     return (
-        f"You are picking a photo for the 'inset' slot in an 'inset' graphic.\n"
-        f"The post is about: {moment_summary}\n"
-        f"Inset context required: {inset_context}\n"
-        f"Hero person to AVOID (including their close-up helmet): {hero_name}\n\n"
-        f"We have {num_candidates} candidate photos.\n"
-        "Reply ONLY with a JSON object on one line: "
-        '{\"index\": <1-based integer>, \"shows_hero_person\": <true|false>}\n'
-        "shows_hero_person=true if the candidate clearly shows the hero person's face or their close-up helmet. "
-        "If unsure about index, use 1."
+        f"You choose the photo for the small circular inset of a {sport} news graphic.\n"
+        f"The story: {moment_summary}\n"
+        f"The inset must show: {inset_context}\n"
+        f"The main photo already shows {hero_name}, so the inset must NOT show {hero_name}'s face or close-up helmet.\n\n"
+        f"Here are {num_candidates} candidate photos, numbered in order from 1.\n"
+        f"Pick the ONE candidate that is clearly a {sport} photo AND clearly shows what the inset must show. "
+        "A photo from another sport (for example a fighter, an octagon, a football pitch) or a generic photo that does not show it "
+        "does not count, even if a place name matches.\n"
+        "Reply ONLY with one line of JSON: "
+        '{"index": <number of the best candidate>, "shows_hero_person": <true|false>, "matches_context": <true|false>}\n'
+        f"matches_context is true only when that candidate is clearly {sport} and clearly shows what the inset must show; "
+        "if no candidate fits, still give the closest index but set matches_context to false."
     )
 
-def parse_inset_pick(raw: str, n: int) -> tuple[int, bool]:
-    """Returns (0-based index, shows_hero_person). Fallback: (0, True) = reject candidate."""
+def parse_inset_pick(raw: str, n: int) -> tuple[int, bool, bool]:
+    """Returns (0-based index, shows_hero_person, matches_context). Fallback: (0, True, False) = reject candidate."""
     try:
         match = re.search(r'\{.*?\}', raw, re.DOTALL)
         if match:
@@ -120,10 +218,11 @@ def parse_inset_pick(raw: str, n: int) -> tuple[int, bool]:
             idx = int(parsed.get('index', 1)) - 1
             idx = idx if 0 <= idx < n else 0
             shows_hero = bool(parsed.get('shows_hero_person', True))
-            return idx, shows_hero
+            matches_context = bool(parsed.get('matches_context', False))
+            return idx, shows_hero, matches_context
     except Exception:
         pass
-    return 0, True  # conservative: treat as showing hero
+    return 0, True, False
 
 
 def build_whatif_alt_pick_prompt(num_candidates: int, hero_name: str) -> str:
@@ -251,44 +350,6 @@ def is_same_person(a: str, b: str) -> bool:
     return _names_are_same_person(a, b)
 
 
-def _is_person_subject(db, analysis: PostAnalysis | None, subject: str) -> bool:
-    """Decide whether subject is a person.
-    A subject that matches a team (F1Driver.team_name ILIKE '%subject%') is NOT a person.
-    A subject is a person if it equals (case-insensitive) analysis.people or analysis.speaker,
-    or appears as a driver in f1_drivers.
-    """
-    if not subject or not subject.strip():
-        return False
-    s = subject.strip()
-
-    if db is not None:
-        try:
-            team_match = db.query(F1Driver).filter(
-                F1Driver.team_name.ilike(f"%{s}%")
-            ).first()
-            if team_match is not None:
-                return False
-        except Exception:
-            pass
-
-    if analysis:
-        if analysis.speaker and s.lower() == analysis.speaker.strip().lower():
-            return True
-        for p in (analysis.people or ()):
-            if p and s.lower() == p.strip().lower():
-                return True
-
-    if db is not None:
-        try:
-            from app.services.f1_drivers import get_driver
-            driver = get_driver(db, s)
-            if driver is not None:
-                return True
-        except Exception:
-            pass
-
-    return False
-
 def _find_inset_pick(
 
     *,
@@ -341,6 +402,11 @@ def _find_inset_pick(
             ),
         )
 
+    niche_cond = _gallery_niche_condition(niche)
+    if niche_cond is not None:
+        kw_subq = db.query(GalleryKeyword.keyword).filter(niche_cond).subquery()
+        base_query = base_query.filter(GalleryImage.keyword.in_(kw_subq.select()))
+
     # Search by inset_context keywords
     context_terms = [t.strip().lower() for t in inset_context.replace(',', ' ').split() if len(t.strip()) >= 3]
     if context_terms:
@@ -360,7 +426,7 @@ def _find_inset_pick(
         content = [{
             "type": "text",
             "text": build_inset_pick_prompt(
-                len(candidates), analysis.moment_summary, inset_context, hero_subj
+                len(candidates), analysis.moment_summary, inset_context, hero_subj, niche=niche
             )
         }]
         for c in candidates:
@@ -372,56 +438,60 @@ def _find_inset_pick(
                 pass
         try:
             raw = _vision_chat(content, context="vision_pick")
-            idx, shows_hero = parse_inset_pick(raw, len(candidates))
+            idx, shows_hero, matches_context = parse_inset_pick(raw, len(candidates))
         except Exception:
-            idx, shows_hero = 0, True
+            idx, shows_hero, matches_context = 0, True, False
             notes.append("Vision pick failed for inset, treating as shows_hero")
 
         if not shows_hero:
-            inset_subj = analysis.secondary or context_item.get("query") or context_item.get("description") or ""
-            is_inset_person = (
-                analysis.secondary_kind == 'person'
-                or _is_person_subject(db, analysis, inset_subj)
-            )
-            winner = None
-            if is_inset_person and label == 'face':
-                to_check = [candidates[idx]] + [c for i, c in enumerate(candidates) if i != idx]
-                for cand in to_check[:3]:
-                    img_bytes = None
-                    try:
-                        with open(cand.local_path, "rb") as f:
-                            img_bytes = f.read()
-                    except Exception:
-                        continue
-                    if not img_bytes:
-                        continue
-                    try:
-                        res = vision_verify_subject(img_bytes, inset_subj, niche)
-                        if _is_confident_subject_match(res):
-                            winner = cand
-                            break
-                        else:
-                            notes.append(f"Inset: identity check failed for {inset_subj} on gallery candidate {cand.id}")
-                    except Exception as e:
-                        notes.append(f"Inset: identity check error for {inset_subj}: {e}")
+            has_mc = ('matches_context' in raw)
+            if has_mc and not matches_context:
+                notes.append(f"Inset: gallery candidate does not match context '{inset_context}', rejected")
             else:
-                winner = candidates[idx]
+                inset_subj = analysis.secondary or context_item.get("query") or context_item.get("description") or ""
+                is_inset_person = (
+                    analysis.secondary_kind == 'person'
+                    or _is_person_subject(db, analysis, inset_subj)
+                )
+                winner = None
+                if is_inset_person and label == 'face':
+                    to_check = [candidates[idx]] + [c for i, c in enumerate(candidates) if i != idx]
+                    for cand in to_check[:3]:
+                        img_bytes = None
+                        try:
+                            with open(cand.local_path, "rb") as f:
+                                img_bytes = f.read()
+                        except Exception:
+                            continue
+                        if not img_bytes:
+                            continue
+                        try:
+                            res = vision_verify_subject(img_bytes, inset_subj, niche)
+                            if _is_confident_subject_match(res):
+                                winner = cand
+                                break
+                            else:
+                                notes.append(f"Inset: identity check failed for {inset_subj} on gallery candidate {cand.id}")
+                        except Exception as e:
+                            notes.append(f"Inset: identity check error for {inset_subj}: {e}")
+                else:
+                    winner = candidates[idx]
 
-            if winner is not None:
-                winner_idx = candidates.index(winner)
-                notes.append(f"Inset: picked gallery index {winner_idx+1}, shows_hero_person=False")
-                return InsetPlan(pick=PhotoPick(
-                    path=winner.local_path,
-                    source="gallery",
-                    gallery_id=winner.id,
-                    url=winner.source_image_url,
-                    label=label,
-                    reason=f"Inset: vision picked index {winner_idx+1}, hero absent"
-                ), mode='real', context_desc=inset_context)
-            else:
-                notes.append(f"Inset: no gallery candidate verified for {inset_subj}")
+                if winner is not None:
+                    winner_idx = candidates.index(winner)
+                    notes.append(f"Inset: picked gallery index {winner_idx+1}, shows_hero_person=False")
+                    return InsetPlan(pick=PhotoPick(
+                        path=winner.local_path,
+                        source="gallery",
+                        gallery_id=winner.id,
+                        url=winner.source_image_url,
+                        label=label,
+                        reason=f"Inset: vision picked index {winner_idx+1}, hero absent"
+                    ), mode='real', context_desc=inset_context)
+                else:
+                    notes.append(f"Inset: no gallery candidate verified for {inset_subj}")
         else:
-            notes.append(f"Inset: gallery candidate shows hero person, rejected")
+            notes.append("Inset: gallery candidate shows hero person, rejected")
 
     # --- Jina fallback (Gated by Event Window) ---
     today = datetime.now(_WIB_TZ).date()
@@ -439,22 +509,41 @@ def _find_inset_pick(
                 exclude_paths=set(exclude_paths_or_urls)
             )
             if gi:
+                sport = _derive_sport(niche)
                 try:
                     with open(gi.local_path, "rb") as f:
                         uri = _vision_datauri(f.read())
                     check_content = [
                         {"type": "text", "text": (
-                            f"Does this photo show '{hero_subj}' or their close-up helmet? "
-                            "Reply ONLY with JSON: {\"shows_hero_person\": true} or {\"shows_hero_person\": false}"
+                            f"Analyze this photo for an inset graphic in {sport}.\n"
+                            f"Inset context required: {inset_context}\n"
+                            f"Hero person to AVOID (including their close-up helmet): {hero_subj}\n\n"
+                            "Reply ONLY with a JSON object: "
+                            '{"shows_hero_person": <true|false>, "same_sport": <true|false>, "matches_context": <true|false>}\n'
+                            "shows_hero_person=true if the photo clearly shows the hero person or their close-up helmet. "
+                            f"same_sport=true if the photo is clearly from {sport}. "
+                            f"matches_context=true if the photo clearly matches and shows the inset context ({inset_context})."
                         )},
                         {"type": "image_url", "image_url": {"url": uri}}
                     ]
                     raw_check = _vision_chat(check_content, context="vision_pick")
-                    _, shows_hero = parse_inset_pick(raw_check, 1)
+                    try:
+                        parsed_jina = json.loads(re.search(r'\{.*?\}', raw_check, re.DOTALL).group())
+                        shows_hero = bool(parsed_jina.get('shows_hero_person', True))
+                        same_sport = parsed_jina.get('same_sport') is True  # fail closed: a missing answer is a no
+                        matches_ctx = parsed_jina.get('matches_context') is True
+                    except Exception:
+                        shows_hero, same_sport, matches_ctx = True, False, False
                 except Exception:
-                    shows_hero = True
+                    shows_hero, same_sport, matches_ctx = True, False, False
 
-                if not shows_hero:
+                if shows_hero:
+                    notes.append("Inset: Jina result shows hero person, rejected")
+                elif not same_sport:
+                    notes.append(f"Inset: Jina result wrong sport (not {sport}), rejected")
+                elif not matches_ctx:
+                    notes.append(f"Inset: Jina result does not match context '{inset_context}', rejected")
+                else:
                     notes.append("Inset: Jina fallback used (in event window), hero absent")
                     return InsetPlan(pick=PhotoPick(
                         path=gi.local_path,
@@ -464,8 +553,6 @@ def _find_inset_pick(
                         label=label,
                         reason="Inset: Jina fetch (in event window), hero absent"
                     ), mode='real', context_desc=inset_context)
-                else:
-                    notes.append("Inset: Jina result shows hero person, rejected")
         except Exception as e:
             notes.append(f"Inset Jina fallback failed: {e}")
     elif inset_query and not in_event:
@@ -489,6 +576,19 @@ def _find_inset_pick(
         return InsetPlan(pick=asset_pick, mode='asset', context_desc=inset_context)
 
     # (c) Imagined
+    inset_subj = analysis.secondary or context_item.get("query") or context_item.get("description") or ""
+    is_inset_person = (
+        analysis.secondary_kind == 'person'
+        or _is_person_subject(db, analysis, inset_subj)
+    )
+    if is_inset_person:
+        notes.append("Inset: person without a verified real photo, dropped")
+        return None
+    if "motogp" in (niche or "").lower():
+        # Owner 2026-10-24: MotoGP cards use only real reference images; nothing is imagined.
+        notes.append("Inset: MotoGP never uses an imagined inset, dropped")
+        return None
+
     notes.append("Inset: no real or asset found, using imagined mode")
     return InsetPlan(pick=None, mode='imagined', context_desc=inset_context)
 
@@ -496,7 +596,7 @@ def _find_inset_pick(
 
 def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_image_path: str | None, exclude_keys: set[str]) -> PhotoPlan:
     notes = []
-    w_labels = wanted_labels(analysis, layout)
+    w_labels = wanted_labels(analysis, layout, db=db, niche=niche)
     created_temp_paths = []
     
     try:
@@ -580,18 +680,8 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                         ),
                     )
 
-                if niche and niche.strip().lower() not in ("", "general"):
-                    niche_clean = niche.strip().lower()
-                    if niche_clean == "motorsport":
-                        niche_cond = or_(
-                            GalleryKeyword.niche.is_(None),
-                            func.lower(GalleryKeyword.niche).in_(["motorsport", "f1", "motogp"])
-                        )
-                    else:
-                        niche_cond = or_(
-                            GalleryKeyword.niche.is_(None),
-                            func.lower(GalleryKeyword.niche) == niche_clean
-                        )
+                niche_cond = _gallery_niche_condition(niche)
+                if niche_cond is not None:
                     kw_subq = db.query(GalleryKeyword.keyword).filter(niche_cond).subquery()
                     base_query = base_query.filter(GalleryImage.keyword.in_(kw_subq.select()))
                     

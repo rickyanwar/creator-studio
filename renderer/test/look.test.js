@@ -77,7 +77,7 @@ test("2. String compat: adaptTemplateForAccent string equals look object with pr
 });
 
 // 3. GP News with primary/secondary
-test("3. GP News with primary/secondary look: title accent, glow, gradient stops, label fill", async () => {
+test("3. GP News with primary/secondary look: title accent, no glow added, gradient stops, label fill", async () => {
   const gpNews = getTemplate("GP News — Breaking");
   const result = await runInPage((tpl) => {
     const adapted = window.adaptTemplateForAccent(tpl, { primary: "#2563EB", secondary: "#FFC21A" });
@@ -93,7 +93,8 @@ test("3. GP News with primary/secondary look: title accent, glow, gradient stops
   }, gpNews);
 
   assert.equal(result.titleAccentColor, "#FFC21A");
-  assert.equal(result.glowColor, "rgba(255,194,26,0.40)");
+  // Owner 2026-10-23: no glow on text; the look recolours a glow only when a template has one.
+  assert.equal(result.glowColor, null);
   assert.ok(Array.isArray(result.colorStops) && result.colorStops.length === 2);
   const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
   assert.match(result.colorStops[0].color, HEX_RE);

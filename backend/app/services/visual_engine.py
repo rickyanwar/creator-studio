@@ -42,6 +42,31 @@ class GenerationRequest:
     model: str = 'cx/gpt-image-2.5'
 
 
+def hero_framing_clause(position: str) -> str:
+    """Hero crop for AI-designed cards; adapts to a head-and-shoulders or an upper-body reference photo."""
+    return (
+        "Professional cut-out with clean hair edges, placed " + position + ". "
+        "If image 1 is a head-and-shoulders photo, crop tight and bold: top of the head about 6-10% from the top edge, eyes at about "
+        "25-30% of the card height, chin no lower than 50% of the card height, face about 30-35% of the card width, shoulders filling "
+        "the card width. If image 1 shows the upper body, keep the whole upper body visible from the top of the head down to about the "
+        "waist, with both shoulders and any raised arm, hand or trophy in the photo kept whole; never slice it at the neck, chest or "
+        "elbows and never clip the head; zoom so he fills about 55-65% of the card width, waist at about 60-65% of the card height. "
+        "Either way the whole face stays in the top half, well clear of the headline area at the bottom."
+    )
+
+
+ACCURACY_LINES = (
+    "ACCURACY (very important): use ONLY what the reference images show and what this brief names. "
+    "Never invent or add a person, face, helmet, car, bike, trophy, venue or crowd that is not in a reference image or named here; "
+    "if a detail is unclear, leave it out instead of guessing. Every person, vehicle and place must belong to {sport} — "
+    "nothing from another sport (no octagon, ring, fighter, football pitch or court)."
+)
+
+
+def accuracy_block(sport: str) -> str:
+    return ACCURACY_LINES.format(sport=sport)
+
+
 def build_inset_prompt(
     hero_desc: str,
     insets: List[dict],
@@ -54,7 +79,7 @@ def build_inset_prompt(
     refs = [hero_path]
     prompt_lines = [
         f"Design a premium vertical (4:5) {sport} social media graphic of the quality a senior graphic designer at the best {sport} media pages produces in Photoshop. Use only the REAL people and objects from the reference photos — never invent, beautify or alter a face.\n",
-        f"HERO (Image 1): {hero_desc}. Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 6-10% from the top edge, eyes at about 25-30% of the card height, chin no lower than 50% of the card height, face about 30-35% of the card width, shoulders filling the card width, placed center-right. The whole face stays in the top half, well clear of the headline area at the bottom. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n"
+        f"HERO (Image 1): {hero_desc}. {hero_framing_clause('center-right')} Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented. Show him at exactly the age he has in image 1: never older, younger, slimmer or restyled, and never a different person who looks similar.\n"
     ]
     
     idx = 2
@@ -65,14 +90,14 @@ def build_inset_prompt(
         desc = inst['desc']
         if mode == 'real':
             refs.append(inst['path'])
-            inset_instructions.append(f"INSET {i+1} (Image {idx}): REAL PHOTO. {desc}. Keep the real identity, clothing, and logos exactly as in Image {idx}.")
+            inset_instructions.append(f"INSET {i+1} (Image {idx}): REAL PHOTO of {desc}. Use Image {idx} exactly as photographed — the same people, cars, place and era — only cropped and colour-graded to match. Keep every identity, clothing item and logo exactly as in Image {idx}. Never add, remove or swap a person or object, and never change its sport, venue or era.")
             idx += 1
         elif mode == 'asset':
             refs.append(inst['path'])
-            inset_instructions.append(f"INSET {i+1} (Image {idx}): ASSET SCENE. {desc}. Use Image {idx} as a reference (e.g., for the exact team logo or car) and compose it into an imagined premium scene. Never alter or fake the real hero. The inset must NOT show the hero person. No text, letters or numbers anywhere. Any team logo must follow Image {idx}.")
+            inset_instructions.append(f"INSET {i+1} (Image {idx}): BRAND SCENE for {desc}. Show only the exact logo or object in Image {idx} on a simple, clean {sport} background (for example the logo on a dark textured wall or a team flag). No people, faces, helmets or drivers, and no car unless Image {idx} shows that car. The logo stays exactly as in Image {idx}. No other text, letters or numbers.")
             idx += 1
         elif mode == 'imagined':
-            inset_instructions.append(f"INSET {i+1}: FULLY AI-IMAGINED SCENE. {desc}. Create a premium sports-media scene. Never alter or fake the real hero. The inset must NOT show the hero person. No text, letters or numbers anywhere. Keep the premium sports-media look (no cheap clip-art, no money rain).")
+            inset_instructions.append(f"INSET {i+1}: GENERATED PLACE OR OBJECT — {desc}. Show only that place or object, clearly {sport} and true to how it really looks. NO people at all: no faces, no drivers, no riders, no fighters, no helmets, no crowds in focus. Nothing from another sport. No text, letters or numbers. Premium sports-media photo look, no clip-art.")
     
     if len(insets) == 1:
         comp_desc = "Crop it tight on its subject and place it inside a large circle (about 45% of the card width) with a clean solid white ring (thin but strong) and a soft drop shadow, upper-left. The hero overlaps the right edge of the circle (hero in front) with a soft contact shadow on the circle — real depth, like layered Photoshop layers."
@@ -85,6 +110,7 @@ def build_inset_prompt(
     prompt_lines.append(
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade across hero, inset and background; high micro-contrast on the face, rich true team colours, soft cool rim light on the hero's edge, clean separation from the background. Looks like a real photograph composited by a professional, not AI art.\n"
     )
+    prompt_lines.append(f"{accuracy_block(sport)}\n")
     prompt_lines.append(f"{realism_block()}\n")
     prompt_lines.append(
         f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."
@@ -96,9 +122,10 @@ def build_inset_prompt(
 def build_solo_prompt(hero_desc: str, purpose: str, accent: str, sport: str = 'Formula 1', treatment: str = 'clean') -> str:
     return (
         f"Design a premium vertical (4:5) {sport} social media graphic of the quality a senior graphic designer at the best {sport} media pages produces in Photoshop. Use only the REAL people and objects from the reference photos — never invent, beautify or alter a face.\n\n"
-        f"HERO (image 1): {hero_desc}. Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 6-10% from the top edge, eyes at about 25-30% of the card height, chin no lower than 50% of the card height, face about 30-35% of the card width, shoulders filling the card width, placed center. The whole face stays in the top half, well clear of the headline area at the bottom. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n\n"
+        f"HERO (image 1): {hero_desc}. {hero_framing_clause('center')} Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented. Show him at exactly the age he has in image 1: never older, younger, slimmer or restyled, and never a different person who looks similar.\n\n"
         f"{treatment_clause(treatment, accent)}\n\n"
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade across hero and background; high micro-contrast on the face, rich true team colours, soft cool rim light on the hero's edge, clean separation from the background. Looks like a real photograph composited by a professional, not AI art.\n\n"
+        f"{accuracy_block(sport)}\n\n"
         f"{realism_block()}\n\n"
         f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks.\n\n"
         f"{avoid_block()}"
@@ -111,6 +138,7 @@ def build_action_prompt(subject_desc: str, purpose: str, accent: str, sport: str
         f"HERO (image 1): {subject_desc}. One big action photo. Crop tight and bold. Keep the real identity, clothing and every logo exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n\n"
         f"{treatment_clause(treatment, accent)}\n\n"
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade; rich true team colours. Looks like a real photograph composited by a professional, not AI art.\n\n"
+        f"{accuracy_block(sport)}\n\n"
         f"{realism_block()}\n\n"
         f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks.\n\n"
         f"{avoid_block()}"
@@ -133,7 +161,7 @@ def build_whatif_inset_prompt(
     refs = [hero_path]
     prompt_lines = [
         f"Design a premium vertical (4:5) {sport} social media graphic of the quality a senior graphic designer at the best {sport} media pages produces in Photoshop. Use only the REAL people and objects from the reference photos — never invent, beautify or alter a face.\n",
-        f"HERO (Image 1): {hero_desc} (real, keep exactly). Professional cut-out with clean hair edges. Crop tight and bold: top of the head about 6-10% from the top edge, eyes at about 25-30% of the card height, chin no lower than 50% of the card height, face about 30-35% of the card width, shoulders filling the card width, placed center-right. The whole face stays in the top half, well clear of the headline area at the bottom. Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented.\n"
+        f"HERO (Image 1): {hero_desc} (real, keep exactly). {hero_framing_clause('center-right')} Keep his real face, identity, expression, skin texture, hair, clothing and every logo, patch, cap badge and microphone flag exactly as in image 1 — sharp, legible, nothing redrawn, removed or invented. Show him at exactly the age he has in image 1: never older, younger, slimmer or restyled, and never a different person who looks similar.\n"
     ]
     
     idx = 2
@@ -159,6 +187,7 @@ def build_whatif_inset_prompt(
     prompt_lines.append(
         f"GRADE & LIGHT: one consistent, cinematic but natural sports-media colour grade across hero, inset and background; high micro-contrast on the face, rich true team colours, soft cool rim light on the hero's edge, clean separation from the background. Looks like a real photograph composited by a professional, not AI art.\n"
     )
+    prompt_lines.append(f"{accuracy_block(sport)}\n")
     prompt_lines.append(f"{realism_block()}\n")
     prompt_lines.append(
         f"{text_zone_line()} Do NOT add any text, letters, numbers, quote marks, badges, page logos, watermarks, glow, neon, lens flares or light streaks."

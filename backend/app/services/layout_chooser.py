@@ -40,8 +40,12 @@ def choose_layout(
         return LayoutChoice(layout='inset', reason='Transfer scenario what-if inset')
 
     if bool(analysis.inset_context.strip()) and inset_is_distinct:
-        if getattr(analysis, 'inset_contexts', ()) and len(analysis.inset_contexts) >= 2 and valid_inset_count >= 2:
-            return LayoutChoice(layout='inset2', reason='Two distinct contextual insets found')
+        insets = getattr(analysis, 'inset_contexts', ())
+        if insets and len(insets) >= 2 and valid_inset_count >= 2:
+            q0 = str(insets[0].get('query') or insets[0].get('description') or '').strip().lower()
+            q1 = str(insets[1].get('query') or insets[1].get('description') or '').strip().lower()
+            if q1 and q0 != q1:
+                return LayoutChoice(layout='inset2', reason='Two distinct contextual insets found')
         return LayoutChoice(layout='inset', reason='Distinct contextual inset photo found')
 
     if analysis.type == 'news' and hero_label == 'action' and analysis.secondary_kind == 'none':

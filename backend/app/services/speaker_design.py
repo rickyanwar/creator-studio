@@ -165,8 +165,10 @@ def _as_naive_utc(value) -> datetime:
     return datetime.min
 
 
+# Owner 2026-10-24: one inset explains the news; fewer references also make each card faster and safer.
+MAX_INSETS = 1
 HEAD_AND_SHOULDERS_FRAMING = "Tight head-and-shoulders, top of the head about 6-10 percent from the top edge, eyes at about 25-30 percent of the card height, chin no lower than 50 percent of the card height, face about 30-35 percent of the card width (the whole face stays in the top half, well clear of the headline area); shoulders and chest continue down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
-HALF_BODY_FRAMING = "HALF-BODY portrait from the top of the head down to the waist, the top of the head about 4-6 percent from the top edge, head and shoulders high in the frame, chin no lower than 45 percent of the card height, face about 30-34 percent of the card width; the body continues down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
+HALF_BODY_FRAMING = "HALF-BODY portrait from the top of the head down to the waist, the whole upper body visible (both shoulders and any raised arm, hand or trophy kept whole; never sliced at the neck, chest or elbows, never a clipped head), the top of the head about 4-6 percent from the top edge, head and shoulders high in the frame, chin no lower than 45 percent of the card height, face about 30-34 percent of the card width; the body continues down to the bottom edge, filling the lower area behind where the text will go; no empty floor or background strip at the bottom"
 
 _CRASH_WORDS = {"crash", "crashed", "crashes", "fall", "fell", "fallen", "clash", "collision", "contact", "incident", "highside", "lowside", "crashing"}
 _WIN_WORDS = {"win", "won", "victory", "winner", "podium", "trophy", "celebrate", "celebrates", "celebration", "champion"}
@@ -442,7 +444,7 @@ Keep every real sponsor logo, patch, number and printed text on the clothing, ca
 Lighting and colour: natural neutral light with true-to-life colours like a real Getty press photo composited by a professional designer. NO golden hour, NO yellow or orange tint, NO haze, NO glow, NO lens flare, NO dramatic grading. The light on the speaker's face matches Image 1.
 Keep every face, the inset circle and any important detail ABOVE the bottom 35 percent of the card.
 The bottom 35 percent will be covered later by the headline text: keep it simple and calm (a plain background or soft out-of-focus scenery; the speaker's body/torso may continue into it), with no faces, text or important detail. It does not need to be dark.
-Do not invent or change any person, face, clothing, bike or pose; no extra people beyond those in the photos; natural skin texture with visible pores and subtle film grain; no HDR look, no over-sharpening, no beauty filter. NO text at all.'''
+Do not invent or change any person, face, clothing, bike or pose; no extra people beyond those in the photos; show every person at exactly the age he has in his photo, never older, younger, slimmer or a look-alike; nothing from another sport and no venue, vehicle or object that is not in a reference image (if something is unclear, leave it out); natural skin texture with visible pores and subtle film grain; no HDR look, no over-sharpening, no beauty filter. NO text at all.'''
 def _photo_description(row, fallback: str) -> str:
     attrs = getattr(row, "attributes", None) or {}
     caption = attrs.get("caption") if isinstance(attrs, dict) else None
@@ -474,9 +476,9 @@ def _build_prompt(layout: str, speaker: str, side: str, sport: str, moment_photo
         if edit_line:
             speaker_line += f" {edit_line}"
         lines = [f"Design a premium vertical 4:5 {sport} social media graphic, the quality a senior graphic designer produces in Photoshop. Use only the REAL people and objects from the reference photos.", speaker_line]
-        for index, row in enumerate(moment_photos[:2]):
+        for index, row in enumerate(moment_photos[:MAX_INSETS]):
             lines.append(f"Image {index + 2} = INSET {index + 1}: REAL PHOTO of {_photo_description(row, speaker)}. Crop it tight on its subject; keep it exactly as photographed.")
-        if len(moment_photos) == 1:
+        if len(moment_photos[:MAX_INSETS]) == 1:
             lines.append(f"Place the inset inside ONE large circle (about 45 percent of the card width) with a clean solid white ring (thin but strong) and a soft drop shadow, upper-{other}. The speaker OVERLAPS the edge of the circle (speaker in front of the circle) with a soft contact shadow on the circle, real layered depth like Photoshop layers.")
         else:
             lines.append(f"Place the insets inside TWO circles of different sizes on the {other} side (a large circle upper-{other} and a smaller one overlapping it lower/mid-{other}), both with the same clean white ring (thin but strong) and a soft drop shadow. The speaker OVERLAPS at least one circle (speaker in front) with a soft contact shadow, real layered depth. Everything inside the top 65 percent.")
@@ -600,7 +602,7 @@ def compose_speaker_design(
         if not speakers or not layout:
             logger.info("speaker design skipped: missing speaker or layout")
             return None
-        refs = [speakers[0]] + (moments[:2] if layout == "inset" else bikes[:1] + speakers[1:2])
+        refs = [speakers[0]] + (moments[:MAX_INSETS] if layout == "inset" else bikes[:1] + speakers[1:2])
         paths = [row.local_path for row in refs]
         speaker_bytes = _read_photo(speakers[0])
         framing = speaker_framing(speaker_bytes, row=speakers[0])

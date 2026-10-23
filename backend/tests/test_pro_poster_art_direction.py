@@ -316,8 +316,8 @@ def test_house_style_inset_line_always_present():
     assert (
         "- House style, when it helps the story: Max Verstappen large in the frame, "
         "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
-        "or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). "
-        "Never repeat the same person or pose in the inset."
+        "or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
+        "One inset is enough; never add a second."
     ) in p_hero
     assert "Put the inset in the upper 40%" not in p_hero
 
@@ -327,8 +327,8 @@ def test_house_style_inset_line_always_present():
     assert (
         "- House style, when it helps the story: the main subject large in the frame, "
         "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
-        "or detail that adds context (for example the trophy or title celebration, the car on track, the venue, the rival). "
-        "Never repeat the same person or pose in the inset."
+        "or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
+        "One inset is enough; never add a second."
     ) in p_no_hero
     assert "Put the inset in the upper 40%" not in p_no_hero
 
