@@ -153,19 +153,38 @@ def _parse(raw: str, title_max: int = 100, desc_max: int = 600, hashtag_max: int
 def pick_livery(db, fanpage_id, t, niche: str | None = None):
     """Next livery for this fanpage: one not used by its recent videos, else the least recently used."""
     options = niche_liveries(t, niche)
-    rows = (
-        db.query(VideoIdea.variables)
-        .join(VideoJob, VideoJob.idea_id == VideoIdea.id)
-        .filter(VideoJob.fanpage_id == fanpage_id)
-        .order_by(VideoJob.id.desc())
-        .limit(50)
-        .all()
-    ) if db is not None else []
     recent = []  # most recent first, unique
-    for (variables,) in rows:
-        value = variables.get("livery") if isinstance(variables, dict) else None
-        if value in options and value not in recent:
-            recent.append(value)
+    if db is not None:
+        prep_rows = (
+            db.query(VideoIdea.prepared)
+            .filter(
+                VideoIdea.fanpage_id == fanpage_id,
+                VideoIdea.prepared.isnot(None),
+                VideoIdea.status.in_(["approved", "proposed"]),
+            )
+            .order_by(VideoIdea.prepared_at.desc())
+            .limit(20)
+            .all()
+        )
+        for (prepared,) in prep_rows:
+            if isinstance(prepared, dict):
+                vars_dict = prepared.get("variables")
+                if isinstance(vars_dict, dict):
+                    value = vars_dict.get("livery")
+                    if value in options and value not in recent:
+                        recent.append(value)
+        rows = (
+            db.query(VideoIdea.variables)
+            .join(VideoJob, VideoJob.idea_id == VideoIdea.id)
+            .filter(VideoJob.fanpage_id == fanpage_id)
+            .order_by(VideoJob.id.desc())
+            .limit(50)
+            .all()
+        )
+        for (variables,) in rows:
+            value = variables.get("livery") if isinstance(variables, dict) else None
+            if value in options and value not in recent:
+                recent.append(value)
     unused = [value for value in options if value not in recent]
     if unused:
         return random.choice(unused)

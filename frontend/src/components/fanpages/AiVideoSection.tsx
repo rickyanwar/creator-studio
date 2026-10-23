@@ -131,6 +131,23 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                 onChange={(e) => set("qa_ai_video_enabled", e.target.checked)}
               />
             </div>
+            <div className="sm:col-span-2 flex items-center justify-between p-3 rounded-lg border border-hairline">
+              <div>
+                <label htmlFor="prompt-polish-ai-video" className="text-xs font-medium text-text-primary cursor-pointer">
+                  Polish prompts with Gemini Argon
+                </label>
+                <p className="text-[11px] text-text-secondary mt-0.5">
+                  On: every clip prompt is rewritten by Gemini Argon (logic, continuity, same voice and sound) before the video is made. Videos wait until the prompts are polished. Off: the template prompts are used as they are.
+                </p>
+              </div>
+              <input
+                id="prompt-polish-ai-video"
+                type="checkbox"
+                className="w-4 h-4 rounded accent-pri shrink-0 cursor-pointer ml-3"
+                checked={(form.ai_video_prompt_polish_enabled as boolean) ?? false}
+                onChange={(e) => set("ai_video_prompt_polish_enabled", e.target.checked)}
+              />
+            </div>
             <div className="sm:col-span-2">
               <label className="label">Allowed Video Templates</label>
               <p className="text-[11px] text-text-secondary mb-2">

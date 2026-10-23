@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { ScraperHealth } from "./types";
+import type { PromptPolishHealth, PromptPolishIdea, PromptPolishJob, ScraperHealth } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -475,6 +475,13 @@ export const listGflowAccounts = () => api.get("/ai-video/accounts");
 export const updateGflowAccount = (id: number, data: { enabled?: boolean; label?: string; terms_accepted?: boolean }) =>
   api.patch(`/ai-video/accounts/${id}`, data);
 export const listGflowWorkers = () => api.get("/ai-video/workers");
+export const getPromptPolishHealth = () => api.get<PromptPolishHealth>("/prompt-polish/health");
+export const getPromptPolishIdea = (id: number) => api.get<PromptPolishIdea>(`/prompt-polish/ideas/${id}`);
+export const getPromptPolishJob = (id: number) => api.get<PromptPolishJob>(`/prompt-polish/jobs/${id}`);
+export const getPromptPolishIdeaStates = (ids: number[]) =>
+  api.get<Record<string, "off" | "polished" | "waiting" | "failed">>("/prompt-polish/ideas-state", {
+    params: { ids: ids.join(",") },
+  });
 // F1 Drivers
 import { F1Driver } from "./types";
 

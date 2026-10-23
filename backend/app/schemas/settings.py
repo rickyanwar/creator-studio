@@ -79,6 +79,9 @@ class SettingsUpdate(BaseModel):
     codex_night_min_gap_s: Optional[int] = Field(None, ge=0, le=3600)
     codex_night_gap_jitter_s: Optional[int] = Field(None, ge=0, le=3600)
     codex_usage_url: Optional[str] = None
+    prompt_polish_base_url: Optional[str] = None
+    prompt_polish_token: Optional[str] = None   # plain — encrypted before saving; "" clears
+    prompt_polish_model: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
 
 
 class SettingsOut(BaseModel):
@@ -173,6 +176,9 @@ class SettingsOut(BaseModel):
     codex_night_min_gap_s: int = 240
     codex_night_gap_jitter_s: int = 60
     codex_usage_url: Optional[str] = None
+    prompt_polish_base_url: str = "http://172.17.0.1:8098"
+    has_prompt_polish_token: bool = False
+    prompt_polish_model: str = "gemini-argon"
 
     model_config = {"from_attributes": False}
 

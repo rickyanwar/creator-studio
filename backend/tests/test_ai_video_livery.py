@@ -181,7 +181,7 @@ def test_pick_livery_avoids_recent_values(monkeypatch):
             return self
 
         def limit(self, count):
-            assert count == 50
+            assert count in (20, 50)
             return self
 
         def all(self):

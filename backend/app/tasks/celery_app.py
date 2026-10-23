@@ -37,6 +37,7 @@ celery_app = Celery(
         "app.tasks.post_metrics",
         "app.tasks.content_memory",
         "app.tasks.ai_video_plan",
+        "app.tasks.ai_video_prepare",
         "app.tasks.ai_video_dispatch",
         "app.tasks.radar",
         "app.tasks.radar_crawl",
@@ -46,6 +47,7 @@ celery_app = Celery(
         "app.tasks.social_delivery",
         "app.tasks.phone_watchdog",
         "app.tasks.queue_watchdog",
+        "app.tasks.prompt_polish_watchdog",
     ],
 )
 
@@ -76,6 +78,7 @@ celery_app.conf.update(
         "app.tasks.yt_clip.analyze_video": {"queue": "video"},
         "app.tasks.yt_clip_render.render_youtube_clip": {"queue": "video"},
         "app.tasks.ai_video_finalize.finalize_ai_video": {"queue": "video"},
+        "app.tasks.ai_video_prepare.prepare_ai_video_ideas": {"queue": "gallery"},
         # Phone posting holds a slot for 5-10 min (one real post) and phone recovery up to ~5 min
         # (one-shot Hermes repair). On the 2-slot default queue they starved renders and, worse,
         # two slow renders stopped every phone post (2026-10-17 test). Own single-slot worker.
@@ -292,6 +295,11 @@ celery_app.conf.beat_schedule = {
         "schedule": 600,
         "options": {"expires": 590},
     },
+    "prepare-ai-video-ideas": {
+        "task": "app.tasks.ai_video_prepare.prepare_ai_video_ideas",
+        "schedule": 300,
+        "options": {"expires": 290},
+    },
     "top-up-ai-video-ideas": {
         "task": "app.tasks.ai_video_plan.top_up_ai_video_ideas",
         "schedule": 3600,
@@ -359,5 +367,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.queue_watchdog.check_queue_backlog",
         "schedule": 300,
         "options": {"expires": 290},
+    },
+    # Prompt polish watchdog: every 10m
+    "check-prompt-polish": {
+        "task": "app.tasks.prompt_polish_watchdog.check_prompt_polish",
+        "schedule": 600,
+        "options": {"expires": 590},
     },
 }

@@ -73,6 +73,11 @@ class VideoIdea(Base):
     client_ref = Column(String(64), nullable=True)
     title = Column(Text, nullable=True)
     caption = Column(Text, nullable=True)
+    # Argon prompt polish: the prepared job payload (variables, title, caption, clips, prompts) — see prompt_polish.
+    prepared = Column(JSON, nullable=True)
+    prepared_at = Column(DateTime, nullable=True)
+    polish_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    polish_error = Column(Text, nullable=True)
 
 
 class VideoJob(Base):

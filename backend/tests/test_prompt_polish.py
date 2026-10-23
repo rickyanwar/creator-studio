@@ -1,0 +1,628 @@
+"""Tests for app.services.prompt_polish — no network, fake http_post."""
+
+import json
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.models.settings import Settings
+from app.services.encryption import encrypt
+from app.services.prompt_polish import (
+    BRAND_NAMES,
+    PROTECTED_PHRASES,
+    PolishConfig,
+    PolishResult,
+    PolishUnavailable,
+    build_instruction,
+    check_polished,
+    get_polish_config,
+    parse_answer,
+    polish_clips,
+    polish_cover,
+)
+
+# ── Tiny template stand-in ────────────────────────────────────────────────────
+
+KNEE_TEMPLATE = SimpleNamespace(
+    key="health-knee", name="Knee Recovery", clip_seconds=8, raw={}
+)
+
+FAN_CAR_TEMPLATE = SimpleNamespace(
+    key="fan-car", name="Formula Weekend", clip_seconds=8,
+    raw={"real_names_allowed": False},
+)
+
+FAN_CAR_NAMES_ALLOWED_TEMPLATE = SimpleNamespace(
+    key="fan-car", name="Formula Weekend", clip_seconds=8,
+    raw={"real_names_allowed": True},
+)
+
+# ── Shared voice / ambience (≥40 chars) ───────────────────────────────────────
+
+VOICE = "A calm, warm male narrator with a steady low-pitched baritone voice, close-mic dry recording."
+AMBIENCE = "Soft ambient room tone at a fixed low level with no music and no sound effects underneath."
+
+# ── KNEE fixtures (3 clips, all t2v, health style) ────────────────────────────
+
+KNEE_CLIPS = [
+    {
+        "index": 1, "mode": "t2v",
+        "prompt": (
+            'A close-up of a human knee joint bending slowly in a clinical white room. '
+            'No text, letters, numbers, labels, logos or watermarks anywhere in the image. No gore. '
+            'no sound effects. '
+            'The narrator says: "Your knee is a masterpiece of engineering, built to carry you through decades of motion."'
+        ),
+    },
+    {
+        "index": 2, "mode": "t2v",
+        "prompt": (
+            'Side view of the same knee mid-stride on a treadmill, muscles visible under translucent skin. '
+            'No text, letters, numbers, labels, logos or watermarks anywhere in the image. No gore. '
+            'no sound effects. '
+            'The narrator says: "Every step sends forces through cartilage, ligaments and bone in perfect harmony."'
+        ),
+    },
+    {
+        "index": 3, "mode": "t2v",
+        "prompt": (
+            'Wide shot of a person standing up from a chair, knee fully extending. '
+            'No text, letters, numbers, labels, logos or watermarks anywhere in the image. No gore. '
+            'no sound effects. '
+            'The narrator says: "Recovery begins when you understand what your body already knows how to do."'
+        ),
+    },
+]
+
+# ── FAN_CAR fixtures (3 clips: t2v, i2v, i2v, motorsport) ────────────────────
+
+FAN_CAR_CLIPS = [
+    {
+        "index": 1, "mode": "t2v",
+        "prompt": (
+            'A vintage open-wheel race car with "FORMULA WEEKEND" painted on the side hurtles down '
+            'a sunlit straight. (no F1, FIA, MotoGP, FIM or Dorna logos) no music. no cuts. '
+            'The narrator says: "In nineteen seventy-eight, ground effect changed everything."'
+        ),
+    },
+    {
+        "index": 2, "mode": "i2v",
+        "prompt": (
+            'Continue seamlessly from this exact frame. The same car drifts into a sweeping right-hand '
+            'corner, "FORMULA WEEKEND" clearly visible on the bodywork. (no F1, FIA, MotoGP, FIM or Dorna logos) '
+            'no music. no cuts. '
+            'The narrator says: "The car stuck to the tarmac as if glued by invisible hands."'
+        ),
+    },
+    {
+        "index": 3, "mode": "i2v",
+        "prompt": (
+            'Continue seamlessly from this exact frame. The car crosses the finish line trailing a thin ribbon of '
+            'tyre smoke, "FORMULA WEEKEND" shining under floodlights. (no F1, FIA, MotoGP, FIM or Dorna logos) '
+            'no music. no cuts. '
+            'The narrator says: "Victory belonged to the engineers who dared to look beneath the floor."'
+        ),
+    },
+]
+
+
+def _good_polished(original_clips, voice=VOICE, ambience=AMBIENCE):
+    """Build a 'good' polished version: originals + shared voice/ambience, under 2900 chars."""
+    polished = []
+    for c in original_clips:
+        prefix = ""
+        if c["mode"] == "i2v":
+            prefix = "Continue seamlessly from this exact frame. "
+            # Strip original prefix to avoid duplication
+            p = c["prompt"]
+            if p.startswith("Continue seamlessly from this exact frame"):
+                p = p[len("Continue seamlessly from this exact frame"):].lstrip(". ")
+        else:
+            p = c["prompt"]
+        prompt = f"{prefix}{voice} {ambience} {p}"
+        assert len(prompt) <= 2900, f"good polished clip {c['index']} is {len(prompt)} chars"
+        polished.append({"index": c["index"], "mode": c["mode"], "prompt": prompt})
+    return polished
+
+
+def _make_answer(polished_clips, voice=VOICE, ambience=AMBIENCE, changes=None):
+    """Build a JSON answer dict."""
+    return {
+        "clips": [{"index": c["index"], "prompt": c["prompt"]} for c in polished_clips],
+        "voice_sentence": voice,
+        "ambience_sentence": ambience,
+        "changes": changes or ["improved continuity"],
+    }
+
+
+def _fake_200(answer_dict, account="acct-1", seconds=12.5):
+    """Return a fake http_post that returns 200 with the given answer."""
+    def _post(url, headers=None, json=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"text": json_module.dumps(answer_dict), "account": account,
+                          "thoughts_chars": 100, "seconds": seconds},
+        )
+    import json as json_module
+    return _post
+
+
+def _fake_200_text(text, account="acct-1", seconds=12.5):
+    """Return a fake http_post that returns 200 with raw text."""
+    def _post(url, headers=None, json=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"text": text, "account": account, "thoughts_chars": 100, "seconds": seconds},
+        )
+    return _post
+
+
+def _fake_error(status_code, body):
+    """Return a fake http_post returning an error."""
+    def _post(url, headers=None, json=None, timeout=None):
+        return SimpleNamespace(status_code=status_code, json=lambda: body)
+    return _post
+
+
+CFG = PolishConfig(base_url="http://localhost:8098", token="test-token", model="gemini-argon")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test cases
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCase1GoodAnswer:
+    def test_good_answer_ok(self):
+        polished = _good_polished(KNEE_CLIPS)
+        answer = _make_answer(polished)
+        post = _fake_200(answer)
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=post)
+        assert result.ok is True
+        assert result.attempts == 1
+        assert result.problems == []
+        # modes copied from original
+        for orig, pol in zip(KNEE_CLIPS, result.clips):
+            assert pol["mode"] == orig["mode"]
+
+    def test_good_answer_fan_car(self):
+        polished = _good_polished(FAN_CAR_CLIPS)
+        answer = _make_answer(polished)
+        post = _fake_200(answer)
+        result = polish_clips(FAN_CAR_CLIPS, template=FAN_CAR_TEMPLATE, niche="f1", config=CFG, http_post=post)
+        assert result.ok is True
+        assert result.attempts == 1
+        assert result.problems == []
+
+
+class TestCase2RetryWithFeedback:
+    def test_quote_changed_then_fixed(self):
+        """Voice-over quote changed by one word → problem; second good → ok, attempts 2."""
+        polished_bad = _good_polished(KNEE_CLIPS)
+        # Change one quote word in clip 1
+        polished_bad[0] = {
+            **polished_bad[0],
+            "prompt": polished_bad[0]["prompt"].replace("masterpiece of engineering", "masterpiece of design"),
+        }
+        polished_good = _good_polished(KNEE_CLIPS)
+        answer_bad = _make_answer(polished_bad)
+        answer_good = _make_answer(polished_good)
+
+        call_count = [0]
+
+        def _post(url, headers=None, json=None, timeout=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {"text": json_mod.dumps(answer_bad), "account": "a1", "thoughts_chars": 10, "seconds": 5.0},
+                )
+            else:
+                # Second call should contain feedback
+                body_prompt = json["prompt"]
+                assert "Your previous answer failed these automatic checks" in body_prompt
+                assert "original quoted text missing" in body_prompt
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {"text": json_mod.dumps(answer_good), "account": "a2", "thoughts_chars": 10, "seconds": 5.0},
+                )
+
+        import json as json_mod
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post)
+        assert result.ok is True
+        assert result.attempts == 2
+
+
+class TestCase3ProtectedPhraseDropped:
+    def test_knee_drops_no_sound_effects(self):
+        polished = _good_polished(KNEE_CLIPS)
+        # Remove "no sound effects" from clip 2
+        polished[1] = {**polished[1], "prompt": polished[1]["prompt"].replace("no sound effects", "")}
+        problems = check_polished(KNEE_CLIPS, polished, VOICE, AMBIENCE)
+        assert any("no sound effects" in p for p in problems)
+
+
+class TestCase4ExtraQuotedText:
+    def test_extra_quote_added(self):
+        polished = _good_polished(KNEE_CLIPS)
+        polished[0] = {**polished[0], "prompt": polished[0]["prompt"] + ' "Extra brand text" appears.'}
+        problems = check_polished(KNEE_CLIPS, polished, VOICE, AMBIENCE)
+        assert any("extra quoted text" in p.lower() for p in problems)
+
+
+class TestCase5VoiceMissing:
+    def test_voice_missing_clip2(self):
+        polished = _good_polished(KNEE_CLIPS)
+        # Remove voice sentence from clip 2
+        polished[1] = {**polished[1], "prompt": polished[1]["prompt"].replace(VOICE, "")}
+        problems = check_polished(KNEE_CLIPS, polished, VOICE, AMBIENCE)
+        assert any("clip 2" in p and "voice_sentence" in p for p in problems)
+
+
+class TestCase6I2vPrefix:
+    def test_i2v_no_prefix(self):
+        polished = _good_polished(FAN_CAR_CLIPS)
+        # Remove i2v prefix from clip 2
+        polished[1] = {**polished[1], "prompt": "The car drifts into a corner. " + VOICE + " " + AMBIENCE + ' "FORMULA WEEKEND" (no F1, FIA, MotoGP, FIM or Dorna logos) no music. no cuts. The narrator says: "The car stuck to the tarmac as if glued by invisible hands."'}
+        problems = check_polished(FAN_CAR_CLIPS, polished, VOICE, AMBIENCE)
+        assert any("i2v" in p and "Continue seamlessly" in p for p in problems)
+
+
+class TestCase7Length:
+    def test_2901_chars_problem(self):
+        polished = _good_polished(KNEE_CLIPS)
+        # Pad clip 1 to 2901 chars
+        current = len(polished[0]["prompt"])
+        pad = 2901 - current
+        if pad > 0:
+            polished[0] = {**polished[0], "prompt": polished[0]["prompt"] + " " + "x" * (pad - 1)}
+        assert len(polished[0]["prompt"]) == 2901
+        problems = check_polished(KNEE_CLIPS, polished, VOICE, AMBIENCE)
+        assert any("2900" in p or "2901" in p for p in problems)
+
+    def test_2900_chars_fine(self):
+        polished = _good_polished(KNEE_CLIPS)
+        current = len(polished[0]["prompt"])
+        pad = 2900 - current
+        if pad > 0:
+            polished[0] = {**polished[0], "prompt": polished[0]["prompt"] + " " + "x" * (pad - 1)}
+        elif pad < 0:
+            polished[0] = {**polished[0], "prompt": polished[0]["prompt"][:2900]}
+        assert len(polished[0]["prompt"]) == 2900
+        # Only check length-related problems
+        problems = check_polished(KNEE_CLIPS, polished, VOICE, AMBIENCE)
+        length_problems = [p for p in problems if "2900" in p or "exceeds" in p]
+        assert length_problems == []
+
+
+class TestCase8DoubledWords:
+    def test_the_the(self):
+        polished = _good_polished(KNEE_CLIPS)
+        polished[0] = {**polished[0], "prompt": "the the " + polished[0]["prompt"]}
+        problems = check_polished(KNEE_CLIPS, polished, VOICE, AMBIENCE)
+        assert any("doubled" in p.lower() for p in problems)
+
+
+class TestCase9BrandNames:
+    def test_ferrari_added_to_fan_car(self):
+        polished = _good_polished(FAN_CAR_CLIPS)
+        polished[0] = {**polished[0], "prompt": polished[0]["prompt"] + " A Ferrari leads the pack."}
+        problems = check_polished(FAN_CAR_CLIPS, polished, VOICE, AMBIENCE, names_allowed=False)
+        assert any("Ferrari" in p for p in problems)
+
+    def test_ferrari_with_names_allowed(self):
+        polished = _good_polished(FAN_CAR_CLIPS)
+        polished[0] = {**polished[0], "prompt": polished[0]["prompt"] + " A Ferrari leads the pack."}
+        problems = check_polished(FAN_CAR_CLIPS, polished, VOICE, AMBIENCE, names_allowed=True)
+        brand_problems = [p for p in problems if "brand" in p.lower() or "Ferrari" in p]
+        assert brand_problems == []
+
+    def test_ferrari_already_in_original(self):
+        """Original already containing Ferrari → fine."""
+        orig = [
+            {**FAN_CAR_CLIPS[0], "prompt": FAN_CAR_CLIPS[0]["prompt"] + " A Ferrari engine roars."},
+            FAN_CAR_CLIPS[1],
+            FAN_CAR_CLIPS[2],
+        ]
+        polished = _good_polished(orig)
+        polished[0] = {**polished[0], "prompt": polished[0]["prompt"] + " A Ferrari engine roars."}
+        problems = check_polished(orig, polished, VOICE, AMBIENCE, names_allowed=False)
+        brand_problems = [p for p in problems if "Ferrari" in p]
+        assert brand_problems == []
+
+
+class TestCase10Parsing:
+    def test_json_fences_parsed(self):
+        polished = _good_polished(KNEE_CLIPS)
+        answer = _make_answer(polished)
+        fenced = "```json\n" + json.dumps(answer) + "\n```"
+        parsed = parse_answer(fenced)
+        assert parsed["voice_sentence"] == VOICE
+
+    def test_non_json_three_times_fail(self):
+        post = _fake_200_text("This is not JSON at all.")
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG,
+                              http_post=post, max_attempts=3)
+        assert result.ok is False
+        assert result.attempts == 3
+
+    def test_200_json_raises_value_error(self):
+        def _post(url, headers=None, json=None, timeout=None):
+            def _raise():
+                raise ValueError("invalid json in body")
+            return SimpleNamespace(status_code=200, json=_raise, text="<html>502 Bad Gateway</html>")
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG,
+                              http_post=_post, max_attempts=2)
+        assert result.ok is False
+        assert result.attempts == 2
+        assert "answer is not valid JSON in the required shape" in result.problems
+
+    def test_seconds_none_defaults_to_zero(self):
+        polished = _good_polished(KNEE_CLIPS)
+        answer = _make_answer(polished)
+        post = _fake_200(answer, seconds=None)
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=post)
+        assert result.ok is True
+        assert result.seconds == 0.0
+
+
+class TestCase11Errors:
+    def test_503_no_account_ready(self):
+        post = _fake_error(503, {"error": "no_account_ready", "retry_after_s": 60, "reasons": {}})
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=post)
+        assert exc_info.value.kind == "no_account_ready"
+        assert exc_info.value.retry_after_s == 60
+
+    def test_503_proxy_down(self):
+        post = _fake_error(503, {"error": "proxy_down"})
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=post)
+        assert exc_info.value.kind == "proxy_down"
+
+    def test_401_unauthorized(self):
+        post = _fake_error(401, {"error": "unauthorized"})
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=post)
+        assert exc_info.value.kind == "unauthorized"
+
+    def test_connection_error_unreachable(self):
+        def _post(url, headers=None, json=None, timeout=None):
+            raise httpx.ConnectError("Connection refused")
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post)
+        assert exc_info.value.kind == "unreachable"
+
+    def test_non_200_non_json_raises_upstream_http_status(self):
+        def _post(url, headers=None, json=None, timeout=None):
+            def _raise():
+                raise ValueError("non-json html")
+            return SimpleNamespace(status_code=502, json=_raise)
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post)
+        assert exc_info.value.kind == "upstream"
+        assert "HTTP 502" in exc_info.value.detail
+
+
+class TestCase12GetPolishConfig:
+    @pytest.fixture
+    def _stable_fernet(self):
+        """Pin a stable Fernet key so encrypt/decrypt use the same key."""
+        from cryptography.fernet import Fernet
+        from app.config import get_settings
+        cfg = get_settings()
+        old_key = cfg.fernet_key
+        cfg.fernet_key = Fernet.generate_key().decode()
+        yield
+        cfg.fernet_key = old_key
+
+    @pytest.fixture
+    def test_db(self, _stable_fernet):
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Settings.__table__.create(bind=engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        row = Settings(
+            id=1,
+            crawl_interval_minutes=30,
+            max_post_age_days=2,
+            ai_provider_primary="gemini",
+            ai_provider_fallback="groq",
+            ai_fallback_after_failures=3,
+            ai_fallback_reset_after_minutes=15,
+        )
+        session.add(row)
+        session.commit()
+        yield session
+        session.close()
+
+    def test_no_token_returns_none(self, test_db):
+        cfg = get_polish_config(test_db)
+        assert cfg is None
+
+    def test_token_set_returns_config(self, test_db):
+        row = test_db.query(Settings).first()
+        token = "my-secret-token"
+        row.prompt_polish_token_encrypted = encrypt(token)
+        test_db.commit()
+        cfg = get_polish_config(test_db)
+        assert cfg is not None
+        assert cfg.token == token
+        assert cfg.base_url == "http://172.17.0.1:8098"
+        assert cfg.model == "gemini-argon"
+
+
+class TestCase13BuildInstruction:
+    def test_contains_template_info(self):
+        instr = build_instruction(FAN_CAR_CLIPS, template=FAN_CAR_TEMPLATE, niche="f1")
+        assert "Formula Weekend" in instr
+        assert "8 s each" in instr
+        # All clip prompts present
+        for c in FAN_CAR_CLIPS:
+            assert c["prompt"] in instr
+        # i2v instruction
+        assert "Continue seamlessly from this exact frame" in instr
+        # Clip seconds
+        assert str(FAN_CAR_TEMPLATE.clip_seconds) in instr
+
+    def test_niche_none_becomes_general(self):
+        instr = build_instruction(KNEE_CLIPS, template=KNEE_TEMPLATE, niche=None)
+        assert "general" in instr
+
+    def test_physics_and_visual_style_rules(self):
+        instr = build_instruction(FAN_CAR_CLIPS, template=FAN_CAR_TEMPLATE, niche="f1")
+        assert "Everything real in the scene obeys real physics" in instr
+        assert "Deliberate visual styles of the template are NOT logic errors" in instr
+
+
+class TestCase14PolishCover:
+    def test_good_json(self):
+        answer = {
+            "lines": ["WHY DOES", "YOUR KNEE", "JERK?"],
+            "highlight": [1],
+            "scene": "A clean medical 3D render of the patellar tendon.",
+        }
+        post = _fake_200(answer)
+        res = polish_cover(
+            title="Why Your Knee Jerks",
+            caption="The reflex explanation.",
+            niche="health",
+            recent=["HOW KNEE WORKS"],
+            subject_hint="Human knee joint in clinical white room",
+            aspect="9:16",
+            config=CFG,
+            http_post=post,
+        )
+        assert res is not None
+        assert res["lines"] == ["WHY DOES", "YOUR KNEE", "JERK?"]
+        assert res["highlight"] == [1]
+        assert res["scene"] == "A clean medical 3D render of the patellar tendon."
+        assert res["by"] == "argon"
+        assert "A clean medical 3D render of the patellar tendon." in res["image_prompt"]
+        assert "UPPER 40%" in res["image_prompt"]
+
+    def test_first_off_spec_then_good_on_attempt_2(self):
+        bad_answer = {
+            "lines": ["L1", "L2", "L3", "L4", "L5", "L6"],  # 6 lines is off spec
+            "highlight": [0],
+            "scene": "scene",
+        }
+        good_answer = {
+            "lines": ["WHY DOES", "IT WORK?"],
+            "highlight": [0],
+            "scene": "scene",
+        }
+        call_count = 0
+
+        def _post(url, headers=None, json=None, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            ans = bad_answer if call_count == 1 else good_answer
+            import json as json_module
+            return SimpleNamespace(
+                status_code=200,
+                json=lambda: {"text": json_module.dumps(ans), "account": "acct-1", "seconds": 10.0},
+            )
+
+        res = polish_cover(
+            title="Title",
+            caption="Caption",
+            niche="health",
+            recent=[],
+            subject_hint="hint",
+            aspect="9:16",
+            config=CFG,
+            max_attempts=2,
+            http_post=_post,
+        )
+        assert call_count == 2
+        assert res is not None
+        assert res["lines"] == ["WHY DOES", "IT WORK?"]
+        assert res["by"] == "argon"
+
+    def test_two_bad_answers_returns_none(self):
+        bad_answer = {
+            "lines": ["L1", "L2", "L3", "L4", "L5", "L6"],
+            "highlight": [0],
+            "scene": "scene",
+        }
+        post = _fake_200(bad_answer)
+        res = polish_cover(
+            title="Title",
+            caption="Caption",
+            niche="health",
+            recent=[],
+            subject_hint="hint",
+            aspect="9:16",
+            config=CFG,
+            max_attempts=2,
+            http_post=post,
+        )
+        assert res is None
+
+    def test_503_raises_polish_unavailable(self):
+        post = _fake_error(503, {"error": "proxy_down"})
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_cover(
+                title="Title",
+                caption="Caption",
+                niche="health",
+                recent=[],
+                subject_hint="hint",
+                aspect="9:16",
+                config=CFG,
+                http_post=post,
+            )
+        assert exc_info.value.kind == "proxy_down"
+
+    def test_request_body_contains_extended_thinking_and_subject_hint(self):
+        captured_body = {}
+
+        def _post(url, headers=None, json=None, timeout=None):
+            nonlocal captured_body
+            captured_body = json
+            import json as json_module
+            ans = {"lines": ["WHY IT", "WORKS?"], "highlight": [0], "scene": "scene"}
+            return SimpleNamespace(
+                status_code=200,
+                json=lambda: {"text": json_module.dumps(ans), "account": "acct-1", "seconds": 5.0},
+            )
+
+        hint = "Very unique subject hint for test 12345"
+        res = polish_cover(
+            title="Unique Title",
+            caption="Unique Caption",
+            niche="sports",
+            recent=["RECENT HOOK"],
+            subject_hint=hint,
+            aspect="9:16",
+            config=CFG,
+            http_post=_post,
+        )
+        assert res is not None
+        assert captured_body.get("extended_thinking") is True
+        assert hint in captured_body.get("prompt", "")
+
+
+def test_generate_timeout_is_900_s():
+    from app.services.prompt_polish import GENERATE_TIMEOUT_S, _post_generate
+    assert GENERATE_TIMEOUT_S == 900
+
+    captured = {}
+    def mock_post(url, headers, json, timeout):
+        captured["timeout"] = timeout
+        return SimpleNamespace(status_code=200, json=lambda: {"text": "{}"})
+
+    cfg = PolishConfig(base_url="http://172.17.0.1:8098", token="tok", model="gemini-argon")
+    _post_generate(cfg, "prompt", http_post=mock_post)
+    assert captured["timeout"] == 900
+

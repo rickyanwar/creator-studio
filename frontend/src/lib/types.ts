@@ -69,6 +69,7 @@ export interface Fanpage {
   qa_ig_enabled?: boolean;
   qa_facebook_enabled?: boolean;
   qa_ai_video_enabled?: boolean;
+  ai_video_prompt_polish_enabled?: boolean;
   ig_mode?: "repost" | "recreate_template" | "recreate_chatgpt";
 
   // ── Content modes (Feature 2) ──
@@ -602,6 +603,10 @@ export interface AppSettings {
   codex_night_min_gap_s?: number;
   codex_night_gap_jitter_s?: number;
   codex_usage_url?: string | null;
+  prompt_polish_base_url?: string;
+  has_prompt_polish_token?: boolean;
+  prompt_polish_token?: string;
+  prompt_polish_model?: string;
 }
 
 export interface AiEngineStatus {
@@ -771,6 +776,79 @@ export interface AiVideoTemplate {
   liveries: string[];
   narrator_presets: string[];
   topic_ideas: string[];
+}
+
+export interface PromptPolishClip {
+  index: number;
+  mode: string;
+  prompt: string;
+  prompt_original?: string | null;
+}
+
+export interface PromptPolishIdea {
+  idea_id: number;
+  state: "off" | "polished" | "waiting" | "failed" | string;
+  prepared_at: string | null;
+  polish_attempts: number;
+  polish_error: string | null;
+  changes: string[];
+  voice_sentence: string;
+  ambience_sentence: string;
+  clips: PromptPolishClip[];
+}
+
+export interface PromptPolishJob {
+  job_id: number;
+  polished: boolean;
+  clips: PromptPolishClip[];
+  changes: string[];
+}
+
+export interface PromptPolishAccount {
+  name: string;
+  status: string;
+  available: boolean;
+  reason?: string | null;
+  used_today?: number;
+  cap_today?: number;
+  next_ok_at?: number | null;
+  cooldown_until?: number | null;
+  sleep_start?: number | string | null;
+  sleep_end?: number | string | null;
+  last_error_type?: string | null;
+  last_used_at?: number | null;
+}
+
+export interface PromptPolishServiceHealth {
+  ok?: boolean;
+  proxy_ok?: boolean;
+  ready_now?: number;
+  accounts?: PromptPolishAccount[];
+  error?: string;
+}
+
+export interface PromptPolishHealth {
+  generated_at?: string;
+  configured: boolean;
+  brands_on: number;
+  service: PromptPolishServiceHealth;
+  last_run: {
+    at?: string;
+    prepared?: number;
+    failed?: number;
+    unavailable?: string | null;
+    retry_after_s?: number | null;
+    detail?: string;
+  } | null;
+  last_ok: string | null;
+  ideas: {
+    prepared: number;
+    waiting: number;
+    failed_24h: number;
+  };
+  starving: number[];
+  problems: string[];
+  ok: boolean;
 }
 
 export interface Template {
