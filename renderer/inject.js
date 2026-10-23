@@ -97,11 +97,12 @@ function recolorStreakDataUri(srcDataUri, accentHex) {
         for (let i = 0; i < data.length; i += 4) {
           const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
           if (a === 0) continue;
-          // Grey/luma relative brightness (same as PIL gray = im.convert("L") / 255.0)
-          const gray = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-          data[i] = Math.max(0, Math.min(255, Math.round(gray * tr)));
-          data[i + 1] = Math.max(0, Math.min(255, Math.round(gray * tg)));
-          data[i + 2] = Math.max(0, Math.min(255, Math.round(gray * tb)));
+          // Colour intensity (brightest channel), so a bright red streak stays bright in the accent colour.
+          // Luma made red streaks ~70% darker and they vanished on dark or red photos (owner 2026-10-24).
+          const v = Math.max(r, g, b) / 255.0;
+          data[i] = Math.max(0, Math.min(255, Math.round(v * tr)));
+          data[i + 1] = Math.max(0, Math.min(255, Math.round(v * tg)));
+          data[i + 2] = Math.max(0, Math.min(255, Math.round(v * tb)));
         }
         ctx.putImageData(imgData, 0, 0);
         resolve(c.toDataURL("image/png"));
