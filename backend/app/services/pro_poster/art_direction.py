@@ -211,7 +211,7 @@ def direct(
     if strict:
         if context_count:
             must_do_lines.append(
-                f"- House style, when it helps the story: {main_subject_str} large in the frame, plus at most ONE circular inset with a thin white ring in the upper part of the image. "
+                f"- House style, when it helps the story: {main_subject_str} large in the frame, plus at most ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners). "
                 "The inset must be cropped from one of the event reference images above (say which in your design), showing a different moment or detail than the main image. "
                 "Never generate an inset that is not in a reference image, and never repeat the same person or pose."
             )
@@ -221,7 +221,7 @@ def direct(
             )
     else:
         must_do_lines.append(
-            f"- House style, when it helps the story: {main_subject_str} large in the frame, plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
+            f"- House style, when it helps the story: {main_subject_str} large in the frame, plus ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners) showing a DIFFERENT moment or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
             "One inset is enough; never add a second. An inset showing a person must come from a reference image; without one, show only a place or object named in the story. Never repeat the same person or pose in the inset."
         )
     must_do_lines.append(
@@ -251,7 +251,7 @@ def direct(
     template_lines = [
         "Space for the fan page template:",
         f"- The bottom {TEMPLATE_TEXT_ZONE_PCT}% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork.",
-        "- Keep the very top edge free of graphics, so the page name fits.",
+        "- Keep the top 12% of the image free of insets, faces and graphic words: the page logo and name sit in the top corners.",
     ]
 
     avoid_lines = [

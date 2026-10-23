@@ -103,8 +103,8 @@ def test_case_1_stuck_post_future_delivery_kept(tmp_path, monkeypatch):
         db.close()
 
 
-def test_case_2_stuck_post_past_delivery_cleaned(tmp_path, monkeypatch):
-    """Case 2: stuck post, delivery scheduled 7 h in the PAST -> CLEANED."""
+def test_case_2_stuck_post_past_delivery_kept(tmp_path, monkeypatch):
+    """Case 2: stuck post, not all jobs published -> KEPT."""
     now = datetime.utcnow()
     db = SessionLocal()
     source = IGSource(ig_username=f"cleanup-{uuid.uuid4().hex}")
@@ -167,8 +167,8 @@ def test_case_2_stuck_post_past_delivery_cleaned(tmp_path, monkeypatch):
         db.expire_all()
 
         refreshed = db.get(Post, post.id)
-        assert refreshed.status == PostStatus.cleaned
-        assert not post_dir.exists()
+        assert refreshed.status == PostStatus.stored
+        assert post_dir.exists()
     finally:
         db.rollback()
         db.query(PublishDelivery).filter_by(publish_job_id=job.id).delete()
@@ -305,8 +305,8 @@ def test_case_4_stuck_post_pending_job_keep_hours(tmp_path, monkeypatch):
         assert db.get(Post, post_kept.id).status == PostStatus.stored
         assert dir_kept.exists()
 
-        assert db.get(Post, post_cleaned.id).status == PostStatus.cleaned
-        assert not dir_cleaned.exists()
+        assert db.get(Post, post_cleaned.id).status == PostStatus.stored
+        assert dir_cleaned.exists()
     finally:
         db.rollback()
         db.query(PublishJob).filter(PublishJob.id.in_([job_recent.id, job_old.id])).delete(synchronize_session=False)
@@ -317,8 +317,8 @@ def test_case_4_stuck_post_pending_job_keep_hours(tmp_path, monkeypatch):
         db.close()
 
 
-def test_case_5_all_jobs_failed_cleaned(tmp_path, monkeypatch):
-    """Case 5: all jobs failed, no deliveries, no scheduled_for -> CLEANED."""
+def test_case_5_all_jobs_failed_kept(tmp_path, monkeypatch):
+    """Case 5: all jobs failed, media never handed to phone/repliz -> KEPT."""
     now = datetime.utcnow()
     db = SessionLocal()
     source = IGSource(ig_username=f"cleanup-{uuid.uuid4().hex}")
@@ -362,8 +362,8 @@ def test_case_5_all_jobs_failed_cleaned(tmp_path, monkeypatch):
         db.expire_all()
 
         refreshed = db.get(Post, post.id)
-        assert refreshed.status == PostStatus.cleaned
-        assert not post_dir.exists()
+        assert refreshed.status == PostStatus.stored
+        assert post_dir.exists()
     finally:
         db.rollback()
         db.query(PublishJob).filter_by(id=job.id).delete()

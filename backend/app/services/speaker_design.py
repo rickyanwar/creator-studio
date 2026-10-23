@@ -479,7 +479,7 @@ def _build_prompt(layout: str, speaker: str, side: str, sport: str, moment_photo
         for index, row in enumerate(moment_photos[:MAX_INSETS]):
             lines.append(f"Image {index + 2} = INSET {index + 1}: REAL PHOTO of {_photo_description(row, speaker)}. Crop it tight on its subject; keep it exactly as photographed.")
         if len(moment_photos[:MAX_INSETS]) == 1:
-            lines.append(f"Place the inset inside ONE large circle (about 45 percent of the card width) with a clean solid white ring (thin but strong) and a soft drop shadow, upper-{other}. The speaker OVERLAPS the edge of the circle (speaker in front of the circle) with a soft contact shadow on the circle, real layered depth like Photoshop layers.")
+            lines.append(f"Place the inset inside ONE large circle (about 45 percent of the card width) with a clean solid white ring (thin but strong) and a soft drop shadow, upper-{other}, its top edge no higher than 12 percent of the card height (the page logo sits in the top corners). The speaker OVERLAPS the edge of the circle (speaker in front of the circle) with a soft contact shadow on the circle, real layered depth like Photoshop layers.")
         else:
             lines.append(f"Place the insets inside TWO circles of different sizes on the {other} side (a large circle upper-{other} and a smaller one overlapping it lower/mid-{other}), both with the same clean white ring (thin but strong) and a soft drop shadow. The speaker OVERLAPS at least one circle (speaker in front) with a soft contact shadow, real layered depth. Everything inside the top 65 percent.")
         lines.append("Background: the real background from Image 1, extended to fill the card, softly out of focus, slightly darkened and desaturated.")

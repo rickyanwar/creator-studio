@@ -21,6 +21,33 @@ logger = logging.getLogger(__name__)
 # Failed videos (Flow error, QC reject) are replaced the same day, at most this many per fan page per day,
 # so a Flow outage cannot loop through ideas and credits (owner 2026-10-22).
 MAX_FAILED_REPLACEMENTS_PER_DAY = 2
+AI_VIDEO_STOCK_DAYS = 20
+
+
+def video_stock(db, fanpage_id: int) -> int:
+    """Number of unposted ai_video PublishJob rows waiting in stock for a fan page."""
+    from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
+
+    try:
+        return (
+            db.query(PublishJob)
+            .filter(
+                PublishJob.fanpage_id == fanpage_id,
+                PublishJob.content_type == ContentType.ai_video,
+                PublishJob.is_deleted.is_(False),
+                PublishJob.status.in_([
+                    PublishJobStatus.pending_publish,
+                    PublishJobStatus.pending_review,
+                ]),
+            )
+            .count()
+        )
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
 
 
 def _daily_counts(jobs) -> tuple[int, int]:
@@ -73,7 +100,10 @@ def plan_ai_videos():
             today_jobs = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.created_at >= local_midnight, VideoJob.status != "cancelled").all()
             made_today, spent_today = _daily_counts(today_jobs)
             open_count = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.status.in_(["queued", "claimed", "generating"])).count()
-            if made_today >= fanpage.ai_video_daily_count or open_count >= 2:
+            if open_count >= 2:
+                continue
+            stock = video_stock(db, fanpage.id)
+            if made_today >= fanpage.ai_video_daily_count and stock >= fanpage.ai_video_daily_count * AI_VIDEO_STOCK_DAYS:
                 continue
             for idea in db.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id, VideoIdea.status == "proposed").all():
                 if fanpage.ai_video_min_score is not None and idea.score is not None and idea.score >= fanpage.ai_video_min_score:

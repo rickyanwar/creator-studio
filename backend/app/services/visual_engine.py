@@ -100,9 +100,9 @@ def build_inset_prompt(
             inset_instructions.append(f"INSET {i+1}: GENERATED PLACE OR OBJECT — {desc}. Show only that place or object, clearly {sport} and true to how it really looks. NO people at all: no faces, no drivers, no riders, no fighters, no helmets, no crowds in focus. Nothing from another sport. No text, letters or numbers. Premium sports-media photo look, no clip-art.")
     
     if len(insets) == 1:
-        comp_desc = "Crop it tight on its subject and place it inside a large circle (about 45% of the card width) with a clean solid white ring (thin but strong) and a soft drop shadow, upper-left. The hero overlaps the right edge of the circle (hero in front) with a soft contact shadow on the circle — real depth, like layered Photoshop layers."
+        comp_desc = "Crop it tight on its subject and place it inside a large circle (about 45% of the card width) with a clean solid white ring (thin but strong) and a soft drop shadow, upper-left, with its top edge no higher than 12% of the card height (the page logo sits in the top corners). The hero overlaps the right edge of the circle (hero in front) with a soft contact shadow on the circle — real depth, like layered Photoshop layers."
     else:
-        comp_desc = "Crop them tight on their subjects and place them inside TWO circles. Use different sizes (e.g. a large circle upper-left and a smaller one overlapping it lower-left/mid-left, or one upper-left + one upper-right with the hero centred), both with the same clean white ring (thin but strong) and a soft drop shadow. The hero overlaps at least one circle (hero in front) with a soft contact shadow — real depth. Everything inside the top 65%."
+        comp_desc = "Crop them tight on their subjects and place them inside TWO circles. Use different sizes (e.g. a large circle upper-left and a smaller one overlapping it lower-left/mid-left, or one upper-left + one upper-right with the hero centred), both with the same clean white ring (thin but strong) and a soft drop shadow. The hero overlaps at least one circle (hero in front) with a soft contact shadow — real depth. The circles start below the top 12% of the card (the page logo sits in the top corners); everything inside the top 65%."
         
     prompt_lines.append("\n".join(inset_instructions) + f"\n{comp_desc}\n")
     

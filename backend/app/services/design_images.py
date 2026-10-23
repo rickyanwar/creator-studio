@@ -101,6 +101,13 @@ def _vision_models() -> list[str]:
     return live if live else full_list
 
 
+_VISION_LOCATION_RETRY_WAITS_S = (2.0, 4.0)
+
+
+def _is_location_error(exc: Exception | None) -> bool:
+    return exc is not None and "location is not supported" in str(exc).lower()
+
+
 def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, context: str = "vision") -> str:
     """Chat-completion call against 9Router, trying each vision model in
     `_vision_models()` in turn until one returns a non-empty response — a
@@ -136,30 +143,39 @@ def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, 
     t0 = time.monotonic()
     models_tried: list[str] = []
     last_exc: Exception | None = None
-    for model in _vision_models():
-        models_tried.append(model)
-        try:
-            c = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": content}],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                timeout=30.0,
-            )
-            text = (c.choices[0].message.content or "").strip()
-            if text:
-                log_ai_copy_event(
-                    context=context, fanpage_id=None, article_id=None,
-                    outcome="success" if len(models_tried) == 1 else "recovered",
-                    models_tried=models_tried, final_provider=model,
-                    error_message=str(last_exc) if last_exc else None,
-                    latency_ms=int((time.monotonic() - t0) * 1000),
+    # The 9Router relay sometimes answers "User location is not supported" for a moment and then works
+    # again (owner 2026-10-24). Those 400s come back at once, so a short wait and another pass is cheap;
+    # no other error is retried, so a slow or dead model never makes a card slower.
+    for attempt, wait_s in enumerate((0.0, *_VISION_LOCATION_RETRY_WAITS_S)):
+        if attempt:
+            if not _is_location_error(last_exc):
+                break
+            logger.info("vision: relay location error, retry %d in %.0f s", attempt, wait_s)
+            time.sleep(wait_s)
+        for model in _vision_models():
+            models_tried.append(model)
+            try:
+                c = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": content}],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout=30.0,
                 )
-                return text
-            last_exc = RuntimeError(f"{model}: empty response")
-        except Exception as exc:
-            last_exc = exc
-            logger.debug("vision model %s failed: %s", model, exc)
+                text = (c.choices[0].message.content or "").strip()
+                if text:
+                    log_ai_copy_event(
+                        context=context, fanpage_id=None, article_id=None,
+                        outcome="success" if len(models_tried) == 1 else "recovered",
+                        models_tried=models_tried, final_provider=model,
+                        error_message=str(last_exc) if last_exc else None,
+                        latency_ms=int((time.monotonic() - t0) * 1000),
+                    )
+                    return text
+                last_exc = RuntimeError(f"{model}: empty response")
+            except Exception as exc:
+                last_exc = exc
+                logger.debug("vision model %s failed: %s", model, exc)
 
     log_ai_copy_event(
         context=context, fanpage_id=None, article_id=None, outcome="failed",
