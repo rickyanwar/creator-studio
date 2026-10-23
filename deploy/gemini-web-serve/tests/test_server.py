@@ -139,7 +139,8 @@ class ServerFixture:
                  pause_range: tuple[float, float] = (0.0, 0.0),
                  rng: random.Random | None = None,
                  request_timeout: int = 600,
-                 watchdog_timeout: int = 45):
+                 watchdog_timeout: int = 300,
+                 thinking: str = "request"):
         self.accounts_dir = accounts_dir
         self.state_path = state_path
         self._client_behaviors = client_behaviors or {}
@@ -186,6 +187,7 @@ class ServerFixture:
             rng=rng or random.Random(1),
             request_timeout=request_timeout,
             watchdog_timeout=watchdog_timeout,
+            thinking=thinking,
         )
         # Monkeypatch proxy check
         self.server._check_proxy = lambda: self._proxy_check_ok
@@ -735,13 +737,44 @@ class TestAccountStatusAndErrorMapping:
         port = sf.start()
         try:
             assert sf.server.request_timeout == 600
-            assert sf.server.watchdog_timeout == 45
+            assert sf.server.watchdog_timeout == 300
             code, body = _req(port, "POST", "/v1/generate", body={"prompt": "hello"})
             assert code == 200
             client = sf._clients_created["a"]
-            assert client.init_kwargs["watchdog_timeout"] == 45
+            assert client.init_kwargs["watchdog_timeout"] == 300
             assert client.init_kwargs["timeout"] == 600
         finally:
             sf.stop()
 
 
+
+
+class TestThinkingOverride:
+    """GWS_THINKING forces one thinking level whatever the caller asks for."""
+
+    def _run(self, tmp_dirs, thinking, requested):
+        accts, state = tmp_dirs
+        _make_account_file(accts, "a", psid="PSID_A")
+        seen = {}
+
+        async def gen(prompt, model, extended_thinking):
+            seen["extended_thinking"] = extended_thinking
+            return _FakeOutput("ok", "")
+
+        sf = ServerFixture(accounts_dir=accts, state_path=state, client_behaviors={"a": gen}, thinking=thinking)
+        port = sf.start()
+        try:
+            code, _ = _req(port, "POST", "/v1/generate", body={"prompt": "hello", "extended_thinking": requested})
+            assert code == 200
+        finally:
+            sf.stop()
+        return seen["extended_thinking"]
+
+    def test_standard_forces_off(self, tmp_dirs):
+        assert self._run(tmp_dirs, "standard", True) is False
+
+    def test_extended_forces_on(self, tmp_dirs):
+        assert self._run(tmp_dirs, "extended", False) is True
+
+    def test_request_honours_caller(self, tmp_dirs):
+        assert self._run(tmp_dirs, "request", False) is False

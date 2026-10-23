@@ -636,6 +636,116 @@ def test_api_job_endpoint(client):
     assert res2["changes"] == []
 
 
+def _make_job(session, fanpage, idea, job_ids, *, polished=True):
+    """Create a VideoJob linked to *idea* with or without prompt_original on clips."""
+    clips = [
+        {
+            "index": 1,
+            "mode": "t2v",
+            "prompt": "Polished prompt" if polished else "Raw prompt",
+            **({"prompt_original": "Original prompt"} if polished else {}),
+        }
+    ]
+    job = VideoJob(
+        fanpage_id=fanpage.id,
+        idea_id=idea.id,
+        template_key="motorsport_tech_explainer",
+        title="Title",
+        caption="Caption",
+        model="veo-3",
+        aspect="9:16",
+        clip_seconds=5,
+        credits_per_clip=10,
+        credits_estimate=10,
+        clips=clips,
+    )
+    session.add(job)
+    session.flush()
+    job_ids.append(job.id)
+    session.commit()
+    return job
+
+
+def test_api_queued_idea_with_polished_job_shows_polished(client):
+    """Queued idea whose VideoJob has prompt_original → 'polished' in both endpoints,
+    even when idea.variables was mutated after prepare (fingerprint changed)."""
+    c, session = client
+    fanpage_ids, idea_ids, job_ids = [], [], []
+
+    fp = _fanpage(session, fanpage_ids, polish_on=True)
+    idea = _idea(session, fp, idea_ids, status="queued")
+    session.commit()
+
+    # Simulate what plan_ai_videos does: mutate variables so fingerprint no longer matches.
+    idea.variables = {"injected": "by_plan"}
+    session.commit()
+
+    _make_job(session, fp, idea, job_ids, polished=True)
+
+    # Single-idea endpoint
+    res = c.get(f"/prompt-polish/ideas/{idea.id}").json()
+    assert res["state"] == "polished", f"expected polished, got {res['state']}"
+    assert any(cl.get("prompt_original") for cl in res["clips"])
+
+    # Batch endpoint
+    batch = c.get(f"/prompt-polish/ideas-state?ids={idea.id}").json()
+    assert batch[str(idea.id)] == "polished"
+
+    # Cleanup
+    session.query(VideoJob).filter(VideoJob.id.in_(job_ids)).delete(synchronize_session=False)
+    session.query(VideoIdea).filter(VideoIdea.id.in_(idea_ids)).delete(synchronize_session=False)
+    session.query(TargetFanpage).filter(TargetFanpage.id.in_(fanpage_ids)).delete(synchronize_session=False)
+    session.commit()
+
+
+def test_api_queued_idea_job_no_prompt_original_switch_on_shows_waiting(client):
+    """Queued idea whose job has no prompt_original + switch on → 'waiting'."""
+    c, session = client
+    fanpage_ids, idea_ids, job_ids = [], [], []
+
+    fp = _fanpage(session, fanpage_ids, polish_on=True)
+    idea = _idea(session, fp, idea_ids, status="queued")
+    session.commit()
+
+    _make_job(session, fp, idea, job_ids, polished=False)
+
+    res = c.get(f"/prompt-polish/ideas/{idea.id}").json()
+    assert res["state"] == "waiting", f"expected waiting, got {res['state']}"
+
+    batch = c.get(f"/prompt-polish/ideas-state?ids={idea.id}").json()
+    assert batch[str(idea.id)] == "waiting"
+
+    # Cleanup
+    session.query(VideoJob).filter(VideoJob.id.in_(job_ids)).delete(synchronize_session=False)
+    session.query(VideoIdea).filter(VideoIdea.id.in_(idea_ids)).delete(synchronize_session=False)
+    session.query(TargetFanpage).filter(TargetFanpage.id.in_(fanpage_ids)).delete(synchronize_session=False)
+    session.commit()
+
+
+def test_api_queued_idea_job_no_prompt_original_switch_off_shows_off(client):
+    """Queued idea whose job has no prompt_original + switch off → 'off'."""
+    c, session = client
+    fanpage_ids, idea_ids, job_ids = [], [], []
+
+    fp = _fanpage(session, fanpage_ids, polish_on=False)
+    idea = _idea(session, fp, idea_ids, status="queued")
+    session.commit()
+
+    _make_job(session, fp, idea, job_ids, polished=False)
+
+    res = c.get(f"/prompt-polish/ideas/{idea.id}").json()
+    assert res["state"] == "off", f"expected off, got {res['state']}"
+
+    batch = c.get(f"/prompt-polish/ideas-state?ids={idea.id}").json()
+    assert batch[str(idea.id)] == "off"
+
+    # Cleanup
+    session.query(VideoJob).filter(VideoJob.id.in_(job_ids)).delete(synchronize_session=False)
+    session.query(VideoIdea).filter(VideoIdea.id.in_(idea_ids)).delete(synchronize_session=False)
+    session.query(TargetFanpage).filter(TargetFanpage.id.in_(fanpage_ids)).delete(synchronize_session=False)
+    session.commit()
+
+
 # ── 5. Script tests ───────────────────────────────────────────────────────────
 
 def test_script_main_success_and_pretty(capsys):

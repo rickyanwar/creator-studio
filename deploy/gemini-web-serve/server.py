@@ -95,11 +95,13 @@ class GWSServer:
         default_proxy: str = "socks5h://100.64.96.50:1080",
         model: str = "gemini-argon",
         request_timeout: int = 600,
-        watchdog_timeout: int = 45,
+        watchdog_timeout: int = 300,
+        thinking: str = "request",
         scheduler_cfg: SchedulerConfig | None = None,
         client_factory=None,
         pause_range: tuple[float, float] = (2.0, 6.0),
         rng: random.Random | None = None,
+        quota_rest_below: float = 0.2,
     ):
         self.bind = bind
         self.port = port
@@ -110,10 +112,13 @@ class GWSServer:
         self.model = model
         self.request_timeout = request_timeout
         self.watchdog_timeout = watchdog_timeout
+        # "request" honours the caller's extended_thinking flag; "standard"/"extended" force one level.
+        self.thinking = thinking if thinking in ("request", "standard", "extended") else "request"
         self.cfg = scheduler_cfg or SchedulerConfig()
         self.client_factory = client_factory or _real_client_factory
         self.pause_range = pause_range
         self.rng = rng or random.Random()
+        self.quota_rest_below = quota_rest_below
 
         self.states: dict[str, dict] = {}
         self.acct_data: dict[str, dict] = {}  # loaded account file data
@@ -208,7 +213,7 @@ class GWSServer:
             else:
                 avail, reason = is_available(st, now)
                 if not avail and reason in (
-                    "sleeping", "on_break", "needs_login", "abuse_flag", "cooldown", "no_proxy", "needs_tos"
+                    "sleeping", "on_break", "needs_login", "abuse_flag", "cooldown", "no_proxy", "needs_tos", "quota_low"
                 ):
                     should_close = True
                 elif st.get("status") not in (None, "ok"):
@@ -380,6 +385,8 @@ class GWSServer:
         extended_thinking = body.get("extended_thinking", True)
         if not isinstance(extended_thinking, bool):
             return 400, {"error": "bad_request"}
+        if self.thinking != "request":
+            extended_thinking = self.thinking == "extended"
         return None, (prompt, model, extended_thinking)
 
     def _no_account_ready_response(self, now: float) -> tuple[int, dict]:
@@ -392,11 +399,79 @@ class GWSServer:
             "reasons": reasons,
         }
 
+    async def _update_quota_state(self, name: str, client: Any) -> None:
+        """Fetch quotas from client and update state. Never raises."""
+        try:
+            fetch = getattr(client, "_fetch_quota", None)
+            if fetch is not None:
+                await fetch()
+            quotas = getattr(client, "quotas", {}) or {}
+            if not isinstance(quotas, dict):
+                return
+            # Find the bucket with the lowest remaining fraction
+            low_fraction: float | None = None
+            low_reset: float | None = None
+            for bucket in quotas.values():
+                if not isinstance(bucket, dict):
+                    continue
+                total = bucket.get("total")
+                remaining = bucket.get("remaining")
+                if not isinstance(total, (int, float)) or total <= 0:
+                    continue
+                if not isinstance(remaining, (int, float)):
+                    continue
+                frac = remaining / total
+                if low_fraction is None or frac < low_fraction:
+                    low_fraction = frac
+                    low_reset = bucket.get("reset_time")
+
+            st = self.states.get(name, {})
+            st["quota_min_fraction"] = low_fraction
+            st["quota_checked_at"] = time.time()
+            if low_reset is not None and isinstance(low_reset, (int, float)) and low_reset > 0:
+                st["quota_reset_at"] = float(low_reset)
+            else:
+                st["quota_reset_at"] = None
+        except Exception:
+            pass
+
+    async def _apply_quota_rest_if_needed(self, name: str) -> bool:
+        """If quota is below threshold, mark account quota_low and return True."""
+        st = self.states.get(name, {})
+        low_fraction = st.get("quota_min_fraction")
+        if low_fraction is None:
+            return False
+        if low_fraction >= self.quota_rest_below:
+            return False
+        # Apply quota_low rest
+        now = time.time()
+        reset_at = st.get("quota_reset_at")
+        jitter = self.rng.uniform(5, 15) * 60.0  # 5-15 min in seconds
+        if reset_at is not None and isinstance(reset_at, (int, float)) and reset_at > now:
+            cooldown_until = reset_at + jitter
+        else:
+            cooldown_until = now + 3600.0
+        # Store jitter on state temporarily so apply_error can use it
+        st["_quota_jitter"] = jitter
+        st["quota_reset_at"] = reset_at
+        from scheduler import apply_error
+        apply_error(st, "quota_low", now)
+        # Override cooldown_until with the correct one (apply_error uses _quota_jitter)
+        st["cooldown_until"] = cooldown_until
+        st.pop("_quota_jitter", None)
+        log.info("quota_low account=%s fraction=%.3f rest_until=%.0f", name, low_fraction, cooldown_until)
+        self._save_state()
+        return True
+
     async def _execute_attempt(
         self, name: str, prompt: str, model: str, extended_thinking: bool
     ) -> tuple[int, dict]:
         """Run single generation attempt. Returns (status_code, result_dict)."""
         client = await self._get_or_create_client(name)
+        # If quota check during init caused quota_low, treat as error
+        st = self.states.get(name, {})
+        if st.get("status") == "quota_low":
+            raise AccountStatusError("quota_low")
         status_err = _map_account_status(getattr(client, "account_status", None))
         if status_err is not None:
             raise AccountStatusError(status_err)
@@ -422,6 +497,8 @@ class GWSServer:
 
         now_after = time.time()
         after_use(self.states[name], now_after, self.cfg, self.rng)
+        # Update quota after successful generate (never fails)
+        await self._update_quota_state(name, client)
         self._persist_cookies(name, client)
         self._save_state()
         elapsed = now_after - t0
@@ -477,7 +554,9 @@ class GWSServer:
                     error_type = _map_error(exc)
                 if error_type == "model_invalid":
                     return 400, {"error": "model_invalid"}
-                apply_error(self.states[name], error_type, time.time())
+                # quota_low: already applied to state in _get_or_create_client; don't re-apply
+                if error_type != "quota_low":
+                    apply_error(self.states[name], error_type, time.time())
                 if name in self.clients:
                     self._persist_cookies(name, self.clients[name])
                 if error_type != "timeout":
@@ -527,6 +606,10 @@ class GWSServer:
             watchdog_timeout=self.watchdog_timeout,
         )
         self.clients[name] = client
+        # Check quota after init (never fails the init)
+        await self._update_quota_state(name, client)
+        # If quota already low, rest account — caller will fall over to another
+        await self._apply_quota_rest_if_needed(name)
         return client
 
     def handle_health(self) -> tuple[int, dict]:
@@ -553,6 +636,7 @@ class GWSServer:
                 ready_now += 1
             if st.get("status") not in ("needs_login", "no_proxy", "needs_tos") and reason != "daily_cap":
                 any_later = True
+            qf = st.get("quota_min_fraction")
             accts.append({
                 "name": name,
                 "status": st.get("status", "ok"),
@@ -566,6 +650,8 @@ class GWSServer:
                 "sleep_end": st.get("sleep_end"),
                 "last_error_type": st.get("last_error_type"),
                 "last_used_at": st.get("last_used_at"),
+                "quota_pct_left": int(round(qf * 100)) if qf is not None else None,
+                "quota_reset_at": st.get("quota_reset_at"),
             })
 
         ok = proxy_ok and (ready_now > 0 or any_later)
@@ -725,8 +811,12 @@ def main() -> None:
         default_proxy=os.environ.get("GWS_DEFAULT_PROXY", "socks5h://100.64.96.50:1080"),
         model=os.environ.get("GWS_MODEL", "gemini-argon"),
         request_timeout=int(os.environ.get("GWS_REQUEST_TIMEOUT_S", "600")),
-        watchdog_timeout=int(os.environ.get("GWS_WATCHDOG_TIMEOUT_S", "45")),
+        # A short watchdog makes gemini_webapi resend the prompt in a new chat (each resend spends quota) when
+        # the phone proxy cuts an idle stream after ~60 s; 300 s lets it poll until Argon has finished.
+        watchdog_timeout=int(os.environ.get("GWS_WATCHDOG_TIMEOUT_S", "300")),
+        thinking=os.environ.get("GWS_THINKING", "request"),
         scheduler_cfg=cfg,
+        quota_rest_below=float(os.environ.get("GWS_QUOTA_REST_BELOW", "0.2")),
     )
     server.start()
 

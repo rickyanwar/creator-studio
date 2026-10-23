@@ -130,10 +130,12 @@ python3 login.py stop
 | `needs_tos` | New Google/Gemini Terms of Service pending | Owner logs in with `login.py <name>` and accepts the Terms |
 | `abuse_flag` | Account flagged by Google | Resting for 24 h |
 | `no_proxy` | Account missing proxy config | Configure proxy or `GWS_DEFAULT_PROXY` |
+| `quota_low` | Quota bucket remaining < `GWS_QUOTA_REST_BELOW` | Automatic — rests until the bucket resets (+ 5-15 min jitter). Cooldown ladder is NOT raised. |
 
 ## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `GWS_REQUEST_TIMEOUT_S` | `600` | HTTP request timeout in seconds (Argon generation) |
-| `GWS_WATCHDOG_TIMEOUT_S` | `45` | Stream watchdog timeout in seconds to recover stalled streams |
+| `GWS_WATCHDOG_TIMEOUT_S` | `300` | Stream watchdog timeout in seconds to recover stalled streams |
+| `GWS_QUOTA_REST_BELOW` | `0.2` | Fraction threshold (0.0–1.0). When the lowest-remaining quota bucket falls below this value, the account enters `quota_low` status until the bucket resets (+ 5–15 min jitter). The cooldown ladder is not raised. |
