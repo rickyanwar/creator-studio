@@ -16,7 +16,7 @@ All traffic goes through the phone proxy. Accounts without a proxy configuration
 | Sleep window    | 3.5-4.5 h per account, staggered, no overlap     |
 | Breaks          | 1-2 per account, 20-60 min each                  |
 | Request gap     | 4-9 min between requests per account              |
-| Daily cap       | 18-28 requests per account                        |
+| Daily cap       | 30-40 requests per account                        |
 | Human pause     | 2-6 s random delay before each request            |
 | Account rotation| Least-recently-used with randomness               |
 | Cooldown ladder | 30 min / 2 h / 12 h on repeated errors           |

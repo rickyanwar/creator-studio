@@ -16,6 +16,7 @@ from app.services.prompt_polish import (
     BRAND_NAMES,
     PROTECTED_PHRASES,
     PolishConfig,
+    PolishInterrupted,
     PolishResult,
     PolishUnavailable,
     build_instruction,
@@ -566,3 +567,178 @@ def test_motorsport_instruction_mentions_racing_speed_and_engine_sound():
     instr = build_instruction(_moto_clips("A motorcycle."), template=T(), niche="motogp")
     assert "real racing speed" in instr and "two-stroke" in instr and "same person" in instr
     assert "full racing speed" in MOTION_SENTENCES["motogp"]
+
+
+# ── PolishInterrupted and resume tests (TASK-R) ────────────────────────────────
+
+class TestCase14PolishInterruptedAfterOneAttempt:
+    """(a) attempt 1 answers with a problem, attempt 2 raises PolishUnavailable -> PolishInterrupted."""
+
+    def test_interrupted_carries_answer_and_problems(self):
+        polished_bad = _good_polished(KNEE_CLIPS)
+        # Break a quote so check_polished reports a problem
+        polished_bad[0] = {
+            **polished_bad[0],
+            "prompt": polished_bad[0]["prompt"].replace("masterpiece of engineering", "masterpiece of design"),
+        }
+        answer_bad = _make_answer(polished_bad)
+
+        call_count = [0]
+
+        def _post(url, headers=None, json=None, timeout=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {"text": json_mod.dumps(answer_bad), "account": "a1",
+                                  "thoughts_chars": 10, "seconds": 5.0},
+                )
+            # Attempt 2: account unavailable
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready", "retry_after_s": 300, "reasons": {}},
+            )
+
+        import json as json_mod
+        with pytest.raises(PolishInterrupted) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post)
+        exc = exc_info.value
+        assert isinstance(exc, PolishUnavailable)
+        assert exc.attempts_used == 1
+        assert exc.answer == json_mod.dumps(answer_bad)
+        assert len(exc.problems) > 0
+        assert exc.account == "a1"
+        assert exc.seconds > 0
+        assert exc.kind == "no_account_ready"
+
+
+class TestCase15PlainUnavailableOnFirstAttempt:
+    """(b) attempt 1 itself unavailable -> plain PolishUnavailable, NOT PolishInterrupted."""
+
+    def test_first_attempt_unavailable(self):
+        post = _fake_error(503, {"error": "no_account_ready", "retry_after_s": 60, "reasons": {}})
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=post)
+        assert not isinstance(exc_info.value, PolishInterrupted)
+        assert exc_info.value.kind == "no_account_ready"
+
+
+class TestCase16ResumeDict:
+    """(c) resume={attempts_used:1} -> first call contains feedback block, at most 2 calls made."""
+
+    def test_resume_starts_with_feedback(self):
+        polished_good = _good_polished(KNEE_CLIPS)
+        answer_good = _make_answer(polished_good)
+
+        call_count = [0]
+        captured_prompts = []
+
+        def _post(url, headers=None, json=None, timeout=None):
+            call_count[0] += 1
+            captured_prompts.append(json["prompt"])
+            return SimpleNamespace(
+                status_code=200,
+                json=lambda: {"text": json_mod.dumps(answer_good), "account": "a2",
+                              "thoughts_chars": 10, "seconds": 3.0},
+            )
+
+        import json as json_mod
+        result = polish_clips(
+            KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post,
+            max_attempts=3,
+            resume={"answer": "prev answer text", "problems": ["clip 1: motion missing"], "attempts_used": 1},
+        )
+        assert result.ok is True
+        # First call should already be attempt 2 with feedback
+        assert "Your previous answer failed these automatic checks" in captured_prompts[0]
+        assert "clip 1: motion missing" in captured_prompts[0]
+        # At most 2 calls (attempts 2 and 3, since 1 was already used)
+        assert call_count[0] <= 2
+
+
+class TestCase17ResumeExhausted:
+    """(d) attempts_used=3 (>= max_attempts) -> no call, failed result."""
+
+    def test_resume_exhausted(self):
+        call_count = [0]
+
+        def _post(url, headers=None, json=None, timeout=None):
+            call_count[0] += 1
+            return SimpleNamespace(status_code=200, json=lambda: {"text": "{}"})
+
+        result = polish_clips(
+            KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post,
+            max_attempts=3,
+            resume={"answer": "prev", "problems": ["bad"], "attempts_used": 3},
+        )
+        assert result.ok is False
+        assert call_count[0] == 0
+        assert result.problems == ["bad"]
+
+
+class TestCase18AttemptLogContainsProblemText:
+    """(e) the attempt log line contains the problem text."""
+
+    def test_log_contains_problems(self, caplog):
+        polished_bad = _good_polished(KNEE_CLIPS)
+        polished_bad[0] = {
+            **polished_bad[0],
+            "prompt": polished_bad[0]["prompt"].replace("masterpiece of engineering", "masterpiece of design"),
+        }
+        answer_bad = _make_answer(polished_bad)
+        # Return bad answer all 2 attempts
+        post = _fake_200(answer_bad)
+
+        import logging
+        with caplog.at_level(logging.INFO, logger="app.services.prompt_polish"):
+            result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG,
+                                  http_post=post, max_attempts=2)
+
+        assert result.ok is False
+        # Check that at least one log line contains the problem text
+        log_lines = [r.message for r in caplog.records if "prompt_polish attempt" in r.message]
+        assert len(log_lines) >= 1
+        assert any("original quoted text missing" in line for line in log_lines)
+
+
+class TestCase19TransportErrorHandling:
+    """Change 3: httpx.ReadError and other TransportErrors -> PolishUnavailable / PolishInterrupted."""
+
+    def test_read_error_raises_unreachable(self):
+        def _post(url, headers=None, json=None, timeout=None):
+            raise httpx.ReadError("reset")
+
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post)
+        assert exc_info.value.kind == "unreachable"
+        assert "reset" in exc_info.value.detail
+
+    def test_read_error_on_attempt_2_raises_interrupted(self):
+        polished_bad = _good_polished(KNEE_CLIPS)
+        polished_bad[0] = {
+            **polished_bad[0],
+            "prompt": polished_bad[0]["prompt"].replace("masterpiece of engineering", "masterpiece of design"),
+        }
+        answer_bad = _make_answer(polished_bad)
+
+        import json as json_mod
+        call_count = [0]
+
+        def _post(url, headers=None, json=None, timeout=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {"text": json_mod.dumps(answer_bad), "account": "a1",
+                                  "thoughts_chars": 10, "seconds": 5.0},
+                )
+            raise httpx.ReadError("[Errno 104] Connection reset by peer")
+
+        with pytest.raises(PolishInterrupted) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health", config=CFG, http_post=_post)
+        exc = exc_info.value
+        assert exc.kind == "unreachable"
+        assert exc.attempts_used == 1
+        assert exc.answer == json_mod.dumps(answer_bad)
+        assert len(exc.problems) > 0
+        assert exc.account == "a1"

@@ -31,6 +31,7 @@ from app.services.ai_video_prepare import (
     valid_prepared,
 )
 from app.services.prompt_polish import PolishConfig, PolishResult, PolishUnavailable
+from app.services.prompt_polish import PolishInterrupted
 import app.services.ai_video_fill as ai_video_fill
 import app.tasks.ai_video_plan as ai_video_plan
 import app.tasks.ai_video_prepare as ai_video_prepare
@@ -785,4 +786,279 @@ def test_candidate_ideas_reprepare_when_clip_count_changed(db):
         # clips_count (2) != planned_clip_count (3) -> candidate again!
         cands = candidate_ideas(session, fp)
         assert [c.id for c in cands] == [idea.id]
+
+
+# ── TASK-R: draft store / resume / stale / valid_prepared tests ──────────────
+
+
+def test_r1_interruption_stores_draft_and_reraises(db):
+    """(a) PolishInterrupted stores a draft, does not change polish_attempts, re-raises."""
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
+    idea = _idea(session, fp, topic="interrupted topic", clips=2)
+    session.commit()
+
+    orig_clips = [
+        {"index": 1, "mode": "t2v", "prompt": "Prompt 1"},
+        {"index": 2, "mode": "i2v", "prompt": "Prompt 2"},
+    ]
+    rendered = orig_clips
+    fill_return = ({"part": "wing"}, "Title", "Caption", rendered, "gemini")
+
+    exc = PolishInterrupted(
+        "no_account_ready", "no accounts", retry_after_s=300,
+        answer="argon answer text", problems=["clip 1: motion missing", "clip 2: vague colour"],
+        attempts_used=1, account="acct-1", seconds=8.5,
+    )
+
+    with patch("app.services.ai_video_prepare.fill_idea", return_value=fill_return), \
+         patch("app.services.ai_video_prepare.polish_clips", side_effect=exc):
+        with pytest.raises(PolishInterrupted):
+            prepare_idea(session, idea, fp, CFG)
+
+    session.refresh(idea)
+    # polish_attempts NOT incremented
+    assert idea.polish_attempts == 0 or idea.polish_attempts is None
+    # prepared_at NOT set
+    # Draft stored
+    prep = idea.prepared
+    assert isinstance(prep, dict)
+    assert prep["draft"] is True
+    assert prep["version"] == PREPARED_VERSION
+    assert prep["fingerprint"] == idea_fingerprint(idea)
+    assert prep["template_key"] == idea.template_key
+    assert prep["clips_count"] == 2
+    assert prep["variables"] == {"part": "wing"}
+    assert prep["title"] == "Title"
+    assert prep["caption"] == "Caption"
+    assert prep["rendered"] == rendered
+    assert prep["answer"] == "argon answer text"
+    assert prep["problems"] == ["clip 1: motion missing", "clip 2: vague colour"]
+    assert prep["attempts_used"] == 1
+    assert prep["account"] == "acct-1"
+    assert prep["seconds"] == 8.5
+    assert "saved_at" in prep
+
+
+def test_r2_resume_from_valid_draft_skips_filler(db):
+    """(b) next prepare_idea with a valid draft skips filler and passes resume."""
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
+    idea = _idea(session, fp, topic="resume topic", clips=2)
+    session.commit()
+
+    rendered = [
+        {"index": 1, "mode": "t2v", "prompt": "P1"},
+        {"index": 2, "mode": "i2v", "prompt": "P2"},
+    ]
+    pol_clips = [
+        {"index": 1, "mode": "t2v", "prompt": "P1 polished"},
+        {"index": 2, "mode": "i2v", "prompt": "P2 polished"},
+    ]
+    now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    draft = {
+        "draft": True,
+        "version": PREPARED_VERSION,
+        "fingerprint": idea_fingerprint(idea),
+        "template_key": idea.template_key,
+        "clips_count": 2,
+        "variables": {"part": "wing"},
+        "title": "T",
+        "caption": "C",
+        "provider": "gemini",
+        "rendered": rendered,
+        "answer": "prev answer",
+        "problems": ["clip 1: bad"],
+        "attempts_used": 1,
+        "account": "acct-1",
+        "seconds": 5.0,
+        "saved_at": now_iso,
+    }
+    idea.prepared = draft
+    session.commit()
+
+    with patch("app.services.ai_video_prepare.fill_idea") as mock_fill, \
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(
+             ok=True, clips=pol_clips, changes=["fixed"], voice_sentence="v", ambience_sentence="a",
+             attempts=2, account="acct-2", seconds=4.0,
+         )) as mock_polish:
+        outcome = prepare_idea(session, idea, fp, CFG)
+
+    assert outcome == "prepared"
+    mock_fill.assert_not_called()
+    # polish_clips was called with resume
+    call_kwargs = mock_polish.call_args
+    assert call_kwargs[1]["resume"] == {"answer": "prev answer", "problems": ["clip 1: bad"], "attempts_used": 1}
+    session.refresh(idea)
+    assert idea.prepared["polished"] is True
+    assert "draft" not in idea.prepared
+
+
+def test_r3_stale_draft_ignored(db):
+    """(c) draft older than 6h or with wrong fingerprint/clip count -> filler runs."""
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
+    idea = _idea(session, fp, topic="stale draft topic", clips=2)
+    session.commit()
+
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=7)).replace(tzinfo=None).isoformat()
+    draft = {
+        "draft": True,
+        "version": PREPARED_VERSION,
+        "fingerprint": idea_fingerprint(idea),
+        "template_key": idea.template_key,
+        "clips_count": 2,
+        "variables": {"part": "wing"},
+        "title": "T",
+        "caption": "C",
+        "provider": "gemini",
+        "rendered": [{"index": 1, "mode": "t2v", "prompt": "P1"}],
+        "answer": "old answer",
+        "problems": ["old problem"],
+        "attempts_used": 1,
+        "account": "acct-1",
+        "seconds": 5.0,
+        "saved_at": old_time,
+    }
+    idea.prepared = draft
+    session.commit()
+
+    orig_clips = [{"index": 1, "mode": "t2v", "prompt": "P1"}, {"index": 2, "mode": "i2v", "prompt": "P2"}]
+    with patch("app.services.ai_video_prepare.fill_idea",
+               return_value=({"part": "wing"}, "T", "C", orig_clips, "gemini")) as mock_fill, \
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(
+             ok=True, clips=orig_clips, changes=["ok"], voice_sentence="v", ambience_sentence="a",
+             attempts=1, account="a1", seconds=3.0,
+         )):
+        outcome = prepare_idea(session, idea, fp, CFG)
+
+    assert outcome == "prepared"
+    mock_fill.assert_called_once()  # filler ran because draft was stale
+
+    # Also test wrong fingerprint
+    idea2 = _idea(session, fp, topic="fingerprint mismatch", clips=2)
+    session.commit()
+    draft2 = dict(draft)
+    draft2["fingerprint"] = "wrong_fingerprint_hash_value_xx"
+    draft2["saved_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    idea2.prepared = draft2
+    session.commit()
+
+    with patch("app.services.ai_video_prepare.fill_idea",
+               return_value=({"part": "wing"}, "T", "C", orig_clips, "gemini")) as mock_fill2, \
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(
+             ok=True, clips=orig_clips, changes=["ok"], voice_sentence="v", ambience_sentence="a",
+             attempts=1, account="a1", seconds=3.0,
+         )):
+        outcome2 = prepare_idea(session, idea2, fp, CFG)
+
+    assert outcome2 == "prepared"
+    mock_fill2.assert_called_once()  # filler ran because fingerprint wrong
+
+    # Also test wrong clips_count
+    idea3 = _idea(session, fp, topic="clip count mismatch", clips=2)
+    session.commit()
+    draft3 = dict(draft)
+    draft3["fingerprint"] = idea_fingerprint(idea3)
+    draft3["clips_count"] = 99
+    draft3["saved_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    idea3.prepared = draft3
+    session.commit()
+
+    with patch("app.services.ai_video_prepare.fill_idea",
+               return_value=({"part": "wing"}, "T", "C", orig_clips, "gemini")) as mock_fill3, \
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(
+             ok=True, clips=orig_clips, changes=["ok"], voice_sentence="v", ambience_sentence="a",
+             attempts=1, account="a1", seconds=3.0,
+         )):
+        outcome3 = prepare_idea(session, idea3, fp, CFG)
+
+    assert outcome3 == "prepared"
+    mock_fill3.assert_called_once()  # filler ran because clips_count wrong
+
+
+def test_r4_valid_prepared_returns_none_for_draft(db):
+    """(d) valid_prepared returns None for a draft."""
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids)
+    idea = _idea(session, fp, topic="draft valid check")
+    session.commit()
+
+    draft = {
+        "draft": True,
+        "version": PREPARED_VERSION,
+        "fingerprint": idea_fingerprint(idea),
+        "template_key": idea.template_key,
+        "clips_count": 2,
+        "variables": {"part": "wing"},
+        "title": "T",
+        "caption": "C",
+        "provider": "gemini",
+        "rendered": [{"index": 1, "mode": "t2v", "prompt": "P1"}],
+        "answer": "answer",
+        "problems": ["problem"],
+        "attempts_used": 1,
+        "account": "acct-1",
+        "seconds": 5.0,
+        "saved_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+    }
+    idea.prepared = draft
+    session.commit()
+
+    assert valid_prepared(idea) is None
+
+
+def test_r5_successful_resumed_round_replaces_draft(db):
+    """(e) a successful resumed round replaces the draft with the normal prepared payload."""
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
+    idea = _idea(session, fp, topic="resume success", clips=2)
+    session.commit()
+
+    rendered = [
+        {"index": 1, "mode": "t2v", "prompt": "P1"},
+        {"index": 2, "mode": "i2v", "prompt": "P2"},
+    ]
+    pol_clips = [
+        {"index": 1, "mode": "t2v", "prompt": "P1 pol"},
+        {"index": 2, "mode": "i2v", "prompt": "P2 pol"},
+    ]
+    now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    draft = {
+        "draft": True,
+        "version": PREPARED_VERSION,
+        "fingerprint": idea_fingerprint(idea),
+        "template_key": idea.template_key,
+        "clips_count": 2,
+        "variables": {"part": "wing"},
+        "title": "T",
+        "caption": "C",
+        "provider": "gemini",
+        "rendered": rendered,
+        "answer": "prev answer",
+        "problems": ["clip 1: bad"],
+        "attempts_used": 1,
+        "account": "acct-1",
+        "seconds": 5.0,
+        "saved_at": now_iso,
+    }
+    idea.prepared = draft
+    session.commit()
+
+    with patch("app.services.ai_video_prepare.fill_idea") as mock_fill, \
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(
+             ok=True, clips=pol_clips, changes=["fixed"],
+             voice_sentence="voice", ambience_sentence="ambience",
+             attempts=2, account="acct-2", seconds=4.0,
+         )):
+        outcome = prepare_idea(session, idea, fp, CFG)
+
+    assert outcome == "prepared"
+    mock_fill.assert_not_called()
+    session.refresh(idea)
+    prep = idea.prepared
+    assert prep["polished"] is True
+    assert "draft" not in prep
+    assert prep["clips"][0]["prompt"] == "P1 pol"
+    assert prep["clips"][0]["prompt_original"] == "P1"
 

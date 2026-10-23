@@ -55,7 +55,7 @@ class TestPlanDay4Accounts30Seeds:
                     assert 20 <= dur_m <= 60, f"seed={seed} {n}: break dur {dur_m}"
                     # Break must not overlap own sleep
                     assert not (brk[0] < p.sleep_end and p.sleep_start < brk[1])
-                assert 18 <= p.cap_today <= 28, f"seed={seed} {n}: cap {p.cap_today}"
+                assert 30 <= p.cap_today <= 40, f"seed={seed} {n}: cap {p.cap_today}"
 
             # Breaks don't overlap any sleep or each other
             all_sleeps = [(plans[n].sleep_start, plans[n].sleep_end) for n in self.NAMES]

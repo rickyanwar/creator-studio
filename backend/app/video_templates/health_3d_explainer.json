@@ -18,15 +18,15 @@
     "total_seconds": 40,
     "credits_per_clip": 15,
     "total_credits": 60,
-    "continuity": "every clip is its own t2v generation with three short shots; the look is kept by the identical style block and visual_subject in every clip, not by frame chaining",
+    "continuity": "every clip is its own t2v generation with two shots; the look is kept by the identical style block and visual_subject in every clip, not by frame chaining",
     "audio": "narration spoken by Flow inside the clip"
   },
   "language": "the fan page's caption language",
   "blocks": {
     "style": "Soft photorealistic 3D medical animation like a premium health-education video: glossy anatomical cross-sections, macro tissue close-ups and clean product shots, smooth soft studio lighting, pastel pink and salmon tissue tones, cream bone, clean white objects, gentle depth of field, slow smooth camera moves. No text, letters, numbers, labels, logos or watermarks anywhere in the image. No gore.",
     "audio": "Audio: a soft, calm ambient music bed very quietly under the voice-over, no sound effects.",
-    "narrator_en": "Voice-over: a calm, warm male health-education narrator in his thirties with a clear, gentle voice, speaking at a relaxed, steady pace, says in English:",
-    "narrator_en_followup": "Voice-over: a calm, warm male health-education narrator in his thirties with a clear, gentle voice, speaking at a relaxed, steady pace, says in English:",
+    "narrator_en": "Voice-over: a 35-year-old male health educator recorded close to the microphone in a dry studio, with a warm, clear tenor voice, a calm, educational tone, a steady measured pace and the same pitch throughout, says in English:",
+    "narrator_en_followup": "Voice-over: a 35-year-old male health educator recorded close to the microphone in a dry studio, with a warm, clear tenor voice, a calm, educational tone, a steady measured pace and the same pitch throughout, says in English:",
     "narrator_presets": {},
     "vehicle_presets": {},
     "liveries": {}
@@ -35,44 +35,44 @@
     {
       "role": "hook",
       "mode": "t2v",
-      "prompt": "{style} Main subject in every shot: {visual_subject}. Three short shots with hard cuts, about three seconds each. Shot 1: {shot_1a} Cut to shot 2: {shot_1b} Cut to shot 3: {shot_1c} {audio} {narrator} \"{narration_1}\"",
-      "narration_words": {"en": "22-25"}
+      "prompt": "{style} Main subject in every shot: {visual_subject}. Two shots with one clean cut, about five seconds each, each a single slow, smooth camera move. Shot 1: {shot_1a} Cut to shot 2: {shot_1b} {audio} {narrator} \"{narration_1}\"",
+      "narration_words": {"en": "18-22"}
     },
     {
       "role": "name_and_how",
       "mode": "t2v",
-      "prompt": "{style} Main subject in every shot: {visual_subject}. Three short shots with hard cuts, about three seconds each. Shot 1: {shot_2a} Cut to shot 2: {shot_2b} Cut to shot 3: {shot_2c} {audio} {narrator_followup} \"{narration_2}\"",
-      "narration_words": {"en": "22-25"}
+      "prompt": "{style} Main subject in every shot: {visual_subject}. Two shots with one clean cut, about five seconds each, each a single slow, smooth camera move. Shot 1: {shot_2a} Cut to shot 2: {shot_2b} {audio} {narrator_followup} \"{narration_2}\"",
+      "narration_words": {"en": "18-22"}
     },
     {
       "role": "mechanism",
       "mode": "t2v",
-      "prompt": "{style} Main subject in every shot: {visual_subject}. Three short shots with hard cuts, about three seconds each. Shot 1: {shot_3a} Cut to shot 2: {shot_3b} Cut to shot 3: {shot_3c} {audio} {narrator_followup} \"{narration_3}\"",
-      "narration_words": {"en": "22-25"}
+      "prompt": "{style} Main subject in every shot: {visual_subject}. Two shots with one clean cut, about five seconds each, each a single slow, smooth camera move. Shot 1: {shot_3a} Cut to shot 2: {shot_3b} {audio} {narrator_followup} \"{narration_3}\"",
+      "narration_words": {"en": "18-22"}
     },
     {
       "role": "payoff",
       "mode": "t2v",
-      "prompt": "{style} Main subject in every shot: {visual_subject}. Three short shots with hard cuts, about three seconds each. Shot 1: {shot_4a} Cut to shot 2: {shot_4b} Cut to shot 3: {shot_4c} {audio} {narrator_followup} \"{narration_4}\"",
-      "narration_words": {"en": "22-25"}
+      "prompt": "{style} Main subject in every shot: {visual_subject}. Two shots with one clean cut, about five seconds each, each a single slow, smooth camera move. Shot 1: {shot_4a} Cut to shot 2: {shot_4b} {audio} {narrator_followup} \"{narration_4}\"",
+      "narration_words": {"en": "18-22"}
     },
     {
       "role": "extra_step",
       "optional": true,
       "mode": "t2v",
-      "prompt": "{style} Main subject in every shot: {visual_subject}. Three short shots with hard cuts, about three seconds each. Shot 1: {shot_5a} Cut to shot 2: {shot_5b} Cut to shot 3: {shot_5c} {audio} {narrator_followup} \"{narration_5}\"",
-      "narration_words": {"en": "22-25"}
+      "prompt": "{style} Main subject in every shot: {visual_subject}. Two shots with one clean cut, about five seconds each, each a single slow, smooth camera move. Shot 1: {shot_5a} Cut to shot 2: {shot_5b} {audio} {narrator_followup} \"{narration_5}\"",
+      "narration_words": {"en": "18-22"}
     }
   ],
   "rules": [
     "Facts only from research_notes; every number needs two independent reputable health sources (e.g. NHS, Mayo Clinic, Cleveland Clinic, WHO, peer-reviewed reviews). Leave unverified claims out.",
     "Explain how something works; never give personal medical advice, a diagnosis or a dosage. Say 'a doctor may…' rather than telling the viewer to start or stop a treatment.",
     "Narration pattern: clip 1 hooks in the second person or straight into the action ('When you…', 'If you have…', 'A thin tube slides…'); clip 2 names the thing and why it matters; clip 3 shows how it works step by step; clip 4 (or 5) gives the outcome or the practical takeaway. No call to action.",
-    "Each clip's narration is about 24 words: three short clauses, one per shot. Each clause matches the shot it plays over.",
+    "Each clip's narration is about 20 words: two short clauses, one per shot. Each clause matches the shot it plays over.",
     "Each clip's narration adds new information and never repeats a sentence or phrase from an earlier clip. Key terms (for example 'airways', 'inhaler', 'immune cells') may repeat: never swap them for odd synonyms.",
     "Narration is plain, natural spoken language a 12-year-old understands: everyday words, short clauses, no flowery or textbook phrases. No exaggeration: say 'within minutes', 'helps' or 'often' instead of 'instantly', 'completely', 'cures' or 'always', unless the facts say so.",
     "visual_subject names the ONE body part, device or product shown in every clip, with its look (e.g. 'a stylised adult wrist with cream bones and pink soft tissue'), so all clips match.",
-    "Each shot slot is one sentence (at most 200 characters) describing one clear image and one slow camera move: a cross-section, a macro close-up or a product on a plain pastel pink background. No people's faces in close-up except a calm adult face in profile when the topic needs it.",
+    "Each shot slot is one sentence (at most 200 characters), two slots per clip (shot_Na, shot_Nb), describing one clear image and one slow camera move: a cross-section, a macro close-up or a product on a plain pastel pink background. No people's faces in close-up except a calm adult face in profile when the topic needs it.",
     "No text, labels, numbers or logos in the image; the studio burns in the captions. No gore, no needles piercing skin in close-up, no blood beyond a small drop.",
     "Never name real brands, companies or products in any slot, narration, title or caption; describe them generically ('a nasal spray bottle')."
   ],
@@ -99,20 +99,16 @@
       "visual_subject": "a stylised human body in soft pink translucent skin with glowing immune cells and a cream-coloured brain",
       "shot_1a": "a slow push-in on a glossy pink cross-section of skin where tiny round germs drift into a small blood vessel.",
       "shot_1b": "macro close-up of white immune cells gliding along the inner wall of the vessel toward the germs.",
-      "shot_1c": "a gentle orbit around a translucent brain with a small region near its base glowing warm orange.",
-      "narration_1": "When germs get into your body, immune cells rush to meet them, and a small area deep in your brain starts raising your temperature.",
+      "narration_1": "When germs enter your body, immune cells rush to meet them, and an area deep in your brain raises your temperature.",
       "shot_2a": "close-up of the glowing region at the base of the brain sending soft warm pulses down the body.",
       "shot_2b": "a cross-section of muscle fibres gently trembling as tiny heat waves rise from them.",
-      "shot_2c": "skin blood vessels narrowing in a smooth cross-section while warmth stays inside the body.",
-      "narration_2": "That area is the hypothalamus. It turns your thermostat up, so muscles shiver and skin vessels narrow to hold heat inside your body.",
+      "narration_2": "That area is the hypothalamus: it turns your thermostat up, so muscles shiver and skin vessels narrow to hold heat inside.",
       "shot_3a": "macro close-up of white immune cells speeding up and wrapping around round germs in warm orange light.",
       "shot_3b": "slow push-in on germs shrinking and slowing down inside a warm glossy blood vessel.",
-      "shot_3c": "a cross-section of a vessel filled with many more active immune cells moving quickly.",
-      "narration_3": "A higher temperature helps many immune cells work faster and makes life harder for some germs, so the body can clear the infection sooner.",
+      "narration_3": "A higher temperature helps immune cells work faster and makes life harder for germs, so the body can clear the infection sooner.",
       "shot_4a": "the glowing region in the brain fading from orange back to a calm cream colour.",
       "shot_4b": "close-up of skin pores releasing tiny clear beads of sweat on soft pink skin.",
-      "shot_4c": "a slow pull-back to the whole calm translucent body with steady, even soft light.",
-      "narration_4": "When the infection is under control, the thermostat resets, you sweat to release the extra heat, and your temperature slowly returns to normal."
+      "narration_4": "When the infection is under control, the thermostat resets, you sweat to release the extra heat, and your temperature returns to normal."
     }
   }
 }

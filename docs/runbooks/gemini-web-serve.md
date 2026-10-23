@@ -246,7 +246,7 @@ The service spreads account usage to mimic human behaviour. The pattern per acco
 | Daily jitter | ±45 min |
 | Short breaks per day | 1–2, each 20–60 min |
 | Gap between successive requests | 4–9 min (randomised) |
-| Daily cap per account | 18–28 requests (randomised) |
+| Daily cap per account | 30–40 requests (randomised) |
 | Concurrency | One request at a time across all accounts |
 | Proxy | Phone proxy only (`socks5h://100.64.96.50:1080`) |
 
@@ -258,8 +258,8 @@ The service spreads account usage to mimic human behaviour. The pattern per acco
 | `GWS_SLEEP_MAX_H` | `4.5` | Maximum sleep duration (hours) |
 | `GWS_GAP_MIN_M` | `4` | Minimum inter-request gap (minutes) |
 | `GWS_GAP_MAX_M` | `9` | Maximum inter-request gap (minutes) |
-| `GWS_CAP_MIN` | `18` | Minimum daily cap per account |
-| `GWS_CAP_MAX` | `28` | Maximum daily cap per account |
+| `GWS_CAP_MIN` | `30` | Minimum daily cap per account |
+| `GWS_CAP_MAX` | `40` | Maximum daily cap per account |
 | `GWS_BREAKS_MAX` | `2` | Maximum short breaks per account per day |
 | `GWS_REQUEST_TIMEOUT_S` | `600` | HTTP request timeout in seconds |
 | `GWS_WATCHDOG_TIMEOUT_S` | `45` | Stream watchdog timeout in seconds |

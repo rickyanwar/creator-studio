@@ -35,8 +35,6 @@ def test_template_loads_and_required_variables():
         "bike_short",
         "setting",
         "detail_1",
-        "detail_2",
-        "detail_3",
         "ride_scene",
         "signature_move",
         "narration_1",
@@ -46,7 +44,7 @@ def test_template_loads_and_required_variables():
     ]
     for var in expected:
         assert var in reqs, f"expected {var} in required_variables"
-    for forbidden in ("bike_rules", "style", "audio"):
+    for forbidden in ("bike_rules", "style", "audio", "detail_2", "detail_3"):
         assert forbidden not in reqs, f"{forbidden} should not be in required_variables"
 
 
@@ -56,22 +54,66 @@ def test_render_clips_example():
     clips = render_clips(t, variables, 3)
     assert len(clips) == 3
     assert [c["mode"] for c in clips] == ["t2v", "i2v", "i2v"]
+    assert t.raw["clip_templates"][0]["role"] == "ride_out"
+    assert t.raw["clip_templates"][1]["role"] == "ride"
+    assert t.raw["clip_templates"][2]["role"] == "finale"
     bike_rules = t.raw["blocks"]["bike_rules"]
+    narrator = t.raw["blocks"]["narrator_en"]
     for clip in clips:
         prompt = clip["prompt"]
         assert "{" not in prompt and "}" not in prompt
         assert bike_rules in prompt
+        assert "No series logos" in prompt
+        assert narrator in prompt  # identical narrator in every clip
         assert len(prompt) <= MAX_PROMPT_CHARS
+
+    # Clip 3 has no stands, puddle, smoke, Hard cut
+    clip_3_prompt = clips[2]["prompt"]
+    for forbidden_text in ("stands", "puddle", "smoke", "Hard cut"):
+        assert forbidden_text not in clip_3_prompt
 
 
 def test_bike_look_pushing_over_flow_limit_raises_value_error():
     t = get_template(KEY)
     variables = dict(t.raw["example"]["variables"])
-    variables["setting"] = "a vintage motorcycle restoration workshop with brick walls and morning light " * 3
-    variables["detail_1"] = "the hand-painted candy ruby red petrol tank with subtle gold pin-striping " * 3
-    variables["bike_look"] = "a legendary 1969 inline-four superbike in gleaming candy ruby red with chrome accents " * 5
+    variables["setting"] = "a vintage motorcycle restoration workshop with brick walls and morning light " * 7
+    variables["detail_1"] = "the hand-painted candy ruby red petrol tank with subtle gold pin-striping " * 7
+    variables["bike_look"] = "a legendary 1969 inline-four superbike in gleaming candy ruby red with chrome accents " * 6
     with pytest.raises(ValueError, match="2900"):
         render_clips(t, variables, 3)
+
+
+def test_motorcycle_commercial_renders_long_fill_under_2300_chars():
+    t = get_template(KEY)
+    bike_look_60 = " ".join(["classic"] * 60)
+    ride_scene_30 = " ".join(["circuit"] * 30)
+    sig_move_30 = " ".join(["accelerates"] * 30)
+    variables = {
+        "vehicle_preset": "classic_bike",
+        "bike_look": bike_look_60,
+        "bike_short": "candy-red 1969 inline-four roadster with chrome and four exhaust pipes",
+        "setting": "pit exit of a period circuit in golden hour light",
+        "detail_1": "candy-red fuel tank and gold stripe",
+        "ride_scene": ride_scene_30,
+        "signature_move": sig_move_30,
+        "narration_1": " ".join(["word"] * 22),
+        "narration_2": " ".join(["word"] * 22),
+        "narration_3": " ".join(["word"] * 22),
+    }
+    clips = render_clips(t, variables, 3, lang_code="en")
+    lengths = [len(c["prompt"]) for c in clips]
+    for i, length in enumerate(lengths):
+        assert length <= 2300, f"clip {i + 1} length {length} exceeds 2300"
+
+
+def test_motorcycle_commercial_ignores_extra_variables():
+    t = get_template(KEY)
+    variables = dict(t.raw["example"]["variables"])
+    variables["detail_2"] = "extra detail 2 that should be ignored"
+    variables["detail_3"] = "extra detail 3 that should be ignored"
+    variables["unknown_var"] = "unknown value"
+    clips = render_clips(t, variables, 3)
+    assert len(clips) == 3
 
 
 def test_build_fill_prompt_rules_and_exceptions():

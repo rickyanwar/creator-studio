@@ -29,7 +29,9 @@
   "blocks": {
     "style": "Ultra-realistic cinematic motorcycle commercial, shot like real cinema-camera footage: natural light, long lenses, shallow depth of field, real reflections on paint and chrome, fine film grain, never CGI or cartoon.",
     "audio": "Audio: the authentic engine sound of this exact motorcycle and a low, rising cinematic music bed under the voice-over, no other voices.",
-    "bike_rules": "RULES: one motorcycle with real weight, both tyres on the ground with a contact shadow; nothing floats, detaches or changes shape. It moves only forward, where its front wheel points; wheels turn only while it moves. Whenever it moves the rider is on it, visor closed, face hidden; no stand under a moving motorcycle. The real livery and lettering stay exactly as described, painted flat, spelled right, never moved or invented; number boards stay plain, in the one colour the livery description names for them, with no race numbers; small or fast lettering stays a soft unreadable mark. No series logos, no on-screen text, no other vehicles, no people besides the rider.",
+    "bike_rules": "RULES: one real, heavy motorcycle with both tyres on the asphalt and a dark contact shadow; it keeps its exact shape and moves only forward, where its front wheel points, and its wheels turn only while it moves. The rider stays seated on it the whole time, visor closed, face hidden. The livery, sponsor lettering and plain number boards stay exactly as described, painted flat in the same place in every shot; small or fast lettering is a soft unreadable mark. No series logos, no race numbers, no on-screen text, no other vehicles, no people besides the rider.",
+    "narrator_en": "Voice-over: a 40-year-old British male documentary narrator recorded close to the microphone in a dry studio, with a deep, warm baritone voice, a calm, authoritative tone, a steady measured pace and the same pitch throughout, says in English:",
+    "narrator_en_followup": "Voice-over: a 40-year-old British male documentary narrator recorded close to the microphone in a dry studio, with a deep, warm baritone voice, a calm, authoritative tone, a steady measured pace and the same pitch throughout, says in English:",
     "vehicle_presets": {
       "classic_bike": "{bike_look}",
       "classic_bike_short": "{bike_short}"
@@ -37,9 +39,9 @@
   },
   "clip_templates": [
     {
-      "role": "reveal_and_start",
+      "role": "ride_out",
       "mode": "t2v",
-      "prompt": "{style} The hero is {vehicle}, parked riderless in {setting}. Shots, one smooth camera move each: a wide reveal of the whole motorcycle; then the hero shot: at the garage mouth under a dark roof overhang, bright daylight behind, the motorcycle on its stands (paddock stands for a race bike, side stand for a road bike) in a mirror-wet puddle reflecting it whole, thick white smoke rolling low along the ground behind it, a low camera slowly arcing around its front three-quarter; then quick macro cuts: {detail_1}; {detail_2}; {detail_3}; wheels still. Last two seconds: a hard cut outside to the pit exit (for a road bike, the dealer forecourt by the road), low front three-quarter view: on both tyres, no stands, the rider seated, visor closed, feet down; the engine fires, exhaust pulsing. {bike_rules} {audio} {narrator} \"{narration_1}\"",
+      "prompt": "{style} The hero is {vehicle}, ready at {setting}, standing on both tyres with the rider seated astride it in a leather suit matching the livery, visor closed, both boots down. One smooth, continuous low camera move: it opens on a front three-quarter view of the whole motorcycle, glides in close past {detail_1} as the engine fires and the exhaust pulses, then pulls back as the rider lifts both feet onto the footpegs and the motorcycle pulls away forward. {bike_rules} {audio} {narrator} \"{narration_1}\"",
       "narration_words": {
         "en": "18-22"
       }
@@ -47,7 +49,7 @@
     {
       "role": "ride",
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. The rider lifts both feet onto the footpegs and rides away forward. {ride_scene} First a low tracking shot at wheel height as it accelerates past the camera, the background streaking by while the motorcycle stays sharp; then it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressing; it stays leaned over until the corner ends, lifts upright smoothly only as the track straightens, and in the final second rides along that straight toward the camera, the whole motorcycle centred in frame in a front three-quarter view. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
+      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {ride_scene} A low wheel-height tracking camera follows alongside as the motorcycle accelerates hard, the background streaking by while the motorcycle stays sharp; it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressed, stays leaned until the corner ends, and lifts upright only as it reaches the exit straight. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
       "narration_words": {
         "en": "18-22"
       }
@@ -55,7 +57,7 @@
     {
       "role": "finale",
       "mode": "i2v_from_previous_last_frame",
-      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade. The motorcycle stays fully in frame throughout. {signature_move} Then the rider brakes in a straight line, the fork dips, and the motorcycle comes to a complete stop; both feet go down and the wheels stop turning. The rider steps off. Hard cut to the final hero shot, matching the opening one: the motorcycle alone on its stands (paddock stands for a race bike, side stand for a road bike) in a mirror-wet puddle reflecting it whole, under a dark roof overhang with bright daylight behind, thick white smoke rolling low behind it, a low camera slowly arcing around its front three-quarter, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
+      "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade; the whole motorcycle stays in frame, travelling forward. {signature_move} Then the rider brakes in a straight line, the front fork dips, and the motorcycle rolls to a calm stop; the rider puts both boots down and stays seated as the camera settles into a steady low front three-quarter view of the whole motorcycle, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
       "narration_words": {
         "en": "18-22"
       }
@@ -69,13 +71,14 @@
     "Each video is about ONE real, famous motorcycle from any era, classic or current: a Grand Prix, MotoGP or superbike racer, or an iconic road motorcycle. Pick one exact version and year. Name its maker and model in narration_1 and in the title (real names are allowed for this template). The model year is 2026 or earlier and the bike really exists: it was sold, or it raced; never a 2027-or-later model, an announced but unreleased bike, a concept, a rumour, or a bike built for future rules (e.g. the 2027 MotoGP regulations).",
     "bike_look: 30-60 words describing exactly how that motorcycle looks: era, body shape (naked, cafe racer, full racing fairing), tank and seat shape, the visible engine layout (e.g. air-cooled inline-four with four chrome exhaust pipes), wheels (spoked or cast), brakes, and its REAL livery: colour layout, the real team and sponsor names exactly as painted and where they sit (e.g. 'white fairing with a blue ROTHMANS band across the nose'), and 'plain number boards, no race number' for race bikes (race numbers are never shown). Name at most three short sponsor words; never invent lettering. Real team and sponsor names are allowed for this template (owner 2026-10-22); series logos are not.",
     "bike_short: 8-15 words, the same motorcycle and colours, never a race number (e.g. 'red 2024 factory racer with white sponsor lettering and plain number boards', or 'candy-red 1969 inline-four roadster with gold tank stripes and chrome').",
-    "setting: where it is parked for the reveal, matching the bike and its era: a vintage workshop or garage door for classic road bikes, a modern design studio or dealer workshop for new road bikes, a period or modern pit-lane garage for race bikes. Daylight or golden hour.",
-    "detail_1, detail_2, detail_3: three different real parts of THIS motorcycle, in this order: a close part (tank, fairing nose, winglets, dashboard), the front wheel and brake, then the engine, swingarm or exhaust. At most 12 words each. Only parts that really exist on it.",
+    "setting: where the ride starts, matching the bike and its era, in daylight or golden hour: the pit exit of a period or modern circuit for race bikes, a workshop driveway or roadside forecourt for road bikes. Never a closed garage interior.",
+    "detail_1: one real, iconic part of THIS motorcycle seen in the close pass (tank, fairing nose, winglets, exhaust, front brake), at most 10 words. Only parts that really exist on it.",
     "ride_scene: one sentence placing the ride: a race circuit that fits its era for race bikes (old-style kerbs for classic racers, a modern circuit for current racers), a scenic coastal or mountain road for road bikes. Race bikes never ride on public roads; road bikes never race other bikes on a circuit.",
     "signature_move: one sentence, the moment the bike is famous for, physically believable: a long high-speed pass at full lean, a two-stroke howl down a straight, a controlled wheelie for a powerful sport bike only. No jumps, no drifting, no tricks the real motorcycle could not do.",
     "Narration: narration_1 = the hook: what the bike is, its year, why it matters. narration_2 = what makes it special (engine, chassis, aero, electronics, speed), only facts from research_notes. narration_3 = its legacy or its place today, ending on a strong line. Each 18-22 words in the audience language, no double quotes.",
     "Facts, years and numbers come ONLY from research_notes. Without notes, keep to the model name and the widely known year, and describe its character without numbers.",
-    "Never show or describe official series logos (MotoGP, FIM, Dorna, WSBK). Never put text on screen; lettering exists only as paint on the motorcycle."
+    "Never show or describe official series logos (MotoGP, FIM, Dorna, WSBK). Never put text on screen; lettering exists only as paint on the motorcycle.",
+    "Write every slot as what IS visible (e.g. 'both tyres planted on the asphalt'); never put rules or 'no ...' lists inside slot text — the template adds the rules."
   ],
   "topic_ideas": [
     "Honda CB750 Four (1969), the first mass-produced inline-four superbike",
@@ -97,10 +100,8 @@
       "vehicle_preset": "classic_bike",
       "bike_look": "a 1969 inline-four roadster in candy ruby red: a teardrop fuel tank with a gold stripe and plain silver panel, a flat black seat, round chrome headlight, chrome fenders, spoked wheels with a front disc brake, and an air-cooled four-cylinder engine feeding four chrome exhaust pipes, two on each side",
       "bike_short": "candy-red 1969 inline-four roadster with chrome and four chrome exhaust pipes",
-      "setting": "an old brick workshop with its roller door half open to warm morning light",
+      "setting": "the sunlit forecourt of an old brick workshop beside a coastal road, in warm morning light",
       "detail_1": "the candy-red fuel tank and its gold stripe",
-      "detail_2": "the spoked front wheel and its single disc brake",
-      "detail_3": "the four cooling-finned cylinders and the four chrome exhaust pipes",
       "ride_scene": "A sunlit coastal road curves along the cliffs, the sea glittering below.",
       "signature_move": "It sweeps through a long fast bend at a steady lean, all four exhaust pipes singing as the road opens toward the sea.",
       "narration_1": "In nineteen sixty-nine, Honda rolled out the CB750 Four, and the motorcycle world suddenly had a new word: superbike.",

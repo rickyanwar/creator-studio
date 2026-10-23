@@ -797,8 +797,8 @@ def main() -> None:
         sleep_max_h=float(os.environ.get("GWS_SLEEP_MAX_H", "4.5")),
         gap_min_m=float(os.environ.get("GWS_GAP_MIN_M", "4")),
         gap_max_m=float(os.environ.get("GWS_GAP_MAX_M", "9")),
-        cap_min=int(os.environ.get("GWS_CAP_MIN", "18")),
-        cap_max=int(os.environ.get("GWS_CAP_MAX", "28")),
+        cap_min=int(os.environ.get("GWS_CAP_MIN", "30")),
+        cap_max=int(os.environ.get("GWS_CAP_MAX", "40")),
         breaks_max=int(os.environ.get("GWS_BREAKS_MAX", "2")),
     )
 

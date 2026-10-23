@@ -87,9 +87,9 @@ Defined in `backend/app/models/ai_video.py:62` (`VideoIdea.status`).
 
 ### 3.1 Registry & Template Data Model
 - Templates loaded from `backend/app/video_templates/*.json` and merged with `_shared_blocks.json` via `@lru_cache(maxsize=1)` (`video_templates.py:60`).
-- Models: `motorsport_tech_explainer`, `motorsport_corner_masterclass`, `motorsport_legend_innovation`, `health_3d_explainer` (2026-10-20, for Ayok sehat).
+- Models: `motorsport_tech_explainer`, `motorsport_corner_masterclass`, `motorsport_legend_innovation`, `motorcycle_commercial`, `health_3d_explainer` (2026-10-20, for Ayok sehat).
 - Core constants: `model="omni-flash"`, `aspect="9:16"`, `clip_seconds=10`, `credits_per_clip=15`. Clip options typically `[2, 3]` (20s or 30s); health `[4, 5]` (40–50 s, 60–75 credits).
-- **Templates without a vehicle** (`"uses_vehicle": false`, `video_templates.uses_vehicle`): no `vehicle_preset`, livery or lettering. `render_clips` → `_render_plain`: style + audio + one identical narrator sentence in every clip, slots `visual_subject` + `shot_<n>a/b/c` + `narration_<n>`, every clip `t2v` (three hard-cut shots per clip, no frame chaining). Prompts over `MAX_PROMPT_CHARS` (2900) fail, because Flow refuses ~3,000+ characters.
+- **Templates without a vehicle** (`"uses_vehicle": false`, `video_templates.uses_vehicle`): no `vehicle_preset`, livery or lettering. `render_clips` → `_render_plain`: style + audio + one identical narrator sentence in every clip, slots `visual_subject` + `shot_<n>a/b` + `narration_<n>`, every clip `t2v` (two shots with one clean cut per clip, no frame chaining). Prompts over `MAX_PROMPT_CHARS` (2900) fail, because Flow refuses ~3,000+ characters.
 - **Niche** (`video_templates.fanpage_niche`, shared by fill, idea writer and research desk): `motogp` from gallery niches / name; else a non-motorsport niche from the page's templates (all health → `health`) or name; else `f1`.
 
 ### 3.2 Template Rotation Math
