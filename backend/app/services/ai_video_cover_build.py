@@ -32,19 +32,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def recent_cover_texts(db: Session, fanpage_id: int) -> list[str]:
+    recent_rows = (
+        db.query(VideoJob)
+        .filter(VideoJob.fanpage_id == fanpage_id, VideoJob.cover_lines.isnot(None))
+        .order_by(VideoJob.id.desc())
+        .limit(8)
+        .all()
+    )
+    return [" ".join(j.cover_lines) for j in recent_rows if j.cover_lines]
+
+
+def apply_prepared_cover(job: VideoJob, cover: dict) -> None:
+    job.cover_lines = cover["lines"]
+    job.cover_highlight = cover["highlight"]
+    job.cover_prompt = cover["image_prompt"]
+
+
 def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob) -> None:
     try:
         if not getattr(fanpage, "ai_video_cover_enabled", True):
             return
 
-        recent_rows = (
-            db.query(VideoJob)
-            .filter(VideoJob.fanpage_id == fanpage.id, VideoJob.cover_lines.isnot(None))
-            .order_by(VideoJob.id.desc())
-            .limit(8)
-            .all()
-        )
-        recent = [" ".join(j.cover_lines) for j in recent_rows if j.cover_lines]
+        recent = recent_cover_texts(db, fanpage.id)
         niche = fanpage_niche(fanpage)
         prompt = build_cover_copy_prompt(job.title, job.caption, niche, recent)
 

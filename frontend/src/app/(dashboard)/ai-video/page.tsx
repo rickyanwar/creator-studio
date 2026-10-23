@@ -16,6 +16,9 @@ import {
   listGflowAccounts,
   updateGflowAccount,
   listGflowWorkers,
+  getPromptPolishIdeaStates,
+  getPromptPolishIdea,
+  getPromptPolishJob,
 } from "@/lib/api";
 import type {
   AiVideoIdea,
@@ -24,9 +27,12 @@ import type {
   Fanpage,
   GflowAccount,
   GflowWorker,
+  PromptPolishIdea,
+  PromptPolishJob,
 } from "@/lib/types";
 import ClipPlayer from "@/components/ClipPlayer";
 import { ResearchIdeaDetails } from "@/components/ai-video/ResearchIdeaDetails";
+import { PromptPolishView } from "@/components/ai-video/PromptPolishView";
 import { useFanpages } from "@/lib/useFanpages";
 
 const statusOptions = [
@@ -417,6 +423,104 @@ function WorkerCard({ worker, now }: { worker: GflowWorker; now: number }) {
   );
 }
 
+function IdeaPolishSection({ ideaId, state }: { ideaId: number; state: string }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<PromptPolishIdea | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = async () => {
+    if (!open && !data) {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await getPromptPolishIdea(ideaId);
+        setData(res.data);
+        setOpen(true);
+      } catch (err: any) {
+        setError(err?.response?.data?.detail || "Failed to load prompts");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      setOpen(!open);
+    }
+  };
+
+  return (
+    <div className="pt-1">
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={loading}
+        className="text-xs font-semibold text-text2 hover:text-text cursor-pointer inline-flex items-center gap-1"
+      >
+        <span>{open ? "Hide prompts" : "Show prompts"}</span>
+        {loading && <span className="text-[10px] text-text2 font-normal">loading…</span>}
+      </button>
+      {error && <p className="text-xs text-bad mt-1">{error}</p>}
+      {open && data && (
+        <div className="mt-2 space-y-2">
+          {state === "failed" && data.polish_error && (
+            <p className="text-xs text-bad bg-bad-soft p-2 rounded-lg border border-bad/20">
+              Polish error: {data.polish_error}
+            </p>
+          )}
+          <PromptPolishView clips={data.clips} changes={data.changes} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JobPolishSection({ jobId }: { jobId: number }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<PromptPolishJob | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = async () => {
+    if (!open && !data) {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await getPromptPolishJob(jobId);
+        setData(res.data);
+        setOpen(true);
+      } catch (err: any) {
+        setError(err?.response?.data?.detail || "Failed to load prompts");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      setOpen(!open);
+    }
+  };
+
+  const btnLabel = data?.polished ? "Show prompts (Argon)" : "Show prompts";
+  const closeLabel = data?.polished ? "Hide prompts (Argon)" : "Hide prompts";
+
+  return (
+    <div className="pt-1">
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={loading}
+        className="text-[11px] font-medium text-text2 hover:text-text cursor-pointer inline-flex items-center gap-1"
+      >
+        <span>{open ? closeLabel : btnLabel}</span>
+        {loading && <span className="text-[10px] text-text2 font-normal">loading…</span>}
+      </button>
+      {error && <p className="text-[11px] text-bad mt-1">{error}</p>}
+      {open && data && (
+        <div className="mt-2">
+          <PromptPolishView clips={data.clips} changes={data.changes} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AiVideoPage() {
   const [tab, setTab] = useState<"ideas" | "jobs" | "accounts">("ideas");
   const [ideaStatus, setIdeaStatus] = useState("proposed");
@@ -437,6 +541,13 @@ export default function AiVideoPage() {
         fanpage_id: fanpageId || undefined,
         limit: 100,
       }).then((r) => r.data as AiVideoIdea[])
+  );
+  const ideaIds = ideas.map((i) => i.id);
+  const ideaIdsKey = ideaIds.join(",");
+  const { data: polishStates = {} } = useSWR(
+    ideaIdsKey ? ["prompt-polish-idea-states", ideaIdsKey] : null,
+    () => getPromptPolishIdeaStates(ideaIds).then((r) => r.data),
+    { refreshInterval: 15000 }
   );
   const { data: jobs = [], mutate: mutateJobs } = useSWR(
     "ai-video-jobs",
@@ -617,6 +728,7 @@ export default function AiVideoPage() {
             <div className="space-y-3">
               {ideas.map((idea) => {
                 const isDecidable = idea.status === "proposed" || idea.status === "pilot";
+                const polishState = polishStates[idea.id] || polishStates[String(idea.id)];
                 return (
                   <article
                     key={idea.id}
@@ -631,6 +743,21 @@ export default function AiVideoPage() {
                           Score {idea.score ?? "—"}
                         </span>
                         <StatusPill value={idea.status} />
+                        {polishState === "polished" && (
+                          <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold whitespace-nowrap bg-pri-soft text-pri-text">
+                            Polished (Argon)
+                          </span>
+                        )}
+                        {polishState === "waiting" && (
+                          <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold whitespace-nowrap bg-warn-soft text-warn">
+                            Waiting for polish
+                          </span>
+                        )}
+                        {polishState === "failed" && (
+                          <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold whitespace-nowrap bg-bad-soft text-bad">
+                            Polish failed
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -653,6 +780,10 @@ export default function AiVideoPage() {
                     )}
 
                     {idea.source === "muse" && <ResearchIdeaDetails idea={idea} />}
+
+                    {(polishState === "polished" || polishState === "failed") && (
+                      <IdeaPolishSection ideaId={idea.id} state={polishState} />
+                    )}
 
                     {actionError?.id === idea.id && (
                       <p className="text-xs text-bad bg-bad-soft rounded p-2 border border-bad/20">
@@ -796,6 +927,8 @@ export default function AiVideoPage() {
                       QC: {job.qc.passed ? "passed" : (job.qc.reasons ?? ["failed"]).join(", ")}
                     </p>
                   )}
+
+                  <JobPolishSection jobId={job.id} />
 
                   {actionError?.id === job.id && (
                     <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded border border-bad/20">

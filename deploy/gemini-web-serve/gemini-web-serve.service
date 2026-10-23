@@ -1,0 +1,16 @@
+[Unit]
+Description=Gemini Web Serve — multi-account Gemini Argon proxy
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/root/gemini_test/venv/bin/python /opt/gemini-web-serve/server.py
+EnvironmentFile=/etc/gemini-web-serve.env
+Restart=always
+RestartSec=10
+MemoryMax=300M
+User=root
+
+[Install]
+WantedBy=multi-user.target

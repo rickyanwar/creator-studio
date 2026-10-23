@@ -6,9 +6,10 @@ from app.database import SessionLocal
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
-from app.services.ai_video_cover_build import prepare_cover
+from app.services.ai_video_cover_build import apply_prepared_cover, prepare_cover
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
+from app.services.ai_video_prepare import polish_enabled, valid_prepared
 from app.services.social_project_eligibility import project_can_generate
 from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import allowed_video_templates, credits_estimate, fit_clips_to_credits, get_template, pick_clips
@@ -35,6 +36,30 @@ def _daily_counts(jobs) -> tuple[int, int]:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover):
+    job = VideoJob(
+        fanpage_id=fanpage.id,
+        idea_id=idea.id,
+        template_key=template.key,
+        title=title,
+        caption=caption,
+        model=template.model,
+        aspect=template.aspect,
+        clip_seconds=template.clip_seconds,
+        clips=rendered,
+        credits_per_clip=template.credits_per_clip,
+        credits_estimate=credits_estimate(template, clips),
+        status="queued",
+    )
+    idea.variables, idea.status, idea.error = variables, "queued", None
+    db.add(job)
+    if isinstance(cover, dict):
+        apply_prepared_cover(job, cover)
+    else:
+        prepare_cover(db, fanpage, job)
+    db.commit()
 
 
 @celery_app.task(name="app.tasks.ai_video_plan.plan_ai_videos")
@@ -104,6 +129,12 @@ def plan_ai_videos():
             if not valid_ideas:
                 continue
 
+            if polish_enabled(fanpage):
+                valid_ideas = [i for i in valid_ideas if valid_prepared(i) is not None]
+                if not valid_ideas:
+                    logger.info("Mode 8: fanpage %s waits for Argon prompt polish", fanpage.id)
+                    continue
+
             # Rotation across templates: choose approved idea whose template was used least recently
             past_jobs = db.query(VideoJob.template_key, VideoJob.created_at).filter(
                 VideoJob.fanpage_id == fanpage.id
@@ -141,26 +172,46 @@ def plan_ai_videos():
                 logger.info("Mode 8: fanpage %s reached its daily credit cap; idea %s waits", fanpage.id, idea.id)
                 continue
             clips = fitted
-            try:
-                # Research-desk ideas carry their own slots, title and caption; the rest are written by the LLM.
-                filler = fill_from_research if research_ready(idea, template, clips) else fill_idea
-                variables, title, caption, rendered, _provider = filler(db, idea, fanpage, clips)
-                job = VideoJob(fanpage_id=fanpage.id, idea_id=idea.id, template_key=template.key, title=title, caption=caption, model=template.model, aspect=template.aspect, clip_seconds=template.clip_seconds, clips=rendered, credits_per_clip=template.credits_per_clip, credits_estimate=credits_estimate(template, clips), status="queued")
-                idea.variables, idea.status, idea.error = variables, "queued", None
-                db.add(job)
-                prepare_cover(db, fanpage, job)
-                db.commit()
-            except ValueError as exc:
-                db.rollback()
-                idea.status, idea.error = "failed", str(exc)[:2000]
-                db.commit()
-            except Exception as exc:
-                db.rollback()
-                idea.status = "approved"
-                idea.error = f"LLM unavailable, will retry: {type(exc).__name__}: {str(exc)[:200]}"
-                db.commit()
-                logger.warning("AI video planning paused: LLM unavailable for idea %s: %s", idea.id, exc)
-                return
+            if polish_enabled(fanpage):
+                prepared = valid_prepared(idea)
+                if not prepared:
+                    continue
+                if prepared.get("clips_count") != clips:
+                    logger.info("prepared clip count %s does not fit today (%s); waiting", prepared.get("clips_count"), clips)
+                    continue
+                variables = prepared["variables"]
+                title = prepared["title"]
+                caption = prepared["caption"]
+                rendered = prepared["clips"]
+                cover = prepared.get("cover")
+                try:
+                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover)
+                except ValueError as exc:
+                    db.rollback()
+                    idea.status, idea.error = "failed", str(exc)[:2000]
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.warning("AI video planning failed for idea %s: %s", idea.id, exc)
+                    continue
+            else:
+                try:
+                    # Research-desk ideas carry their own slots, title and caption; the rest are written by the LLM.
+                    filler = fill_from_research if research_ready(idea, template, clips) else fill_idea
+                    variables, title, caption, rendered, _provider = filler(db, idea, fanpage, clips)
+                    cover = None
+                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover)
+                except ValueError as exc:
+                    db.rollback()
+                    idea.status, idea.error = "failed", str(exc)[:2000]
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    idea.status = "approved"
+                    idea.error = f"LLM unavailable, will retry: {type(exc).__name__}: {str(exc)[:200]}"
+                    db.commit()
+                    logger.warning("AI video planning paused: LLM unavailable for idea %s: %s", idea.id, exc)
+                    return
     finally:
         db.close()
 

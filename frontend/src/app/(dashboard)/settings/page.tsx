@@ -16,6 +16,7 @@ import { HermesTokensCard } from "@/components/settings/HermesTokensCard";
 import { AiVideoSettingsCard } from "@/components/settings/AiVideoSettingsCard";
 import { GalleryLabelsSettingsCard } from "@/components/settings/GalleryLabelsSettingsCard";
 import { AiImageEngineSettingsCard } from "@/components/settings/AiImageEngineSettingsCard";
+import { PromptPolishSettingsCard } from "@/components/settings/PromptPolishSettingsCard";
 import { ProPosterSettingsCard } from "@/components/settings/ProPosterSettingsCard";
 import { F1DriversSettings } from "@/components/settings/F1DriversSettings";
 import { DevicesSettingsCard } from "@/components/settings/DevicesSettingsCard";
@@ -548,6 +549,7 @@ export default function SettingsPage() {
           {activeTab === "image" && (
             <div className="space-y-4">
               <AiImageEngineSettingsCard settings={settings} onChanged={() => mutate()} />
+              <PromptPolishSettingsCard settings={settings} onChanged={() => mutate()} />
               <ProPosterSettingsCard settings={settings} onChanged={() => mutate()} />
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                 <span className="text-xs text-text2">

@@ -155,6 +155,9 @@ def get_settings(db: DB, _: CurrentUser):
         codex_usage_url=getattr(row, "codex_usage_url", None),
         pro_poster_enabled=getattr(row, "pro_poster_enabled", False) or False,
         pro_poster_fanpage_ids=list(getattr(row, "pro_poster_fanpage_ids", None) or []),
+        prompt_polish_base_url=getattr(row, "prompt_polish_base_url", "http://172.17.0.1:8098") or "http://172.17.0.1:8098",
+        has_prompt_polish_token=bool(getattr(row, "prompt_polish_token_encrypted", None)),
+        prompt_polish_model=getattr(row, "prompt_polish_model", "gemini-argon") or "gemini-argon",
     )
 
 
@@ -183,6 +186,9 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
     if "gptcli_token" in data:
         token = (data.pop("gptcli_token") or "").strip()
         row.gptcli_token_encrypted = encrypt(token) if token else None
+    if "prompt_polish_token" in data:
+        token = (data.pop("prompt_polish_token") or "").strip()
+        row.prompt_polish_token_encrypted = encrypt(token) if token else None
     if "youtube_cookies" in data:
         from app.services.yt_downloader import validate_cookies_txt
 
@@ -222,6 +228,18 @@ def update_settings(body: SettingsUpdate, db: DB, _: CurrentUser):
         if not (base_url.startswith("http://") or base_url.startswith("https://")):
             raise HTTPException(status_code=400, detail="gptcli_base_url must start with http:// or https://")
         data["gptcli_base_url"] = base_url.rstrip("/")
+
+    if "prompt_polish_base_url" in data:
+        base_url = (data["prompt_polish_base_url"] or "").strip()
+        if not (base_url.startswith("http://") or base_url.startswith("https://")):
+            raise HTTPException(status_code=400, detail="prompt_polish_base_url must start with http:// or https://")
+        data["prompt_polish_base_url"] = base_url.rstrip("/")
+
+    if "prompt_polish_model" in data:
+        model = (data["prompt_polish_model"] or "").strip()
+        if not model:
+            raise HTTPException(status_code=400, detail="prompt_polish_model must not be empty")
+        data["prompt_polish_model"] = model
 
     if "codex_usage_url" in data:
         usage_url = (data["codex_usage_url"] or "").strip()

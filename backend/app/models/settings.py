@@ -129,6 +129,10 @@ class Settings(Base):
     gptcli_size = Column(String(16), default="1080x1350", nullable=False, server_default="1080x1350")
     pro_poster_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     pro_poster_fanpage_ids = Column(JSON, default=list, nullable=False, server_default="[]")
+    # Argon prompt polish (Mode 8): gemini-web-serve on the VPS host (Gemini web cookie client via the phone proxy).
+    prompt_polish_base_url = Column(String(256), default="http://172.17.0.1:8098", nullable=False, server_default="http://172.17.0.1:8098")
+    prompt_polish_token_encrypted = Column(String(512), nullable=True)
+    prompt_polish_model = Column(String(64), default="gemini-argon", nullable=False, server_default="gemini-argon")
     ai_day_start = Column(String(5), default="05:30", nullable=False, server_default="05:30")  # WIB; = gpt serve sleep end
     ai_night_start = Column(String(5), default="00:00", nullable=False, server_default="00:00")  # WIB; = gpt serve sleep start
     codex_share_percent = Column(Integer, default=35, nullable=False, server_default="35")

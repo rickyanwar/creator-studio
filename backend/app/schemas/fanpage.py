@@ -214,6 +214,7 @@ class FanpageBase(BaseModel):
     qa_ig_enabled: bool = True
     qa_facebook_enabled: bool = True
     qa_ai_video_enabled: bool = True
+    ai_video_prompt_polish_enabled: bool = False
 
     @field_validator(
         "qa_news_enabled",
@@ -225,6 +226,11 @@ class FanpageBase(BaseModel):
     @classmethod
     def clean_qa_toggles(cls, v):
         return True if v is None else v
+
+    @field_validator("ai_video_prompt_polish_enabled", mode="before")
+    @classmethod
+    def clean_prompt_polish_toggle(cls, v):
+        return False if v is None else v
 
     @field_validator("radar_niches", mode="before")
     @classmethod
