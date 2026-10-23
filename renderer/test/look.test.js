@@ -283,3 +283,20 @@ test("9. Full render: GP Quote with streak:false has non-visible streak image on
 
   assert.equal(result.streakVisible, false);
 });
+
+// Owner 2026-10-24: a bright red streak recoloured to the accent must stay bright (it vanished when tinted by luma).
+test("recolorStreakDataUri keeps a bright red pixel at full accent strength", async () => {
+  const result = await runInPage(async () => {
+    const c = document.createElement("canvas");
+    c.width = 2; c.height = 1;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#FF2020"; ctx.fillRect(0, 0, 2, 1);
+    const out = await window.recolorStreakDataUri(c.toDataURL("image/png"), "#2563EB");
+    const img = new Image();
+    await new Promise((r) => { img.onload = r; img.src = out; });
+    const c2 = document.createElement("canvas"); c2.width = 2; c2.height = 1;
+    const ctx2 = c2.getContext("2d"); ctx2.drawImage(img, 0, 0);
+    return Array.from(ctx2.getImageData(0, 0, 1, 1).data);
+  }, null);
+  assert.ok(Math.abs(result[0] - 0x25) <= 2 && Math.abs(result[1] - 0x63) <= 2 && Math.abs(result[2] - 0xEB) <= 2, String(result));
+});
