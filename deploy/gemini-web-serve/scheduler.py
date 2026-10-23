@@ -29,8 +29,8 @@ class SchedulerConfig:
     break_max_m: float = 60.0
     gap_min_m: float = 4.0
     gap_max_m: float = 9.0
-    cap_min: int = 18
-    cap_max: int = 28
+    cap_min: int = 30
+    cap_max: int = 40
     tz: str = "Asia/Jakarta"
 
 

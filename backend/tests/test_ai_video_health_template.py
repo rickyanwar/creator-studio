@@ -40,7 +40,8 @@ def test_template_has_no_vehicle_slots():
     assert not uses_vehicle(t)
     assert "vehicle_preset" not in required_variables(t, 4)
     assert required_variables(t, 4)[0] == "visual_subject"
-    assert len([n for n in required_variables(t, 5) if n.startswith("shot_")]) == 15
+    assert len([n for n in required_variables(t, 5) if n.startswith("shot_")]) == 10
+    assert "shot_1c" not in required_variables(t, 5)
     assert narrator_presets(t) == ["EN-DOC"]
 
 
@@ -56,7 +57,9 @@ def test_example_renders_four_cut_style_t2v_clips():
         assert prompt.startswith(t.raw["blocks"]["style"])
         assert _example()["visual_subject"] in prompt
         assert narrator in prompt  # one identical narrator sentence in every clip
-        assert "Cut to shot 3" in prompt
+        assert "Two shots with one clean cut" in prompt
+        assert "Cut to shot 2" in prompt
+        assert "Cut to shot 3" not in prompt
 
 
 def test_narration_outside_budget_is_rejected():
@@ -66,12 +69,50 @@ def test_narration_outside_budget_is_rejected():
         render_clips(get_template(KEY), variables, 4, lang_code="en")
 
 
-def test_prompt_over_flow_limit_is_rejected():
+def test_prompt_over_flow_limit_is_rejected(monkeypatch):
+    monkeypatch.setattr("app.services.video_templates.MAX_PROMPT_CHARS", 2000)
     variables = _example()
-    for slot in ("visual_subject", "shot_1a", "shot_1b", "shot_1c"):
-        variables[slot] = "a calm soft pink cross-section of healthy tissue in gentle light " * 9
+    for slot in ("visual_subject", "shot_1a", "shot_1b"):
+        variables[slot] = "a calm soft pink cross-section of healthy tissue in gentle light " * 7
     with pytest.raises(ValueError, match="Flow refuses prompts"):
         render_clips(get_template(KEY), variables, 4, lang_code="en")
+
+
+def test_health_explainer_renders_long_fill_under_2300_chars():
+    t = get_template(KEY)
+    shot_text = "A glossy pink anatomical cross-section showing tiny active cells gliding through healthy soft tissue under warm studio lighting with shallow depth of field and a gentle slow camera move forward."
+    assert len(shot_text) <= 200
+    narr_22 = " ".join(["word"] * 22)
+    variables = {
+        "visual_subject": "a stylised human body in soft pink translucent skin with cream bones",
+        "shot_1a": shot_text,
+        "shot_1b": shot_text,
+        "narration_1": narr_22,
+        "shot_2a": shot_text,
+        "shot_2b": shot_text,
+        "narration_2": narr_22,
+        "shot_3a": shot_text,
+        "shot_3b": shot_text,
+        "narration_3": narr_22,
+        "shot_4a": shot_text,
+        "shot_4b": shot_text,
+        "narration_4": narr_22,
+    }
+    clips = render_clips(t, variables, 4, lang_code="en")
+    lengths = [len(c["prompt"]) for c in clips]
+    for i, length in enumerate(lengths):
+        assert length <= 2300, f"clip {i + 1} length {length} exceeds 2300"
+
+
+def test_health_explainer_ignores_extra_shot_slots():
+    t = get_template(KEY)
+    variables = dict(_example())
+    variables["shot_1c"] = "extra third shot from old pack"
+    variables["shot_2c"] = "extra third shot from old pack"
+    variables["shot_3c"] = "extra third shot from old pack"
+    variables["shot_4c"] = "extra third shot from old pack"
+    clips = render_clips(t, variables, 4, lang_code="en")
+    assert len(clips) == 4
 
 
 def test_non_english_page_gets_the_narrator_in_its_language():

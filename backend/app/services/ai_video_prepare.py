@@ -16,7 +16,7 @@ from app.services.ai_video_fill import (
     fill_idea,
     research_ready,
 )
-from app.services.prompt_polish import PolishConfig, polish_clips
+from app.services.prompt_polish import PolishConfig, PolishInterrupted, polish_clips
 from app.services.video_templates import (
     allowed_video_templates,
     fit_clips_to_credits,
@@ -28,6 +28,7 @@ from app.tasks.publisher import _fanpage_tz
 logger = logging.getLogger(__name__)
 
 PREPARED_VERSION = 1
+DRAFT_MAX_AGE_H = 6
 MAX_PREPARE_ROUNDS = 3  # rounds of polish_clips before the idea fails
 MAX_IDEAS_PER_RUN = 3
 PREPARED_AHEAD_MIN = 2
@@ -84,6 +85,40 @@ def valid_prepared(idea) -> dict | None:
         return None
     clips = prep.get("clips")
     if not isinstance(clips, list) or len(clips) == 0:
+        return None
+    return prep
+
+
+def _resume_draft(idea, clips: int) -> dict | None:
+    """Return idea.prepared if it is a valid, unexpired polish draft, else None."""
+    prep = getattr(idea, "prepared", None)
+    if not isinstance(prep, dict):
+        return None
+    if prep.get("draft") is not True:
+        return None
+    if prep.get("version") != PREPARED_VERSION:
+        return None
+    if prep.get("fingerprint") != idea_fingerprint(idea):
+        return None
+    if prep.get("template_key") != getattr(idea, "template_key", None):
+        return None
+    if prep.get("clips_count") != clips:
+        return None
+    rendered = prep.get("rendered")
+    if not isinstance(rendered, list) or len(rendered) == 0:
+        return None
+    saved_at_raw = prep.get("saved_at")
+    if not saved_at_raw:
+        return None
+    try:
+        saved_at = datetime.fromisoformat(str(saved_at_raw))
+    except (ValueError, TypeError):
+        return None
+    if saved_at.tzinfo is not None:
+        saved_at = saved_at.astimezone(timezone.utc).replace(tzinfo=None)
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    age = (now_utc - saved_at).total_seconds()
+    if age < 0 or age > DRAFT_MAX_AGE_H * 3600:
         return None
     return prep
 
@@ -156,21 +191,80 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
     if clips is None:
         return "skipped"
 
-    filler = fill_from_research if research_ready(idea, template, clips) else fill_idea
+    draft = _resume_draft(idea, clips)
+    if draft is not None:
+        variables = draft["variables"]
+        title = draft["title"]
+        caption = draft["caption"]
+        provider = draft["provider"]
+        rendered = draft["rendered"]
+        resume = {
+            "answer": draft["answer"],
+            "problems": draft["problems"],
+            "attempts_used": draft["attempts_used"],
+        }
+    else:
+        resume = None
+        filler = fill_from_research if research_ready(idea, template, clips) else fill_idea
+        try:
+            variables, title, caption, rendered, provider = filler(db, idea, fanpage, clips)
+        except ValueError as exc:
+            idea.status = "failed"
+            idea.error = str(exc)[:2000]
+            db.commit()
+            return "failed"
+        except Exception as exc:
+            logger.warning("Filler failed for idea %s: %s", getattr(idea, "id", None), exc)
+            db.rollback()
+            return "skipped"
+
+    logger.info("prepare: idea %s fanpage %s %s (resume=%s)", getattr(idea, "id", None), getattr(fanpage, "id", None), idea.template_key, bool(resume))
+
     try:
-        variables, title, caption, rendered, provider = filler(db, idea, fanpage, clips)
-    except ValueError as exc:
-        idea.status = "failed"
-        idea.error = str(exc)[:2000]
+        if resume is not None:
+            result = polish_clips(
+                rendered,
+                template=template,
+                niche=fanpage_niche(fanpage),
+                config=config,
+                resume=resume,
+            )
+        else:
+            result = polish_clips(
+                rendered,
+                template=template,
+                niche=fanpage_niche(fanpage),
+                config=config,
+            )
+    except PolishInterrupted as exc:
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        idea.prepared = {
+            "draft": True,
+            "version": PREPARED_VERSION,
+            "fingerprint": idea_fingerprint(idea),
+            "template_key": idea.template_key,
+            "clips_count": clips,
+            "variables": variables,
+            "title": title,
+            "caption": caption,
+            "provider": provider,
+            "rendered": rendered,
+            "answer": exc.answer,
+            "problems": exc.problems,
+            "attempts_used": exc.attempts_used,
+            "account": exc.account,
+            "seconds": exc.seconds,
+            "saved_at": now_iso,
+        }
         db.commit()
-        return "failed"
-    except Exception as exc:
-        logger.warning("Filler failed for idea %s: %s", getattr(idea, "id", None), exc)
-        db.rollback()
-        return "skipped"
+        logger.info(
+            "prepare: idea %s polish interrupted after %d attempt(s), draft saved",
+            idea.id,
+            exc.attempts_used,
+        )
+        raise
 
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-    result = polish_clips(rendered, template=template, niche=fanpage_niche(fanpage), config=config)
     idea.polish_attempts = (idea.polish_attempts or 0) + 1
     idea.prepared_at = now_utc
 
@@ -203,6 +297,12 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
         idea.prepared = prep
         idea.polish_error = None
         db.commit()
+        logger.info(
+            "prepare: idea %s -> prepared attempts=%d problems=%s",
+            idea.id,
+            result.attempts,
+            (" | ".join(result.problems))[:600],
+        )
         return "prepared"
     else:
         idea.prepared = None
@@ -211,10 +311,18 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
             idea.status = "failed"
             idea.error = f"Argon prompt polish failed after {idea.polish_attempts} rounds: {idea.polish_error}"[:2000]
             db.commit()
-            return "failed"
+            outcome = "failed"
         else:
             db.commit()
-            return "skipped"
+            outcome = "skipped"
+        logger.info(
+            "prepare: idea %s -> %s attempts=%d problems=%s",
+            idea.id,
+            outcome,
+            result.attempts,
+            (" | ".join(result.problems))[:600],
+        )
+        return outcome
 
 
 def _fanpage_need_key(db, fanpage) -> tuple[int, int]:

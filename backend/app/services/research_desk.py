@@ -155,7 +155,7 @@ PACK_RULES = {
 NICHE_GUIDES = {
     "health": {
         "studio": ("Short vertical (9:16) everyday-health explainer videos, 40-50 seconds, soft photorealistic 3D "
-                   "medical animation, voice-over spoken inside the clips; every clip is three short shots with hard cuts."),
+                   "medical animation, voice-over spoken inside the clips; every clip is two shots with one clean cut."),
         "idea_sources": [
             "Everyday health questions people search for: how a body process, a common condition, a treatment or a "
             "device works, or how to use something correctly.",

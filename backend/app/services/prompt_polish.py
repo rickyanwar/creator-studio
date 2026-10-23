@@ -90,6 +90,19 @@ class PolishUnavailable(Exception):
         self.retry_after_s = retry_after_s
 
 
+class PolishInterrupted(PolishUnavailable):
+    """Argon became unavailable after at least one answered attempt; carries what is needed to resume."""
+
+    def __init__(self, kind: str, detail: str = "", retry_after_s: int | None = None, *,
+                 answer: str, problems: list[str], attempts_used: int, account: str | None, seconds: float):
+        super().__init__(kind, detail, retry_after_s)
+        self.answer = answer
+        self.problems = list(problems)
+        self.attempts_used = attempts_used
+        self.account = account
+        self.seconds = seconds
+
+
 @dataclass(frozen=True)
 class PolishConfig:
     base_url: str
@@ -317,9 +330,9 @@ def _post_generate(config: PolishConfig, prompt: str, http_post=None):
 
     try:
         resp = post_fn(url, headers=headers, json=body, timeout=GENERATE_TIMEOUT_S)
-    except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as e:
+    except httpx.TransportError as e:
         raise PolishUnavailable("unreachable", str(e))
-    except httpx.TimeoutException as e:
+    except OSError as e:
         raise PolishUnavailable("unreachable", str(e))
 
     sc = resp.status_code
@@ -345,7 +358,7 @@ def _post_generate(config: PolishConfig, prompt: str, http_post=None):
 
 
 def polish_clips(clips: list[dict], *, template, niche: str | None, config: PolishConfig,
-                 max_attempts: int = 3, http_post=None) -> PolishResult:
+                 max_attempts: int = 3, resume: dict | None = None, http_post=None) -> PolishResult:
     """Rewrite clip prompts via Argon. Raises PolishUnavailable on infra errors."""
     if not config or not config.token:
         raise PolishUnavailable("not_configured", "no token")
@@ -356,7 +369,26 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
     last_problems: list[str] = []
     prev_answer_text: str | None = None
 
-    for attempt in range(1, max_attempts + 1):
+    start_attempt = 1
+    if resume is not None:
+        prev_answer_text = resume.get("answer")
+        last_problems = list(resume.get("problems", []))
+        attempts_used = int(resume.get("attempts_used", 0))
+        if attempts_used >= max_attempts:
+            return PolishResult(
+                ok=False,
+                clips=[],
+                changes=[],
+                voice_sentence="",
+                ambience_sentence="",
+                attempts=max_attempts,
+                problems=last_problems,
+                account=last_account,
+                seconds=total_seconds,
+            )
+        start_attempt = attempts_used + 1
+
+    for attempt in range(start_attempt, max_attempts + 1):
         prompt = build_instruction(clips, template=template, niche=niche)
         if attempt >= 2 and prev_answer_text is not None:
             feedback_lines = ["Your previous answer failed these automatic checks:"]
@@ -367,14 +399,34 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
             feedback_lines.append(prev_answer_text[:20000])
             prompt = prompt + "\n" + "\n".join(feedback_lines)
 
-        resp = _post_generate(config, prompt, http_post=http_post)
+        try:
+            resp = _post_generate(config, prompt, http_post=http_post)
+        except PolishUnavailable as exc:
+            if prev_answer_text is not None:
+                logger.info(
+                    "prompt_polish interrupted after attempt %d (%s); round saved for resume",
+                    attempt - 1,
+                    exc.kind,
+                )
+                raise PolishInterrupted(
+                    exc.kind,
+                    exc.detail,
+                    exc.retry_after_s,
+                    answer=prev_answer_text,
+                    problems=last_problems,
+                    attempts_used=attempt - 1,
+                    account=last_account,
+                    seconds=total_seconds,
+                ) from exc
+            raise
 
         try:
             rj = resp.json()
         except Exception:
             last_problems = ["answer is not valid JSON in the required shape"]
             prev_answer_text = getattr(resp, "text", "")
-            logger.info("prompt_polish attempt %d non-json 200 response problems=1", attempt)
+            summary = (" | ".join(last_problems))[:600]
+            logger.info("prompt_polish attempt %d non-json 200 response problems=1: %s", attempt, summary)
             continue
 
         answer_text = rj.get("text", "")
@@ -389,7 +441,8 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
         except ValueError:
             last_problems = ["answer is not valid JSON in the required shape"]
             prev_answer_text = answer_text
-            logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=1", attempt, acct, secs)
+            summary = (" | ".join(last_problems))[:600]
+            logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=1: %s", attempt, acct, secs, summary)
             continue
 
         # Build polished clips
@@ -400,7 +453,8 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
             if idx not in polished_by_idx:
                 last_problems = [f"clip indexes mismatch: polished missing index {idx}"]
                 prev_answer_text = answer_text
-                logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=1", attempt, acct, secs)
+                summary = (" | ".join(last_problems))[:600]
+                logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=1: %s", attempt, acct, secs, summary)
                 continue
             polished_clips.append({
                 "index": idx,
@@ -417,7 +471,11 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
         changes = parsed["changes"]
         problems = check_polished(clips, polished_clips, voice, ambience, names_allowed=names_allowed,
                                   motion=motion_sentence_for(niche))
-        logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=%d", attempt, acct, secs, len(problems))
+        if problems:
+            summary = (" | ".join(problems))[:600]
+            logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=%d: %s", attempt, acct, secs, len(problems), summary)
+        else:
+            logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=0", attempt, acct, secs)
 
         if not problems:
             return PolishResult(
