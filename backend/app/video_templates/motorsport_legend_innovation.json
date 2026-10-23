@@ -1,7 +1,7 @@
 {
   "key": "motorsport_legend_innovation",
   "niches": ["f1"],
-  "clip_options": [2],
+  "clip_options": [1, 2, 3, 4],
   "default_clips": 2,
   "id": "motorsport_legend_innovation",
   "name": "Motorsport Legend Innovation — Banned & Game-Changing Tech",
@@ -47,13 +47,93 @@
     "caption-free freeze moment of the operational device",
     "no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos)"
   ],
+  "clip_sets": {
+    "1": [
+      {
+        "role": "whole_story",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, races across a historic asphalt Grand Prix circuit seen from a dramatic chase tracking angle. The camera swoops close to the {innovation_part}. The bodywork becomes translucent in a technical X-ray cutaway revealing {innovation_name}: {mechanism_details}. {working_action} Then the bodywork turns solid again and the camera pulls back to the whole car racing past, ending on a caption-free low hero shot. Macro mechanical fidelity, motion blur across the track surface, no exhaust flames or fireballs, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "3": [
+      {
+        "role": "reveal",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, races across a historic asphalt Grand Prix circuit seen from a dramatic chase tracking angle. The camera swoops close to the {innovation_part}. The bodywork becomes translucent in a technical X-ray cutaway revealing {innovation_name}: {mechanism_details}. {working_action} Macro mechanical fidelity, motion blur across the track surface, no exhaust flames or fireballs, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exploded_view",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, no exhaust flames or fireballs, one continuous camera move with no cuts. {effect_visual} The {innovation_part} assembly lifts and breaks apart into a technical exploded view in mid-air: {parts_list} separate and float with crisp mechanical precision above the rushing asphalt. The components smoothly reassemble and lock into place. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "legacy",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, no exhaust flames or fireballs, one continuous camera move with no cuts. The camera pulls back from the {innovation_part} to show the whole car at full racing speed on the historic circuit. {legacy_visual} The camera finishes on a caption-free low hero shot as the car races past. Macro mechanical fidelity, motion blur across the track surface. {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "4": [
+      {
+        "role": "reveal",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, races across a historic asphalt Grand Prix circuit seen from a dramatic chase tracking angle. The camera swoops close to the {innovation_part}. The bodywork becomes translucent in a technical X-ray cutaway revealing {innovation_name}: {mechanism_details}. {working_action} Macro mechanical fidelity, motion blur across the track surface, no exhaust flames or fireballs, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exploded_view",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, no exhaust flames or fireballs, one continuous camera move with no cuts. {effect_visual} The {innovation_part} assembly lifts and breaks apart into a technical exploded view in mid-air: {parts_list} separate and float with crisp mechanical precision above the rushing asphalt. The components smoothly reassemble and lock into place. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "in_action",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, no exhaust flames or fireballs, one continuous camera move with no cuts. The camera stays close to the {innovation_part} as the car {action_moment}; the bodywork turns translucent again and shows {action_effect} Macro mechanical fidelity, motion blur across the track surface. {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "legacy",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, no exhaust flames or fireballs, one continuous camera move with no cuts. The camera pulls back from the {innovation_part} to show the whole car at full racing speed on the historic circuit. {legacy_visual} The camera finishes on a caption-free low hero shot as the car races past. Macro mechanical fidelity, motion blur across the track surface. {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ]
+  },
+  "narration_by_clips": {
+    "1": "narration_1 tells the whole story in one sentence: what the innovation was, how it worked, and why it mattered.",
+    "2": "narration_1 = what the innovation was and the problem it solved. narration_2 = how it worked and why it mattered, ending on a strong line.",
+    "3": "narration_1 = what the innovation was. narration_2 = how it worked. narration_3 = its impact or why it was banned or copied, ending on a strong line.",
+    "4": "narration_1 = what the innovation was. narration_2 = how it worked. narration_3 = what it did in the action_moment. narration_4 = its impact or why it was banned or copied, ending on a strong line."
+  },
   "rules": [
     "Specific claims regarding years, lap-time gains, technical parameters, and ban reasons must come ONLY from verified research_notes.",
     "Never name real teams, constructors, drivers, circuits, or commercial sponsors in prompts or narration.",
     "Do not display any F1 logo, Formula 1 or FIA wordmarks, team badges, or watermarks.",
     "Narration must remain strictly within the word budget (22-24 words per clip) in English.",
     "Clip 2 must continue seamlessly from clip 1's final frame with a single camera movement without cuts.",
-    "End clip 2 on a clean caption-free freeze frame of the innovation."
+    "End clip 2 on a clean caption-free freeze frame of the innovation.",
+    "Length: write the whole story for the number of clips chosen (see narration_by_clips); a shorter video is a complete story with its own ending.",
+    "Longer videos (3-4 clips) add: legacy_visual = one sentence of what the car visibly does that shows the advantage (e.g. 'it stays planted through a fast sweeper where the airflow lines hug the floor'); action_moment and action_effect (4 clips) = one real driving moment and what visibly happens to the innovation in it."
   ],
   "topic_ideas": [
     "six-wheeled front steering geometry and low-drag front wing design",

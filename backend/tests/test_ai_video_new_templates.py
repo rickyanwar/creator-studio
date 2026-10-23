@@ -32,7 +32,7 @@ def test_new_templates_load_and_list():
     assert t_innov.aspect == "9:16"
     assert t_innov.clip_seconds == 10
     assert t_innov.credits_per_clip == 15
-    assert t_innov.clip_options == (2,)
+    assert t_innov.clip_options == (1, 2, 3, 4)
     assert t_innov.default_clips == 2
 
     t_corner = video_templates.get_template("motorsport_corner_masterclass")
@@ -41,7 +41,7 @@ def test_new_templates_load_and_list():
     assert t_corner.aspect == "9:16"
     assert t_corner.clip_seconds == 10
     assert t_corner.credits_per_clip == 15
-    assert t_corner.clip_options == (2,)
+    assert t_corner.clip_options == (1, 2, 3, 4)
     assert t_corner.default_clips == 2
 
     # Verify underscore files are not listed

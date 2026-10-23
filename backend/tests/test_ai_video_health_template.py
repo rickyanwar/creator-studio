@@ -230,7 +230,9 @@ def health_pack(channel_ids, **overrides):
 
 
 def _health_channel(db, clean):
-    return make_fanpage(db, clean, name="Leaky Health Page", niches=(), ai_video_templates=[KEY])
+    # Health pages run 40-50 s videos (like Inside You in production); the clip-count default of make_fanpage is for motorsport.
+    return make_fanpage(db, clean, name="Leaky Health Page", niches=(), ai_video_templates=[KEY],
+                        ai_video_seconds_min=40, ai_video_seconds_max=50)
 
 
 def test_brief_lists_the_health_niche_with_its_guide(db, clean):

@@ -99,6 +99,7 @@ Abridged; real values come from the server.
       "clip_seconds": 10, "clip_options": [2, 3],
       "slots_by_clips": {"2": ["part", "mechanism_details", "..."], "3": ["..."]},
       "clip_prompts": [{"index": 1, "role": "reveal", "continues_previous_clip": false, "prompt": "{style} {vehicle} ... \"{narration_1}\""}],
+      "clip_prompts_by_clips": {"2": [{"index": 1, "role": "reveal", "continues_previous_clip": false, "prompt": "{style} {vehicle} ... \"{narration_1}\""}]},
       "studio_filled_placeholders": {"...": "..."},
       "vehicle_presets": {"f1": {"full": "...", "short": "..."}},
       "rules": ["..."], "research": {"questions": ["..."]},
@@ -115,6 +116,7 @@ Plan the run from the brief:
 - **Assigning channels.** Each pack is for exactly one channel with `ideas_needed > 0`. Never reuse a subject that appears in `used_subjects` or that another channel already got.
 - **Topics.** Never give a channel a topic from its `recent_topics`, and never reuse a subject similar to any in `used_subjects`.
 - **Templates.** Pick each pack's template from the templates the channel allows, and `clips` from the `clip_options` it allows.
+- **Length.** A template can have its own clip set per length (`clip_prompts_by_clips`, `narration_plan_by_clips`, `narration_words_by_clips`). Write the whole story for the `clips` you choose: a shorter video is a complete story with its own ending, never the first clips of the longer one.
 
 ## GET /research/schema
 

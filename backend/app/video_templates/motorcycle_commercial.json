@@ -3,9 +3,7 @@
   "niches": [
     "motogp"
   ],
-  "clip_options": [
-    3
-  ],
+  "clip_options": [1, 2, 3, 4, 5, 6],
   "default_clips": 3,
   "id": "motorcycle_commercial",
   "name": "Motorcycle Commercial — Legendary & New Race and Road Bikes",
@@ -41,7 +39,7 @@
     {
       "role": "ride_out",
       "mode": "t2v",
-      "prompt": "{style} The hero is {vehicle}, ready at {setting}, standing on both tyres with the rider seated astride it in a leather suit matching the livery, visor closed, both boots down. One smooth, continuous low camera move: it opens on a front three-quarter view of the whole motorcycle, glides in close past {detail_1} as the engine fires and the exhaust pulses, then pulls back as the rider lifts both feet onto the footpegs and the motorcycle pulls away forward. {bike_rules} {audio} {narrator} \"{narration_1}\"",
+      "prompt": "{style} The hero is {vehicle}, ready at {setting}, standing on both tyres with the rider seated astride it in a leather suit matching the livery, visor closed, both boots down. One smooth, continuous low camera move: it opens on a front three-quarter view of the whole motorcycle, lingers close and slow on {detail_1} as the engine fires and the exhaust pulses, then pulls back as the rider lifts both feet onto the footpegs and the motorcycle pulls away forward. {bike_rules} {audio} {narrator} \"{narration_1}\"",
       "narration_words": {
         "en": "18-22"
       }
@@ -63,22 +61,183 @@
       }
     }
   ],
-  "keywords_that_worked": [
-    "condensed MOTION, WHEELS, RIDER, NO KEY, REALISM rules from the desktop 30 s commercial",
-    "Continue seamlessly from this exact frame"
-  ],
+  "clip_sets": {
+    "2": [
+      {
+        "role": "ride_out",
+        "mode": "t2v",
+        "narration_words": {
+          "en": "18-22"
+        },
+        "prompt": "{style} The hero is {vehicle} at {setting}, the rider astride it in a matching leather suit. One continuous low camera move: from a front three-quarter view of the whole bike it glides past {detail_1} as the engine fires, then pulls away and accelerates hard. {ride_scene} {bike_rules} {audio} {narrator} \"{narration_1}\""
+      },
+      {
+        "role": "corner_and_finish",
+        "mode": "i2v_from_previous_last_frame",
+        "narration_words": {
+          "en": "18-22"
+        },
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {signature_move} A low tracking camera follows alongside as it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, and lifts upright on the exit straight; then the rider brakes in a straight line, the front fork dips, and the motorcycle rolls to a calm stop, the rider puts both boots down and stays seated, ending on a calm, caption-free still frame of the whole motorcycle. {bike_rules} {audio} {narrator_followup} \"{narration_2}\""
+      }
+    ],
+    "1": [
+      {
+        "role": "whole_story",
+        "mode": "t2v",
+        "narration_words": {
+          "en": "18-22"
+        },
+        "prompt": "{style} The hero is {vehicle} at {setting}, the rider astride it in a matching leather suit. In one continuous low tracking shot from a front three-quarter view of the whole motorcycle, it pulls away, accelerates and sweeps through one fast corner at a steady lean, then straightens up. {ride_scene} {bike_rules} {audio} {narrator} \"{narration_1}\""
+      }
+    ],
+    "4": [
+      {
+        "role": "ride_out",
+        "mode": "t2v",
+        "prompt": "{style} The hero is {vehicle}, ready at {setting}, standing on both tyres with the rider seated astride it in a leather suit matching the livery, visor closed, both boots down. One smooth, continuous low camera move: it opens on a front three-quarter view of the whole motorcycle, lingers close and slow on {detail_1} as the engine fires and the exhaust pulses, then pulls back as the rider lifts both feet onto the footpegs and the motorcycle pulls away forward. {bike_rules} {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "detail_pass",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {ride_scene} A camera car tracks alongside at speed and drifts in close, slowly lingering on {detail_2} in sharp focus for several seconds, then glides along to {detail_3} and holds on it, the background streaking by while every part stays sharp. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "ride",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {ride_scene} A low wheel-height tracking camera follows alongside as the motorcycle accelerates hard, the background streaking by while the motorcycle stays sharp; it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressed, stays leaned until the corner ends, and lifts upright only as it reaches the exit straight. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "finale",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade; the whole motorcycle stays in frame, travelling forward. {signature_move} Then the rider brakes in a straight line, the front fork dips, and the motorcycle rolls to a calm stop; the rider puts both boots down and stays seated as the camera settles into a steady low front three-quarter view of the whole motorcycle, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      }
+    ],
+    "5": [
+      {
+        "role": "ride_out",
+        "mode": "t2v",
+        "prompt": "{style} The hero is {vehicle}, ready at {setting}, standing on both tyres with the rider seated astride it in a leather suit matching the livery, visor closed, both boots down. One smooth, continuous low camera move: it opens on a front three-quarter view of the whole motorcycle, lingers close and slow on {detail_1} as the engine fires and the exhaust pulses, then pulls back as the rider lifts both feet onto the footpegs and the motorcycle pulls away forward. {bike_rules} {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "detail_pass",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {ride_scene} A camera car tracks alongside at speed and drifts in close, slowly lingering on {detail_2} in sharp focus for several seconds, then glides along to {detail_3} and holds on it, the background streaking by while every part stays sharp. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "ride",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {ride_scene} A low wheel-height tracking camera follows alongside as the motorcycle accelerates hard, the background streaking by while the motorcycle stays sharp; it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressed, stays leaned until the corner ends, and lifts upright only as it reaches the exit straight. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "signature",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {signature_move} The camera tracks low alongside the whole motorcycle the entire time, the rider and machine moving as one. {bike_rules} {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "finale",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade; the whole motorcycle stays in frame, travelling forward. The rider brakes in a straight line, the front fork dips, and the motorcycle rolls to a calm stop; the rider puts both boots down and stays seated as the camera settles into a steady low front three-quarter view of the whole motorcycle, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_5}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      }
+    ],
+    "6": [
+      {
+        "role": "ride_out",
+        "mode": "t2v",
+        "prompt": "{style} The hero is {vehicle}, ready at {setting}, standing on both tyres with the rider seated astride it in a leather suit matching the livery, visor closed, both boots down. One smooth, continuous low camera move: it opens on a front three-quarter view of the whole motorcycle, lingers close and slow on {detail_1} as the engine fires and the exhaust pulses, then pulls back as the rider lifts both feet onto the footpegs and the motorcycle pulls away forward. {bike_rules} {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "detail_pass",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {ride_scene} A camera car tracks alongside at speed and drifts in close, slowly lingering on {detail_2} in sharp focus for several seconds, then glides along to {detail_3} and holds on it, the background streaking by while every part stays sharp. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "ride",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {ride_scene} A low wheel-height tracking camera follows alongside as the motorcycle accelerates hard, the background streaking by while the motorcycle stays sharp; it leans into a sweeping corner, rider and motorcycle leaning together, both tyres planted, the suspension compressed, stays leaned until the corner ends, and lifts upright only as it reaches the exit straight. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "engine_pass",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. A low tracking camera holds a long, slow macro pass along {engine_detail} as the motorcycle accelerates, every fin, bolt and weld in sharp focus, then eases back to the whole motorcycle. {bike_rules} {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "signature",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade, travelling only forward. {signature_move} The camera tracks low alongside the whole motorcycle the entire time, the rider and machine moving as one. {bike_rules} {audio} {narrator_followup} \"{narration_5}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      },
+      {
+        "role": "finale",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, the same rider, the same light and colour grade; the whole motorcycle stays in frame, travelling forward. The rider brakes in a straight line, the front fork dips, and the motorcycle rolls to a calm stop; the rider puts both boots down and stays seated as the camera settles into a steady low front three-quarter view of the whole motorcycle, ending on a calm, caption-free still frame. {bike_rules} {audio} {narrator_followup} \"{narration_6}\"",
+        "narration_words": {
+          "en": "18-22"
+        }
+      }
+    ]
+  },
+  "narration_by_clips": {
+    "1": "narration_1 tells the whole story in one sentence: maker, model and year, the one thing that makes it special, and why it matters, ending on a strong line.",
+    "2": "narration_1 = the hook: maker, model, year and what makes it special. narration_2 = the moment it is famous for and its legacy, ending on a strong line.",
+    "3": "narration_1 = the hook: what the bike is, its year, why it matters. narration_2 = what makes it special. narration_3 = its legacy or its place today, ending on a strong line.",
+    "4": "narration_1 = the hook: maker, model, year. narration_2 = what makes it special, over the detail close-ups. narration_3 = how it rides or races. narration_4 = its legacy, ending on a strong line.",
+    "5": "narration_1 = the hook. narration_2 = what makes it special (detail close-ups). narration_3 = how it rides or races. narration_4 = the moment it is famous for. narration_5 = its legacy, ending on a strong line.",
+    "6": "narration_1 = the hook. narration_2 = what makes it special (detail close-ups). narration_3 = how it rides or races. narration_4 = its engine and sound. narration_5 = the moment it is famous for. narration_6 = its legacy, ending on a strong line."
+  },
   "rules": [
     "Each video is about ONE real, famous motorcycle from any era, classic or current: a Grand Prix, MotoGP or superbike racer, or an iconic road motorcycle. Pick one exact version and year. Name its maker and model in narration_1 and in the title (real names are allowed for this template). The model year is 2026 or earlier and the bike really exists: it was sold, or it raced; never a 2027-or-later model, an announced but unreleased bike, a concept, a rumour, or a bike built for future rules (e.g. the 2027 MotoGP regulations).",
     "bike_look: 30-60 words describing exactly how that motorcycle looks: era, body shape (naked, cafe racer, full racing fairing), tank and seat shape, the visible engine layout (e.g. air-cooled inline-four with four chrome exhaust pipes), wheels (spoked or cast), brakes, and its REAL livery: colour layout, the real team and sponsor names exactly as painted and where they sit (e.g. 'white fairing with a blue ROTHMANS band across the nose'), and 'plain number boards, no race number' for race bikes (race numbers are never shown). Name at most three short sponsor words; never invent lettering. Real team and sponsor names are allowed for this template (owner 2026-10-22); series logos are not.",
     "bike_short: 8-15 words, the same motorcycle and colours, never a race number (e.g. 'red 2024 factory racer with white sponsor lettering and plain number boards', or 'candy-red 1969 inline-four roadster with gold tank stripes and chrome').",
     "setting: where the ride starts, matching the bike and its era, in daylight or golden hour: the pit exit of a period or modern circuit for race bikes, a workshop driveway or roadside forecourt for road bikes. Never a closed garage interior.",
-    "detail_1: one real, iconic part of THIS motorcycle seen in the close pass (tank, fairing nose, winglets, exhaust, front brake), at most 10 words. Only parts that really exist on it.",
+    "detail_1: one real, iconic part of THIS motorcycle seen in the close pass (2-clip and 3-clip videos) (tank, fairing nose, winglets, exhaust, front brake), at most 10 words. Only parts that really exist on it.",
     "ride_scene: one sentence placing the ride: a race circuit that fits its era for race bikes (old-style kerbs for classic racers, a modern circuit for current racers), a scenic coastal or mountain road for road bikes. Race bikes never ride on public roads; road bikes never race other bikes on a circuit.",
-    "signature_move: one sentence, the moment the bike is famous for, physically believable: a long high-speed pass at full lean, a two-stroke howl down a straight, a controlled wheelie for a powerful sport bike only. No jumps, no drifting, no tricks the real motorcycle could not do.",
-    "Narration: narration_1 = the hook: what the bike is, its year, why it matters. narration_2 = what makes it special (engine, chassis, aero, electronics, speed), only facts from research_notes. narration_3 = its legacy or its place today, ending on a strong line. Each 18-22 words in the audience language, no double quotes.",
+    "signature_move (2-clip and 3-clip videos): one sentence, the moment the bike is famous for, physically believable: a long high-speed pass at full lean, a two-stroke howl down a straight, a controlled wheelie for a powerful sport bike only. No jumps, no drifting, no tricks the real motorcycle could not do.",
+    "Narration: write the whole story for the number of clips chosen (see narration_by_clips): a 1-clip or 2-clip video is a complete, shorter story with its own ending, never the first clips of the 3-clip one. Each narration is 18-22 words in the audience language, no double quotes.",
     "Facts, years and numbers come ONLY from research_notes. Without notes, keep to the model name and the widely known year, and describe its character without numbers.",
     "Never show or describe official series logos (MotoGP, FIM, Dorna, WSBK). Never put text on screen; lettering exists only as paint on the motorcycle.",
-    "Write every slot as what IS visible (e.g. 'both tyres planted on the asphalt'); never put rules or 'no ...' lists inside slot text — the template adds the rules."
+    "Write every slot as what IS visible (e.g. 'both tyres planted on the asphalt'); never put rules or 'no ...' lists inside slot text — the template adds the rules.",
+    "Longer videos (4-6 clips) linger on the bike: detail_2 and detail_3 = two more real, iconic parts of THIS motorcycle for the slow close-ups (at most 10 words each, e.g. 'the gold-anodised front fork and radial brake calipers'); engine_detail (6 clips) = the visible engine and exhaust, as it really looks (at most 15 words)."
   ],
   "topic_ideas": [
     "Honda CB750 Four (1969), the first mass-produced inline-four superbike",

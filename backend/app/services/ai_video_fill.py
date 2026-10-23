@@ -11,6 +11,7 @@ from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language, language_name
 from app.services.video_templates import (
     _TEMPLATE_DIR,
+    clip_templates_for,
     fanpage_niche,
     get_narration_budget,
     get_template,
@@ -83,7 +84,9 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
     lang = cs.language
     lang_display = language_name(lang)
     example = t.raw.get("example", {}).get("variables", {})
-    budgets = {f"narration_{i + 1}": get_narration_budget(c, lang) for i, c in enumerate(t.raw["clip_templates"][:clips])}
+    budgets = {f"narration_{i + 1}": get_narration_budget(c, lang) for i, c in enumerate(clip_templates_for(t, clips))}
+    plan_text = t.raw.get("narration_by_clips", {}).get(str(clips))
+    plan_line = f"\nNarration plan for {clips} clips: {plan_text}" if plan_text else ""
     title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
     desc_max = getattr(fanpage, "ai_video_description_max_chars", None) or 600
     if uses_vehicle(t):
@@ -112,7 +115,7 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
     prompt = f"""Fill this video template as strict JSON with keys variables, title, caption.
 Template rules: {json.dumps(t.raw.get('rules', t.raw.get('description', '')))}
 Format example variables: {json.dumps(example)}
-Required variables: {json.dumps(required_variables(t, clips))}; narration word budgets: {json.dumps(budgets)}
+Required variables: {json.dumps(required_variables(t, clips))}; narration word budgets: {json.dumps(budgets)}{plan_line}
 {look_line}Narration must be in {lang_display}.
 Title and caption must be in {lang}; title <= {title_max} chars, caption <= {desc_max} chars and <= {cs.hashtag_count} hashtags.
 The FIRST sentence is the hook a reader sees before 'See more' on Facebook mobile: at most 125 characters, concrete and specific (who + what), no generic opener.
@@ -245,6 +248,7 @@ def research_ready(idea, template, clips) -> bool:
     """A research-desk idea that already carries every slot plus its own title and caption."""
     return bool(
         idea.source == "muse" and idea.title and idea.caption and isinstance(idea.variables, dict)
+        and (getattr(idea, "clips", None) is None or idea.clips == clips)
         and (set(required_variables(template, clips)) - set(LOCK_SLOTS)) <= set(idea.variables)
     )
 

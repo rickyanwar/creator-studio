@@ -39,7 +39,7 @@ def test_ai_video_template_registry():
     assert t.aspect == "9:16"
     assert t.clip_seconds == 10
     assert t.credits_per_clip == 15
-    assert t.clip_options == (2, 3)
+    assert t.clip_options == (1, 2, 3, 4, 5, 6)
     assert t.default_clips == 2
     assert "f1" in t.niches
     assert video_templates.credits_estimate(t, 2) == 30
@@ -140,7 +140,7 @@ def test_render_clips_value_errors():
 
     # invalid clips count
     with pytest.raises(ValueError, match="clips must be one of"):
-        video_templates.render_clips(t, base, 4)
+        video_templates.render_clips(t, base, 7)
 
     # missing variable
     v_missing = dict(base)
