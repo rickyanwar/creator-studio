@@ -243,3 +243,73 @@ class GflowRunner:
 
         candidates.sort(key=_sort_key, reverse=True)
         return [row for _, row in candidates]
+
+    def recover_from_project(self, *, profile, project, submit_time, out_dir, exclude=None):
+        if self.cfg.proxy:
+            try:
+                ensure_proxy_ready(self.cfg.proxy)
+            except RuntimeError as exc:
+                return GflowResult(False, {}, -1, "ProxyUnreachableError", False, str(exc))
+        env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
+        env["GFLOW_CLI_PROFILE"] = profile
+        if self.cfg.proxy:
+            env["GFLOW_PROXY"] = self.cfg.proxy
+            env["GFLOW_SOCKS5_PROXY"] = self.cfg.proxy
+            env["ALL_PROXY"] = self.cfg.proxy
+            env["HTTP_PROXY"] = self.cfg.proxy
+            env["HTTPS_PROXY"] = self.cfg.proxy
+
+        if isinstance(submit_time, datetime):
+            epoch = int(submit_time.timestamp())
+        else:
+            try:
+                epoch = int(float(submit_time))
+            except Exception:
+                epoch = 0
+
+        exclude_args = [str(m) for m in (exclude or []) if str(m).strip()]
+        script = Path(__file__).with_name("project_recover.py").resolve()
+        command = [
+            *shlex.split(self.cfg.probe_prefix),
+            *shlex.split(self.cfg.probe_python_cmd),
+            str(script),
+            str(profile),
+            str(project),
+            str(epoch),
+            str(out_dir),
+            *exclude_args,
+        ]
+        try:
+            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=profile):
+                completed = subprocess.run(
+                    command,
+                    cwd=self.cfg.cli_dir,
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=240,
+                    check=False,
+                )
+        except Exception as exc:
+            return GflowResult(False, {}, -1, "ProcessError", False, str(exc))
+
+        stdout = (completed.stdout or "").strip()
+        match = re.search(r"^RECOVERED\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)", stdout, re.MULTILINE)
+        if match:
+            media_id = match.group(1)
+            workflow_id = match.group(2)
+            local_path = match.group(3)
+            size_bytes = int(match.group(4))
+            payload = {
+                "media_id": media_id,
+                "workflow_id": workflow_id,
+                "local_path": local_path,
+                "bytes": size_bytes,
+            }
+            return GflowResult(True, payload, 0, None, False, "recovered from project")
+
+        none_match = re.search(r"^NONE(?:\s+(.*))?$", stdout, re.MULTILINE)
+        reason = none_match.group(1) if none_match else (stdout or "no clip recovered")
+        return GflowResult(False, {}, completed.returncode, "RecoveryFailed", False, reason or "no clip recovered")
+

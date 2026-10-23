@@ -67,7 +67,7 @@ class JobRunner:
             return self.gflow.find_stranded_media_id(profile=profile, project=project, submit_time=submit_time)
         return None
 
-    def _recover_clip(self, result, *, jid, index, profile, project, submit_time, out):
+    def _recover_clip(self, result, *, jid, index, profile, project, submit_time, out, state=None):
         msg = result.message or ""
         if not any(err in msg for err in SUBMITTED_ERRORS):
             return None
@@ -117,6 +117,61 @@ class JobRunner:
                 attempt += 1
                 if self.cancelled(jid):
                     return None
+            if project and hasattr(self.gflow, "recover_from_project"):
+                if self.cancelled(jid):
+                    return None
+                exclude = []
+                if state and isinstance(state.data.get("clips"), dict):
+                    exclude = [
+                        v["media_id"]
+                        for v in state.data["clips"].values()
+                        if isinstance(v, dict) and "media_id" in v
+                    ]
+                if not exclude:
+                    for p in (self.cfg.work_dir / "jobs").glob(f"{jid}-g*/state.json"):
+                        try:
+                            d = json.loads(p.read_text())
+                            if isinstance(d.get("clips"), dict):
+                                exclude.extend([
+                                    v["media_id"]
+                                    for v in d["clips"].values()
+                                    if isinstance(v, dict) and "media_id" in v
+                                ])
+                        except Exception:
+                            pass
+                sub_epoch = (
+                    int(submit_time.timestamp())
+                    if isinstance(submit_time, datetime)
+                    else int(float(submit_time))
+                )
+                rec = self.gflow.recover_from_project(
+                    profile=profile,
+                    project=project,
+                    submit_time=sub_epoch,
+                    out_dir=out.parent,
+                    exclude=exclude,
+                )
+                if self.cancelled(jid):
+                    return None
+                if rec and rec.ok:
+                    mid = rec.payload.get("media_id")
+                    rec_path = Path(
+                        rec.payload.get("local_path")
+                        or rec.payload.get("path")
+                        or (out.parent / f"{mid}.mp4")
+                    )
+                    if not rec_path.is_absolute():
+                        rec_path = self.cfg.cli_dir / rec_path
+                    if rec_path.is_file() and rec_path.stat().st_size:
+                        log.info(
+                            "Recovered clip %s for job %s clip %s from the Flow project listing",
+                            mid,
+                            jid,
+                            index,
+                        )
+                        rec.payload.setdefault("local_path", str(rec_path))
+                        rec.payload.setdefault("media_id", mid)
+                        return rec
             log.warning(
                 "No stranded clip could be downloaded for job %s clip %s within %ss (candidates tried: %d)",
                 jid, index, STRANDED_WAIT_S, len(tried),
@@ -236,7 +291,8 @@ class JobRunner:
                 if not result.ok:
                     recovered = self._recover_clip(result, jid=jid, index=index,
                                                    profile=profile, project=project,
-                                                   submit_time=submit_time, out=out)
+                                                   submit_time=submit_time, out=out,
+                                                   state=state)
                     if self.cancelled(jid):
                         return
                     if recovered:
@@ -266,7 +322,8 @@ class JobRunner:
                             if not result.ok:
                                 recovered = self._recover_clip(result, jid=jid, index=index,
                                                                profile=profile, project=project,
-                                                               submit_time=submit_time, out=out)
+                                                               submit_time=submit_time, out=out,
+                                                               state=state)
                                 if self.cancelled(jid):
                                     return
                                 if recovered:
@@ -286,7 +343,8 @@ class JobRunner:
                             if not result.ok:
                                 recovered = self._recover_clip(result, jid=jid, index=index,
                                                                profile=profile, project=project,
-                                                               submit_time=submit_time, out=out)
+                                                               submit_time=submit_time, out=out,
+                                                               state=state)
                                 if self.cancelled(jid):
                                     return
                                 if recovered:
