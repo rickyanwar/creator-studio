@@ -96,7 +96,7 @@ Decide the visual concept and respond with STRICT JSON:
 Rules:
 - The scene must use the reference photos for every real person, by image number.
 - The inset must show a DIFFERENT moment or detail than the main image that explains THIS story (what the headline is about: the place, the trophy, the rival, the car on track). Name the reference image number it uses. A person in the inset must come from a reference photo; without one, describe only a place or object from the story, with no people. It must never show the same person in the same pose. If nothing fits, use "none". Use one inset at most.{strict_rule}
-- graphic_words: at most 3 short words or numbers that literally appear in the headline or the story text (e.g. "P9", "2X", "100K", "KO", "TREBLE").
+- graphic_words: always an empty list [] (the artwork carries no words; the page template adds the headline).
 - Never invent results, people or places. Everything must belong to {brief.event.series}: nothing from another sport.
 - If there is no reference photo of a person, the scene must not show any identifiable person's face.
 Respond ONLY with the JSON object."""
