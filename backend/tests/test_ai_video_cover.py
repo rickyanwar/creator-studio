@@ -172,6 +172,152 @@ def test_build_cover_html():
     assert '<div class="logo txt"' in html_text
 
 
+def test_default_prompts_byte_for_byte_unchanged():
+    title = "Why The Rear Wing Flexes"
+    caption = "Aerodynamic downforce explainer"
+    niche = "f1"
+    recent = ["HOW WINGS WORK"]
+
+    expected_copy = (
+        'You write the cover (thumbnail) text for a short vertical explainer video on a f1 fan page.\n'
+        'A viewer scrolling past sees the cover for under a second. The cover must tell them at once WHAT the video is about\n'
+        'and make them NEED the answer.\n\n'
+        'Video title: Why The Rear Wing Flexes\n'
+        'Video caption: Aerodynamic downforce explainer\n\n'
+        'Write the cover words in the SAME language as the video title.\n'
+        'The cover is ONE short, plain question that the video answers (the way curious people really ask it):\n'
+        '- Start with WHY, HOW or WHAT (or the same words in the title\'s language) and end with "?".\n'
+        '- Name the subject plainly so it is understood instantly: the body part, the car part, the object. A viewer who\n'
+        '  only reads the cover knows the topic. Never a vague teaser ("WHO DECIDED?", "HOW?", "THIS PART…").\n'
+        '- Ask about the surprising or strange part, never give the answer.\n'
+        '- Make it personal when it fits: for the body use "YOUR" ("WHY DOES YOUR KNEE KICK WHEN TAPPED?").\n'
+        '- 4 to 8 words, everyday words, no jargon the caption does not use. 2 to 4 lines, each at most\n'
+        '  14 characters; break lines at natural pauses.\n'
+        '- SPECIFIC beats generic: use a number or a sharp contrast from the title or caption when there is one.\n'
+        '- Do not reuse a hook from this page\'s recent covers: HOW WINGS WORK\n'
+        '- Clickbait never means lying: no claim the video does not support, no invented facts or numbers, no fake\n'
+        '  urgency. Use only numbers that appear in the title or caption; keep names, numbers and technical terms exactly as\n'
+        '  written there. No worn-out words: "secret", "insane", "shocking", "crazy", "you won\'t believe".\n'
+        '- Never end a line on a small word ("the", "a", "of", "le", "la", "de", "yang", ...); no colon, dash or comma at a\n'
+        '  line end. No emojis, no hashtags, no quotation marks.\n'
+        '- Highlight the ONE line that holds the surprising part (the subject or the strange result).\n\n'
+        'Examples:\n'
+        '"Why Your Knee Jerks When the Doctor Taps It" -> {"lines": ["WHY DOES", "YOUR KNEE KICK", "WHEN TAPPED?"], "highlight": [1]}\n'
+        '"Why Your Stomach Growls: The Wave Inside You" -> {"lines": ["WHY DOES", "YOUR STOMACH", "GROWL?"], "highlight": [1]}\n'
+        '"The lever that lifts a Formula 1 car" -> {"lines": ["HOW DOES", "ONE LEVER LIFT", "AN F1 CAR?"], "highlight": [1]}\n'
+        '"The captive wheel nut: the single nut that never leaves the wheel" -> {"lines": ["WHY THIS", "WHEEL NUT", "NEVER COMES OFF?"], "highlight": [1]}\n'
+        '"Le turbo : une turbine à 125 000 tours par minute" -> {"lines": ["COMMENT UN TURBO", "TOURNE À", "125 000 TR/MIN ?"], "highlight": [2]}\n\n'
+        'Also describe ONE picture for the cover background, in English, for an image model:\n'
+        '- a dramatic CLOSE-UP of the one object or moment the video is about, at its most intense instant (glowing, sparking,\n'
+        '  straining, frozen just before something happens), from a striking low angle;\n'
+        '- close, but the object stays INSTANTLY recognisable: show enough of it and its context (the whole jack under the car\n'
+        '  nose, the whole knee with the hammer), never an abstract macro of a detail;\n'
+        '- ONE focal point, nothing else competing: no crowds, no wide scenery, no busy cockpit or garage;\n'
+        '- a touch of mystery is good (part of it in shadow, the key detail just catching the light);\n'
+        '- do NOT describe the background, lighting, colours or style (the brand sets those);\n'
+        '- a real-looking motorsport close-up; a car or bike part in a real team\'s colours is fine, but no real driver\'s or rider\'s face; no series logos.\n\n'
+        'Reply with ONLY this JSON:\n'
+        '{"lines": ["LINE 1", "LINE 2"], "highlight": [index of the highlighted line, 0-based], "scene": "one or two sentences"}'
+    )
+
+    actual_copy = build_cover_copy_prompt(title, caption, niche, recent)
+    assert actual_copy == expected_copy
+    assert build_cover_copy_prompt(title, caption, niche, recent, template_key=None) == expected_copy
+
+    scene = "a rear wing flexing at speed"
+    expected_image = (
+        'Vertical 9:16 cover image (thumbnail) for a short explainer video titled "Why The Rear Wing Flexes".\n'
+        'Scene: a rear wing flexing at speed\n'
+        'Style: premium motorsport commercial photo, the subject brightly and clearly lit so every shape and colour reads at a glance on a phone, real team colours, clean darker-toned background, natural textures, no HDR look.\n'
+        'Composition: a dramatic close-up of ONE hero subject that fills the LOWER part of the frame, from about 40% to 95% of\n'
+        'the height, razor sharp and fully visible, well lit from the front with a rim light and one bright accent (a glow,\n'
+        'spark, reflection or hot edge) as the focal point. A viewer must recognise the subject in half a second: no heavy\n'
+        'shadows over it, not an abstract macro. Everything around it stays quiet and plain; minimal and uncluttered, no people\'s faces.\n'
+        'The UPPER 40% of the frame is calm and simple: the SAME continuous background as the rest, out of focus and slightly\n'
+        'darker toward the top, with no objects, so large title text placed there later stays readable. One seamless picture:\n'
+        'no band, panel, border, horizontal line or split between the top and the rest.\n'
+        'Bold contrast, rich colour, shallow depth of field, physically believable, like a premium commercial still.\n'
+        'Do NOT add any text, letters, numbers, captions, watermarks or logos anywhere in the image. Liveries, signs and screens carry plain colour blocks only, never words or brand names. No series logos.'
+    )
+
+    actual_image = build_cover_image_prompt(title, scene, niche)
+    assert actual_image == expected_image
+    assert build_cover_image_prompt(title, scene, niche, template_key=None) == expected_image
+
+
+def test_motorcycle_commercial_cover_prompts():
+    title = "1994 Honda NSR500"
+    caption = "Two-stroke GP legend"
+    copy_p = build_cover_copy_prompt(title, caption, "motogp", template_key="motorcycle_commercial")
+
+    assert "WHOLE motorcycle" in copy_p
+    assert "no deep shadows" in copy_p
+    assert "a dramatic CLOSE-UP" not in copy_p
+    assert "a touch of mystery" not in copy_p
+    assert "a real-looking photo of the whole motorcycle in its real livery" in copy_p
+
+    img_p = build_cover_image_prompt(title, None, "motogp", template_key="motorcycle_commercial")
+    assert "WHOLE motorcycle" in img_p or "whole motorcycle, fully visible" in img_p
+    assert "no deep shadows" in img_p
+    assert "a dramatic close-up" not in img_p.lower()
+    assert "a touch of mystery" not in img_p.lower()
+    assert "premium motorcycle brochure photo" in img_p
+
+
+def test_f1_and_health_cover_prompts_unchanged():
+    title = "Why Wings Flex"
+    f1_copy = build_cover_copy_prompt(title, "caption", "f1", template_key="f1_template")
+    assert "a dramatic CLOSE-UP" in f1_copy
+    assert "a touch of mystery" in f1_copy
+    assert "WHOLE motorcycle" not in f1_copy
+
+    f1_img = build_cover_image_prompt(title, "scene", "f1", template_key="f1_template")
+    assert "a dramatic close-up" in f1_img.lower()
+    assert "WHOLE motorcycle" not in f1_img
+    assert "brochure photo" not in f1_img
+
+    health_copy = build_cover_copy_prompt("Knee Joint", "caption", "health")
+    assert "3D anatomy or medical render" in health_copy
+    assert "a dramatic CLOSE-UP" in health_copy
+    assert "WHOLE motorcycle" not in health_copy
+
+    health_img = build_cover_image_prompt("Knee Joint", "scene", "health")
+    assert "3D anatomy render" in health_img
+    assert "WHOLE motorcycle" not in health_img
+
+
+def test_prepare_cover_motorcycle_commercial(sqlite_db):
+    fanpage = TargetFanpage(id=12, repliz_account_id="r12", name="Moto Page", ai_video_cover_enabled=True)
+    sqlite_db.add(fanpage)
+    sqlite_db.commit()
+
+    job = VideoJob(
+        id=102,
+        fanpage_id=fanpage.id,
+        template_key="motorcycle_commercial",
+        title="Honda NSR500",
+        caption="1994 Two Stroke",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=4,
+        clips=[{"index": 1}],
+        credits_per_clip=15,
+        credits_estimate=15,
+        status="queued",
+    )
+    sqlite_db.add(job)
+    sqlite_db.commit()
+
+    fake_copy = {"lines": ["NSR500", "LEGEND"], "highlight": [0], "scene": "Whole bike on stand"}
+    with patch("app.services.news_copywriter._generate_with_fallback", return_value=(fake_copy, "router")):
+        prepare_cover(sqlite_db, fanpage, job)
+
+    assert job.cover_lines == ["NSR500", "LEGEND"]
+    assert job.cover_prompt is not None
+    assert "whole motorcycle" in job.cover_prompt.lower()
+    assert "brochure photo" in job.cover_prompt
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. prepare_cover tests
 # ─────────────────────────────────────────────────────────────────────────────

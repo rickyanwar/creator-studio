@@ -10,11 +10,6 @@ from dataclasses import dataclass, field
 import httpx
 
 from app.models.settings import Settings
-from app.services.ai_video_cover import (
-    build_cover_copy_prompt,
-    build_cover_image_prompt,
-    parse_cover_copy,
-)
 from app.services.encryption import decrypt
 
 logger = logging.getLogger(__name__)
@@ -30,6 +25,47 @@ PROTECTED_PHRASES = (
     "no sound effects",
     "no cuts",
 )
+
+# Motorsport motion rules (owner 2026-10-23, after a NSR500 video "turned" upright and sideways in a corner).
+# Argon must put the sentence for the niche, word for word, in every clip; check_polished enforces it.
+MOTION_SENTENCES = {
+    "motogp": (
+        "Motion: one manoeuvre per shot; on track it runs at full racing speed; it turns only while bike and "
+        "rider lean together about 45 degrees, rides upright only on straights, never slides sideways."
+    ),
+    "f1": (
+        "Motion: one manoeuvre per shot; the car turns only by steering its front wheels, keeps its direction "
+        "across cuts, never slides sideways."
+    ),
+}
+VAGUE_COLOUR_WORDS = ("solid-colour", "solid colour", "solid-color", "solid color")
+
+
+def motion_sentence_for(niche: str | None) -> str | None:
+    """The fixed motion-rules sentence for a motorsport niche, None for other niches."""
+    return MOTION_SENTENCES.get((niche or "").strip().lower())
+
+
+def _motorsport_rules(motion: str | None) -> str:
+    """Extra instruction lines for motorsport templates (empty for other niches)."""
+    if not motion:
+        return ""
+    return (
+        "4. Motorsport: describe the livery panel by panel with exact colours (for a car: nose, bodywork and sidepods, "
+        "engine cover, wings, wheels, helmet; for a motorcycle: upper fairing, lower fairing, tank, tail, number boards, "
+        "wheels, rider suit, helmet). Never use vague colour words such as \"solid-colour\" or \"matching\"; repeat that "
+        "exact livery sentence in every clip. If a clip asks for several manoeuvres (for example a straight, a corner "
+        "and an exit), keep the one that matches its voice-over and simplify the rest. A corner always names its "
+        "direction (left or right) and where the camera stands. On a circuit the vehicle runs at real racing speed: "
+        "background streaking with motion blur, the camera tracking hard; never a slow cruise unless the original "
+        "asks for slow motion.\n"
+        "   Engine sound: the background sound sentence names the engine exactly as the subject is described - a "
+        "two-stroke sounds like a crisp, ringing, crackling two-stroke; a four-stroke like a deep, smooth four-stroke "
+        "roar - loud at speed, quiet only when parked, the same character in every clip, never switching type. The "
+        "narrator voice sentence keeps the same person (gender, age, accent) in every clip.\n"
+        f"5. Put this sentence word for word in every clip: {motion}\n"
+    )
+
 
 BRAND_NAMES = (
     "Ferrari", "Brabham", "McLaren", "Mercedes", "Red Bull", "Williams",
@@ -111,12 +147,13 @@ def build_instruction(clips: list[dict], *, template, niche: str | None) -> str:
         "   Deliberate visual styles of the template are NOT logic errors: keep them exactly as the original describes them - X-ray or semi-transparent cutaways, exploded technical views where parts separate, float and then reassemble into the same object, glowing airflow, force or signal lines, slow motion. Around such a visualisation everything else still obeys real physics, and afterwards the object is back in exactly the same state.\n"
         "2. Visual continuity: describe the main subject (vehicle, rider, body part, object) once in concrete detail (shape, colours, materials, the exact lettering already in the prompt) and repeat that exact description in every clip. Each clip must end on a frame the next clip can continue from naturally.\n"
         f"3. Audio continuity: write ONE narrator voice sentence in rich concrete detail (keep the narrator the original prompt describes; add pitch, timbre, pace that fits the narration inside {clip_seconds} seconds, and a close-mic dry recording) and put that exact same sentence, word for word, in every clip right before the voice-over line. Write ONE background sound sentence (keep what the original allows: if it says no music, keep no music; if it has a music bed, keep one calm continuous bed with a fixed tempo and level) at a fixed low level under the voice, and put that exact same sentence, word for word, in every clip.\n"
+        f"{_motorsport_rules(motion_sentence_for(niche))}"
         "Hard rules:\n"
         "- Keep every text that is inside double quotes in the original EXACTLY as written (every voice-over line and any lettering). Do not add any new double-quoted text.\n"
         "- Keep every restriction of the original (no text, no logos or the exact logo rules, no watermark, no gore, no music, no sound effects, no cuts — whichever the original has).\n"
         "- Do not name or imply any real team, maker, sponsor or brand that the original does not already name.\n"
         "- Every i2v clip must start with: Continue seamlessly from this exact frame\n"
-        "- Each clip prompt must stay under 2,700 characters.\n"
+        "- Each clip prompt must stay under 2,600 characters: cut decorative or repeated words first, never the rules, quotes or livery.\n"
         "- Do not change the number of clips or their order.\n"
         'Return ONLY JSON, no markdown: {"clips":[{"index":1,"prompt":"..."}],"voice_sentence":"...","ambience_sentence":"...","changes":["one short reason per change"]}\n'
         "\n"
@@ -172,10 +209,35 @@ def parse_answer(text: str) -> dict:
     return obj
 
 
-def check_polished(original: list[dict], polished: list[dict], voice: str, ambience: str,
-                   *, names_allowed: bool = False) -> list[str]:
-    """Run guards. Returns [] if all pass, else list of problem strings."""
+def _motion_problems(polished: list[dict], motion: str | None) -> list[str]:
+    """Motorsport guards: the motion-rules sentence in every clip, no vague colour words."""
     problems = []
+    for clip in polished:
+        text = clip["prompt"]
+        if motion and motion not in text:
+            problems.append(f"clip {clip['index']}: motion rules sentence missing (copy it word for word)")
+        vague = [w for w in VAGUE_COLOUR_WORDS if w in text.lower()]
+        if motion and vague:
+            problems.append(f"clip {clip['index']}: vague colour word {vague[0]!r}; name the exact colour")
+    return problems
+
+
+def _engine_type(original: list[dict]) -> str | None:
+    """'two-stroke' / 'four-stroke' when the original subject names its engine type, else None."""
+    text = " ".join(c["prompt"].lower() for c in original)
+    for kind, words in (("two-stroke", ("two-stroke", "2-stroke")), ("four-stroke", ("four-stroke", "4-stroke"))):
+        if any(w in text for w in words):
+            return kind
+    return None
+
+
+def check_polished(original: list[dict], polished: list[dict], voice: str, ambience: str,
+                   *, names_allowed: bool = False, motion: str | None = None) -> list[str]:
+    """Run guards. Returns [] if all pass, else list of problem strings."""
+    problems = _motion_problems(polished, motion) if motion else []
+    engine = _engine_type(original) if motion else None
+    if engine and engine not in ambience.lower():
+        problems.append(f"ambience_sentence must name the {engine} engine sound of this subject")
 
     # 1. Same number and set of indexes
     orig_indexes = sorted(c["index"] for c in original)
@@ -282,50 +344,6 @@ def _post_generate(config: PolishConfig, prompt: str, http_post=None):
     return resp
 
 
-def polish_cover(
-    *,
-    title: str,
-    caption: str | None,
-    niche: str | None,
-    recent: list[str],
-    subject_hint: str,
-    aspect: str,
-    config: PolishConfig,
-    max_attempts: int = 2,
-    http_post=None,
-) -> dict | None:
-    cover_prompt = build_cover_copy_prompt(title, caption, niche, recent)
-    extra = (
-        "\n\nThe video's main subject, exactly as it appears in the video (keep the cover picture consistent with it):\n"
-        f"{subject_hint}\n"
-        'Describe the cover background picture ("scene") in rich concrete detail (2-3 sentences) for the SAME subject, '
-        'same colours and same look as above, following every picture rule above.\n'
-    )
-    prompt = cover_prompt + extra
-
-    for _ in range(max_attempts):
-        resp = _post_generate(config, prompt, http_post=http_post)
-        try:
-            rj = resp.json()
-        except Exception:
-            continue
-        text = rj.get("text", "")
-        try:
-            parsed = parse_cover_copy(text, title, strict=True)
-        except ValueError:
-            continue
-        scene = parsed.get("scene", "")
-        image_prompt = build_cover_image_prompt(title, scene, niche, aspect)
-        return {
-            "lines": parsed["lines"],
-            "highlight": parsed["highlight"],
-            "scene": scene,
-            "image_prompt": image_prompt,
-            "by": "argon",
-        }
-    return None
-
-
 def polish_clips(clips: list[dict], *, template, niche: str | None, config: PolishConfig,
                  max_attempts: int = 3, http_post=None) -> PolishResult:
     """Rewrite clip prompts via Argon. Raises PolishUnavailable on infra errors."""
@@ -397,7 +415,8 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
         voice = parsed["voice_sentence"]
         ambience = parsed["ambience_sentence"]
         changes = parsed["changes"]
-        problems = check_polished(clips, polished_clips, voice, ambience, names_allowed=names_allowed)
+        problems = check_polished(clips, polished_clips, voice, ambience, names_allowed=names_allowed,
+                                  motion=motion_sentence_for(niche))
         logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=%d", attempt, acct, secs, len(problems))
 
         if not problems:

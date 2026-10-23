@@ -54,31 +54,48 @@ Examples:
 "Le turbo : une turbine à 125 000 tours par minute" -> {{"lines": ["COMMENT UN TURBO", "TOURNE À", "125 000 TR/MIN ?"], "highlight": [2]}}
 
 Also describe ONE picture for the cover background, in English, for an image model:
-- a dramatic CLOSE-UP of the one object or moment the video is about, at its most intense instant (glowing, sparking,
+{picture_rules}
+
+Reply with ONLY this JSON:
+{{"lines": ["LINE 1", "LINE 2"], "highlight": [index of the highlighted line, 0-based], "scene": "one or two sentences"}}"""
+
+DEFAULT_PICTURE_RULES = """- a dramatic CLOSE-UP of the one object or moment the video is about, at its most intense instant (glowing, sparking,
   straining, frozen just before something happens), from a striking low angle;
 - close, but the object stays INSTANTLY recognisable: show enough of it and its context (the whole jack under the car
   nose, the whole knee with the hammer), never an abstract macro of a detail;
 - ONE focal point, nothing else competing: no crowds, no wide scenery, no busy cockpit or garage;
 - a touch of mystery is good (part of it in shadow, the key detail just catching the light);
 - do NOT describe the background, lighting, colours or style (the brand sets those);
-- {scene_rule}
+- {scene_rule}"""
 
-Reply with ONLY this JSON:
-{{"lines": ["LINE 1", "LINE 2"], "highlight": [index of the highlighted line, 0-based], "scene": "one or two sentences"}}"""
+MOTORCYCLE_PICTURE_RULES = """- the WHOLE motorcycle in full view, from the front wheel to the tail, in a three-quarter side view, standing on its
+  stands or riding on a real road or circuit, so it is instantly recognisable;
+- soft, even daylight on the whole bike: no deep shadows, no dark mood, no silhouette;
+- never a close-up of a part, never an opened engine, cutaway, exploded view or loose parts;
+- ONE motorcycle, nothing else competing: no crowds, no other vehicles;
+- do NOT describe the background, colours or style (the brand sets those);
+- {scene_rule}"""
 
 SCENE_RULES = {
     "health": "a clean, realistic 3D anatomy or medical render of the one body part; no real person's face, no gore.",
+    "motorcycle": "a real-looking photo of the whole motorcycle in its real livery; the rider, if any, wears a closed dark visor so no face shows; no series logos.",
     "default": ("a real-looking motorsport close-up; a car or bike part in a real team's colours is fine, but no "
                 "real driver's or rider's face; no series logos."),
 }
 
+DEFAULT_COMPOSITION = """Composition: a dramatic close-up of ONE hero subject that fills the LOWER part of the frame, from about 40% to 95% of
+the height, razor sharp and fully visible, well lit from the front with a rim light and one bright accent (a glow,
+spark, reflection or hot edge) as the focal point. A viewer must recognise the subject in half a second: no heavy
+shadows over it, not an abstract macro. Everything around it stays quiet and plain; minimal and uncluttered, no people's faces."""
+
+MOTORCYCLE_COMPOSITION = """Composition: the whole motorcycle, fully visible from the front wheel to the tail, in a three-quarter side view,
+filling the LOWER part of the frame from about 40% to 95% of the height, razor sharp, in soft, even daylight with
+no deep shadows on it. Everything around it stays quiet and plain; minimal and uncluttered, no people's faces."""
+
 COVER_IMAGE_PROMPT = """Vertical {aspect} cover image (thumbnail) for a short explainer video titled "{title}".
 Scene: {scene}
 Style: {style}
-Composition: a dramatic close-up of ONE hero subject that fills the LOWER part of the frame, from about 40% to 95% of
-the height, razor sharp and fully visible, well lit from the front with a rim light and one bright accent (a glow,
-spark, reflection or hot edge) as the focal point. A viewer must recognise the subject in half a second: no heavy
-shadows over it, not an abstract macro. Everything around it stays quiet and plain; minimal and uncluttered, no people's faces.
+{composition}
 The UPPER 40% of the frame is calm and simple: the SAME continuous background as the rest, out of focus and slightly
 darker toward the top, with no objects, so large title text placed there later stays readable. One seamless picture:
 no band, panel, border, horizontal line or split between the top and the rest.
@@ -87,6 +104,7 @@ Do NOT add any text, letters, numbers, captions, watermarks or logos anywhere in
 
 STYLES = {
     "health": "clean, realistic 3D anatomy render, the one structure glowing softly on a plain near-white background, medically plausible.",
+    "motorcycle": "premium motorcycle brochure photo, soft even daylight, true livery colours, natural textures, clean light background, no HDR look, no dark moody shadows.",
     "default": ("premium motorsport commercial photo, the subject brightly and clearly lit so every shape and colour reads at a "
                 "glance on a phone, real team colours, clean darker-toned background, natural textures, no HDR look."),
 }
@@ -96,11 +114,22 @@ def _niche_key(niche: str | None) -> str:
     return "health" if (niche or "").strip().lower() == "health" else "default"
 
 
+def _style_key(niche: str | None, template_key: str | None = None) -> str:
+    if template_key == "motorcycle_commercial":
+        return "motorcycle"
+    return _niche_key(niche)
+
+
 def build_cover_copy_prompt(title: str, caption: str | None, niche: str | None,
-                            recent_covers: list[str] | None = None) -> str:
+                            recent_covers: list[str] | None = None,
+                            template_key: str | None = None) -> str:
     """recent_covers: this fan page's last cover texts, so the hooks do not repeat across videos."""
     recent = [c for c in (recent_covers or []) if c][:8]
     avoid_line = ("- Do not reuse a hook from this page's recent covers: " + "; ".join(recent) + "\n") if recent else ""
+    key = _style_key(niche, template_key)
+    rules_template = MOTORCYCLE_PICTURE_RULES if key == "motorcycle" else DEFAULT_PICTURE_RULES
+    scene_rule = SCENE_RULES.get(key, SCENE_RULES["default"])
+    picture_rules = rules_template.format(scene_rule=scene_rule)
     return COVER_COPY_PROMPT.format(
         avoid_line=avoid_line,
         niche=(niche or "sports").strip() or "sports",
@@ -109,7 +138,7 @@ def build_cover_copy_prompt(title: str, caption: str | None, niche: str | None,
         max_words=MAX_COVER_WORDS,
         max_lines=MAX_COVER_LINES,
         max_chars=MAX_LINE_CHARS,
-        scene_rule=SCENE_RULES[_niche_key(niche)],
+        picture_rules=picture_rules,
     )
 
 
@@ -157,10 +186,19 @@ def parse_cover_copy(raw: str, title: str, *, strict: bool = False) -> dict:
         return fallback_cover_copy(title)
 
 
-def build_cover_image_prompt(title: str, scene: str | None, niche: str | None, aspect: str = "9:16") -> str:
-    key = _niche_key(niche)
-    scene = (scene or "").strip() or f"the main subject of the video, shown clearly. {SCENE_RULES[key]}"
-    return COVER_IMAGE_PROMPT.format(aspect=aspect, title=(title or "").strip(), scene=scene, style=STYLES[key])
+def build_cover_image_prompt(title: str, scene: str | None, niche: str | None, aspect: str = "9:16",
+                             template_key: str | None = None) -> str:
+    key = _style_key(niche, template_key)
+    scene_rule = SCENE_RULES.get(key, SCENE_RULES["default"])
+    scene = (scene or "").strip() or f"the main subject of the video, shown clearly. {scene_rule}"
+    composition = MOTORCYCLE_COMPOSITION if key == "motorcycle" else DEFAULT_COMPOSITION
+    return COVER_IMAGE_PROMPT.format(
+        aspect=aspect,
+        title=(title or "").strip(),
+        scene=scene,
+        style=STYLES.get(key, STYLES["default"]),
+        composition=composition,
+    )
 
 
 def build_cover_html(*, width: int, height: int, background_src: str, lines: list[str], highlight: list[int],

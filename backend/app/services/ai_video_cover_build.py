@@ -56,7 +56,7 @@ def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob) -> None:
 
         recent = recent_cover_texts(db, fanpage.id)
         niche = fanpage_niche(fanpage)
-        prompt = build_cover_copy_prompt(job.title, job.caption, niche, recent)
+        prompt = build_cover_copy_prompt(job.title, job.caption, niche, recent, template_key=job.template_key)
 
         try:
             from app.services import news_copywriter
@@ -77,6 +77,7 @@ def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob) -> None:
             copy.get("scene", ""),
             niche,
             getattr(job, "aspect", None) or "9:16",
+            template_key=job.template_key,
         )
     except Exception as exc:
         logger.warning("prepare_cover failed for job %s: %s", getattr(job, "id", None), exc)

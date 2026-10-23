@@ -10,14 +10,13 @@ import logging
 from sqlalchemy import and_, or_
 
 from app.models.ai_video import VideoIdea, VideoJob
-from app.services.ai_video_cover_build import recent_cover_texts
 from app.services.ai_video_fill import (
     fanpage_niche,
     fill_from_research,
     fill_idea,
     research_ready,
 )
-from app.services.prompt_polish import PolishConfig, polish_clips, polish_cover
+from app.services.prompt_polish import PolishConfig, polish_clips
 from app.services.video_templates import (
     allowed_video_templates,
     fit_clips_to_credits,
@@ -183,18 +182,6 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
             orig_prompt = orig_by_idx.get(idx, {}).get("prompt", "")
             polished_clips.append({**pol_clip, "prompt_original": orig_prompt})
 
-        cover = None
-        if getattr(fanpage, "ai_video_cover_enabled", True):
-            cover = polish_cover(
-                title=title,
-                caption=caption,
-                niche=fanpage_niche(fanpage),
-                recent=recent_cover_texts(db, fanpage.id),
-                subject_hint=result.clips[0]["prompt"][:900],
-                aspect=getattr(template, "aspect", "9:16"),
-                config=config,
-            )
-
         prep = {
             "version": PREPARED_VERSION,
             "fingerprint": idea_fingerprint(idea),
@@ -206,7 +193,6 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
             "provider": provider,
             "polished": True,
             "clips": polished_clips,
-            "cover": cover,
             "voice_sentence": result.voice_sentence,
             "ambience_sentence": result.ambience_sentence,
             "changes": result.changes,

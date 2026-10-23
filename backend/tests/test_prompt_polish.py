@@ -23,7 +23,6 @@ from app.services.prompt_polish import (
     get_polish_config,
     parse_answer,
     polish_clips,
-    polish_cover,
 )
 
 # ── Tiny template stand-in ────────────────────────────────────────────────────
@@ -111,8 +110,8 @@ FAN_CAR_CLIPS = [
 ]
 
 
-def _good_polished(original_clips, voice=VOICE, ambience=AMBIENCE):
-    """Build a 'good' polished version: originals + shared voice/ambience, under 2900 chars."""
+def _good_polished(original_clips, voice=VOICE, ambience=AMBIENCE, motion=""):
+    """Build a 'good' polished version: originals + shared voice/ambience (+ motorsport motion rules), under 2900 chars."""
     polished = []
     for c in original_clips:
         prefix = ""
@@ -124,7 +123,7 @@ def _good_polished(original_clips, voice=VOICE, ambience=AMBIENCE):
                 p = p[len("Continue seamlessly from this exact frame"):].lstrip(". ")
         else:
             p = c["prompt"]
-        prompt = f"{prefix}{voice} {ambience} {p}"
+        prompt = f"{prefix}{voice} {ambience} {motion + ' ' if motion else ''}{p}"
         assert len(prompt) <= 2900, f"good polished clip {c['index']} is {len(prompt)} chars"
         polished.append({"index": c["index"], "mode": c["mode"], "prompt": prompt})
     return polished
@@ -191,7 +190,8 @@ class TestCase1GoodAnswer:
             assert pol["mode"] == orig["mode"]
 
     def test_good_answer_fan_car(self):
-        polished = _good_polished(FAN_CAR_CLIPS)
+        from app.services.prompt_polish import MOTION_SENTENCES
+        polished = _good_polished(FAN_CAR_CLIPS, motion=MOTION_SENTENCES["f1"])
         answer = _make_answer(polished)
         post = _fake_200(answer)
         result = polish_clips(FAN_CAR_CLIPS, template=FAN_CAR_TEMPLATE, niche="f1", config=CFG, http_post=post)
@@ -484,135 +484,6 @@ class TestCase13BuildInstruction:
         assert "Deliberate visual styles of the template are NOT logic errors" in instr
 
 
-class TestCase14PolishCover:
-    def test_good_json(self):
-        answer = {
-            "lines": ["WHY DOES", "YOUR KNEE", "JERK?"],
-            "highlight": [1],
-            "scene": "A clean medical 3D render of the patellar tendon.",
-        }
-        post = _fake_200(answer)
-        res = polish_cover(
-            title="Why Your Knee Jerks",
-            caption="The reflex explanation.",
-            niche="health",
-            recent=["HOW KNEE WORKS"],
-            subject_hint="Human knee joint in clinical white room",
-            aspect="9:16",
-            config=CFG,
-            http_post=post,
-        )
-        assert res is not None
-        assert res["lines"] == ["WHY DOES", "YOUR KNEE", "JERK?"]
-        assert res["highlight"] == [1]
-        assert res["scene"] == "A clean medical 3D render of the patellar tendon."
-        assert res["by"] == "argon"
-        assert "A clean medical 3D render of the patellar tendon." in res["image_prompt"]
-        assert "UPPER 40%" in res["image_prompt"]
-
-    def test_first_off_spec_then_good_on_attempt_2(self):
-        bad_answer = {
-            "lines": ["L1", "L2", "L3", "L4", "L5", "L6"],  # 6 lines is off spec
-            "highlight": [0],
-            "scene": "scene",
-        }
-        good_answer = {
-            "lines": ["WHY DOES", "IT WORK?"],
-            "highlight": [0],
-            "scene": "scene",
-        }
-        call_count = 0
-
-        def _post(url, headers=None, json=None, timeout=None):
-            nonlocal call_count
-            call_count += 1
-            ans = bad_answer if call_count == 1 else good_answer
-            import json as json_module
-            return SimpleNamespace(
-                status_code=200,
-                json=lambda: {"text": json_module.dumps(ans), "account": "acct-1", "seconds": 10.0},
-            )
-
-        res = polish_cover(
-            title="Title",
-            caption="Caption",
-            niche="health",
-            recent=[],
-            subject_hint="hint",
-            aspect="9:16",
-            config=CFG,
-            max_attempts=2,
-            http_post=_post,
-        )
-        assert call_count == 2
-        assert res is not None
-        assert res["lines"] == ["WHY DOES", "IT WORK?"]
-        assert res["by"] == "argon"
-
-    def test_two_bad_answers_returns_none(self):
-        bad_answer = {
-            "lines": ["L1", "L2", "L3", "L4", "L5", "L6"],
-            "highlight": [0],
-            "scene": "scene",
-        }
-        post = _fake_200(bad_answer)
-        res = polish_cover(
-            title="Title",
-            caption="Caption",
-            niche="health",
-            recent=[],
-            subject_hint="hint",
-            aspect="9:16",
-            config=CFG,
-            max_attempts=2,
-            http_post=post,
-        )
-        assert res is None
-
-    def test_503_raises_polish_unavailable(self):
-        post = _fake_error(503, {"error": "proxy_down"})
-        with pytest.raises(PolishUnavailable) as exc_info:
-            polish_cover(
-                title="Title",
-                caption="Caption",
-                niche="health",
-                recent=[],
-                subject_hint="hint",
-                aspect="9:16",
-                config=CFG,
-                http_post=post,
-            )
-        assert exc_info.value.kind == "proxy_down"
-
-    def test_request_body_contains_extended_thinking_and_subject_hint(self):
-        captured_body = {}
-
-        def _post(url, headers=None, json=None, timeout=None):
-            nonlocal captured_body
-            captured_body = json
-            import json as json_module
-            ans = {"lines": ["WHY IT", "WORKS?"], "highlight": [0], "scene": "scene"}
-            return SimpleNamespace(
-                status_code=200,
-                json=lambda: {"text": json_module.dumps(ans), "account": "acct-1", "seconds": 5.0},
-            )
-
-        hint = "Very unique subject hint for test 12345"
-        res = polish_cover(
-            title="Unique Title",
-            caption="Unique Caption",
-            niche="sports",
-            recent=["RECENT HOOK"],
-            subject_hint=hint,
-            aspect="9:16",
-            config=CFG,
-            http_post=_post,
-        )
-        assert res is not None
-        assert captured_body.get("extended_thinking") is True
-        assert hint in captured_body.get("prompt", "")
-
-
 def test_generate_timeout_is_900_s():
     from app.services.prompt_polish import GENERATE_TIMEOUT_S, _post_generate
     assert GENERATE_TIMEOUT_S == 900
@@ -626,3 +497,72 @@ def test_generate_timeout_is_900_s():
     _post_generate(cfg, "prompt", http_post=mock_post)
     assert captured["timeout"] == 900
 
+
+
+# ── Motorsport motion rules (owner 2026-10-23) ──────────────────────────────────────────────────────────────
+from app.services.prompt_polish import MOTION_SENTENCES, motion_sentence_for
+
+
+def _moto_clips(prompt_text: str) -> list[dict]:
+    return [{"index": 1, "mode": "t2v", "prompt": prompt_text}]
+
+
+def test_motion_sentence_per_niche():
+    assert motion_sentence_for("motogp") == MOTION_SENTENCES["motogp"]
+    assert motion_sentence_for("F1") == MOTION_SENTENCES["f1"]
+    assert motion_sentence_for("health") is None
+    assert motion_sentence_for(None) is None
+
+
+def test_build_instruction_adds_motorsport_rules_only_for_motorsport():
+    class T:
+        name = "motorcycle commercial"
+        clip_seconds = 10
+        raw = {}
+    clips = _moto_clips("A motorcycle on a circuit.")
+    moto = build_instruction(clips, template=T(), niche="motogp")
+    assert MOTION_SENTENCES["motogp"] in moto
+    assert "livery panel by panel" in moto
+    health = build_instruction(clips, template=T(), niche="health")
+    assert "Motion:" not in health
+    assert "livery panel by panel" not in health
+
+
+def test_check_polished_requires_motion_sentence_and_exact_colours():
+    voice = "Voice-over: a calm narrator with a warm low voice, close-mic dry recording, says:"
+    amb = "Background: a steady low engine note and distant crowd, no music and no other sound."
+    motion = MOTION_SENTENCES["motogp"]
+    orig = _moto_clips("A motorcycle.")
+    good = _moto_clips(f"A motorcycle in a white and navy livery. {motion} {amb} {voice}")
+    assert check_polished(orig, good, voice, amb, motion=motion) == []
+    missing = _moto_clips(f"A motorcycle in a white livery. {amb} {voice}")
+    assert any("motion rules sentence missing" in p for p in check_polished(orig, missing, voice, amb, motion=motion))
+    vague = _moto_clips(f"Plain solid-colour number boards. {motion} {amb} {voice}")
+    assert any("vague colour word" in p for p in check_polished(orig, vague, voice, amb, motion=motion))
+    # Non-motorsport niches are not affected by the vague-colour rule.
+    assert check_polished(orig, vague, voice, amb, motion=None) == []
+
+
+def test_check_polished_requires_the_engine_type_in_the_ambience():
+    voice = "Voice-over: a calm narrator with a warm low voice, close-mic dry recording, says:"
+    motion = MOTION_SENTENCES["motogp"]
+    orig = _moto_clips("A 1993 two-stroke V4 Grand Prix motorcycle.")
+    amb_ok = "Background: the crisp ringing two-stroke V4 engine at a fixed low level, no music."
+    amb_bad = "Background: a deep four-stroke roar at a fixed low level under the voice, no music."
+    good = _moto_clips(f"A bike in a white livery. {motion} {amb_ok} {voice}")
+    bad = _moto_clips(f"A bike in a white livery. {motion} {amb_bad} {voice}")
+    assert check_polished(orig, good, voice, amb_ok, motion=motion) == []
+    assert any("two-stroke engine sound" in p for p in check_polished(orig, bad, voice, amb_bad, motion=motion))
+    # No engine type named in the original -> no engine check.
+    plain = _moto_clips("A Grand Prix motorcycle.")
+    assert check_polished(plain, bad, voice, amb_bad, motion=motion) == []
+
+
+def test_motorsport_instruction_mentions_racing_speed_and_engine_sound():
+    class T:
+        name = "motorcycle commercial"
+        clip_seconds = 10
+        raw = {}
+    instr = build_instruction(_moto_clips("A motorcycle."), template=T(), niche="motogp")
+    assert "real racing speed" in instr and "two-stroke" in instr and "same person" in instr
+    assert "full racing speed" in MOTION_SENTENCES["motogp"]
