@@ -142,14 +142,6 @@ def test_1_prepare_idea_success(db):
         {"index": 2, "mode": "i2v", "prompt": "Prompt 2 polished"},
     ]
     fill_vars = {"part": "rear wing", "vehicle_preset": "f1"}
-    cover_payload = {
-        "lines": ["WHY DOES", "REAR WING", "FLEX?"],
-        "highlight": [1],
-        "scene": "Rear wing close up",
-        "image_prompt": "Cover image prompt",
-        "by": "argon",
-    }
-
     with patch("app.services.ai_video_prepare.fill_idea", return_value=(fill_vars, "Polished Title", "Polished Caption", orig_clips, "gemini")), \
          patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(
              ok=True,
@@ -160,12 +152,10 @@ def test_1_prepare_idea_success(db):
              attempts=1,
              account="acct-1",
              seconds=6.5,
-         )), \
-         patch("app.services.ai_video_prepare.polish_cover", return_value=cover_payload) as mock_cover:
+         )):
         outcome = prepare_idea(session, idea, fp, CFG)
 
     assert outcome == "prepared"
-    mock_cover.assert_called_once()
     session.refresh(idea)
     assert idea.status == "approved"  # unchanged
     assert idea.variables is None  # unchanged
@@ -182,7 +172,7 @@ def test_1_prepare_idea_success(db):
     assert prep["title"] == "Polished Title"
     assert prep["caption"] == "Polished Caption"
     assert prep["variables"] == fill_vars
-    assert prep["cover"] == cover_payload
+    assert "cover" not in prep
     assert len(prep["clips"]) == 2
     assert prep["clips"][0]["prompt_original"] == "Prompt 1 original"
     assert prep["clips"][0]["prompt"] == "Prompt 1 polished"
@@ -609,59 +599,23 @@ def test_10_pick_livery_skips_prepared_idea_livery(db):
     assert picked == "papaya"
 
 
-def test_11_prepare_idea_cover_none_when_off_spec(db):
+def test_11_prepare_idea_stores_no_cover_key_and_makes_one_polish_call(db):
     session, fanpage_ids = db
     fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
-    idea = _idea(session, fp, topic="off spec cover", clips=2)
+    idea = _idea(session, fp, topic="no argon cover", clips=2)
     session.commit()
 
     orig_clips = [{"index": 1, "mode": "t2v", "prompt": "P1"}]
     pol_clips = [{"index": 1, "mode": "t2v", "prompt": "P1 pol"}]
     with patch("app.services.ai_video_prepare.fill_idea", return_value=({}, "T", "C", orig_clips, "gemini")), \
-         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(ok=True, clips=pol_clips)), \
-         patch("app.services.ai_video_prepare.polish_cover", return_value=None):
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(ok=True, clips=pol_clips)) as mock_clips:
         outcome = prepare_idea(session, idea, fp, CFG)
 
     assert outcome == "prepared"
+    mock_clips.assert_called_once()
     session.refresh(idea)
-    assert idea.prepared["cover"] is None
-
-
-def test_12_prepare_idea_cover_not_requested_when_disabled(db):
-    session, fanpage_ids = db
-    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True, ai_video_cover_enabled=False)
-    idea = _idea(session, fp, topic="no cover", clips=2)
-    session.commit()
-
-    orig_clips = [{"index": 1, "mode": "t2v", "prompt": "P1"}]
-    pol_clips = [{"index": 1, "mode": "t2v", "prompt": "P1 pol"}]
-    with patch("app.services.ai_video_prepare.fill_idea", return_value=({}, "T", "C", orig_clips, "gemini")), \
-         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(ok=True, clips=pol_clips)), \
-         patch("app.services.ai_video_prepare.polish_cover") as mock_cover:
-        outcome = prepare_idea(session, idea, fp, CFG)
-
-    assert outcome == "prepared"
-    mock_cover.assert_not_called()
-    session.refresh(idea)
-    assert idea.prepared["cover"] is None
-
-
-def test_13_prepare_idea_cover_unavailable_propagates_and_leaves_unprepared(db):
-    session, fanpage_ids = db
-    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
-    idea = _idea(session, fp, topic="cover unavailable", clips=2)
-    session.commit()
-
-    orig_clips = [{"index": 1, "mode": "t2v", "prompt": "P1"}]
-    pol_clips = [{"index": 1, "mode": "t2v", "prompt": "P1 pol"}]
-    with patch("app.services.ai_video_prepare.fill_idea", return_value=({}, "T", "C", orig_clips, "gemini")), \
-         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(ok=True, clips=pol_clips)), \
-         patch("app.services.ai_video_prepare.polish_cover", side_effect=PolishUnavailable("proxy_down", "down")):
-        with pytest.raises(PolishUnavailable):
-            prepare_idea(session, idea, fp, CFG)
-
-    session.refresh(idea)
-    assert idea.prepared is None
+    assert idea.prepared is not None
+    assert "cover" not in idea.prepared
 
 
 def test_14_candidate_ideas_skip_recently_failed(db):
