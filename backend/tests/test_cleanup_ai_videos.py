@@ -207,15 +207,15 @@ def test_retention_thresholds_published_7d_failed_14d(db, tmp_path, monkeypatch)
     assert verify.get(PublishJob, job_fail_8d.id).video_path == str(f_fail_8d)
     assert verify.get(VideoJob, v_fail_8d.id).video_path == str(f_fail_8d)
 
-    # failed updated 20 days ago -> deleted
-    assert not f_fail_20d.exists()
-    assert verify.get(PublishJob, job_fail_20d.id).video_path is None
-    assert verify.get(VideoJob, v_fail_20d.id).video_path is None
+    # failed updated 20 days ago -> kept (failed/skipped jobs never deleted)
+    assert f_fail_20d.exists()
+    assert verify.get(PublishJob, job_fail_20d.id).video_path == str(f_fail_20d)
+    assert verify.get(VideoJob, v_fail_20d.id).video_path == str(f_fail_20d)
 
     verify.close()
 
 
-def test_failed_video_job_without_publish_job_is_deleted(db, tmp_path, monkeypatch):
+def test_failed_video_job_without_publish_job_is_kept(db, tmp_path, monkeypatch):
     session, fanpage_ids = db
     root = tmp_path / "media"
     ai_dir = root / "ai_videos"
@@ -233,8 +233,8 @@ def test_failed_video_job_without_publish_job_is_deleted(db, tmp_path, monkeypat
 
     verify = SessionLocal()
     stored = verify.get(VideoJob, job_id)
-    assert not video.exists() and not thumb.exists()
-    assert stored.video_path is None and stored.thumbnail_path is None
+    assert video.exists() and thumb.exists()
+    assert stored.video_path == str(video) and stored.thumbnail_path == str(thumb)
     verify.close()
 
 
@@ -264,7 +264,7 @@ def test_missing_files_are_cleared_without_crashing(db, tmp_path, monkeypatch):
     (root / "ai_videos").mkdir(parents=True)
     video = root / "ai_videos" / "missing.mp4"
     fanpage = _fanpage(session, fanpage_ids)
-    job = _publish_job(session, fanpage, status=PublishJobStatus.failed, published_at=_old(datetime.now()), video_path=video, thumbnail_path=None)
+    job = _publish_job(session, fanpage, status=PublishJobStatus.published, published_at=_old(datetime.now(), 15), video_path=video, thumbnail_path=None)
     session.commit()
     job_id = job.id
 

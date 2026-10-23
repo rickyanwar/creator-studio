@@ -92,13 +92,71 @@ def _post_media_still_needed(db, jobs, now) -> bool:
     return live_delivery is not None
 
 
+def _job_go_live_pending(db, job_ids, now) -> set[int]:
+    """Return ids of jobs that still have a live delivery:
+    PublishDelivery.state in _LIVE_DELIVERY_STATES AND
+    (scheduled_for IS NULL OR scheduled_for + _KEEP_AFTER_GO_LIVE > now)."""
+    if not job_ids:
+        return set()
+
+    from sqlalchemy import or_
+    from app.models.social_publishing import PublishDelivery
+
+    now_naive = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
+    cutoff = now_naive - _KEEP_AFTER_GO_LIVE
+
+    rows = (
+        db.query(PublishDelivery.publish_job_id)
+        .filter(
+            PublishDelivery.publish_job_id.in_(job_ids),
+            PublishDelivery.state.in_(_LIVE_DELIVERY_STATES),
+            or_(
+                PublishDelivery.scheduled_for.is_(None),
+                PublishDelivery.scheduled_for > cutoff,
+            ),
+        )
+        .all()
+    )
+    return {row[0] for row in rows if row[0] is not None}
+
+
+def _to_naive_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _job_go_live_time(job) -> datetime | None:
+    """Return latest of (job.scheduled_for, latest delivery scheduled_for or published_at of its deliveries, job.published_at)."""
+    timestamps = []
+    if job.scheduled_for is not None:
+        sf = _to_naive_utc(job.scheduled_for)
+        if sf:
+            timestamps.append(sf)
+    if job.published_at is not None:
+        pa = _to_naive_utc(job.published_at)
+        if pa:
+            timestamps.append(pa)
+    deliveries = getattr(job, "deliveries", None) or []
+    for d in deliveries:
+        if d.scheduled_for is not None:
+            dsf = _to_naive_utc(d.scheduled_for)
+            if dsf:
+                timestamps.append(dsf)
+        if d.published_at is not None:
+            dpa = _to_naive_utc(d.published_at)
+            if dpa:
+                timestamps.append(dpa)
+    return max(timestamps) if timestamps else None
+
+
 @celery_app.task(name="app.tasks.cleanup.cleanup_old_media")
 def cleanup_old_media():
     """Remove media files for:
-    - Posts where all jobs published and cleanup_at passed (6h after publish)
-    - Posts where all jobs failed/skipped (no point keeping files)
-    - Posts stuck in stored/pending_fanout for more than 12h
-    - never while a job may still publish (go-live + 6 h, live deliveries, pending jobs < 48 h)
+    - Posts where all jobs published, cleanup_at passed (6h after publish),
+      and no media is still needed (go-live + 6 h, live deliveries, pending jobs < 48 h)
     """
     db = SessionLocal()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -123,29 +181,14 @@ def cleanup_old_media():
 
         for post in candidates:
             jobs = db.query(PublishJob).filter_by(post_id=post.id).all()
-            should_clean = False
+            if not jobs:
+                continue
 
-            if post.status == PostStatus.done:
-                # All jobs terminal + cleanup_at passed for published ones
-                all_terminal = all(
-                    j.status in (PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped)
-                    for j in jobs
-                )
-                published_jobs = [j for j in jobs if j.status == PublishJobStatus.published]
-                cleanup_due = all(j.cleanup_at and j.cleanup_at <= now for j in published_jobs)
-                should_clean = all_terminal and (not published_jobs or cleanup_due)
+            # Delete only when every job of the post is published
+            if not all(j.status == PublishJobStatus.published for j in jobs):
+                continue
 
-            elif jobs and all(
-                j.status in (PublishJobStatus.failed, PublishJobStatus.skipped) for j in jobs
-            ):
-                # All jobs failed/skipped — files will never be used
-                should_clean = True
-
-            elif post.crawled_at and (now - post.crawled_at).total_seconds() > _STUCK_POST_MAX_AGE_HOURS * 3600:
-                # Stuck in stored/pending_fanout for too long — orphaned
-                should_clean = True
-
-            if not should_clean:
+            if not all(j.cleanup_at and j.cleanup_at <= now for j in jobs):
                 continue
 
             if _post_media_still_needed(db, jobs, now):
@@ -186,9 +229,12 @@ def cleanup_old_designs():
     so the Queue/History UI doesn't try to load a file that's gone — same
     pattern cleanup_old_media uses for Post.image_local_paths above."""
     db = SessionLocal()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=_DESIGN_RETENTION_DAYS)).replace(tzinfo=None)
-    published_cutoff = (datetime.now(timezone.utc) - timedelta(days=_PUBLISHED_DESIGN_RETENTION_DAYS)).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
+    now_naive = now.replace(tzinfo=None)
+    cutoff = (now - timedelta(days=_DESIGN_RETENTION_DAYS)).replace(tzinfo=None)
+    published_cutoff = (now - timedelta(days=_PUBLISHED_DESIGN_RETENTION_DAYS)).replace(tzinfo=None)
     cleaned = 0
+    kept_not_live = 0
 
     try:
         from sqlalchemy import and_, or_
@@ -198,22 +244,34 @@ def cleanup_old_designs():
             db.query(PublishJob)
             .filter(
                 PublishJob.design_image_path.isnot(None),
-                PublishJob.status.in_([
-                    PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped,
-                ]),
+                PublishJob.status == PublishJobStatus.published,
                 or_(
-                    and_(PublishJob.status == PublishJobStatus.published,
-                         PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
-                    and_(PublishJob.status == PublishJobStatus.published,
-                         PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
-                    and_(PublishJob.status.in_([PublishJobStatus.failed, PublishJobStatus.skipped]),
-                         PublishJob.updated_at <= cutoff),
+                    and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
+                    and_(PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
                 ),
             )
             .all()
         )
 
+        published_ids = [j.id for j in candidates if j.status == PublishJobStatus.published and j.id is not None]
+        pending_ids = _job_go_live_pending(db, published_ids, now)
+
         for job in candidates:
+            if job.status == PublishJobStatus.published:
+                if job.id in pending_ids:
+                    kept_not_live += 1
+                    continue
+                if job.scheduled_for:
+                    sf = _to_naive_utc(job.scheduled_for)
+                    if sf and sf + _KEEP_AFTER_GO_LIVE > now_naive:
+                        kept_not_live += 1
+                        continue
+                go_live = _job_go_live_time(job)
+                if go_live is not None:
+                    if go_live + _KEEP_AFTER_GO_LIVE > now_naive or go_live > published_cutoff:
+                        kept_not_live += 1
+                        continue
+
             try:
                 Path(job.design_image_path).unlink(missing_ok=True)
             except OSError as exc:
@@ -226,6 +284,7 @@ def cleanup_old_designs():
         db.commit()
         if cleaned:
             logger.info("Design cleanup: removed %d file(s) (published > %d day, other > %d days)", cleaned, _PUBLISHED_DESIGN_RETENTION_DAYS, _DESIGN_RETENTION_DAYS)
+        logger.info("Design cleanup: kept %d file(s) not live yet", kept_not_live)
 
     except Exception as exc:
         db.rollback()
@@ -238,9 +297,12 @@ def cleanup_old_designs():
 def cleanup_old_ai_videos():
     """Delete terminal Mode 8 video files older than the retention period."""
     db = SessionLocal()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=_AI_VIDEO_RETENTION_DAYS)).replace(tzinfo=None)
-    published_cutoff = (datetime.now(timezone.utc) - timedelta(days=_PUBLISHED_AI_VIDEO_RETENTION_DAYS)).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
+    now_naive = now.replace(tzinfo=None)
+    cutoff = (now - timedelta(days=_AI_VIDEO_RETENTION_DAYS)).replace(tzinfo=None)
+    published_cutoff = (now - timedelta(days=_PUBLISHED_AI_VIDEO_RETENTION_DAYS)).replace(tzinfo=None)
     cleaned = 0
+    kept_not_live = 0
     media_dir = (Path(settings.storage_base_path) / "ai_videos").resolve()
 
     def safe_path(raw_path):
@@ -281,45 +343,69 @@ def cleanup_old_ai_videos():
             .filter(
                 PublishJob.content_type == ContentType.ai_video,
                 PublishJob.video_path.isnot(None),
-                PublishJob.status.in_([
-                    PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped,
-                ]),
+                PublishJob.status == PublishJobStatus.published,
                 or_(
-                    and_(PublishJob.status == PublishJobStatus.published,
-                         PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
+                    and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
                     and_(PublishJob.status == PublishJobStatus.published,
                          PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
-                    and_(PublishJob.status.in_([PublishJobStatus.failed, PublishJobStatus.skipped]),
-                         PublishJob.updated_at <= cutoff),
                 ),
             )
             .all()
         )
+
+        video_candidates = db.query(VideoJob).filter(
+            or_(VideoJob.video_path.isnot(None), VideoJob.thumbnail_path.isnot(None)),
+        ).all()
+
+        published_candidate_ids = [j.id for j in publish_candidates if j.status == PublishJobStatus.published and j.id is not None]
+        for vj in video_candidates:
+            if vj.status == "done" and vj.publish_job_id:
+                published_candidate_ids.append(vj.publish_job_id)
+        pending_ids = _job_go_live_pending(db, list(set(published_candidate_ids)), now)
+
+        skipped_publish_ids = set()
         for job in publish_candidates:
+            if job.status == PublishJobStatus.published:
+                if job.id in pending_ids:
+                    kept_not_live += 1
+                    skipped_publish_ids.add(job.id)
+                    continue
+                if job.scheduled_for:
+                    sf = _to_naive_utc(job.scheduled_for)
+                    if sf and sf + _KEEP_AFTER_GO_LIVE > now_naive:
+                        kept_not_live += 1
+                        skipped_publish_ids.add(job.id)
+                        continue
+                go_live = _job_go_live_time(job)
+                if go_live is not None:
+                    if go_live + _KEEP_AFTER_GO_LIVE > now_naive or go_live > published_cutoff:
+                        kept_not_live += 1
+                        skipped_publish_ids.add(job.id)
+                        continue
+
             if not delete_paths((job.video_path, job.video_thumbnail_path)):
                 continue
             job.video_path = job.video_url = None
             job.video_thumbnail_path = job.video_thumbnail_url = None
             cleaned += 1
 
-        video_candidates = db.query(VideoJob).filter(
-            or_(VideoJob.video_path.isnot(None), VideoJob.thumbnail_path.isnot(None)),
-        ).all()
-        terminal_statuses = {PublishJobStatus.published, PublishJobStatus.failed, PublishJobStatus.skipped}
         for job in video_candidates:
-            if job.status in ("failed", "cancelled"):
-                age = job.finished_at or job.updated_at or job.created_at
-                eligible = age <= cutoff
-            elif job.status == "done" and job.publish_job_id:
+            eligible = False
+            if job.status == "done" and job.publish_job_id:
                 publish_job = db.get(PublishJob, job.publish_job_id)
-                age = None
-                limit = cutoff
-                if publish_job and publish_job.status in terminal_statuses:
-                    age = publish_job.published_at or publish_job.updated_at
-                    limit = published_cutoff if (publish_job.status == PublishJobStatus.published and publish_job.published_at) else cutoff
-                eligible = age is not None and age <= limit
-            else:
-                eligible = False
+                if publish_job and publish_job.status == PublishJobStatus.published:
+                    if (
+                        publish_job.id not in pending_ids
+                        and not (publish_job.scheduled_for and _to_naive_utc(publish_job.scheduled_for) + _KEEP_AFTER_GO_LIVE > now_naive)
+                    ):
+                        go_live = _job_go_live_time(publish_job)
+                        if go_live is not None:
+                            eligible = (go_live + _KEEP_AFTER_GO_LIVE <= now_naive) and (go_live <= published_cutoff)
+                        else:
+                            age = publish_job.updated_at or job.updated_at
+                            eligible = age is not None and age <= cutoff
+                    if not eligible and publish_job.id not in skipped_publish_ids:
+                        kept_not_live += 1
             if not eligible or not delete_paths((job.video_path, job.thumbnail_path)):
                 continue
             job.video_path = job.video_url = None
@@ -328,6 +414,7 @@ def cleanup_old_ai_videos():
 
         db.commit()
         logger.info("AI video cleanup: removed %d file(s) (published > %d days, other > %d days)", cleaned, _PUBLISHED_AI_VIDEO_RETENTION_DAYS, _AI_VIDEO_RETENTION_DAYS)
+        logger.info("AI video cleanup: kept %d file(s) not live yet", kept_not_live)
     except Exception as exc:
         db.rollback()
         logger.error("AI video cleanup task error: %s", exc, exc_info=True)

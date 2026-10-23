@@ -309,11 +309,17 @@ Implemented in `backend/app/services/ai_video_overlay.py`:
   - Manual review mode: leaves `PublishJob` with status `pending_review`.
 - State closure: `job.status = "done"`, `idea.status = "done"`, `job.finished_at = utcnow`.
 
+### 8.4 Video Stock & Release Horizon
+- `AI_VIDEO_STOCK_DAYS = 20`: Planner produces ahead into stock up to `ai_video_daily_count * AI_VIDEO_STOCK_DAYS` pending jobs even after hitting today's daily count (`made_today >= ai_video_daily_count`), keeping Google Flow active 24/7.
+- `VIDEO_STOCK_RELEASE_HOURS = 36`: `publish_job` holds `ContentType.ai_video` in `pending_publish` if its earliest destination slot is > 36h away (`video_slot_soon(...) is False`).
+- Why: `cleanup.py` (`cleanup_old_ai_videos`) deletes source video files 7 days after Repliz handoff (`published_at`). Videos scheduled further out would lose files before go-live, so they are only released to Repliz shortly before their slot.
+- `recover_stuck_auto_publishes` sweeps held stock periodically, dispatching oldest stock first (`order_by(PublishJob.created_at.asc())`).
+
 ---
 
 ## Verified claims
 
-backend/app/tasks/ai_video_plan.py:33 - Planner skips fanpage if daily target reached (made_today >= ai_video_daily_count) or 2+ jobs are currently in flight (open_count >= 2).
+backend/app/tasks/ai_video_plan.py:33 - Planner skips fanpage if open_count >= 2 or both daily target and stock cap (made_today >= ai_video_daily_count and stock >= ai_video_daily_count * AI_VIDEO_STOCK_DAYS) are reached.
 backend/app/tasks/ai_video_plan.py:76 - Approved ideas rotate by least recently used template on that fanpage before considering score and age.
 backend/app/tasks/ai_video_plan.py:84 - An approved idea is marked failed immediately if template's minimum clip option exceeds fanpage ai_video_max_credits_per_video.
 backend/app/services/ai_video_dispatch.py:188 - Worker claim requests are throttled by MIN_CLAIM_GAP_MINUTES = 10 based on GflowAccount.last_used_at.

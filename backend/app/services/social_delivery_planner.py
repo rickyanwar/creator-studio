@@ -382,6 +382,69 @@ def news_slot_available(
         return True
 
 
+VIDEO_STOCK_RELEASE_HOURS = 36
+
+
+def video_slot_soon(
+    db: Session,
+    job: PublishJob,
+    now_utc: datetime | None = None,
+    horizon_hours: float = VIDEO_STOCK_RELEASE_HOURS,
+) -> bool:
+    """True when at least one active destination of the job's fan page would get a slot for this job within horizon_hours.
+
+    Read-only (no row locks, no writes). True when the fan page has no active destinations or on any error (old behaviour).
+    """
+    try:
+        fanpage_id = getattr(job, "fanpage_id", None)
+        if fanpage_id is None:
+            return True
+
+        destinations = (
+            db.query(SocialDestination)
+            .filter(
+                SocialDestination.content_project_id == fanpage_id,
+                SocialDestination.is_active.is_(True),
+            )
+            .order_by(SocialDestination.id)
+            .all()
+        )
+        if not destinations:
+            return True
+
+        sleep_start, sleep_end = _resolve_sleep_window(db, job)
+        aware_now = _resolve_aware_now(now_utc)
+        deadline = aware_now + timedelta(hours=horizon_hours)
+
+        for destination in destinations:
+            next_slot_utc, _, _, _ = _plan_slot(
+                db=db,
+                destination=destination,
+                job=job,
+                aware_now=aware_now,
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
+            )
+            if next_slot_utc is not None:
+                slot_aware = (
+                    next_slot_utc
+                    if next_slot_utc.tzinfo is not None
+                    else next_slot_utc.replace(tzinfo=timezone.utc)
+                )
+                if slot_aware <= deadline:
+                    return True
+
+        return False
+    except Exception as exc:
+        job_id = getattr(job, "id", None)
+        logger.warning(
+            "video_slot_soon failed for job id=%s: %s",
+            job_id,
+            exc,
+        )
+        return True
+
+
 def next_news_slot_utc(
     db: Session,
     job: PublishJob,

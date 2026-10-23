@@ -216,7 +216,7 @@ def test_hero_prompt_contents():
     assert "Tell THIS story" in p
     assert "- The bottom 35% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork." in p
     assert "bottom 42%" not in p
-    assert "Keep the very top edge free of graphics" in p
+    assert "Keep the top 12% of the image free of insets" in p
     assert (
         "- Image 1: a real press photo of Nicolo Bulega (Aruba.it Racing Ducati). "
         "Keep his face, helmet design, race number, kit, vehicle livery and sponsor logos exactly as they are."
@@ -315,7 +315,7 @@ def test_house_style_inset_line_always_present():
     p_hero = direct(brief_hero, PhotoSelection(hero=None, context=(ctx,))).prompt
     assert (
         "- House style, when it helps the story: Max Verstappen large in the frame, "
-        "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
+        "plus ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners) showing a DIFFERENT moment "
         "or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
         "One inset is enough; never add a second."
     ) in p_hero
@@ -326,7 +326,7 @@ def test_house_style_inset_line_always_present():
     p_no_hero = direct(brief_no_hero, PhotoSelection(hero=None, context=(ctx,))).prompt
     assert (
         "- House style, when it helps the story: the main subject large in the frame, "
-        "plus ONE circular inset with a thin white ring in the upper part of the image showing a DIFFERENT moment "
+        "plus ONE circular inset with a thin white ring in the upper part of the image, its top edge no higher than 12% of the image height (the page logo sits in the top corners) showing a DIFFERENT moment "
         "or detail that adds context and matches the story (for example the trophy, the car on track, the venue, the rival). "
         "One inset is enough; never add a second."
     ) in p_no_hero
@@ -356,7 +356,7 @@ def test_realism_and_template_space_sections_present():
     assert "Space for the fan page template:" in p
     assert "- The bottom 35% of the image will be covered later by the fan page's headline text. Keep that area simple and calm (for example a plain background, the track, the floor or soft out-of-focus scenery), with no faces, text or important detail. It does not need to be dark. Everything above it is the full artwork." in p
     assert "bottom 42%" not in p
-    assert "- Keep the very top edge free of graphics, so the page name fits." in p
+    assert "- Keep the top 12% of the image free of insets, faces and graphic words: the page logo and name sit in the top corners." in p
 
     # Avoid section
     assert "Do NOT include anything below (very important):" in p

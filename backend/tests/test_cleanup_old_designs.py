@@ -147,9 +147,9 @@ def test_cleanup_old_designs(tmp_path):
         assert j3.design_image_url == "https://example.com/fail_2d.png"
 
         j4 = db.get(PublishJob, job_fail_30d.id)
-        assert not f_fail_30d.exists()
-        assert j4.design_image_path is None
-        assert j4.design_image_url is None
+        assert f_fail_30d.exists()
+        assert j4.design_image_path == str(f_fail_30d)
+        assert j4.design_image_url == "https://example.com/fail_30d.png"
 
         j5 = db.get(PublishJob, job_pub_none_30d.id)
         assert not f_pub_none_30d.exists()

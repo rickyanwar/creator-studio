@@ -250,6 +250,8 @@ def _next_schedule_at(db, fanpage_id: int, breaking: bool = False) -> datetime:
     return floor_utc
 
 
+STOCK_RECHECK_PER_PAGE = 2  # oldest stocked AI videos per page re-dispatched per recovery run
+
 @celery_app.task(name="app.tasks.publisher.publish_job", bind=True, max_retries=3)
 def publish_job(self, job_id: int):
     """Publish a single PublishJob to Repliz."""
@@ -277,6 +279,22 @@ def publish_job(self, job_id: int):
         job = db.query(PublishJob).filter_by(id=job_id).first()
         if not job:
             return
+
+        from app.models.publish_jobs import ContentType
+        if job.content_type in (ContentType.ai_video, "ai_video"):
+            from app.services.social_delivery_planner import (
+                VIDEO_STOCK_RELEASE_HOURS,
+                video_slot_soon,
+            )
+            if not video_slot_soon(db, job):
+                job.status = PublishJobStatus.pending_publish
+                db.commit()
+                logger.info(
+                    "AI video %d held in stock: next slot more than %d h away",
+                    job.id,
+                    VIDEO_STOCK_RELEASE_HOURS,
+                )
+                return
 
         # Check for configured active social destinations (S1b delivery ledger path)
         from app.models.social_publishing import SocialDestination, PublishDelivery
@@ -688,16 +706,25 @@ def recover_stuck_auto_publishes():
             )
             .all()
         )
-        ai_video_jobs = (
-            db.query(PublishJob.id)
+        # Videos in stock wait here too: only the oldest few per page are re-checked each run, so a
+        # 20-day stock never floods the queue (each publish_job holds them again until their slot is near).
+        ai_video_rows = (
+            db.query(PublishJob.id, PublishJob.fanpage_id)
             .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
             .filter(
                 PublishJob.status == PublishJobStatus.pending_publish,
                 PublishJob.content_type == ContentType.ai_video,
                 TargetFanpage.ai_video_publish_mode == PublishMode.auto,
             )
+            .order_by(PublishJob.created_at.asc())
             .all()
         )
+        per_page: dict[int, int] = {}
+        ai_video_jobs = []
+        for job_id, fanpage_id in ai_video_rows:
+            if per_page.get(fanpage_id, 0) < STOCK_RECHECK_PER_PAGE:
+                per_page[fanpage_id] = per_page.get(fanpage_id, 0) + 1
+                ai_video_jobs.append((job_id,))
         ig_recreate_jobs = (
             db.query(PublishJob.id)
             .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)

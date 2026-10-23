@@ -85,10 +85,10 @@ def test_cleanup_old_media_uses_naive_utc_datetimes(tmp_path, monkeypatch):
         db.expire_all()
 
         assert db.get(Post, due_post.id).status == PostStatus.cleaned
-        assert db.get(Post, stuck_post.id).status == PostStatus.cleaned
+        assert db.get(Post, stuck_post.id).status == PostStatus.stored
         assert db.get(Post, future_post.id).status == PostStatus.done
         assert not (tmp_path / "posts" / str(due_post.uuid)).exists()
-        assert not (tmp_path / "posts" / str(stuck_post.uuid)).exists()
+        assert (tmp_path / "posts" / str(stuck_post.uuid)).exists()
         assert (tmp_path / "posts" / str(future_post.uuid)).exists()
     finally:
         db.rollback()
