@@ -15,6 +15,7 @@ from app.models.ai_copy_events import AICopyEvent
 from app.models.settings import Settings
 from app.services.codex_budget import CodexUsage
 from app.services.engine_router import (
+    CODEX_OVERFLOW_MAX_PCT,
     WIB,
     EnginePlan,
     codex_allowed,
@@ -344,8 +345,8 @@ def test_5c_day_queues_zero_not_overflow(mock_db):
         assert plan.reason == "gptcli_first"
 
 
-def test_6_day_share_exhausted_long_queue_gptcli_first(mock_db):
-    """6. day, share 0.35 (= percent) and queue 10 -> ("gptcli","9router") gptcli_first."""
+def test_6_day_share_exhausted_long_queue_overflow(mock_db):
+    """6. day, share 0.35 (= percent) and queue 10 -> ("9router","gptcli") overflow up to 70%."""
     with patch("app.services.engine_router.get_gptcli_config"), \
          patch("app.services.engine_router.gptcli_applies", return_value=True), \
          patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
@@ -357,27 +358,28 @@ def test_6_day_share_exhausted_long_queue_gptcli_first(mock_db):
 
         plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
 
-        assert plan.order == ("gptcli", "9router")
-        assert plan.reason == "gptcli_first"
+        assert plan.order == ("9router", "gptcli")
+        assert plan.reason == "overflow"
         assert plan.defer_until is None
 
 
-def test_6b_codex_budget_zero_skips_gptcli_queue_len(mock_db):
-    """Codex budget left 0 -> gptcli_queue_len is not even called."""
+def test_6b_codex_resting_skips_queue_len(mock_db):
+    """Codex resting -> queue lengths are not even called."""
     with patch("app.services.engine_router.get_gptcli_config"), \
          patch("app.services.engine_router.gptcli_applies", return_value=True), \
          patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
          patch("app.services.engine_router.codex_share", return_value=0.35), \
-         patch("app.services.engine_router.visual_queue_len", return_value=0), \
+         patch("app.services.engine_router.visual_queue_len") as mock_vq, \
          patch("app.services.engine_router.gptcli_queue_len") as mock_q, \
-         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.codex_resting", return_value=True), \
          patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, None, None, "estimate")), \
          patch("app.services.engine_router.codex_daily_used", return_value=10):
 
         plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
 
-        assert plan.order == ("gptcli", "9router")
+        assert plan.order == ("gptcli",)
         assert plan.reason == "gptcli_first"
+        mock_vq.assert_not_called()
         mock_q.assert_not_called()
 
 
@@ -403,14 +405,14 @@ def test_7_day_share_random_selection(mock_db):
 
 
 def test_8_day_window_pct_high_blocks_overflow(mock_db):
-    """8. day, window_pct 61 >= share_max 60 -> gptcli_first even with a long queue."""
+    """8. day, window_pct 72 >= overflow_max 70 -> gptcli_first even with a long queue."""
     with patch("app.services.engine_router.get_gptcli_config"), \
          patch("app.services.engine_router.gptcli_applies", return_value=True), \
          patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
          patch("app.services.engine_router.codex_share", return_value=0.10), \
          patch("app.services.engine_router.visual_queue_len", return_value=10), \
          patch("app.services.engine_router.codex_resting", return_value=False), \
-         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(61.0, None, None, "estimate")), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(72.0, None, None, "estimate")), \
          patch("app.services.engine_router.codex_daily_used", return_value=10):
 
         plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
@@ -601,3 +603,100 @@ def test_14_render_queue_for(mock_db):
     broken_fanpage = MagicMock()
     type(broken_fanpage).id = property(lambda self: (_ for _ in ()).throw(RuntimeError("crash")))
     assert render_queue_for(mock_db, broken_fanpage, "news") is None
+
+
+# -------------------------------------------------------------------------
+# Owner rule (2026-10-23): Codex overflow up to 70 % usage when queue is long
+# -------------------------------------------------------------------------
+
+
+def test_overflow_queue_long_usage_65_share_met_gives_overflow(mock_db):
+    """queue long, usage 65 %, share already met (left 0) -> overflow (Codex first)."""
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.35), \
+         patch("app.services.engine_router.visual_queue_len", return_value=5), \
+         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(65.0, None, None, "9router")), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
+        assert plan.order == ("9router", "gptcli")
+        assert plan.reason == "overflow"
+
+
+def test_overflow_queue_long_usage_72_gives_gptcli_first(mock_db):
+    """queue long, usage 72 % -> gptcli_first."""
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.0), \
+         patch("app.services.engine_router.visual_queue_len", return_value=5), \
+         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(72.0, None, None, "9router")), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
+        assert plan.order == ("gptcli", "9router")
+        assert plan.reason == "gptcli_first"
+
+
+def test_share_queue_short_usage_40_vs_55(mock_db):
+    """queue short, usage 40 %, left > 0, rand()=0 -> share; usage 55 % -> gptcli_first (share stops at 50 %)."""
+    mock_db.query.return_value.first.return_value.codex_share_max_pct = 50
+
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.10), \
+         patch("app.services.engine_router.visual_queue_len", return_value=0), \
+         patch("app.services.engine_router.gptcli_queue_len", return_value=0), \
+         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        with patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, None, None, "9router")):
+            plan_share = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME, rand=lambda: 0.0)
+            assert plan_share.order == ("9router", "gptcli")
+            assert plan_share.reason == "share"
+
+        with patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(55.0, None, None, "9router")):
+            plan_first = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME, rand=lambda: 0.0)
+            assert plan_first.order == ("gptcli", "9router")
+            assert plan_first.reason == "gptcli_first"
+
+
+def test_overflow_queue_long_weekly_ahead_gives_gptcli_first(mock_db):
+    """queue long but weekly ahead of pace -> gptcli_first."""
+    monday_time = datetime(2026, 10, 19, 14, 0, tzinfo=WIB)
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.10), \
+         patch("app.services.engine_router.visual_queue_len", return_value=5), \
+         patch("app.services.engine_router.codex_resting", return_value=False), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, 35.0, None, "9router")), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        plan = plan_engines(mock_db, fanpage_id=1, now=monday_time)
+        assert plan.order == ("gptcli", "9router")
+        assert plan.reason == "gptcli_first"
+
+
+def test_overflow_queue_long_codex_resting_gives_gptcli_first(mock_db):
+    """queue long but codex resting -> gptcli_first."""
+    with patch("app.services.engine_router.get_gptcli_config"), \
+         patch("app.services.engine_router.gptcli_applies", return_value=True), \
+         patch("app.services.engine_router.gptcli_unavailable_until", return_value=None), \
+         patch("app.services.engine_router.codex_share", return_value=0.10), \
+         patch("app.services.engine_router.visual_queue_len") as mock_vq, \
+         patch("app.services.engine_router.gptcli_queue_len") as mock_gq, \
+         patch("app.services.engine_router.codex_resting", return_value=True), \
+         patch("app.services.engine_router.get_codex_usage", return_value=CodexUsage(40.0, None, None, "9router")), \
+         patch("app.services.engine_router.codex_daily_used", return_value=10):
+
+        plan = plan_engines(mock_db, fanpage_id=1, now=DAY_TIME)
+        assert plan.order == ("gptcli",)
+        assert plan.reason == "gptcli_first"
+        mock_vq.assert_not_called()
+        mock_gq.assert_not_called()
