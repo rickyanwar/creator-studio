@@ -9,7 +9,7 @@ import logging
 
 from sqlalchemy import and_, or_
 
-from app.models.ai_video import VideoIdea
+from app.models.ai_video import VideoIdea, VideoJob
 from app.services.ai_video_cover_build import recent_cover_texts
 from app.services.ai_video_fill import (
     fanpage_niche,
@@ -24,12 +24,13 @@ from app.services.video_templates import (
     get_template,
     pick_clips,
 )
+from app.tasks.publisher import _fanpage_tz
 
 logger = logging.getLogger(__name__)
 
 PREPARED_VERSION = 1
 MAX_PREPARE_ROUNDS = 3  # rounds of polish_clips before the idea fails
-MAX_IDEAS_PER_RUN = 2
+MAX_IDEAS_PER_RUN = 3
 PREPARED_AHEAD_MIN = 2
 RETRY_AFTER_FAILED_MIN = 60
 
@@ -230,9 +231,52 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
             return "skipped"
 
 
+def _fanpage_need_key(db, fanpage) -> tuple[int, int]:
+    from app.tasks.ai_video_plan import _daily_counts
+
+    now = datetime.now(timezone.utc)
+    local_today = now.astimezone(_fanpage_tz(fanpage)).date()
+    local_midnight = (
+        datetime.combine(local_today, datetime.min.time(), tzinfo=_fanpage_tz(fanpage))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    today_jobs = (
+        db.query(VideoJob)
+        .filter(
+            VideoJob.fanpage_id == fanpage.id,
+            VideoJob.created_at >= local_midnight,
+            VideoJob.status != "cancelled",
+        )
+        .all()
+    )
+    made_today, _ = _daily_counts(today_jobs)
+    can_make_today = made_today < (getattr(fanpage, "ai_video_daily_count", 0) or 0)
+
+    prep_ideas = (
+        db.query(VideoIdea)
+        .filter(
+            VideoIdea.fanpage_id == fanpage.id,
+            VideoIdea.status.in_(["approved", "proposed"]),
+            VideoIdea.prepared.isnot(None),
+        )
+        .all()
+    )
+    has_valid_prep = any(valid_prepared(i) is not None for i in prep_ideas)
+
+    if can_make_today and not has_valid_prep:
+        rank = 0
+    elif can_make_today:
+        rank = 1
+    else:
+        rank = 2
+
+    return (rank, fanpage.id)
+
+
 def pick_run_ideas(db, fanpages) -> list[tuple]:
     """Pick up to MAX_IDEAS_PER_RUN ideas across fanpages round-robin."""
-    sorted_fps = sorted(fanpages, key=lambda fp: fp.id)
+    sorted_fps = sorted(fanpages, key=lambda fp: _fanpage_need_key(db, fp))
     fp_candidates = {fp.id: candidate_ideas(db, fp) for fp in sorted_fps}
     picked = []
     while len(picked) < MAX_IDEAS_PER_RUN:
