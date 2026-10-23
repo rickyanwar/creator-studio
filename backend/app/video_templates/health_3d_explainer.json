@@ -2,7 +2,7 @@
   "key": "health_3d_explainer",
   "niches": ["health"],
   "uses_vehicle": false,
-  "clip_options": [4, 5],
+  "clip_options": [1, 2, 3, 4, 5, 6],
   "default_clips": 4,
   "id": "health_3d_explainer_cuts",
   "name": "Health 3D Explainer — soft medical animation, three cuts per clip",
@@ -62,8 +62,17 @@
       "mode": "t2v",
       "prompt": "{style} Main subject in every shot: {visual_subject}. Two shots with one clean cut, about five seconds each, each a single slow, smooth camera move. Shot 1: {shot_5a} Cut to shot 2: {shot_5b} {audio} {narrator_followup} \"{narration_5}\"",
       "narration_words": {"en": "18-22"}
-    }
+    },
+    {"role": "second_takeaway", "optional": true, "mode": "t2v", "prompt": "{style} Main subject in every shot: {visual_subject}. Two shots with one clean cut, about five seconds each, each a single slow, smooth camera move. Shot 1: {shot_6a} Cut to shot 2: {shot_6b} {audio} {narrator_followup} \"{narration_6}\"", "narration_words": {"en": "18-22"}}
   ],
+  "narration_by_clips": {
+    "1": "narration_1 tells the whole explainer in one sentence of two short clauses: what it is and how it works or what it does for you.",
+    "2": "narration_1 = the hook and what it is. narration_2 = how it works and the outcome.",
+    "3": "narration_1 = the hook. narration_2 = what it is and how it works. narration_3 = the outcome or takeaway.",
+    "4": "narration_1 = the hook. narration_2 = what it is and why it matters. narration_3 = how it works step by step. narration_4 = the outcome or takeaway.",
+    "5": "narration_1 = the hook. narration_2 = what it is. narration_3 = how it works. narration_4 = a second step or detail. narration_5 = the outcome or takeaway.",
+    "6": "narration_1 = the hook. narration_2 = what it is. narration_3 = how it works. narration_4 = a second step. narration_5 = the outcome. narration_6 = one practical, non-medical takeaway or common myth corrected."
+  },
   "rules": [
     "Facts only from research_notes; every number needs two independent reputable health sources (e.g. NHS, Mayo Clinic, Cleveland Clinic, WHO, peer-reviewed reviews). Leave unverified claims out.",
     "Explain how something works; never give personal medical advice, a diagnosis or a dosage. Say 'a doctor may…' rather than telling the viewer to start or stop a treatment.",
@@ -74,7 +83,8 @@
     "visual_subject names the ONE body part, device or product shown in every clip, with its look (e.g. 'a stylised adult wrist with cream bones and pink soft tissue'), so all clips match.",
     "Each shot slot is one sentence (at most 200 characters), two slots per clip (shot_Na, shot_Nb), describing one clear image and one slow camera move: a cross-section, a macro close-up or a product on a plain pastel pink background. No people's faces in close-up except a calm adult face in profile when the topic needs it.",
     "No text, labels, numbers or logos in the image; the studio burns in the captions. No gore, no needles piercing skin in close-up, no blood beyond a small drop.",
-    "Never name real brands, companies or products in any slot, narration, title or caption; describe them generically ('a nasal spray bottle')."
+    "Never name real brands, companies or products in any slot, narration, title or caption; describe them generically ('a nasal spray bottle').",
+    "Length: write the whole explainer for the number of clips chosen (see narration_by_clips); a shorter video is a complete explainer with its own ending, never the first clips of a longer one."
   ],
   "topic_ideas": [
     "How a fever helps the body fight an infection",

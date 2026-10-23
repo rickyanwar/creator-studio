@@ -60,6 +60,15 @@ class VideoTemplate:
     default_clips: int
     raw: dict
 
+    def __post_init__(self):
+        clip_sets = self.raw.get("clip_sets", {})
+        for k, v in clip_sets.items():
+            k_int = int(k)
+            if k_int not in self.clip_options:
+                raise ValueError(f"clip_sets key {k} must be in clip_options {self.clip_options}")
+            if len(v) != k_int:
+                raise ValueError(f"clip_sets[{k!r}] length {len(v)} must equal {k_int}")
+
 
 @lru_cache(maxsize=1)
 def list_templates() -> list[VideoTemplate]:
@@ -136,7 +145,7 @@ def required_variables(t: VideoTemplate, clips: int) -> list[str]:
     blocks = t.raw.get("blocks", {})
     string_blocks = {k for k, v in blocks.items() if isinstance(v, str)}
     names = []
-    for clip in t.raw["clip_templates"][:clips]:
+    for clip in clip_templates_for(t, clips):
         for name in _PLACEHOLDER.findall(clip["prompt"]):
             if name not in BLOCK_VARS and name not in string_blocks and name not in names:
                 names.append(name)
@@ -148,6 +157,12 @@ def required_variables(t: VideoTemplate, clips: int) -> list[str]:
     if not uses_vehicle(t):
         return names
     return names + ["vehicle_preset"]
+
+
+def clip_templates_for(t: VideoTemplate, clips: int) -> list[dict]:
+    """The clip list for a video of `clips` clips: a dedicated clip set when the template has one, else the first clips."""
+    clip_set = t.raw.get("clip_sets", {}).get(str(clips))
+    return list(clip_set) if clip_set is not None else t.raw["clip_templates"][:clips]
 
 
 def vehicle_presets(t: VideoTemplate) -> list[str]:
@@ -283,7 +298,7 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
         vehicle_short=_PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), preset_short_vehicle),
     )
     rendered = []
-    for index, clip in enumerate(t.raw["clip_templates"][:clips], start=1):
+    for index, clip in enumerate(clip_templates_for(t, clips), start=1):
         narration = f"narration_{index}"
         budget_str = get_narration_budget(clip, lang)
         lo, hi = map(int, budget_str.split("-"))
@@ -317,7 +332,7 @@ def _render_plain(t: VideoTemplate, variables: dict, clips: int, lang_code: str 
     substitutions.update({k: v for k, v in blocks.items() if isinstance(v, str)})
     substitutions.update(style=blocks["style"], audio=blocks["audio"], narrator=narrator, narrator_followup=narrator)
     rendered = []
-    for index, clip in enumerate(t.raw["clip_templates"][:clips], start=1):
+    for index, clip in enumerate(clip_templates_for(t, clips), start=1):
         narration = f"narration_{index}"
         lo, hi = map(int, get_narration_budget(clip, lang).split("-"))
         if not lo - 6 <= len(variables[narration].split()) <= hi:

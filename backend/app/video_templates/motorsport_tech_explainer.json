@@ -1,7 +1,7 @@
 {
   "key": "motorsport_tech_explainer",
   "niches": ["f1", "motogp"],
-  "clip_options": [2, 3],
+  "clip_options": [1, 2, 3, 4, 5, 6],
   "default_clips": 2,
   "id": "motorsport_tech_explainer_xray",
   "name": "Motorsport Tech Explainer — X-ray & Exploded View (any topic)",
@@ -51,6 +51,173 @@
     "one continuous camera move with no cuts",
     "no sponsor logos, no numbers; text is forbidden except for the channel-name lettering"
   ],
+  "clip_sets": {
+    "1": [
+      {
+        "role": "whole_story",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, speeds forward along a sunny circuit seen from a high chase angle, the asphalt streaming backward beneath it. The camera flies forward and down into a close-up of the {part}; the bodywork turns semi-transparent like an X-ray cutaway, revealing {mechanism_details}. {mechanism_action} Only the {moving_part} moves; {fixed_parts} stay completely fixed, rigid and level. Then the bodywork turns solid again and the camera pulls back to the whole vehicle racing past on the sunny circuit, ending on a low hero shot. Crisp mechanical detail, motion blur on the asphalt. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "2": [
+      {
+        "role": "reveal",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, speeds forward along a sunny circuit seen from a high chase angle, the asphalt streaming backward beneath it. The camera flies forward and down into an extreme close-up of the {part}. The {part} bodywork turns semi-transparent like an X-ray cutaway, explicitly revealing {mechanism_details}. {mechanism_action} Only the {moving_part} moves; {fixed_parts} stay completely fixed, rigid and level, and nothing else bends, tilts or warps. Crisp mechanical macro detail, motion blur on the asphalt below. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exploded_and_finish",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. {effect_visual} Then the {part} assembly breaks apart into a technical exploded view: {parts_list} separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible. Finally all the parts fly back together and lock into place, and {final_state}. The camera then pulls back to show the whole vehicle at full racing speed and finishes on a low hero shot as it races past. Crisp mechanical macro detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "4": [
+      {
+        "role": "reveal",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, speeds forward along a sunny circuit seen from a high chase angle, the asphalt streaming backward beneath it. The camera flies forward and down into an extreme close-up of the {part}. The {part} bodywork turns semi-transparent like an X-ray cutaway, explicitly revealing {mechanism_details}. {mechanism_action} Only the {moving_part} moves; {fixed_parts} stay completely fixed, rigid and level, and nothing else bends, tilts or warps. Crisp mechanical macro detail, motion blur on the asphalt below. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exploded_view",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. {effect_visual} Then the entire {part} assembly breaks apart into a technical exploded view: {parts_list} separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible and spinning slowly. Finally all the parts fly back together and lock into place, and {final_state}. Crisp mechanical macro detail. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "in_action",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera stays close to the {part} as the vehicle {action_moment}; the bodywork turns semi-transparent again and shows {action_effect} Crisp mechanical macro detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "payoff",
+        "optional": true,
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera pulls back from the {part} to show the whole vehicle at full racing speed on the sunny circuit. {payoff_action} The camera finishes on a low hero shot as the vehicle races past. Crisp detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "5": [
+      {
+        "role": "reveal",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, speeds forward along a sunny circuit seen from a high chase angle, the asphalt streaming backward beneath it. The camera flies forward and down into an extreme close-up of the {part}. The {part} bodywork turns semi-transparent like an X-ray cutaway, explicitly revealing {mechanism_details}. {mechanism_action} Only the {moving_part} moves; {fixed_parts} stay completely fixed, rigid and level, and nothing else bends, tilts or warps. Crisp mechanical macro detail, motion blur on the asphalt below. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exploded_view",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. {effect_visual} Then the entire {part} assembly breaks apart into a technical exploded view: {parts_list} separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible and spinning slowly. Finally all the parts fly back together and lock into place, and {final_state}. Crisp mechanical macro detail. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "in_action",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera stays close to the {part} as the vehicle {action_moment}; the bodywork turns semi-transparent again and shows {action_effect} Crisp mechanical macro detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "linked_part",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera glides along the vehicle to the {linked_part}, which turns semi-transparent and shows how it works together with the {part}: {linked_details} Crisp mechanical macro detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "payoff",
+        "optional": true,
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera pulls back from the {part} to show the whole vehicle at full racing speed on the sunny circuit. {payoff_action} The camera finishes on a low hero shot as the vehicle races past. Crisp detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_5}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "6": [
+      {
+        "role": "reveal",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle}, speeds forward along a sunny circuit seen from a high chase angle, the asphalt streaming backward beneath it. The camera flies forward and down into an extreme close-up of the {part}. The {part} bodywork turns semi-transparent like an X-ray cutaway, explicitly revealing {mechanism_details}. {mechanism_action} Only the {moving_part} moves; {fixed_parts} stay completely fixed, rigid and level, and nothing else bends, tilts or warps. Crisp mechanical macro detail, motion blur on the asphalt below. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exploded_view",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. {effect_visual} Then the entire {part} assembly breaks apart into a technical exploded view: {parts_list} separate and float apart in mid-air above the fast-moving blurred asphalt, each part clearly visible and spinning slowly. Finally all the parts fly back together and lock into place, and {final_state}. Crisp mechanical macro detail. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "in_action",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera stays close to the {part} as the vehicle {action_moment}; the bodywork turns semi-transparent again and shows {action_effect} Crisp mechanical macro detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "linked_part",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera glides along the vehicle to the {linked_part}, which turns semi-transparent and shows how it works together with the {part}: {linked_details} Crisp mechanical macro detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "measured_effect",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera rises to a high side view of the whole vehicle at speed while {effect_overlay} Crisp mechanical macro detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_5}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "payoff",
+        "optional": true,
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same photorealistic 3D CGI engineering documentary style, same {vehicle_short}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner, one continuous camera move with no cuts. The car keeps driving forward at the same speed as in the previous shot and never appears to roll or drive backwards; the wheels and the asphalt always move the way they do for a car travelling forward. The camera may change angle like a professional motorsport camera (tracking, orbiting or crane moves), but every change of angle is one smooth, visible move, never a jump. The camera pulls back from the {part} to show the whole vehicle at full racing speed on the sunny circuit. {payoff_action} The camera finishes on a low hero shot as the vehicle races past. Crisp detail, motion blur on the asphalt. {audio} {narrator_followup} \"{narration_6}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ]
+  },
+  "narration_by_clips": {
+    "1": "narration_1 tells the whole story in one sentence: what the part is, how it works, and why it matters on track.",
+    "2": "narration_1 = what the part is and what it does. narration_2 = how its pieces work together and why it matters, ending on a strong line.",
+    "3": "narration_1 = what the part is and what it does. narration_2 = how its pieces work together. narration_3 = what it gives the car on track, ending on a strong line.",
+    "4": "narration_1 = what the part is. narration_2 = its pieces. narration_3 = what it does in the action_moment. narration_4 = what it gives the car on track, ending on a strong line.",
+    "5": "narration_1 = what the part is. narration_2 = its pieces. narration_3 = the action_moment. narration_4 = how the linked_part works with it. narration_5 = what it gives the car on track, ending on a strong line.",
+    "6": "narration_1 = what the part is. narration_2 = its pieces. narration_3 = the action_moment. narration_4 = the linked_part. narration_5 = the measured effect (a number only if research_notes prove it). narration_6 = what it gives the car on track, ending on a strong line."
+  },
   "rules": [
     "Ask the owner before generating: say model, clips and total credits (2 x 15 = 30).",
     "Never name real teams, sponsors or brands in the prompt; describe colours instead ('glossy racing red').",
@@ -62,7 +229,9 @@
     "Show at most 3 to 5 large, recognisable components in mechanism_details and parts_list.",
     "Prefer well-known, simple, correct anatomy over invented detail.",
     "moving_part names the ONE part that moves; fixed_parts lists the nearby parts that must stay still (they are written into the video prompt).",
-    "Every clip keeps the car driving forward: it never appears to roll or drive backwards. The camera may orbit, track or crane like a professional motorsport camera, but angle changes are smooth visible moves, never jumps."
+    "Every clip keeps the car driving forward: it never appears to roll or drive backwards. The camera may orbit, track or crane like a professional motorsport camera, but angle changes are smooth visible moves, never jumps.",
+    "Length: write the whole story for the number of clips chosen (see narration_by_clips). A 1-clip or 2-clip video is a complete, shorter story with its own ending, never the first clips of a longer one.",
+    "Longer videos (4-6 clips) add: action_moment = one real driving moment where the part works, e.g. 'brakes hard into a slow hairpin' (at most 12 words); action_effect = what visibly happens to the part in that moment (one sentence); linked_part = one real nearby component that works with the part (at most 6 words); linked_details = how they work together, visibly (one sentence); effect_overlay = one clean visual of the measurable effect, e.g. 'soft glowing airflow lines bend over the rear wing' (one sentence, no text or numbers on screen)."
   ],
   "topic_ideas": {
     "f1": ["front wing winglets and downforce", "brake-by-wire and rear brake balance", "ERS / MGU-K energy recovery", "seamless-shift gearbox", "halo and the survival cell", "steering wheel controls", "2026 active aero (verify facts first)"],

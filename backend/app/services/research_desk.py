@@ -33,6 +33,7 @@ from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import (
     allowed_video_templates,
     clip_choices,
+    clip_templates_for,
     fanpage_niche,
     get_narration_budget,
     get_template,
@@ -305,6 +306,14 @@ def template_item(t, niches) -> dict:
             {"index": i, "role": c.get("role"), "continues_previous_clip": c["mode"] != "t2v", "prompt": c["prompt"]}
             for i, c in enumerate(raw["clip_templates"], start=1)
         ],
+        "clip_prompts_by_clips": {
+            str(n): [
+                {"index": i, "role": c.get("role"), "continues_previous_clip": c["mode"] != "t2v", "prompt": c["prompt"]}
+                for i, c in enumerate(clip_templates_for(t, n), start=1)
+            ]
+            for n in t.clip_options
+        },
+        "narration_plan_by_clips": raw.get("narration_by_clips", {}),
         "studio_filled_placeholders": placeholders,
         "vehicle_presets": {
             p: {"full": _neutral_vehicle_text(blocks["vehicle_presets"][p]),
@@ -339,6 +348,17 @@ def _narration_words(t, lang: str) -> dict:
     for i, clip in enumerate(t.raw["clip_templates"], start=1):
         lo, hi = map(int, get_narration_budget(clip, lang).split("-"))
         out[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{lo - 6}-{hi}"}
+    return out
+
+
+def _narration_words_by_clips(t, lang: str) -> dict:
+    out = {}
+    for n in t.clip_options:
+        by_clip = {}
+        for i, clip in enumerate(clip_templates_for(t, n), start=1):
+            lo, hi = map(int, get_narration_budget(clip, lang).split("-"))
+            by_clip[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{lo - 6}-{hi}"}
+        out[str(n)] = by_clip
     return out
 
 
@@ -510,7 +530,8 @@ def build_brief(db: Session) -> dict:
                 "ideas_needed": need,
                 "templates": {
                     t.key: {"clip_options": clip_choices(fp, t), "vehicle_presets": niche_presets(t, niche),
-                            "narration_words": _narration_words(t, lang)}
+                            "narration_words": _narration_words(t, lang),
+                            "narration_words_by_clips": _narration_words_by_clips(t, lang)}
                     for t in templates
                 },
                 "copy_rules": copy_rules(fp),

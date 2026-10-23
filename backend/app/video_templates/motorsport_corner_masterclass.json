@@ -1,7 +1,7 @@
 {
   "key": "motorsport_corner_masterclass",
   "niches": ["f1"],
-  "clip_options": [2],
+  "clip_options": [1, 2, 3, 4],
   "default_clips": 2,
   "id": "motorsport_corner_masterclass",
   "name": "Motorsport Corner Masterclass — Telemetry & Racing Line",
@@ -46,12 +46,92 @@
     "tyre sidewall deformation gripping the rumble kerb",
     "no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos)"
   ],
+  "clip_sets": {
+    "1": [
+      {
+        "role": "whole_corner",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle} races toward a generic unnamed {corner_type} at {approach_speed}, captured in one continuous dynamic drone chase shot. A glowing neon racing line lights the asphalt ahead; braking-point boards are plain blank geometric foam boards without text or numbers. The carbon-ceramic brake discs glow cherry red under heavy braking, the driver turns in, the car clips the apex over the red-and-white kerb with glowing blue lateral force arrows across the chassis, then accelerates hard onto the exit straight. No official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "3": [
+      {
+        "role": "approach_and_turn_in",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle} races toward a generic unnamed {corner_type} at {approach_speed}, captured in a dynamic drone chase shot. A glowing neon racing line illuminates the asphalt track ahead, with braking-point marker boards rendered as plain blank geometric rectangular foam boards without text or numbers. Carbon-ceramic brake discs glow bright cherry red under heavy deceleration while the driver initiates turn-in. No official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "apex_and_exit",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same cinematic broadcast motorsport analysis style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. The camera swings low into the geometric apex of the {corner_type}, displaying glowing blue lateral force vectors and glowing yellow speed arrows across the chassis. Extreme macro close-up captures tyre sidewall deformation gripping the red-and-white rumble kerb as the car holds its line through the apex. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exit_and_drive_off",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same cinematic broadcast motorsport analysis style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. The car unwinds the steering and unleashes full traction onto the exit straight, glowing yellow speed arrows stretching ahead as it gathers speed; the camera rises into a high drone view of the whole {corner_type} and the clean racing line just driven. {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ],
+    "4": [
+      {
+        "role": "approach_and_turn_in",
+        "mode": "t2v",
+        "prompt": "{style} {vehicle} races toward a generic unnamed {corner_type} at {approach_speed}, captured in a dynamic drone chase shot. A glowing neon racing line illuminates the asphalt track ahead, with braking-point marker boards rendered as plain blank geometric rectangular foam boards without text or numbers. Carbon-ceramic brake discs glow bright cherry red under heavy deceleration while the driver initiates turn-in. No official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no sponsor logos, no watermarks. {audio} {narrator} \"{narration_1}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "apex_and_exit",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same cinematic broadcast motorsport analysis style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. The camera swings low into the geometric apex of the {corner_type}, displaying glowing blue lateral force vectors and glowing yellow speed arrows across the chassis. Extreme macro close-up captures tyre sidewall deformation gripping the red-and-white rumble kerb as the car holds its line through the apex. {audio} {narrator_followup} \"{narration_2}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "wrong_line_ghost",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same cinematic broadcast motorsport analysis style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. A translucent ghost copy of the same car takes {mistake_line} through the {corner_type} beside the real car, and the glowing racing line shows how much later and slower the ghost reaches the exit. {audio} {narrator_followup} \"{narration_3}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      },
+      {
+        "role": "exit_and_drive_off",
+        "mode": "i2v_from_previous_last_frame",
+        "prompt": "Continue seamlessly from this exact frame, same cinematic broadcast motorsport analysis style, same {vehicle_short}, no sponsor logos, no numbers, one continuous camera move with no cuts. The car unwinds the steering and unleashes full traction onto the exit straight, glowing yellow speed arrows stretching ahead as it gathers speed; the camera rises into a high drone view of the whole {corner_type} and the clean racing line just driven. {audio} {narrator_followup} \"{narration_4}\"",
+        "narration_words": {
+          "en": "22-24"
+        }
+      }
+    ]
+  },
+  "narration_by_clips": {
+    "1": "narration_1 tells the whole corner in one sentence: brake, turn in, apex, and the fast exit that matters most.",
+    "2": "narration_1 = braking and turn-in. narration_2 = apex and exit, ending on a strong line.",
+    "3": "narration_1 = braking and turn-in. narration_2 = the apex. narration_3 = the exit and why it decides the lap, ending on a strong line.",
+    "4": "narration_1 = braking and turn-in. narration_2 = the apex. narration_3 = the common mistake (mistake_line) and what it costs. narration_4 = the exit and why it decides the lap, ending on a strong line."
+  },
   "rules": [
     "Corners must be generic technical corner types (hairpin, chicane, banked sweeper, compression complex) - never name real circuits, curves, or track complexes.",
     "Braking boards must be plain blank shapes without text, digits, or logos.",
     "Never display F1, FIA, or MotoGP logos, wordmarks, or sponsor decals.",
     "Narration must be strictly in English, exactly 22-24 words per clip.",
-    "Clip 2 must begin with 'Continue seamlessly from this exact frame' and maintain a single continuous camera move without cuts."
+    "Clip 2 must begin with 'Continue seamlessly from this exact frame' and maintain a single continuous camera move without cuts.",
+    "Length: write the whole corner for the number of clips chosen (see narration_by_clips); a shorter video is a complete story with its own ending.",
+    "4-clip videos add mistake_line: the common wrong line, at most 12 words (e.g. 'an early turn-in that runs wide on exit')."
   ],
   "topic_ideas": [
     "heavy braking downhill hairpin with acute turn-in and late apex line",
