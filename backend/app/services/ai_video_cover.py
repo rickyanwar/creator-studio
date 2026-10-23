@@ -30,12 +30,16 @@ Video title: {title}
 Video caption: {caption}
 
 Write the cover words in the SAME language as the video title.
-The cover is ONE short, plain question that the video answers (the way curious people really ask it):
+The cover is ONE short question that the video answers, written as a natural, grammatical sentence a curious person
+would really say out loud: it has its verb and its small words ("WHY DO YOU GET SICK READING IN A CAR?"), never
+broken shorthand ("WHY SICK READING, NOT DRIVING?"). Keep it as SHORT as a natural sentence allows.
 - Start with WHY, HOW or WHAT (or the same words in the title's language) and end with "?".
 - Name the subject plainly so it is understood instantly: the body part, the car part, the object. A viewer who
   only reads the cover knows the topic. Never a vague teaser ("WHO DECIDED?", "HOW?", "THIS PART…").
 - Ask about the surprising or strange part, never give the answer.
-- Make it personal when it fits: for the body use "YOUR" ("WHY DOES YOUR KNEE KICK WHEN TAPPED?").
+- Who the question is about: use "YOU"/"YOUR" only for everyday things that happen to every viewer's own body or
+  life ("WHY DOES YOUR KNEE KICK WHEN TAPPED?"). In motorsport the question is about the driver, the rider, the car
+  or the bike, never the viewer: "WHY IS AN F1 DRIVER'S HEAD 40 KG?", never "WHY DOES YOUR HEAD HIT 40 KILOS?".
 - 4 to {max_words} words, everyday words, no jargon the caption does not use. 2 to {max_lines} lines, each at most
   {max_chars} characters; break lines at natural pauses.
 - SPECIFIC beats generic: use a number or a sharp contrast from the title or caption when there is one.
@@ -50,6 +54,8 @@ Examples:
 "Why Your Knee Jerks When the Doctor Taps It" -> {{"lines": ["WHY DOES", "YOUR KNEE KICK", "WHEN TAPPED?"], "highlight": [1]}}
 "Why Your Stomach Growls: The Wave Inside You" -> {{"lines": ["WHY DOES", "YOUR STOMACH", "GROWL?"], "highlight": [1]}}
 "The lever that lifts a Formula 1 car" -> {{"lines": ["HOW DOES", "ONE LEVER LIFT", "AN F1 CAR?"], "highlight": [1]}}
+"Reading in the back seat makes you carsick" -> {{"lines": ["WHY DO YOU", "GET SICK READING", "IN A CAR?"], "highlight": [1]}}
+"The 40-kilo head: why an F1 driver's head gets heavier under braking" -> {{"lines": ["WHY IS AN F1", "DRIVER'S HEAD", "40 KG?"], "highlight": [2]}}
 "The captive wheel nut: the single nut that never leaves the wheel" -> {{"lines": ["WHY THIS", "WHEEL NUT", "NEVER COMES OFF?"], "highlight": [1]}}
 "Le turbo : une turbine à 125 000 tours par minute" -> {{"lines": ["COMMENT UN TURBO", "TOURNE À", "125 000 TR/MIN ?"], "highlight": [2]}}
 
@@ -77,7 +83,9 @@ MOTORCYCLE_PICTURE_RULES = """- the WHOLE motorcycle in full view, from the fron
 - {scene_rule}"""
 
 SCENE_RULES = {
-    "health": "a clean, realistic 3D anatomy or medical render of the one body part; no real person's face, no gore.",
+    "health": ("the picture shows exactly what the question asks about: for a body part, a clean, realistic 3D anatomy "
+               "render of it; for an everyday situation (reading in a car, falling asleep, a sneeze), that situation itself "
+               "as a real-looking photo, the person seen from behind or with the face out of frame; no gore."),
     "motorcycle": "a real-looking photo of the whole motorcycle in its real livery; the rider, if any, wears a closed dark visor so no face shows; no series logos.",
     "default": ("a real-looking motorsport close-up; a car or bike part in a real team's colours is fine, but no "
                 "real driver's or rider's face; no series logos."),
@@ -140,6 +148,35 @@ def build_cover_copy_prompt(title: str, caption: str | None, niche: str | None,
         max_chars=MAX_LINE_CHARS,
         picture_rules=picture_rules,
     )
+
+
+BIKE_LINE_CHARS = 16  # a model name like DESMOSEDICI GP7 stays on one line
+_BIKE_TITLE_HEAD = re.compile(r"^\s*(.+?\(\s*\d{4}\s*\))")
+_BIKE_TITLE_YEAR_FIRST = re.compile(r"^\s*((?:19|20)\d{2})\s+([^:–—-]{3,40}?)\s*[:–—-]")
+
+
+def motorcycle_cover_copy(title: str) -> dict | None:
+    """Motorcycle commercial covers show the legend bike; the text is its name and year, e.g. "HONDA RC166 (1966)"
+    (owner 2026-10-24). Taken from the title as written, never from a model. None when the title has no "(YYYY)"."""
+    match = _BIKE_TITLE_HEAD.match(title or "")
+    if match:
+        head = " ".join(match.group(1).split()).upper()
+    else:
+        year_first = _BIKE_TITLE_YEAR_FIRST.match(title or "")
+        if not year_first:
+            return None
+        head = f"{' '.join(year_first.group(2).split())} ({year_first.group(1)})".upper()
+    name, year = head.rsplit("(", 1)
+    year_line = "(" + year.replace(" ", "")
+    words = name.split()
+    lines: list[str] = []
+    for word in words:
+        if lines and len(lines[-1]) + 1 + len(word) <= BIKE_LINE_CHARS:
+            lines[-1] = f"{lines[-1]} {word}"
+        else:
+            lines.append(word)
+    lines = lines[:MAX_COVER_LINES - 1] + [year_line]
+    return {"lines": lines, "highlight": list(range(len(lines) - 1))}  # the bike's name in the accent, the year plain
 
 
 def fallback_cover_copy(title: str) -> dict:

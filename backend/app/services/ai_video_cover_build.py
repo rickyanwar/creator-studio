@@ -16,6 +16,7 @@ from app.services.ai_video_cover import (
     COVER_FADE_SECONDS,
     COVER_HOLD_SECONDS,
     build_cover_copy_prompt,
+    motorcycle_cover_copy,
     build_cover_html,
     build_cover_image_prompt,
     fallback_cover_copy,
@@ -70,6 +71,10 @@ def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob) -> None:
             logger.warning("prepare_cover copywriter failed, using fallback: %s", exc)
             copy = fallback_cover_copy(job.title or "")
 
+        if job.template_key == "motorcycle_commercial":
+            bike = motorcycle_cover_copy(job.title or "")
+            if bike:
+                copy = {**copy, **bike}
         job.cover_lines = copy["lines"]
         job.cover_highlight = copy["highlight"]
         job.cover_prompt = build_cover_image_prompt(
