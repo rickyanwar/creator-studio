@@ -297,8 +297,8 @@ celery_app.conf.beat_schedule = {
     },
     "prepare-ai-video-ideas": {
         "task": "app.tasks.ai_video_prepare.prepare_ai_video_ideas",
-        "schedule": 300,
-        "options": {"expires": 290},
+        "schedule": 120,
+        "options": {"expires": 110},
     },
     "top-up-ai-video-ideas": {
         "task": "app.tasks.ai_video_plan.top_up_ai_video_ideas",

@@ -348,7 +348,7 @@ def test_5_candidate_ideas_filtering_and_ordering(db):
     assert [c.id for c in cands_no_min] == [i1.id]
 
 
-def test_6_pick_run_ideas_round_robin_max_2(db):
+def test_6_pick_run_ideas_round_robin_max_3(db):
     session, fanpage_ids = db
     fp1 = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
     fp2 = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
@@ -364,10 +364,79 @@ def test_6_pick_run_ideas_round_robin_max_2(db):
     with patch("app.services.ai_video_prepare.allowed_video_templates", return_value=[]):
         picked = pick_run_ideas(session, [fp2, fp1])  # passes in reverse id order
 
-    assert len(picked) == MAX_IDEAS_PER_RUN  # 2
-    # Round-robin: fp1_i1, fp2_i1
+    assert MAX_IDEAS_PER_RUN == 3
+    assert len(picked) == MAX_IDEAS_PER_RUN  # 3
+    # Round-robin: fp1_i1, fp2_i1, fp1_i2
     assert picked[0] == (fp1, fp1_i1)
     assert picked[1] == (fp2, fp2_i1)
+    assert picked[2] == (fp1, fp1_i2)
+
+
+def test_pick_run_ideas_priority_capped_vs_quota(db):
+    session, fanpage_ids = db
+    fp1 = _fanpage(session, fanpage_ids, ai_video_daily_count=2, ai_video_prompt_polish_enabled=True)
+    fp2 = _fanpage(session, fanpage_ids, ai_video_daily_count=2, ai_video_prompt_polish_enabled=True)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for idx in range(2):
+        session.add(VideoJob(
+            fanpage_id=fp1.id,
+            template_key="motorsport_tech_explainer",
+            title=f"Job {idx}",
+            caption="Cap",
+            model="veo2",
+            aspect="9:16",
+            clip_seconds=5,
+            clips=[],
+            credits_per_clip=10,
+            credits_estimate=20,
+            status="completed",
+            created_at=now,
+        ))
+
+    fp1_i1 = _idea(session, fp1, topic="fp1-idea", score=95)
+    fp2_i1 = _idea(session, fp2, topic="fp2-idea", score=90)
+    session.commit()
+
+    with patch("app.services.ai_video_prepare.allowed_video_templates", return_value=[]):
+        picked = pick_run_ideas(session, [fp1, fp2])
+
+    assert len(picked) == 2
+    assert picked[0] == (fp2, fp2_i1)
+    assert picked[1] == (fp1, fp1_i1)
+
+
+def test_pick_run_ideas_priority_quota_with_prep_vs_without_prep(db):
+    session, fanpage_ids = db
+    fp1 = _fanpage(session, fanpage_ids, ai_video_daily_count=2, ai_video_prompt_polish_enabled=True)
+    fp2 = _fanpage(session, fanpage_ids, ai_video_daily_count=2, ai_video_prompt_polish_enabled=True)
+
+    fp1_prep = _idea(session, fp1, topic="fp1-prep", status="approved", score=95)
+    fp1_prep.prepared = {
+        "version": PREPARED_VERSION,
+        "fingerprint": idea_fingerprint(fp1_prep),
+        "template_key": fp1_prep.template_key,
+        "clips_count": 2,
+        "polished": True,
+        "clips": [{"index": 1, "prompt": "P"}],
+    }
+    fp1_i2 = _idea(session, fp1, topic="fp1-cand", status="approved", score=80)
+
+    fp2_i1 = _idea(session, fp2, topic="fp2-cand", status="approved", score=90)
+    session.commit()
+
+    with patch("app.services.ai_video_prepare.allowed_video_templates", return_value=[]):
+        picked = pick_run_ideas(session, [fp1, fp2])
+
+    assert picked[0] == (fp2, fp2_i1)
+    assert picked[1] == (fp1, fp1_i2)
+
+
+def test_beat_schedule_prepare_ai_video_ideas():
+    from app.tasks.celery_app import celery_app
+    entry = celery_app.conf.beat_schedule["prepare-ai-video-ideas"]
+    assert entry["schedule"] == 120
+    assert entry["options"]["expires"] == 110
 
 
 def test_7_valid_prepared_validation(db):
