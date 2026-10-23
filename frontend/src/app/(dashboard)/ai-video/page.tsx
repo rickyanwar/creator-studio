@@ -864,6 +864,37 @@ export default function AiVideoPage() {
                         </button>
                       </div>
                     )}
+
+                    {/* Remove button for approved ideas */}
+                    {idea.status === "approved" && (
+                      <div className="flex flex-wrap items-center justify-end gap-2 pt-2.5 border-t border-line">
+                        <input
+                          type="text"
+                          aria-label="Reason for removing"
+                          placeholder="Remove this idea? It will not be made."
+                          value={rejectReasons[idea.id] ?? ""}
+                          onChange={(e) =>
+                            setRejectReasons((prev) => ({ ...prev, [idea.id]: e.target.value }))
+                          }
+                          className="h-9 px-3 rounded-lg border border-line bg-surface text-text text-xs flex-[1_1_200px] focus:outline-none focus:ring-1 focus:ring-pri"
+                        />
+                        <button
+                          type="button"
+                          disabled={busy === idea.id}
+                          onClick={() => {
+                            const reason = rejectReasons[idea.id]?.trim() || undefined;
+                            act(
+                              idea.id,
+                              () => rejectAiVideoIdea(idea.id, reason),
+                              () => { mutateIdeas(); }
+                            );
+                          }}
+                          className="h-9 px-3.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-text text-xs font-semibold transition-colors disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
                   </article>
                 );
               })}

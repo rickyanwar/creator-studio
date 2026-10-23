@@ -93,7 +93,7 @@ def approve(db: Session, idea: VideoIdea, username: str) -> VideoIdea:
 
 
 def reject(db: Session, idea: VideoIdea, username: str) -> VideoIdea:
-    if idea.status not in ("proposed", "pilot"):
+    if idea.status not in ("proposed", "pilot", "approved"):
         raise ConflictError(f"Cannot reject idea with status {idea.status}")
     idea.status, idea.decided_by, idea.decided_at = "rejected", username, _now()
     db.commit()

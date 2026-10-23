@@ -200,6 +200,13 @@ def is_available(state: dict, now: float) -> tuple[bool, str]:
         state["status"] = "ok"
         state["cooldown_until"] = None
         status = "ok"
+    if status == "quota_low":
+        cu = state.get("cooldown_until")
+        if cu is not None and now < cu:
+            return False, "quota_low"
+        state["status"] = "ok"
+        state["cooldown_until"] = None
+        status = "ok"
 
     # Sleep window
     ss = state.get("sleep_start", 0.0)
@@ -229,7 +236,7 @@ def is_available(state: dict, now: float) -> tuple[bool, str]:
 def pick_account(
     states: dict[str, dict], now: float, rng: random.Random
 ) -> str | None:
-    """Pick an available account, preferring least recently used."""
+    """Pick an available account, preferring higher quota_min_fraction then least recently used."""
     available = []
     for name, st in states.items():
         ok, _ = is_available(st, now)
@@ -237,8 +244,12 @@ def pick_account(
             available.append(name)
     if not available:
         return None
-    # Sort by last_used_at (None first = never used), tie-break by name
+    # Sort by:
+    # 1. quota_min_fraction descending (None counts as 1.0 — highest)
+    # 2. last_used_at ascending (None first = never used)
+    # 3. name for stable tie-break
     available.sort(key=lambda n: (
+        -(states[n].get("quota_min_fraction") if states[n].get("quota_min_fraction") is not None else 1.0),
         states[n].get("last_used_at") is not None,
         states[n].get("last_used_at") or 0.0,
         n,
@@ -270,7 +281,7 @@ def next_ready_at(states: dict[str, dict], now: float, tz_name: str = "Asia/Jaka
             noa = st.get("next_ok_at")
             if noa is not None:
                 candidates.append(noa)
-        elif reason in ("cooldown", "abuse_flag", "needs_tos"):
+        elif reason in ("cooldown", "abuse_flag", "needs_tos", "quota_low"):
             cu = st.get("cooldown_until")
             if cu is not None:
                 candidates.append(cu)
@@ -330,4 +341,15 @@ def apply_error(state: dict, error_type: str, now: float) -> None:
 
     if error_type in ("timeout", "network"):
         state["next_ok_at"] = now + 10 * 60
+        return
+
+    if error_type == "quota_low":
+        # Do NOT raise cooldown_level. Just set cooldown_until from quota_reset_at.
+        reset_at = state.get("quota_reset_at")
+        if reset_at is not None and reset_at > now:
+            cooldown_until = reset_at + state.get("_quota_jitter", 0.0)
+        else:
+            cooldown_until = now + 3600.0
+        state["cooldown_until"] = cooldown_until
+        state["status"] = "quota_low"
         return
