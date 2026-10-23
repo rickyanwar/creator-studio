@@ -23,6 +23,10 @@ and stream watchdog timeout of **45 s** (`GWS_WATCHDOG_TIMEOUT_S = 45`) to recov
 Polish is **fail-closed**: every brand with the "Polish prompts with Gemini Argon" switch
 on will produce no AI video at all while this service is down or unhealthy.
 
+### ChatGPT Fallback
+When Argon is unavailable (`no_account_ready`, 502, proxy down), prompt polish automatically falls back to ChatGPT (`POST /v1/text` on `gpt serve` at `http://172.17.0.1:8099`, account label `chatgpt:<profile>`).
+Kill switch on the VPS: set `GPT_SERVE_TEXT_DAILY_CAP=0` in `/etc/gpt-serve.env` and restart `gpt-serve`.
+
 ---
 
 ## 2. Health check

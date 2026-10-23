@@ -115,6 +115,11 @@ In `ai_video_plan.py:62-77`, the planner prevents template fatigue on a fanpage:
   - `livery`: `pick_livery(db, fanpage_id, template)` inspects past 50 jobs, picks unused livery or least recently used.
   - `channel_name`: `sanitize_channel_name(fanpage.name)` uppercased, alphanumeric/spaces only, truncated to 24 chars.
 
+### 3.5 Prompt Polish & ChatGPT Fallback
+- **Argon Prompt Polish** (`prompt_polish.py`, `ai_video_prepare.py`): Early prompt rewriting for Mode 8 clips via `gemini-web-serve`.
+- **ChatGPT Fallback**: When Argon raises `PolishUnavailable` (502, `no_account_ready`, etc.), prompt polish automatically falls back to ChatGPT (`POST /v1/text` on `gpt serve`, thread `polish`, account label `chatgpt:<profile>`).
+- **Kill Switch**: Set `GPT_SERVE_TEXT_DAILY_CAP=0` in `/etc/gpt-serve.env` on the VPS to disable the ChatGPT text endpoint.
+
 ---
 
 ## 4. Job State Machine, Lease Protocols, and Sweep Engine

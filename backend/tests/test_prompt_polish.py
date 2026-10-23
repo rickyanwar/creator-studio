@@ -742,3 +742,286 @@ class TestCase19TransportErrorHandling:
         assert exc.answer == json_mod.dumps(answer_bad)
         assert len(exc.problems) > 0
         assert exc.account == "a1"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ChatGPT fallback tests (TASK-P)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from app.services.gptcli_client import GptcliConfig, generate_text
+
+GPTCLI_CFG = GptcliConfig(
+    enabled=True,
+    base_url="http://localhost:8099",
+    token="test-gptcli-token",
+    fanpage_ids=(),
+    thread="polish",
+    size="1080x1350",
+    day_start="05:30",
+)
+CFG_WITH_CHATGPT = PolishConfig(
+    base_url="http://localhost:8098",
+    token="test-token",
+    model="gemini-argon",
+    chatgpt=GPTCLI_CFG,
+)
+
+
+class TestCaseChatGPTFallback:
+    def test_argon_503_chatgpt_200_valid_answer(self):
+        """Argon 503 no_account_ready + ChatGPT 200 valid answer -> result.ok, result.account == 'chatgpt:utama'."""
+        polished = _good_polished(KNEE_CLIPS)
+        answer = _make_answer(polished)
+
+        def _post(url, headers=None, json=None, timeout=None):
+            if "/v1/text" in url:
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {
+                        "text": json_mod.dumps(answer),
+                        "gptcli": {"profile": "utama", "duration_s": 4.5, "request_id": "polish-123"},
+                    },
+                )
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready", "retry_after_s": 300},
+            )
+
+        import json as json_mod
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
+                              config=CFG_WITH_CHATGPT, http_post=_post)
+        assert result.ok is True
+        assert result.account == "chatgpt:utama"
+        assert result.seconds == 4.5
+        assert len(result.clips) == len(KNEE_CLIPS)
+
+    def test_argon_unavailable_chatgpt_429(self):
+        """Argon unavailable + ChatGPT 429 -> raises PolishUnavailable with Argon kind and 'chatgpt: chatgpt_busy' in detail."""
+        def _post(url, headers=None, json=None, timeout=None):
+            if "/v1/text" in url:
+                return SimpleNamespace(
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                    json=lambda: {"error": {"type": "quota", "message": "rate limited"}},
+                )
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready", "retry_after_s": 120},
+            )
+
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
+                         config=CFG_WITH_CHATGPT, http_post=_post)
+        exc = exc_info.value
+        assert exc.kind == "no_account_ready"
+        assert "chatgpt: chatgpt_busy" in exc.detail
+
+    def test_argon_unavailable_after_attempt_1_chatgpt_answers_attempt_2(self):
+        """Argon unavailable after one answered attempt + ChatGPT answers attempt 2 validly -> ok (resume path not needed)."""
+        polished_bad = _good_polished(KNEE_CLIPS)
+        polished_bad[0] = {
+            **polished_bad[0],
+            "prompt": polished_bad[0]["prompt"].replace("masterpiece of engineering", "masterpiece of design"),
+        }
+        answer_bad = _make_answer(polished_bad)
+        answer_good = _make_answer(_good_polished(KNEE_CLIPS))
+
+        call_count = {"argon": 0, "chatgpt": 0}
+        import json as json_mod
+
+        def _post(url, headers=None, json=None, timeout=None):
+            if "/v1/text" in url:
+                call_count["chatgpt"] += 1
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {
+                        "text": json_mod.dumps(answer_good),
+                        "gptcli": {"profile": "utama", "duration_s": 3.0},
+                    },
+                )
+            call_count["argon"] += 1
+            if call_count["argon"] == 1:
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {"text": json_mod.dumps(answer_bad), "account": "a1", "seconds": 2.0},
+                )
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready", "retry_after_s": 60},
+            )
+
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
+                              config=CFG_WITH_CHATGPT, http_post=_post, max_attempts=3)
+        assert result.ok is True
+        assert result.attempts == 2
+        assert result.account == "chatgpt:utama"
+        assert call_count["chatgpt"] == 1
+
+    def test_chatgpt_answer_fails_check_polished_not_accepted(self):
+        """ChatGPT answer that fails check_polished is NOT accepted (problems reported; same as Argon)."""
+        polished_bad = _good_polished(KNEE_CLIPS)
+        polished_bad[0] = {
+            **polished_bad[0],
+            "prompt": polished_bad[0]["prompt"].replace("masterpiece of engineering", "masterpiece of design"),
+        }
+        answer_bad = _make_answer(polished_bad)
+        import json as json_mod
+
+        def _post(url, headers=None, json=None, timeout=None):
+            if "/v1/text" in url:
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {
+                        "text": json_mod.dumps(answer_bad),
+                        "gptcli": {"profile": "utama", "duration_s": 3.0},
+                    },
+                )
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready"},
+            )
+
+        result = polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
+                              config=CFG_WITH_CHATGPT, http_post=_post, max_attempts=2)
+        assert result.ok is False
+        assert result.attempts == 2
+        assert len(result.problems) > 0
+        assert any("original quoted text missing" in p for p in result.problems)
+
+    def test_config_chatgpt_none_behaviour_as_before(self):
+        """config.chatgpt None -> behaviour exactly as before (existing tests keep passing)."""
+        called_urls = []
+
+        def _post(url, headers=None, json=None, timeout=None):
+            called_urls.append(url)
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready"},
+            )
+
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
+                         config=CFG, http_post=_post)
+        assert exc_info.value.kind == "no_account_ready"
+        assert "chatgpt:" not in exc_info.value.detail
+        assert not any("/v1/text" in u for u in called_urls)
+
+    def test_gptcli_unavailable_until_set_chatgpt_not_called(self, monkeypatch):
+        """gptcli_unavailable_until() set (monkeypatch) -> ChatGPT not called."""
+        from datetime import datetime, timedelta, timezone
+        monkeypatch.setattr(
+            "app.services.prompt_polish.gptcli_unavailable_until",
+            lambda: datetime.now(timezone.utc) + timedelta(minutes=15),
+        )
+
+        called_urls = []
+
+        def _post(url, headers=None, json=None, timeout=None):
+            called_urls.append(url)
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready"},
+            )
+
+        with pytest.raises(PolishUnavailable) as exc_info:
+            polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
+                         config=CFG_WITH_CHATGPT, http_post=_post)
+        assert exc_info.value.kind == "no_account_ready"
+        assert not any("/v1/text" in u for u in called_urls)
+
+    def test_token_never_appears_in_logs_or_exception_text(self, caplog):
+        """token never appears in logs/exception text (use a token like 'SECRET123' and assert not in str(exc) / caplog.text)."""
+        import logging
+        cfg_secret = PolishConfig(
+            base_url="http://localhost:8098",
+            token="ARGON_SECRET",
+            model="gemini-argon",
+            chatgpt=GptcliConfig(
+                enabled=True,
+                base_url="http://localhost:8099",
+                token="SECRET123",
+                fanpage_ids=(),
+                thread="polish",
+                size="1080x1350",
+                day_start="05:30",
+            ),
+        )
+
+        def _post(url, headers=None, json=None, timeout=None):
+            if "/v1/text" in url:
+                return SimpleNamespace(
+                    status_code=500,
+                    json=lambda: {"error": {"type": "server_error", "message": "Bearer SECRET123 rejected by upstream"}},
+                )
+            return SimpleNamespace(
+                status_code=503,
+                json=lambda: {"error": "no_account_ready"},
+            )
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(PolishUnavailable) as exc_info:
+                polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
+                             config=cfg_secret, http_post=_post)
+        exc = exc_info.value
+        assert "SECRET123" not in str(exc)
+        assert "SECRET123" not in exc.detail
+        assert "SECRET123" not in caplog.text
+
+    def test_get_polish_config_with_chatgpt(self, monkeypatch):
+        from cryptography.fernet import Fernet
+        from app.config import get_settings
+        monkeypatch.setattr(get_settings(), "fernet_key", Fernet.generate_key().decode())
+        engine = create_engine("sqlite:///:memory:", poolclass=StaticPool)
+        Settings.__table__.create(engine)
+        Session = sessionmaker(bind=engine)
+        db = Session()
+        try:
+            row = Settings(
+                id=1,
+                prompt_polish_token_encrypted=encrypt("argon-tok"),
+                prompt_polish_base_url="http://argon:8098",
+                prompt_polish_model="gemini-argon",
+                gptcli_token_encrypted=encrypt("gpt-tok"),
+                gptcli_base_url="http://gpt:8099",
+            )
+            db.add(row)
+            db.commit()
+
+            cfg = get_polish_config(db)
+            assert cfg is not None
+            assert cfg.token == "argon-tok"
+            assert cfg.chatgpt is not None
+            assert cfg.chatgpt.token == "gpt-tok"
+            assert cfg.chatgpt.base_url == "http://gpt:8099"
+        finally:
+            db.close()
+            Settings.__table__.drop(engine)
+
+    def test_generate_text_status_code_mappings(self):
+        """Test status code and error kind mappings in generate_text."""
+        for status, err_type, expected_kind in [
+            (401, "unauthorized", "chatgpt_unauthorized"),
+            (404, "disabled", "chatgpt_disabled"),
+            (429, "quota", "chatgpt_busy"),
+            (429, "text_cap_reached", "chatgpt_busy"),
+            (503, "sleeping", "chatgpt_sleeping"),
+            (502, "refused", "chatgpt_refused"),
+            (500, "server_error", "chatgpt_failed"),
+        ]:
+            def _post(url, headers=None, json=None, timeout=None):
+                return SimpleNamespace(
+                    status_code=status,
+                    json=lambda: {"error": {"type": err_type, "message": f"err {err_type}"}},
+                )
+
+            with pytest.raises(PolishUnavailable) as exc_info:
+                generate_text(GPTCLI_CFG, "test prompt", http_post=_post)
+            assert exc_info.value.kind == expected_kind
+
+    def test_generate_text_transport_error_mapped(self):
+        def _post(url, headers=None, json=None, timeout=None):
+            raise httpx.ConnectError("connection refused")
+
+        with pytest.raises(PolishUnavailable) as exc_info:
+            generate_text(GPTCLI_CFG, "test prompt", http_post=_post)
+        assert exc_info.value.kind == "chatgpt_unreachable"
