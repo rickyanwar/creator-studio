@@ -81,7 +81,7 @@ def valid_prepared(idea) -> dict | None:
         return None
     if prep.get("template_key") != getattr(idea, "template_key", None):
         return None
-    if prep.get("polished") is not True:
+    if not (prep.get("polished") is True or prep.get("render_fallback") is True):
         return None
     clips = prep.get("clips")
     if not isinstance(clips, list) or len(clips) == 0:
@@ -304,6 +304,44 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
         db.commit()
         logger.info(
             "prepare: idea %s -> prepared attempts=%d problems=%s",
+            idea.id,
+            result.attempts,
+            (" | ".join(result.problems))[:600],
+        )
+        return "prepared"
+    elif template.raw.get("polish_fallback") == "render":
+        fallback_clips = [
+            {
+                **clip,
+                "prompt_original": clip.get("prompt", ""),
+                "voice_sentence": None,
+                "ambience_sentence": None,
+                "changes": [],
+                "polish_problems": result.problems[:5],
+            }
+            for clip in rendered
+        ]
+        prep = {
+            "version": PREPARED_VERSION,
+            "fingerprint": idea_fingerprint(idea),
+            "template_key": idea.template_key,
+            "clips_count": clips,
+            "variables": variables,
+            "title": title,
+            "caption": caption,
+            "provider": provider,
+            "account": result.account,
+            "seconds": result.seconds,
+            "attempts": result.attempts,
+            "polished": False,
+            "render_fallback": True,
+            "clips": fallback_clips,
+        }
+        idea.prepared = prep
+        idea.polish_error = ("; ".join(result.problems))[:2000]
+        db.commit()
+        logger.info(
+            "prepare: idea %s -> render fallback attempts=%d problems=%s",
             idea.id,
             result.attempts,
             (" | ".join(result.problems))[:600],

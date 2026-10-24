@@ -83,7 +83,7 @@ def test_bike_look_pushing_over_flow_limit_raises_value_error():
         render_clips(t, variables, 3)
 
 
-def test_motorcycle_commercial_renders_long_fill_under_2300_chars():
+def test_motorcycle_commercial_renders_long_fill_under_2700_chars():
     t = get_template(KEY)
     bike_look_60 = " ".join(["classic"] * 60)
     ride_scene_30 = " ".join(["circuit"] * 30)
@@ -103,7 +103,9 @@ def test_motorcycle_commercial_renders_long_fill_under_2300_chars():
     clips = render_clips(t, variables, 3, lang_code="en")
     lengths = [len(c["prompt"]) for c in clips]
     for i, length in enumerate(lengths):
-        assert length <= 2300, f"clip {i + 1} length {length} exceeds 2300"
+        # Timed cinematic shots (owner 2026-10-25) need more text; 2,700 leaves room under Flow's 2,900 limit,
+        # and the template falls back to this render when the polish cannot stay inside it.
+        assert length <= 2700, f"clip {i + 1} length {length} exceeds 2700"
 
 
 def test_motorcycle_commercial_ignores_extra_variables():
