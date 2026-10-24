@@ -246,11 +246,21 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
         if channel_name is not None:
             if not isinstance(channel_name, str) or sanitize_channel_name(channel_name) != channel_name:
                 raise ValueError("channel_name must be sanitized")
-            lettering = f' with a small, subtle "{channel_name}" name in clean white letters '
-            lettering += "on the side of the fairing, no other text" if "motogp" in preset else "on the side of the engine cover, no other text"
-            lettering_short = f' with the same small "{channel_name}" name and no other text'
+            template_lettering = blocks.get("lettering")
+            if isinstance(template_lettering, dict):
+                kind = "bike" if "motogp" in preset else "car"
+                lettering = template_lettering[kind].replace("{channel_name}", channel_name)
+                lettering_short = template_lettering["short"].replace("{channel_name}", channel_name)
+            else:
+                lettering = f' with a small, subtle "{channel_name}" name in clean white letters '
+                lettering += "on the side of the fairing, no other text" if "motogp" in preset else "on the side of the engine cover, no other text"
+                lettering_short = f' with the same small "{channel_name}" name and no other text'
         else:
-            lettering, lettering_short = ", no text", ", no text"
+            template_lettering = blocks.get("lettering")
+            if isinstance(template_lettering, dict):
+                lettering, lettering_short = template_lettering["none"], ""
+            else:
+                lettering, lettering_short = ", no text", ", no text"
         livery_values = blocks["liveries"][livery]
         substitutions.update(
             livery=livery_values["full"],
@@ -285,10 +295,10 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
             else:
                 custom_preset = re.sub(r",?\s*says:\s*$", f", speaking natural, native-sounding {lang_display}, says in {lang_display}:", preset_text)
             narrator = "Voice-over: " + custom_preset
-            narrator_followup = "Voice-over: " + ("the same " + custom_preset[2:] if custom_preset.startswith("a ") else custom_preset)
+            narrator_followup = narrator
         else:
             narrator = "Voice-over: " + preset_text
-            narrator_followup = "Voice-over: " + ("the same " + preset_text[2:] if preset_text.startswith("a ") else preset_text)
+            narrator_followup = narrator
     # Template text blocks (e.g. bike_rules) always win over same-named variables, so a fill can never rewrite the rules.
     substitutions.update({k: v for k, v in blocks.items() if isinstance(v, str)})
     substitutions.update(
@@ -393,4 +403,3 @@ def fit_clips_to_credits(t: VideoTemplate, clips: int, budget) -> Optional[int]:
         if credits_estimate(t, c) <= budget:
             return c
     return None
-

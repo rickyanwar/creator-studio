@@ -45,7 +45,8 @@ def test_motorcycle_commercial_modes_and_prompt_lengths():
     clips = render_clips(t, variables, 3)
     assert [c["mode"] for c in clips] == ["t2v", "i2v", "i2v"]
     for c in render_clips(t, variables, 3, lang_code="en"):
-        assert len(c["prompt"]) <= 2300
+        # 3 timed cinematic shots per clip (owner 2026-10-24); render cap is 2900, polish target 2600.
+        assert len(c["prompt"]) <= 2700
 
 
 def test_loader_rejects_clip_set_length_mismatch():

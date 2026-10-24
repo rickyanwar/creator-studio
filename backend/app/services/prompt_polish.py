@@ -37,12 +37,13 @@ PROTECTED_PHRASES = (
 # Argon must put the sentence for the niche, word for word, in every clip; check_polished enforces it.
 MOTION_SENTENCES = {
     "motogp": (
-        "Motion: one manoeuvre per shot; on track it runs at full racing speed; it turns only while bike and "
-        "rider lean together about 45 degrees, rides upright only on straights, never slides sideways."
+        "Motion: whenever the motorcycle moves, it travels forward in one clear direction at full racing speed, "
+        "bike and rider leaning together about 45 degrees only in corners and riding upright on straights, both "
+        "tyres gripping the track."
     ),
     "f1": (
-        "Motion: one manoeuvre per shot; the car turns only by steering its front wheels, keeps its direction "
-        "across cuts, never slides sideways."
+        "Motion: whenever the car moves, it travels forward in one clear direction, turning only by steering its "
+        "front wheels, all four tyres gripping the track."
     ),
 }
 VAGUE_COLOUR_WORDS = ("solid-colour", "solid colour", "solid-color", "solid color")
@@ -60,17 +61,21 @@ def _motorsport_rules(motion: str | None) -> str:
     return (
         "4. Motorsport: describe the livery panel by panel with exact colours (for a car: nose, bodywork and sidepods, "
         "engine cover, wings, wheels, helmet; for a motorcycle: upper fairing, lower fairing, tank, tail, number boards, "
-        "wheels, rider suit, helmet). Never use vague colour words such as \"solid-colour\" or \"matching\"; repeat that "
-        "exact livery sentence in every clip. If a clip asks for several manoeuvres (for example a straight, a corner "
-        "and an exit), keep the one that matches its voice-over and simplify the rest. A corner always names its "
-        "direction (left or right) and where the camera stands. On a circuit the vehicle runs at real racing speed: "
+        "wheels, rider suit, helmet). Never use vague colour words such as \"solid-colour\" or \"matching\"; use that "
+        "exact livery sentence in every clip where the outside of the vehicle is in frame, and leave it out of a clip "
+        "that stays inside or close to one part. A clip that is not written as timed shots makes at most ONE big change "
+        "in its 10 seconds: one camera move, or one change of a part (becoming see-through, separating, reassembling), "
+        "never several of them stacked. If a clip asks for several manoeuvres in one continuous shot (for example a straight, a corner "
+        "and an exit), keep the one that matches its voice-over and simplify the rest; a clip written as timed shots ([00:00-00:02] ...) keeps every timed shot. A corner always names its "
+        "direction (left or right) and where the camera stands. In wide shots on a circuit the vehicle runs at real racing speed: "
         "background streaking with motion blur, the camera tracking hard; never a slow cruise unless the original "
-        "asks for slow motion.\n"
+        "asks for slow motion. Macro shots inside or close to a part keep a steady, close camera on that part.\n"
         "   Engine sound: the background sound sentence names the engine exactly as the subject is described - a "
         "two-stroke sounds like a crisp, ringing, crackling two-stroke; a four-stroke like a deep, smooth four-stroke "
-        "roar - loud at speed, quiet only when parked, the same character in every clip, never switching type. The "
-        "narrator voice sentence keeps the same person (gender, age, accent) in every clip.\n"
-        f"5. Put this sentence word for word in every clip: {motion}\n"
+        "roar - clearly audible at speed but always lower than the voice, quiet when parked, the same character in "
+        "every clip, never switching type. The narrator voice sentence keeps the same person (gender, age, accent) in "
+        "every clip.\n"
+        f"5. Put this sentence word for word in every clip, right after the action: {motion}\n"
     )
 
 
@@ -84,6 +89,7 @@ BRAND_NAMES = (
 
 _DOUBLED_SMALL = re.compile(r"(?i)\b(the|a|an|of|to|and|in|on)\s+\1\b")
 _QUOTE_RE = re.compile(r'"([^"]+)"')
+_TIMED_SHOT_RE = re.compile(r"\[\d{2}:\d{2}-\d{2}:\d{2}\]")
 _I2V_PREFIX = "Continue seamlessly from this exact frame"
 
 
@@ -174,18 +180,20 @@ def build_instruction(clips: list[dict], *, template, niche: str | None) -> str:
         f'You are a senior prompt engineer for Google Flow (Veo 3). Below are {n} clip prompts ({clip_seconds} s each, vertical 9:16) for ONE short video made from template "{template_name}" (niche: {niche_str}). Each clip is generated separately and the clips are joined in order. A clip with mode t2v is text-to-video. A clip with mode i2v is image-to-video: it starts from the LAST FRAME of the previous clip, so it must begin by continuing that exact frame.\n'
         "\n"
         "Rewrite every clip prompt so the final video is realistic, physically and historically logical, and feels like ONE continuous video:\n"
-        "1. Fix every logic problem: duplicated words or sentences, awkward machine-filled phrases, physically impossible actions, camera moves that cannot happen in one shot, anything that contradicts the story, the period or real-world engineering/anatomy. Everything real in the scene obeys real physics: gravity and momentum, a moving vehicle keeps moving the same way at a believable speed, wheels turn with the ground, parts move only the way the real mechanism lets them, and nothing appears, vanishes or changes shape without a cause. Never invent facts, mechanisms or events that are not in the original. Keep the same story, the same facts and the same order of events.\n"
+        "1. Fix every logic problem: duplicated words or sentences, awkward machine-filled phrases, physically impossible actions, camera moves that cannot happen in one shot, anything that contradicts the story, the period or real-world engineering/anatomy. Everything real in the scene obeys real physics: gravity and momentum, a moving vehicle keeps moving the same way at a believable speed, wheels turn with the ground, parts move only the way the real mechanism lets them, and nothing appears, vanishes or changes shape without a cause. Never invent facts, mechanisms or events that are not in the original. Keep the same story, the same facts and the same order of events. Every number, year, name and claim inside the voice-over quotes comes from verified research: keep it exactly, never add, round, exaggerate or replace a fact. Show only parts that exist on the real vehicle or body, in their real place, moving only the way they really move; remove any imagined part or effect that would mislead the viewer.\n"
         "   Deliberate visual styles of the template are NOT logic errors: keep them exactly as the original describes them - X-ray or semi-transparent cutaways, exploded technical views where parts separate, float and then reassemble into the same object, glowing airflow, force or signal lines, slow motion. Around such a visualisation everything else still obeys real physics, and afterwards the object is back in exactly the same state.\n"
-        "2. Visual continuity: describe the main subject (vehicle, rider, body part, object) once in concrete detail (shape, colours, materials, the exact lettering already in the prompt) and repeat that exact description in every clip. Each clip must end on a frame the next clip can continue from naturally.\n"
-        f"3. Audio continuity: write ONE narrator voice sentence in rich concrete detail (keep the narrator the original prompt describes; add pitch, timbre, pace that fits the narration inside {clip_seconds} seconds, and a close-mic dry recording) and put that exact same sentence, word for word, in every clip right before the voice-over line. Write ONE background sound sentence (keep what the original allows: if it says no music, keep no music; if it has a music bed, keep one calm continuous bed with a fixed tempo and level) at a fixed low level under the voice, and put that exact same sentence, word for word, in every clip.\n"
+        "2. Visual continuity: describe the main subject (vehicle, rider, body part, object) once in concrete detail (shape, colours, materials, the exact lettering already in the prompt) and use that exact description in every clip where the whole subject is in frame. A clip that stays inside or close to one part describes only what is in frame (that part, its casing, its colours) and never lists parts that are out of frame. Name each thing directly; never refer back with words like \"the same\" or \"as before\", which the video model cannot see. End every clip on a steady, clearly described frame (framing, subject, motion) that the next clip can continue from naturally.\n"
+        f"3. Audio continuity: write ONE narrator voice sentence as a studio voice profile (keep the narrator the original prompt describes: gender, age, accent and energy; add vocal register such as baritone or alto, timbre, an even pace that fits the narration inside {clip_seconds} seconds, and \"recorded close to the microphone in a dry studio\") and put that exact sentence, word for word, in every clip right before the voice-over line. Leave out breaths, pauses, hesitations, words-per-minute numbers and words like \"the same\" or \"again\": they make the voice drift. The narrator must be one single person in every clip: same gender, age, accent, pitch, timbre, pace and energy, never a second voice. Write ONE background sound sentence (keep what the original allows: if it says no music, keep no music; if it has a music bed, keep one calm continuous bed with a fixed tempo and level) at a fixed low level, always quieter than the voice, and put that exact sentence, word for word, in every clip.\n"
         f"{_motorsport_rules(motion_sentence_for(niche))}"
         "Hard rules:\n"
         "- Keep every text that is inside double quotes in the original EXACTLY as written (every voice-over line and any lettering). Do not add any new double-quoted text.\n"
-        "- Keep every restriction of the original (no text, no logos or the exact logo rules, no watermark, no gore, no music, no sound effects, no cuts — whichever the original has).\n"
+        "- Keep every restriction of the original (no text, no logos or the exact logo rules, no watermark, no gore, no music, no sound effects, no cuts — whichever the original has), word for word, but gather them into ONE short closing sentence at the very end of the clip; everywhere else describe what IS there (clean unmarked bodywork, plain surfaces) instead of listing what is not.\n"
         "- Do not name or imply any real team, maker, sponsor or brand that the original does not already name.\n"
-        "- Every i2v clip must start with: Continue seamlessly from this exact frame\n"
+        "- Every i2v clip must start with: Continue seamlessly from this exact frame — then, in the same sentence, name what that frame shows (framing, subject, where it is moving) as the previous clip ended it.\n"
+        "- Order inside every clip: (1) the start frame and camera, (2) the subject as it is visible in this clip, (3) the action, ending on the final frame (timed shots stay together here), (4) the background sound sentence, (5) the narrator voice sentence and its voice-over line, (6) the closing restrictions sentence.\n"
         "- Each clip prompt must stay under 2,600 characters: cut decorative or repeated words first, never the rules, quotes or livery.\n"
         "- Do not change the number of clips or their order.\n"
+        "- If a clip is written as timed shots ([00:00-00:02] ...), keep every timed shot with its time marker, in the same order and with the same content; improve the wording only inside each shot.\n"
         'Return ONLY JSON, no markdown: {"clips":[{"index":1,"prompt":"..."}],"voice_sentence":"...","ambience_sentence":"...","changes":["one short reason per change"]}\n'
         "\n"
         f"{clips_block}"
@@ -291,6 +299,15 @@ def check_polished(original: list[dict], polished: list[dict], voice: str, ambie
         pol_clip = pol_by_idx[idx]
         orig_prompt = orig_clip["prompt"]
         pol_prompt = pol_clip["prompt"]
+
+        # Timed shots are part of the clip's edit structure, not optional prose.
+        markers = _TIMED_SHOT_RE.findall(orig_prompt)
+        if markers:
+            positions = [pol_prompt.find(marker) for marker in markers]
+            if any(position < 0 for position in positions) or positions != sorted(positions):
+                problems.append(
+                    f"clip {idx}: keep every timed-shot marker exactly and in order: {', '.join(markers)}"
+                )
 
         # 2. Quotes
         orig_quotes = set(_QUOTE_RE.findall(orig_prompt))
@@ -437,9 +454,12 @@ A reviewer watched the generated clip and found these logic errors:
 Rewrite the prompt so Flow does not make these errors again:
 - Keep the same story, facts, subject, livery, camera plan and order of events. Change only what prevents the listed errors: state the correct behaviour plainly (for example the direction of travel, which parts stay still, that both tyres stay on the ground), and simplify or remove the action that caused an error. Fewer, clearer actions beat more words.
 - Keep every text inside double quotes EXACTLY as written, in the same order. Do not add new double-quoted text.
-- Keep the narrator voice sentence and the background sound sentence exactly as they are.
+- If the prompt is written as timed shots ([00:00-00:02] ...), keep every timed shot with its time marker, in the same order.
+- Keep the narrator voice sentence and the background sound sentence exactly as they are, so the narrator stays the very same single voice as in the other clips.
+- Every number, year, name and claim in the voice-over stays exactly as written; show only real parts in their real place.
 - Keep every restriction of the original (no text, the logo rules, no watermark, no cuts - whichever it has) and its intended visual styles (X-ray cutaway, exploded view, glowing lines).
 - Do not invent facts, mechanisms, brands or events.
+- Describe what IS in the shot in plain positive words; in a close shot of one part describe only that part, not the whole vehicle; never refer back with words like "the same" or "as before".
 - Stay under 2,600 characters.
 Return ONLY JSON, no markdown: {{"prompt":"...","changes":["one short reason per change"]}}
 

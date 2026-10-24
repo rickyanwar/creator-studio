@@ -56,7 +56,7 @@ Report only clear, visible logic errors of these kinds:
 5. The livery, colours or lettering differ from the prompt{previous_livery}.
 6. A mechanism moves in a way the prompt does not describe, or a part the prompt says stays still moves.
 7. An official series or governing-body logo appears (F1, FIA, MotoGP, FIM, Dorna, UFC). Team and sponsor logos are allowed.
-Never report these, they are intended or not logic: X-ray or semi-transparent cutaways, exploded views where parts separate, float and then reassemble, glowing lines, slow motion, motion blur, depth of field, film grain, camera moves, hard cuts when the prompt asks for cuts, small soft unreadable lettering, lighting, colour grading, beauty or style, and anything you cannot see clearly.
+Never report these, they are intended or not logic: X-ray or semi-transparent cutaways, exploded views where parts separate, float and then reassemble, glowing lines, slow motion, motion blur, depth of field, film grain, camera moves, hard cuts when the prompt asks for cuts, small soft unreadable lettering, where the team name lettering is placed on the vehicle, lighting, colour grading, beauty or style, and anything you cannot see clearly.
 Mark an error "major" only when an ordinary viewer would clearly notice it; otherwise mark it "minor". When you are unsure, do not report it.
 Return ONLY JSON, no markdown: {{"issues":[{{"problem":"what is wrong, where, in which frames","severity":"major"}}]}} - an empty list when the clip is logical.'''
 
