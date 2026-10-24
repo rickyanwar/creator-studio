@@ -220,12 +220,17 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
 
     logger.info("prepare: idea %s fanpage %s %s (resume=%s)", getattr(idea, "id", None), getattr(fanpage, "id", None), idea.template_key, bool(resume))
 
+    # The polish call can take many minutes. End the read transaction first: an
+    # idle-in-transaction connection blocks every migration ALTER (incident 2026-10-24).
+    niche = fanpage_niche(fanpage)
+    db.commit()
+
     try:
         if resume is not None:
             result = polish_clips(
                 rendered,
                 template=template,
-                niche=fanpage_niche(fanpage),
+                niche=niche,
                 config=config,
                 resume=resume,
             )
@@ -233,7 +238,7 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
             result = polish_clips(
                 rendered,
                 template=template,
-                niche=fanpage_niche(fanpage),
+                niche=niche,
                 config=config,
             )
     except PolishInterrupted as exc:

@@ -238,8 +238,13 @@ def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
                 logger.info("label_new_gallery_images: daily cap reached")
                 break
 
+            # End the transaction before the slow vision call; an idle-in-transaction
+            # connection blocks every migration ALTER (incident 2026-10-24).
+            local_path, keyword = img.local_path, img.keyword
+            db.commit()
+
             try:
-                norm = label_image(img.local_path, provider="router", keyword=img.keyword)
+                norm = label_image(local_path, provider="router", keyword=keyword)
                 img.attributes = merge_label_attributes(img.attributes, norm)
                 img.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 img.label_error = None

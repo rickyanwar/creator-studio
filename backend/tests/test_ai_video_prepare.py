@@ -1062,3 +1062,31 @@ def test_r5_successful_resumed_round_replaces_draft(db):
     assert prep["clips"][0]["prompt"] == "P1 pol"
     assert prep["clips"][0]["prompt_original"] == "P1"
 
+
+
+def test_prepare_idea_ends_the_read_transaction_before_the_polish_call(db):
+    # Incident 2026-10-24: a polish call held an idle-in-transaction connection
+    # for hours; the next migration's ALTER waited on it and stalled the whole app.
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
+    idea = _idea(session, fp, topic="brake cooling", clips=1)
+    session.commit()
+
+    rendered = [{"index": 1, "mode": "t2v", "prompt": "Prompt 1"}]
+
+    def filler(db_, *_args):
+        db_.query(VideoIdea).count()  # the filler reads, which opens a transaction
+        return {"part": "brakes"}, "Title", "Caption", rendered, "gemini"
+
+    seen = {}
+
+    def polish(*_args, **_kwargs):
+        seen["in_transaction"] = session.in_transaction()
+        return PolishResult(ok=True, clips=[{"index": 1, "mode": "t2v", "prompt": "Polished"}])
+
+    with patch("app.services.ai_video_prepare.fill_idea", side_effect=filler), \
+         patch("app.services.ai_video_prepare.polish_clips", side_effect=polish):
+        outcome = prepare_idea(session, idea, fp, CFG)
+
+    assert outcome == "prepared"
+    assert seen["in_transaction"] is False

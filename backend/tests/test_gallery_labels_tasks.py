@@ -351,3 +351,35 @@ def test_label_gallery_image_passes_owner_hints_when_relabeling(db_session, tmp_
     with patch("app.tasks.gallery_labels.label_image", return_value={"shot_type": "portrait"}) as mock_label:
         label_gallery_image(img.id, force=True, relabel=True)
     assert mock_label.call_args.kwargs["hints"] == {"session": "race"}
+
+
+
+def test_task_ends_the_transaction_before_each_vision_call(db_session, tmp_path):
+    # Incident 2026-10-24: an open transaction during a slow vision call blocked a migration.
+    s = db_session.query(Settings).filter_by(id=1).first()
+    now = datetime.now(timezone.utc)
+    s.gallery_labeling_enabled = True
+    s.gallery_labeling_daily_cap = 100
+    s.gallery_labeling_since = now - timedelta(days=1)
+    db_session.commit()
+
+    f = tmp_path / "tx.jpg"
+    f.write_text("fake")
+    img = GalleryImage(
+        keyword="tx-check", source_image_url=_unique_url("tx"), local_path=str(f),
+        public_url="http://p", width=100, height=100, source_engine="bing",
+        downloaded_at=now - timedelta(minutes=20), attributes=None, label_attempts=0,
+    )
+    db_session.add(img)
+    db_session.commit()
+
+    seen = {}
+
+    def fake_label(path, **kwargs):
+        seen[path] = (kwargs.get("keyword"), db_session.in_transaction())
+        return {"shot_type": "portrait", "people_count": 1, "activity": "talking", "expression": "neutral", "context": {"session": "unknown", "rain": False, "night": False, "circuit_visible": False}, "livery_colors": [], "quality": {"blurry": False, "obstructed": False}, "caption": ""}
+
+    with patch("app.tasks.gallery_labels.label_image", side_effect=fake_label):
+        label_new_gallery_images(db=db_session)
+
+    assert seen[str(f)] == ("tx-check", False)
