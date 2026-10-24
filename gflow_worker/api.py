@@ -54,6 +54,18 @@ class StudioClient:
     def fail(self, job_id, generation, reason, message):
         return self._post(f"jobs/{job_id}/fail", json=dict(worker_id=self.worker_id, generation=generation, reason=reason, message=message))
 
+    def clip_qc_upload(self, job_id, generation, index, attempt, prompt, clip_path):
+        with Path(clip_path).open("rb") as f:
+            return self._post(f"jobs/{job_id}/clips/{index}/qc", timeout=300,
+                              data={"worker_id": self.worker_id, "generation": str(generation),
+                                    "attempt": str(attempt), "prompt": prompt},
+                              files={"clip": ("clip.mp4", f, "video/mp4")})
+
+    def clip_qc_status(self, job_id, generation, index, attempt):
+        return self._post(f"jobs/{job_id}/clips/{index}/qc-status",
+                          json={"worker_id": self.worker_id, "generation": generation,
+                                "attempt": attempt})
+
     def complete(self, job_id, generation, video, thumbnail, meta, cover_bg=None):
         with contextlib.ExitStack() as stack:
             v = stack.enter_context(Path(video).open("rb"))

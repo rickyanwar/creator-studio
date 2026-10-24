@@ -218,6 +218,7 @@ class FanpageBase(BaseModel):
     qa_facebook_enabled: bool = True
     qa_ai_video_enabled: bool = True
     ai_video_prompt_polish_enabled: bool = False
+    ai_video_clip_qc_enabled: bool = False
 
     @field_validator(
         "qa_news_enabled",
@@ -235,6 +236,11 @@ class FanpageBase(BaseModel):
     def clean_prompt_polish_toggle(cls, v):
         return False if v is None else v
 
+    @field_validator("ai_video_clip_qc_enabled", mode="before")
+    @classmethod
+    def clean_clip_qc_toggle(cls, v):
+        return False if v is None else v
+
     @field_validator("radar_niches", mode="before")
     @classmethod
     def clean_radar_niches(cls, v):
@@ -249,6 +255,7 @@ class FanpageBase(BaseModel):
 
 
 class FanpageUpdate(FanpageBase):
+    ai_video_clip_qc_enabled: Optional[bool] = None
     brand_override: Optional[bool] = None
     ig_mode: Optional[Literal["repost", "recreate_template", "recreate_chatgpt"]] = None
     badge_breaking_enabled: Optional[bool] = None

@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from pydantic import BaseModel, Field
 
 from app.api.deps import DB, require_hermes_scope
-from app.models.ai_video import VideoJob
+from app.models.ai_video import VideoJob, VideoClipQc, GflowAccount
+from app.models.target_fanpages import TargetFanpage
 from app.models.api_tokens import ApiToken
 from app.services import ai_video_dispatch
 from app.services.ai_video_dispatch import ConflictError
@@ -93,6 +94,8 @@ def claim(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     job, acc = claimed
+    from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS
+    fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
     return {
         "job": {
             "id": job.id,
@@ -108,6 +111,8 @@ def claim(
             "flow_project_id": job.flow_project_id,
             "project_name": f"ai-video-{job.id}-g{job.generation}",
             "cover_prompt": job.cover_prompt,
+            "clip_qc": bool(fanpage and fanpage.ai_video_clip_qc_enabled),
+            "clip_qc_max_attempts": CLIP_QC_MAX_ATTEMPTS,
             "account": {
                 "id": acc.id,
                 "profile": acc.profile,
@@ -115,6 +120,100 @@ def claim(
             "lease_seconds": ai_video_dispatch.LEASE_MINUTES * 60,
         }
     }
+
+
+MAX_CLIP_QC_BYTES = 80 * 1024 * 1024
+
+
+@router.post("/jobs/{id}/clips/{index}/qc")
+def upload_clip_qc(
+    id: int,
+    index: int,
+    db: DB,
+    worker_id: str = Form(...),
+    generation: int = Form(...),
+    attempt: int = Form(...),
+    prompt: str = Form(...),
+    clip: UploadFile = File(...),
+    token: ApiToken = Depends(require_hermes_scope("gflow:worker")),
+):
+    from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS, clip_qc_path
+    from app.tasks.ai_video_clip_qc import check_clip
+    _validate_worker_id(worker_id)
+    job = db.query(VideoJob).filter_by(id=id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not 1 <= attempt <= CLIP_QC_MAX_ATTEMPTS:
+        raise HTTPException(status_code=422, detail="Invalid attempt")
+    if index != len(job.clips_done or []) + 1:
+        raise HTTPException(status_code=409, detail="Unexpected clip index")
+    try:
+        ai_video_dispatch.touch_lease(db, job, worker_id, generation)
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    row = db.query(VideoClipQc).filter_by(video_job_id=id, generation=generation, clip_index=index, attempt=attempt).first()
+    if row:
+        if row.verdict is None:
+            check_clip.delay(row.id)
+        db.commit()
+        return {"qc_id": row.id}
+    path = clip_qc_path(id, generation, index, attempt)
+    size = 0
+    with path.open("wb") as output:
+        while chunk := clip.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_CLIP_QC_BYTES:
+                path.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="Clip too large")
+            output.write(chunk)
+    row = VideoClipQc(video_job_id=id, generation=generation, clip_index=index, attempt=attempt,
+                      prompt=prompt, clip_path=str(path))
+    db.add(row)
+    if attempt >= 2 and job.account_id:
+        account = db.query(GflowAccount).filter_by(id=job.account_id).first()
+        if account and account.credits is not None:
+            account.credits = max(0, account.credits - job.credits_per_clip)
+    db.commit()
+    db.refresh(row)
+    check_clip.delay(row.id)
+    return {"qc_id": row.id}
+
+
+class ClipQcStatusRequest(BaseModel):
+    worker_id: str
+    generation: int
+    attempt: int
+
+
+@router.post("/jobs/{id}/clips/{index}/qc-status")
+def clip_qc_status(id: int, index: int, req: ClipQcStatusRequest, db: DB,
+                   token: ApiToken = Depends(require_hermes_scope("gflow:worker"))):
+    _validate_worker_id(req.worker_id)
+    job = db.query(VideoJob).filter_by(id=id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        ai_video_dispatch.touch_lease(db, job, req.worker_id, req.generation)
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    row = db.query(VideoClipQc).filter_by(video_job_id=id, generation=req.generation,
+                                           clip_index=index, attempt=req.attempt).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Clip QC not found")
+    state = {None: "pending", "pass": "pass", "retry": "retry", "use_attempt": "use_attempt", "failed": "failed"}[row.verdict]
+    if row.verdict is None:
+        from datetime import timedelta
+        from app.services.ai_video_dispatch import _utcnow
+        now = _utcnow()
+        if (row.updated_at and now - row.updated_at > timedelta(minutes=15)
+                and (row.processing_until is None or row.processing_until < now)):
+            from app.tasks.ai_video_clip_qc import check_clip
+            check_clip.delay(row.id)
+            row.updated_at = now
+    db.commit()
+    return {"state": state, "prompt": row.next_prompt if state == "retry" else None,
+            "use_attempt": row.use_attempt if state == "use_attempt" else None,
+            "issues": row.issues or [], "waiting_reason": row.waiting_reason}
 
 
 @router.post("/jobs/{id}/progress")

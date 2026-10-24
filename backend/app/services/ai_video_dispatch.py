@@ -551,6 +551,17 @@ def record_progress(
     db.refresh(job)
 
 
+def touch_lease(db: Session, job: VideoJob, worker_id: str, generation: int) -> None:
+    """Validate an active worker lease and extend it without committing."""
+    if job.worker_id != worker_id or job.status not in ("claimed", "generating") or generation != job.generation:
+        raise ConflictError(
+            f"Conflict: job worker_id={job.worker_id}, status={job.status}, generation={job.generation}"
+        )
+    now = _utcnow()
+    job.lease_until = now + timedelta(minutes=LEASE_MINUTES)
+    job.last_progress_at = now
+
+
 def _maybe_trip_breaker(
     db: Session,
     worker_id: str,

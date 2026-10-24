@@ -274,91 +274,24 @@ class JobRunner:
                 self.api.fail(jid, generation, "lost_checkpoint", "local clip file is missing")
                 return
             if not checkpoint:
-                out = (state.directory / f"clip-{index}.mp4").resolve()
-                profile = job["account"]["profile"]
-                kwargs = dict(profile=profile, project=project, model=job["model"],
-                              aspect=job["aspect"], duration=job["clip_seconds"], out=out)
-                submit_time = datetime.now(timezone.utc)
                 is_t2v = (index == 1 or clip.get("mode") == "t2v")
-                if is_t2v:
-                    # Cut-style templates (e.g. health) make every clip as its own t2v shot list.
-                    result = self.gflow.t2v(clip["prompt"], **kwargs)
-                else:
+                frame = None
+                if not is_t2v:
                     frame = self.media.last_frame(paths[-1], state.directory / f"seed-{index}.jpg", self.cfg.seed_offset_ms)
                     if self.cancelled(jid):
                         return
-                    result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
-                if not result.ok:
-                    recovered = self._recover_clip(result, jid=jid, index=index,
-                                                   profile=profile, project=project,
-                                                   submit_time=submit_time, out=out,
-                                                   state=state)
-                    if self.cancelled(jid):
+                if job.get("clip_qc"):
+                    checkpoint = self._qc_clip(job, state, index=index, clip=clip, is_t2v=is_t2v,
+                                               frame=frame, project=project)
+                    if checkpoint is None:
                         return
-                    if recovered:
-                        result = recovered
-                    else:
-                        msg = result.message or ""
-                        # Pre-submit retry
-                        if (result.exit_code in PRE_SUBMIT_EXIT_CODES and
-                                not any(err in msg for err in SUBMITTED_ERRORS)):
-                            delay = random.uniform(*PRE_SUBMIT_RETRY_DELAY_S)
-                            remaining = delay
-                            while remaining > 0:
-                                if self.cancelled(jid):
-                                    return
-                                step = min(5.0, remaining)
-                                self._sleep(step)
-                                remaining -= step
-                            if self.cancelled(jid):
-                                return
-                            submit_time = datetime.now(timezone.utc)
-                            if is_t2v:
-                                result = self.gflow.t2v(clip["prompt"], **kwargs)
-                            else:
-                                result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
-                            if self.cancelled(jid):
-                                return
-                            if not result.ok:
-                                recovered = self._recover_clip(result, jid=jid, index=index,
-                                                               profile=profile, project=project,
-                                                               submit_time=submit_time, out=out,
-                                                               state=state)
-                                if self.cancelled(jid):
-                                    return
-                                if recovered:
-                                    result = recovered
-
-                        # Seed retry
-                        elif (not is_t2v and result.error_class == "MediaUploadRejectedError" and
-                              "upload-terms" not in msg):
-                            frame = self.media.last_frame(paths[-1], state.directory / f"seed-{index}-b.jpg",
-                                                          self.cfg.seed_offset_ms + SEED_RETRY_EXTRA_MS)
-                            if self.cancelled(jid):
-                                return
-                            submit_time = datetime.now(timezone.utc)
-                            result = self.gflow.i2v(clip["prompt"], frame=frame, **kwargs)
-                            if self.cancelled(jid):
-                                return
-                            if not result.ok:
-                                recovered = self._recover_clip(result, jid=jid, index=index,
-                                                               profile=profile, project=project,
-                                                               submit_time=submit_time, out=out,
-                                                               state=state)
-                                if self.cancelled(jid):
-                                    return
-                                if recovered:
-                                    result = recovered
-
-                        if not result.ok:
-                            self._fail(jid, generation, result, profile=profile)
-                            return
-                path = Path(result.payload.get("local_path") or result.payload.get("path") or out)
-                if not path.is_absolute():
-                    path = self.cfg.cli_dir / path
-                if not path.is_file() or not path.stat().st_size:
-                    raise ValueError("CLI did not write clip")
-                checkpoint = {"media_id": result.payload["media_id"], "path": str(path.resolve())}
+                else:
+                    checkpoint = self._generate_clip(job, state, index=index, prompt=clip["prompt"],
+                                                     is_t2v=is_t2v, frame=frame,
+                                                     out=(state.directory / f"clip-{index}.mp4").resolve(),
+                                                     project=project)
+                    if checkpoint is None:
+                        return
                 local[key] = checkpoint
                 state.save()
             if self.cancelled(jid):
@@ -386,6 +319,140 @@ class JobRunner:
                           cover_bg=cover_bg)
         state.data["uploaded"] = True
         state.save()
+
+    def _generate_clip(self, job, state, *, index, prompt, is_t2v, frame, out, project):
+        """Generate one clip file, preserving the existing retry and recovery behavior."""
+        jid, generation = job["id"], job["generation"]
+        profile = job["account"]["profile"]
+        kwargs = dict(profile=profile, project=project, model=job["model"],
+                      aspect=job["aspect"], duration=job["clip_seconds"], out=out)
+        submit_time = datetime.now(timezone.utc)
+        if is_t2v:
+            result = self.gflow.t2v(prompt, **kwargs)
+        else:
+            result = self.gflow.i2v(prompt, frame=frame, **kwargs)
+        if not result.ok:
+            recovered = self._recover_clip(result, jid=jid, index=index, profile=profile,
+                                           project=project, submit_time=submit_time, out=out, state=state)
+            if self.cancelled(jid):
+                return None
+            if recovered:
+                result = recovered
+            else:
+                msg = result.message or ""
+                if (result.exit_code in PRE_SUBMIT_EXIT_CODES and
+                        not any(err in msg for err in SUBMITTED_ERRORS)):
+                    delay = random.uniform(*PRE_SUBMIT_RETRY_DELAY_S)
+                    remaining = delay
+                    while remaining > 0:
+                        if self.cancelled(jid):
+                            return None
+                        step = min(5.0, remaining)
+                        self._sleep(step)
+                        remaining -= step
+                    if self.cancelled(jid):
+                        return None
+                    submit_time = datetime.now(timezone.utc)
+                    result = self.gflow.t2v(prompt, **kwargs) if is_t2v else self.gflow.i2v(prompt, frame=frame, **kwargs)
+                    if self.cancelled(jid):
+                        return None
+                    if not result.ok:
+                        recovered = self._recover_clip(result, jid=jid, index=index, profile=profile,
+                                                       project=project, submit_time=submit_time, out=out, state=state)
+                        if self.cancelled(jid):
+                            return None
+                        if recovered:
+                            result = recovered
+                elif (not is_t2v and result.error_class == "MediaUploadRejectedError" and
+                      "upload-terms" not in msg):
+                    previous = state.data.get("clips", {}).get(str(index - 1), {}).get("path")
+                    frame = self.media.last_frame(previous, state.directory / f"seed-{index}-b.jpg",
+                                                  self.cfg.seed_offset_ms + SEED_RETRY_EXTRA_MS)
+                    if self.cancelled(jid):
+                        return None
+                    submit_time = datetime.now(timezone.utc)
+                    result = self.gflow.i2v(prompt, frame=frame, **kwargs)
+                    if self.cancelled(jid):
+                        return None
+                    if not result.ok:
+                        recovered = self._recover_clip(result, jid=jid, index=index, profile=profile,
+                                                       project=project, submit_time=submit_time, out=out, state=state)
+                        if self.cancelled(jid):
+                            return None
+                        if recovered:
+                            result = recovered
+                if not result.ok:
+                    self._fail(jid, generation, result, profile=profile)
+                    return None
+        path = Path(result.payload.get("local_path") or result.payload.get("path") or out)
+        if not path.is_absolute():
+            path = self.cfg.cli_dir / path
+        if not path.is_file() or not path.stat().st_size:
+            raise ValueError("CLI did not write clip")
+        return {"media_id": result.payload["media_id"], "path": str(path.resolve())}
+
+    def _qc_clip(self, job, state, *, index, clip, is_t2v, frame, project):
+        jid, generation = job["id"], job["generation"]
+        qc = state.data.setdefault("qc", {}).setdefault(str(index), {
+            "attempt": 1, "prompts": {"1": clip["prompt"]}, "files": {}, "uploaded": []
+        })
+        max_attempts = job.get("clip_qc_max_attempts", 4)
+        waiting_reason = None
+        while True:
+            attempt = int(qc["attempt"])
+            attempt_key = str(attempt)
+            if attempt_key not in qc["files"]:
+                out = (state.directory / (f"clip-{index}.mp4" if attempt == 1 else f"clip-{index}-a{attempt}.mp4")).resolve()
+                result = self._generate_clip(job, state, index=index, prompt=qc["prompts"][attempt_key],
+                                             is_t2v=is_t2v, frame=frame, out=out, project=project)
+                if result is None:
+                    return None
+                qc["files"][attempt_key] = result
+                state.save()
+            if attempt not in qc["uploaded"]:
+                self.api.clip_qc_upload(jid, generation, index, attempt, qc["prompts"][attempt_key],
+                                        qc["files"][attempt_key]["path"])
+                qc["uploaded"].append(attempt)
+                state.save()
+            try:
+                response = self.api.clip_qc_status(jid, generation, index, attempt)
+            except TransientApiError:
+                log.warning("Clip QC status unavailable for job %s clip %s; continuing to poll", jid, index)
+                response = {"state": "pending"}
+            status = response.get("state")
+            if status == "pending":
+                reason = response.get("waiting_reason")
+                if reason and reason != waiting_reason:
+                    log.info("Clip QC waiting for job %s clip %s: %s", jid, index, reason)
+                    waiting_reason = reason
+                remaining = self.cfg.clip_qc_poll_seconds
+                while remaining > 0:
+                    if self.cancelled(jid):
+                        return None
+                    step = min(5.0, remaining)
+                    self._sleep(step)
+                    remaining -= step
+                continue
+            if status == "pass":
+                return qc["files"][attempt_key]
+            if status == "use_attempt":
+                chosen = int(response["use_attempt"])
+                log.info("Using clip QC attempt %s for job %s clip %s", chosen, jid, index)
+                return qc["files"][str(chosen)]
+            if status == "retry":
+                next_attempt = attempt + 1
+                if next_attempt > max_attempts:
+                    self.api.fail(jid, generation, "other", "clip QC asked for too many attempts")
+                    return None
+                qc["attempt"] = next_attempt
+                qc["prompts"][str(next_attempt)] = response["prompt"]
+                state.save()
+                continue
+            if status == "failed":
+                self.api.fail(jid, generation, "other", (response.get("waiting_reason") or "clip QC failed")[:500])
+                return None
+            self.api.fail(jid, generation, "other", f"clip QC returned an unknown state: {status!r}"[:500])
+            return None
 
     def _resolve_cover_raw(self, result, out: Path) -> Path | None:
         payload = getattr(result, "payload", {})

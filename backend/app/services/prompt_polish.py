@@ -395,6 +395,76 @@ def _ask(config: PolishConfig, prompt: str, http_post=None, attempt: int = 1):
         raise
 
 
+def parse_clip_answer(text: str) -> dict:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    start = cleaned.find("{")
+    depth = 0
+    end = -1
+    for index in range(start, len(cleaned)) if start >= 0 else ():
+        if cleaned[index] == "{":
+            depth += 1
+        elif cleaned[index] == "}":
+            depth -= 1
+            if depth == 0:
+                end = index + 1
+                break
+    if end < 0:
+        raise ValueError("answer is not valid JSON in the required shape")
+    try:
+        value = json.loads(cleaned[start:end])
+    except json.JSONDecodeError as exc:
+        raise ValueError("answer is not valid JSON in the required shape") from exc
+    if not isinstance(value, dict):
+        raise ValueError("answer is not valid JSON in the required shape")
+    if not isinstance(value.get("prompt"), str) or not isinstance(value.get("changes"), list):
+        raise ValueError("answer is not valid JSON in the required shape")
+    return value
+
+
+def repolish_clip(prompt: str, *, mode: str, clip_index: int, clips_total: int, issues: list[dict],
+                  template, niche: str | None, config: PolishConfig, http_post=None) -> str:
+    i2v = (' It is image-to-video: it starts from the last frame of the previous clip and must begin with "Continue seamlessly from this exact frame".'
+           if mode != "t2v" else "")
+    issue_lines = "\n".join(f"- [{item['severity']}] {item['problem']}" for item in issues)
+    instruction = f'''You are a senior prompt engineer for Google Flow (Veo 3). The prompt below made clip {clip_index} of {clips_total} ({template.clip_seconds} s, vertical 9:16) of one short video from template "{template.name}" (niche: {niche or "general"}).{i2v}
+A reviewer watched the generated clip and found these logic errors:
+{issue_lines}
+Rewrite the prompt so Flow does not make these errors again:
+- Keep the same story, facts, subject, livery, camera plan and order of events. Change only what prevents the listed errors: state the correct behaviour plainly (for example the direction of travel, which parts stay still, that both tyres stay on the ground), and simplify or remove the action that caused an error. Fewer, clearer actions beat more words.
+- Keep every text inside double quotes EXACTLY as written, in the same order. Do not add new double-quoted text.
+- Keep the narrator voice sentence and the background sound sentence exactly as they are.
+- Keep every restriction of the original (no text, the logo rules, no watermark, no cuts - whichever it has) and its intended visual styles (X-ray cutaway, exploded view, glowing lines).
+- Do not invent facts, mechanisms, brands or events.
+- Stay under 2,600 characters.
+Return ONLY JSON, no markdown: {{"prompt":"...","changes":["one short reason per change"]}}
+
+PROMPT:
+{prompt}'''
+    original_quotes = _QUOTE_RE.findall(prompt)
+    for attempt in (1, 2):
+        try:
+            resp = _ask(config, instruction, http_post=http_post, attempt=attempt)
+            try:
+                response_json = resp.json()
+            except Exception as exc:
+                raise ValueError("repolish answer invalid") from exc
+            answer = parse_clip_answer(response_json.get("text", ""))
+            rewritten = answer["prompt"]
+            if (_QUOTE_RE.findall(rewritten) != original_quotes or len(rewritten) > 2600
+                    or (mode != "t2v" and not rewritten.startswith(_I2V_PREFIX))):
+                raise ValueError("repolish answer invalid")
+            return rewritten
+        except ValueError:
+            if attempt == 2:
+                raise ValueError("repolish answer invalid")
+    raise ValueError("repolish answer invalid")
+
+
 def polish_clips(clips: list[dict], *, template, niche: str | None, config: PolishConfig,
                  max_attempts: int = 3, resume: dict | None = None, http_post=None) -> PolishResult:
     """Rewrite clip prompts via Argon. Raises PolishUnavailable on infra errors."""
