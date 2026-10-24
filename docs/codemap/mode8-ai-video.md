@@ -224,6 +224,12 @@ Implemented in `gflow_worker/probe_credits.py`:
 - Clip N > 1: image-to-video (`i2v`) using `Media.last_frame(clip_prev, seed_png, offset_ms=100)`, unless the clip's `mode` is `t2v` (cut-style templates such as health): then it is its own t2v generation.
 - `Media.last_frame` (`media.py:20-33`): Runs `ffmpeg -sseof -0.1 -i clip.mp4 -frames:v 1 seed.png`. Fallback to positive seek if `-sseof` fails.
 
+### 6.1a Per-Clip Logic QC (brand switch `ai_video_clip_qc_enabled`, default off; owner 2026-10-24)
+- Claim payload carries `clip_qc` + `clip_qc_max_attempts` (4 = first try + 3 retries).
+- Worker (`runner.py` `_qc_clip`, state in `state.data["qc"][index]` for resume): generate attempt -> `POST jobs/{id}/clips/{index}/qc` (multipart clip) -> poll `qc-status` every `clip_qc_poll_seconds` (20 s). States: `pending`, `pass`, `retry` (new prompt, same seed frame), `use_attempt` (best attempt after 4), `failed` (QC unavailable for 6 h); an unknown state fails the job. Only the accepted attempt becomes the checkpoint / `clip_done`, so the next i2v clip seeds from it.
+- Server: rows in `video_clip_qc` (one per job/generation/clip/attempt). Celery `app.tasks.ai_video_clip_qc.check_clip` on the `gallery` queue: claims the row (`processing_until`, 40 min), runs `logic_check` (8-frame contact sheet + previous accepted clip's last frame, FlashFast vision, logic errors only; a clip passes when no issue is "major"), re-polishes only that clip (`prompt_polish.repolish_clip`, Argon -> ChatGPT, quotes/i2v prefix/2,600 chars validated), never holds a DB transaction during slow calls, re-checks job status/generation after each slow call. Vision or re-polish unavailable -> re-queue every 120 s, verdict `failed` after 6 h. `qc-status` re-queues a lost task after 15 min.
+- Credits: attempt >= 2 is charged at upload. Accepted-best clips (`job.clips[i].qc.accepted_best`) send the finished video to `pending_review`. QC clip copies live in `media/ai_videos/clip_qc/` and are deleted at finalize.
+
 ### 6.2 Concat Assembly & Frozen Frame Removal
 `gflow_worker/media.py:35-63`:
 - Trims trailing 100ms (`trim_tail_ms=100`) from preceding clips (`trim=end=duration-0.1`). Eliminates static/frozen last frames at clip boundary transitions.

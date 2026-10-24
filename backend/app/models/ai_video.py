@@ -123,3 +123,29 @@ class VideoJob(Base):
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class VideoClipQc(Base):
+    __tablename__ = "video_clip_qc"
+    __table_args__ = (
+        UniqueConstraint("video_job_id", "generation", "clip_index", "attempt", name="uq_video_clip_qc_attempt"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    video_job_id = Column(Integer, ForeignKey("video_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    generation = Column(Integer, nullable=False)
+    clip_index = Column(Integer, nullable=False)
+    attempt = Column(Integer, nullable=False)
+    prompt = Column(Text, nullable=False)
+    clip_path = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    issues = Column(JSON, nullable=True)
+    major_count = Column(Integer, nullable=True)
+    minor_count = Column(Integer, nullable=True)
+    verdict = Column(String(20), nullable=True)
+    next_prompt = Column(Text, nullable=True)
+    use_attempt = Column(Integer, nullable=True)
+    waiting_reason = Column(Text, nullable=True)
+    processing_until = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

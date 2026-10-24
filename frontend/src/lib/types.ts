@@ -70,6 +70,7 @@ export interface Fanpage {
   qa_facebook_enabled?: boolean;
   qa_ai_video_enabled?: boolean;
   ai_video_prompt_polish_enabled?: boolean;
+  ai_video_clip_qc_enabled?: boolean;
   ig_mode?: "repost" | "recreate_template" | "recreate_chatgpt";
 
   // ── Content modes (Feature 2) ──

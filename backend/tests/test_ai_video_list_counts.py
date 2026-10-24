@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS target_fanpages (
     qa_facebook_enabled INTEGER,
     qa_ai_video_enabled INTEGER,
     ai_video_prompt_polish_enabled INTEGER,
+    ai_video_clip_qc_enabled INTEGER,
     caption_tone TEXT,
     caption_language TEXT,
     caption_max_length INTEGER,

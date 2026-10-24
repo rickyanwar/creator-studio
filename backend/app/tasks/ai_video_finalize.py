@@ -74,6 +74,14 @@ def finalize_ai_video(video_job_id: int):
         passed = vision is None or vision["passed"]
         job.qc = {"technical": technical, "vision": vision, "passed": passed, "reasons": reasons}
         publish_status = PublishJobStatus.pending_publish if vision is None or vision["passed"] else PublishJobStatus.pending_review
+        from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS, clip_qc_dir
+        for clip in job.clips or []:
+            qc = clip.get("qc") or {}
+            if qc.get("accepted_best"):
+                publish_status = PublishJobStatus.pending_review
+                issues = qc.get("issues") or []
+                first_problem = issues[0].get("problem") if issues and isinstance(issues[0], dict) else "logic issues"
+                reasons.append(f"clip {clip['index']}: kept the best of {CLIP_QC_MAX_ATTEMPTS} attempts ({first_problem})")
         publish_video_path, publish_video_url = job.video_path, job.video_url
         publish_thumbnail_path, publish_thumbnail_url = job.thumbnail_path, job.thumbnail_url
         overlays_enabled = bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))
@@ -175,6 +183,11 @@ def finalize_ai_video(video_job_id: int):
         if idea:
             idea.status = "done"
         db.commit()
+        try:
+            for path in clip_qc_dir().glob(f"job{job.id}_*"):
+                path.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Failed to clean clip QC files for job %s", job.id, exc_info=True)
         if publish_status == PublishJobStatus.pending_publish and fanpage.ai_video_publish_mode == PublishMode.auto:
             from app.tasks.publisher import publish_job as publish_task
             publish_task.delay(publish_job.id)
@@ -388,4 +401,3 @@ def rerender_ai_video_overlay(publish_job_id: int):
             db.commit()
     finally:
         db.close()
-

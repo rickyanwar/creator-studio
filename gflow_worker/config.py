@@ -22,6 +22,7 @@ class Config:
     chrome_peak_mb: int = 1200
     work_dir: Path = field(default_factory=lambda: Path("~/.gflow-worker").expanduser())
     poll_seconds: float = 60
+    clip_qc_poll_seconds: float = 20
     credits_refresh_minutes: float = 1440
     credits_refresh_jitter_minutes: float = 240
     clip_timeout_seconds: float = 1200
@@ -72,7 +73,7 @@ class Config:
         if values["max_concurrent"] > 2:
             log.warning("GFLOW_MAX_CONCURRENT=%d clamped to 2", values["max_concurrent"])
             values["max_concurrent"] = 2
-        for name in ("poll_seconds", "credits_refresh_minutes", "credits_refresh_jitter_minutes", "clip_timeout_seconds", "keep_done_days"):
+        for name in ("poll_seconds", "clip_qc_poll_seconds", "credits_refresh_minutes", "credits_refresh_jitter_minutes", "clip_timeout_seconds", "keep_done_days"):
             values[name] = float(os.getenv("GFLOW_" + name.upper(), str(cls.__dataclass_fields__[name].default)))
         values["cover_image_model"] = os.getenv("GFLOW_COVER_IMAGE_MODEL", str(cls.__dataclass_fields__["cover_image_model"].default))
         gap_raw = os.getenv("GFLOW_COVER_GAP_SECONDS", "").strip()
@@ -94,7 +95,7 @@ class Config:
             raise ValueError("GFLOW_CLI_DIR must be a directory")
         if cfg.max_concurrent < 1 or any(getattr(cfg, n) < 0 for n in ("mem_reserve_mb", "chrome_peak_mb", "seed_offset_ms", "keep_done_days", "credits_refresh_jitter_minutes")):
             raise ValueError("invalid worker limits")
-        if min(cfg.poll_seconds, cfg.credits_refresh_minutes, cfg.clip_timeout_seconds, cfg.probe_timeout_seconds,
+        if min(cfg.poll_seconds, cfg.clip_qc_poll_seconds, cfg.credits_refresh_minutes, cfg.clip_timeout_seconds, cfg.probe_timeout_seconds,
                cfg.lock_timeout_seconds) <= 0:
             raise ValueError("worker intervals must be positive")
         if cfg.credits_refresh_jitter_minutes >= cfg.credits_refresh_minutes:
