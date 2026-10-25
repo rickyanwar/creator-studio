@@ -32,6 +32,7 @@ from app.services.ai_video_prepare import (
 )
 from app.services.prompt_polish import PolishConfig, PolishResult, PolishUnavailable
 from app.services.prompt_polish import PolishInterrupted
+from app.services.video_templates import get_template, render_clips
 import app.services.ai_video_fill as ai_video_fill
 import app.tasks.ai_video_plan as ai_video_plan
 import app.tasks.ai_video_prepare as ai_video_prepare
@@ -220,6 +221,77 @@ def test_2_polish_not_ok_retries_and_fails(db):
         assert idea.status == "failed"
         assert idea.error.startswith("Argon prompt polish failed after 3 rounds:")
         assert "bad logic; extra quote" in idea.error
+
+
+def test_render_fallback_for_timed_template(db):
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
+    idea = _idea(session, fp, template_key="motorsport_tech_dive", topic="F1 carbon brakes", clips=1)
+    session.commit()
+
+    template = get_template("motorsport_tech_dive")
+    fill_vars = dict(template.raw["example"]["variables"])
+    fill_vars["livery"] = "graphite_violet"
+    fill_vars["channel_name"] = "TEST"
+    rendered = render_clips(template, fill_vars, 1)
+
+    fill_return = (fill_vars, "Tech Dive Title", "Tech Dive Caption", rendered, "gemini")
+    polish_problem = "clip 1: keep every timed-shot marker exactly and in order: ..."
+
+    with patch("app.services.ai_video_prepare.fill_idea", return_value=fill_return), \
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(ok=False, problems=[polish_problem])):
+        outcome = prepare_idea(session, idea, fp, CFG)
+
+    assert outcome == "prepared"
+    session.refresh(idea)
+    assert idea.status == "approved"  # unchanged
+    assert idea.polish_attempts == 1
+    assert idea.polish_error == polish_problem
+    assert idea.prepared_at is not None
+
+    prep = idea.prepared
+    assert isinstance(prep, dict)
+    assert prep["version"] == PREPARED_VERSION
+    assert prep["fingerprint"] == idea_fingerprint(idea)
+    assert prep["template_key"] == "motorsport_tech_dive"
+    assert prep["clips_count"] == 1
+    assert prep["variables"] == fill_vars
+    assert prep["title"] == "Tech Dive Title"
+    assert prep["caption"] == "Tech Dive Caption"
+    assert prep["provider"] == "gemini"
+    assert prep["render_fallback"] is True
+    assert prep["polished"] is False
+    assert len(prep["clips"]) == 1
+    assert prep["clips"][0]["prompt_original"] == rendered[0]["prompt"]
+    assert prep["clips"][0]["prompt"] == rendered[0]["prompt"]
+    assert prep["clips"][0]["voice_sentence"] is None
+    assert prep["clips"][0]["ambience_sentence"] is None
+    assert prep["clips"][0]["changes"] == []
+    assert prep["clips"][0]["polish_problems"] == [polish_problem]
+
+    assert valid_prepared(idea) is not None
+
+
+def test_no_fallback_for_other_templates(db):
+    session, fanpage_ids = db
+    fp = _fanpage(session, fanpage_ids, ai_video_prompt_polish_enabled=True)
+    idea = _idea(session, fp, template_key="motorsport_tech_explainer", topic="turbo lag", clips=2)
+    session.commit()
+
+    orig_clips = [{"index": 1, "mode": "t2v", "prompt": "Orig"}]
+    fill_return = ({"part": "turbo"}, "T", "C", orig_clips, "gemini")
+    polish_problem = "clip 1: keep every timed-shot marker exactly and in order: ..."
+
+    with patch("app.services.ai_video_prepare.fill_idea", return_value=fill_return), \
+         patch("app.services.ai_video_prepare.polish_clips", return_value=PolishResult(ok=False, problems=[polish_problem])):
+        outcome = prepare_idea(session, idea, fp, CFG)
+
+    assert outcome == "skipped"
+    session.refresh(idea)
+    assert idea.prepared is None
+    assert idea.polish_error == polish_problem
+    assert valid_prepared(idea) is None
+    assert idea.status == "approved"
 
 
 def test_3_filler_value_error_fails_and_runtime_error_skips(db):

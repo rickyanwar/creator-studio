@@ -1,8 +1,8 @@
 {
   "style": "Photorealistic 3D CGI, premium motorsport engineering documentary style, one continuous camera move with no cuts.",
-  "audio": "Audio: engine and wind ambience quietly under the voice-over, no music.",
-  "narrator_en": "Voice-over: a confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
-  "narrator_en_followup": "Voice-over: the same confident British male documentary narrator with a deep, warm, clear voice, speaking at a steady pace, says in English:",
+  "audio": "Audio: steady engine and wind ambience at a low, even level, always quieter than the voice-over, no music.",
+  "narrator_en": "Voice-over: a 40-year-old British male documentary narrator recorded close to the microphone in a dry studio, with a deep, warm, clear baritone voice and a steady, even pace, says in English:",
+  "narrator_en_followup": "Voice-over: a 40-year-old British male documentary narrator recorded close to the microphone in a dry studio, with a deep, warm, clear baritone voice and a steady, even pace, says in English:",
   "liveries": {
     "scarlet": {
       "full": "deep glossy red with white accents on the nose, sidepods and rear wing, a black floor and a black halo",
@@ -73,18 +73,18 @@
     "f1_red": "A modern Formula 1 car in glossy racing red with white accents, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "f1_red_short": "glossy red Formula 1 car with white accents, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "motogp": "A modern MotoGP prototype racing motorcycle (full carbon aero fairing with front winglets, slick racing tyres, rider tucked low behind the screen) in glossy racing red with white accents and a rider in a plain red leather suit and plain helmet, no sponsor logos, no text, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
-    "motogp_short": "glossy red MotoGP prototype motorcycle with white accents and the same plain-suited rider, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
+    "motogp_short": "glossy red MotoGP prototype motorcycle with white accents and its plain-suited rider, no text, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "f1": "A modern open-wheel single-seater Grand Prix race car in a {livery} livery{lettering}, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "f1_short": "{livery_short} open-wheel single-seater Grand Prix race car{lettering_short}, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
     "motogp_livery": "A modern MotoGP prototype racing motorcycle (full carbon aero fairing with front winglets, slick racing tyres, rider tucked low behind the screen) in a {livery} livery{lettering} and a rider in a plain leather suit and plain helmet in matching colours, no sponsor logos, no numbers, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner",
-    "motogp_livery_short": "{livery_short} MotoGP prototype motorcycle{lettering_short} and the same plain-suited rider, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner"
+    "motogp_livery_short": "{livery_short} MotoGP prototype motorcycle{lettering_short} and its plain-suited rider, no official league, series or governing-body logos (no F1, FIA, MotoGP, FIM or Dorna logos), no watermark in any corner"
   },
   "narrator_presets": {
-    "EN-PADDOCK": "a relaxed British male motorsport commentator in his forties with a slightly raspy, natural voice, speaking conversationally in English with small natural pauses and breaths, like chatting to a friend in the paddock, not a polished announcer, not a movie-trailer voice, says:",
-    "EN-AUSSIE-ENG": "a laid-back Australian race engineer in his thirties with a slightly gravelly, natural voice, explaining casually and enthusiastically in English with natural breaths, unscripted and down to earth, not a polished announcer, says:",
-    "EN-SCOT": "a calm Scottish man in his fifties with a gentle rasp, speaking conversationally in English at an easy pace with tiny natural hesitations, like an old mechanic telling a story, not a polished announcer, says:",
-    "EN-JOURNO-F": "a confident Northern English female motorsport journalist in her thirties with a slightly husky, natural voice, speaking in English like a relaxed podcast host with natural breaths, not a polished announcer, says:",
-    "EN-US-ENG": "a soft-spoken American race engineer in his forties, speaking casually in English as if explaining to a new team member, natural pauses and breaths, not a movie-trailer voice, says:"
+    "EN-PADDOCK": "a 45-year-old British male motorsport commentator recorded close to the microphone in a dry studio, with a slightly raspy, natural baritone voice and a relaxed, conversational, even pace, says:",
+    "EN-AUSSIE-ENG": "a 35-year-old Australian male race engineer recorded close to the microphone in a dry studio, with a slightly gravelly, natural baritone voice and a casual, enthusiastic, even pace, says:",
+    "EN-SCOT": "a 55-year-old Scottish male mechanic recorded close to the microphone in a dry studio, with a gentle, slightly raspy, warm baritone voice and a calm, easy, even pace, says:",
+    "EN-JOURNO-F": "a 35-year-old Northern English female motorsport journalist recorded close to the microphone in a dry studio, with a slightly husky, warm alto voice and a relaxed, confident, even pace, says:",
+    "EN-US-ENG": "a 40-year-old American male race engineer recorded close to the microphone in a dry studio, with a soft-spoken, warm baritone voice and a calm, casual, even pace, says:"
   },
-  "narrator_note": "Narrator line = 'Voice-over: ' + preset; follow-up clips replace the leading 'a' with 'the same'. Presets other than the original documentary voice (narrator_en) are untested; test with 4 s clips (7 credits) only with owner approval."
+  "narrator_note": "Narrator line = 'Voice-over: ' + preset, word for word the same in every clip (no 'the same ...' follow-up wording: the video model cannot see other clips). Presets are studio voice profiles; leave out breaths, pauses, hesitations and words-per-minute numbers, which make the voice drift. Presets other than the original documentary voice (narrator_en) are untested; test with 4 s clips (7 credits) only with owner approval."
 }

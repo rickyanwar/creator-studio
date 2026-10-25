@@ -113,7 +113,9 @@ def test_render_narrator_presets(preset):
     rendered = video_templates.render_clips(template, _variables(narrator_preset=preset, livery="scarlet"), 2)
 
     assert f"Voice-over: {preset_text}" in rendered[0]["prompt"]
-    assert f"Voice-over: the same {preset_text[2:]}" in rendered[1]["prompt"]
+    # Veo cannot see other clips, so every clip carries the identical narrator line.
+    assert f"Voice-over: {preset_text}" in rendered[1]["prompt"]
+    assert "Voice-over: the same" not in rendered[1]["prompt"]
     assert all("{" not in clip["prompt"] and "}" not in clip["prompt"] for clip in rendered)
     # Regression test: non-EN-DOC narrator preserves vehicle text
     assert "Grand Prix race car in a deep glossy red" in rendered[0]["prompt"]
