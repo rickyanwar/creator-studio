@@ -12,6 +12,7 @@ from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.social_publishing import PublishDelivery, SocialDestination
 from app.models.target_fanpages import TargetFanpage
 from app.services.content_groups import GROUP_IDS, enabled_groups, group_of
+from app.services.event_days import effective_daily_target
 from app.services.publishing_schedule import (
     _pick_slot_instant,
     build_legacy_reservations_query,
@@ -242,8 +243,10 @@ def pick_slot(
 ) -> datetime:
     """Find next slot enforcing per-mode quota and borrowing rules."""
     enabled = enabled_groups(fanpage) if fanpage else []
+    local_day = now_utc.astimezone(zoneinfo.ZoneInfo(destination.timezone)).date()
+    target = effective_daily_target(db, destination, fanpage, local_day)
     quotas = group_quotas(
-        destination.daily_target, destination.mode_shares, enabled
+        target, destination.mode_shares, enabled
     )
     g = group_of(job.content_type)
 
@@ -251,7 +254,7 @@ def pick_slot(
         return compute_audience_slot(
             now_utc=now_utc,
             timezone_name=destination.timezone,
-            daily_target=destination.daily_target,
+            daily_target=target,
             min_gap_minutes=destination.min_gap_minutes,
             existing_slots_utc=list(all_reservations),
             sleep_start_hour=sleep_start,
@@ -278,7 +281,7 @@ def pick_slot(
         slot = compute_audience_slot(
             now_utc=now_utc,
             timezone_name=destination.timezone,
-            daily_target=destination.daily_target,
+            daily_target=target,
             min_gap_minutes=destination.min_gap_minutes,
             existing_slots_utc=current_existing,
             sleep_start_hour=sleep_start,
@@ -318,7 +321,7 @@ def pick_slot(
                 s2 = compute_audience_slot(
                     now_utc=max(now_utc, w_start_utc),
                     timezone_name=destination.timezone,
-                    daily_target=destination.daily_target,
+                    daily_target=target,
                     min_gap_minutes=destination.min_gap_minutes,
                     existing_slots_utc=current_existing,
                     sleep_start_hour=sleep_start,
@@ -334,7 +337,7 @@ def pick_slot(
         existing_on_d = sum(
             1 for dt in current_existing if dt.astimezone(tz).date() == d
         )
-        needed = max(0, destination.daily_target - existing_on_d)
+        needed = max(0, target - existing_on_d)
         noon_utc = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz).astimezone(
             timezone.utc
         )
@@ -349,7 +352,7 @@ def pick_slot(
     return compute_audience_slot(
         now_utc=now_utc,
         timezone_name=destination.timezone,
-        daily_target=destination.daily_target,
+        daily_target=target,
         min_gap_minutes=destination.min_gap_minutes,
         existing_slots_utc=list(all_reservations),
         sleep_start_hour=sleep_start,

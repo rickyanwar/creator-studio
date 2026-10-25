@@ -203,7 +203,7 @@ def _create_delivery(
             id=job_id,
             fanpage_id=dest_id,
             status=PublishJobStatus.pending_publish,
-            content_type=ContentType.news_content,
+            content_type=ContentType.discussion,
             scheduled_for=scheduled_for,
         )
         db.add(job)

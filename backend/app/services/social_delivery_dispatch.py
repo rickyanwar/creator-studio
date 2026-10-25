@@ -15,13 +15,14 @@ import re
 import subprocess
 from typing import Any, Sequence
 import uuid
+import zoneinfo
 
 import httpx
 from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.publish_jobs import PublishJob, PublishJobStatus
+from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.social_publishing import (
     DeliveryEvent,
     DestinationDeviceAssignment,
@@ -32,6 +33,8 @@ from app.models.social_publishing import (
     RecoveryIncident,
     SocialDestination,
 )
+from app.models.target_fanpages import TargetFanpage
+from app.services.event_days import news_fresh_hours
 from app.services.repliz_client import (
     format_schedule_at,
     get_repliz_client_from_db,
@@ -1970,6 +1973,71 @@ def replan_stale_scheduled_deliveries(
     return replanned
 
 
+REPLIZ_NEWS_SUBMIT_LEAD_MINUTES = 45
+
+
+def _news_dispatch_gate(db: Session, delivery: PublishDelivery, now: datetime) -> str:
+    """Return 'go', 'hold', or 'stale' for news delivery dispatch."""
+    try:
+        if not delivery or not delivery.publish_job_id:
+            return "go"
+
+        job = db.query(PublishJob).filter_by(id=delivery.publish_job_id).first()
+        if not job or job.content_type != ContentType.news_content or job.is_breaking:
+            return "go"
+
+        fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first() if job.fanpage_id else None
+        destination = db.query(SocialDestination).filter_by(id=delivery.destination_id).first() if delivery.destination_id else None
+
+        now_aware = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+        now_naive = now_aware.astimezone(timezone.utc).replace(tzinfo=None)
+
+        try:
+            dest_tz = zoneinfo.ZoneInfo(destination.timezone) if destination and destination.timezone else zoneinfo.ZoneInfo("Asia/Jakarta")
+        except Exception:
+            dest_tz = zoneinfo.ZoneInfo("Asia/Jakarta")
+        local_day = now_aware.astimezone(dest_tz).date()
+
+        dest_stale_hours = getattr(destination, "news_stale_hours", None) if destination else None
+        hours = news_fresh_hours(db, fanpage, dest_stale_hours, local_day)
+
+        job_created_at = getattr(job, "created_at", None)
+        if job_created_at is None:
+            job_created_naive = now_naive
+        elif job_created_at.tzinfo is not None:
+            job_created_naive = job_created_at.astimezone(timezone.utc).replace(tzinfo=None)
+        else:
+            job_created_naive = job_created_at
+
+        delivery_scheduled = getattr(delivery, "scheduled_for", None)
+        if delivery_scheduled is not None and delivery_scheduled.tzinfo is not None:
+            delivery_scheduled_naive = delivery_scheduled.astimezone(timezone.utc).replace(tzinfo=None)
+        else:
+            delivery_scheduled_naive = delivery_scheduled
+
+        if (
+            delivery_scheduled_naive is not None
+            and (delivery_scheduled_naive - job_created_naive) > timedelta(hours=hours)
+        ) or (now_naive - job_created_naive) > timedelta(hours=hours):
+            return "stale"
+
+        if (
+            delivery.intended_method == "repliz"
+            and delivery_scheduled_naive is not None
+            and (delivery_scheduled_naive - now_naive) > timedelta(minutes=REPLIZ_NEWS_SUBMIT_LEAD_MINUTES)
+        ):
+            return "hold"
+
+        return "go"
+    except Exception as exc:
+        logger.warning(
+            "Error in _news_dispatch_gate for delivery %s: %s",
+            getattr(delivery, "id", None),
+            exc,
+        )
+        return "go"
+
+
 def dispatch_due_deliveries(
     db: Session,
     job_id: int | None = None,
@@ -2033,6 +2101,18 @@ def dispatch_due_deliveries(
     processed: list[PublishDelivery] = []
 
     for candidate in candidates:
+        gate = _news_dispatch_gate(db, candidate, now)
+        if gate == "hold":
+            continue
+        if gate == "stale":
+            if candidate.attempt_count == 0 and candidate.claim_token is None and candidate.repliz_schedule_id is None and candidate.facebook_post_id is None and candidate.uncertain_since is None:
+                candidate.state = "skipped"
+                candidate.last_error = "stale: news too old to post at dispatch"
+                candidate.scheduled_for = None
+                db.commit()
+                processed.append(candidate)
+            continue
+
         delivery, token = claim_paced_delivery_for_dispatch(
             db,
             candidate.id,
@@ -2094,6 +2174,15 @@ def dispatch_due_deliveries(
                 rd = repliz_delivs[0]
                 job.repliz_schedule_id = rd.repliz_schedule_id
                 job.scheduled_for = rd.scheduled_for
+        elif all(
+            d.state == "skipped" and (d.last_error or "").startswith("stale:")
+            for d in all_deliveries
+        ):
+            job.status = PublishJobStatus.skipped
+            job.last_error = next(
+                (d.last_error for d in all_deliveries if d.last_error),
+                "stale: news too old to post at dispatch",
+            )
         elif job.status == PublishJobStatus.publishing:
             # Release back to pending_publish for the recovery sweep
             job.status = PublishJobStatus.pending_publish

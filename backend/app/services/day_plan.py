@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.social_publishing import SocialDestination
 from app.models.target_fanpages import TargetFanpage
 from app.services import mode_quota, publishing_schedule
+from app.services.event_days import effective_daily_target
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,11 @@ def destination_day_plan(
     if destination.content_project_id:
         fanpage = db.get(TargetFanpage, destination.content_project_id)
 
+    target = effective_daily_target(db, destination, fanpage, local_now.date())
+
     enabled = mode_quota.enabled_groups(fanpage) if fanpage else []
     quotas = mode_quota.group_quotas(
-        destination.daily_target, destination.mode_shares, enabled
+        target, destination.mode_shares, enabled
     )
 
     reservations_with_groups = mode_quota.group_reservations(db, destination)
@@ -59,7 +62,7 @@ def destination_day_plan(
             remaining[g] = max(0, q - used.get(g, 0))
         remaining_total = sum(remaining.values())
     else:
-        remaining_total = max(0, destination.daily_target - sum(used.values()))
+        remaining_total = max(0, target - sum(used.values()))
 
     # Free slots left today
     reservations = publishing_schedule.get_destination_reservations_utc(db, destination)
@@ -73,13 +76,13 @@ def destination_day_plan(
 
     hour_weights = getattr(fanpage, "publish_hour_weights", None) if fanpage else None
 
-    if destination.daily_target > 0 and remaining_total > 0:
+    if target > 0 and remaining_total > 0:
         for _ in range(min(remaining_total, 30)):
             try:
                 slot = publishing_schedule.compute_audience_slot(
                     now_utc=now_utc,
                     timezone_name=destination.timezone,
-                    daily_target=destination.daily_target,
+                    daily_target=target,
                     min_gap_minutes=destination.min_gap_minutes,
                     existing_slots_utc=reservations + phantoms,
                     sleep_start_hour=sleep_start,
@@ -108,7 +111,8 @@ def destination_day_plan(
         "timezone": destination.timezone,
         "local_now": local_now_iso,
         "local_date": local_date,
-        "daily_target": destination.daily_target,
+        "daily_target": target,
+        "base_daily_target": destination.daily_target,
         "quotas": quotas,
         "used": used,
         "remaining": remaining,

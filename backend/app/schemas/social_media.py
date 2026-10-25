@@ -372,6 +372,7 @@ class DayPlanOut(BaseModel):
     local_now: str
     local_date: str
     daily_target: int
+    base_daily_target: Optional[int] = None
     quotas: dict[str, int]
     used: dict[str, int]
     remaining: dict[str, int]
