@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.posts import Post
-from app.models.publish_jobs import ContentType, PublishJob
+from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.social_publishing import (
     DeliveryEvent,
     DestinationDeviceAssignment,
@@ -27,6 +27,7 @@ from app.models.social_publishing import (
     SocialDestination,
 )
 from app.models.target_fanpages import TargetFanpage
+from app.services.event_days import news_fresh_hours
 from app.services.social_delivery_policy import (
     choose_method_for_slot,
     compute_next_slot,
@@ -318,9 +319,12 @@ def _plan_slot(
     if job_created_at_utc > aware_now:
         job_created_at_utc = aware_now
 
-    news_stale_hours = getattr(destination, "news_stale_hours", 24)
-    if news_stale_hours is None:
-        news_stale_hours = 24
+    try:
+        dest_tz = zoneinfo.ZoneInfo(destination.timezone)
+    except Exception:
+        dest_tz = zoneinfo.ZoneInfo("Asia/Jakarta")
+    local_day = aware_now.astimezone(dest_tz).date()
+    news_stale_hours = news_fresh_hours(db, dest_fanpage, getattr(destination, "news_stale_hours", None), local_day)
 
     is_stale_news = (
         group_of(job.content_type) == "news"
@@ -328,6 +332,84 @@ def _plan_slot(
     )
 
     return next_slot_utc, is_stale_news, news_stale_hours, existing_slots_utc
+
+
+SUPERSEDE_REASON = "stale: superseded by fresher news (job {job_id})"
+
+
+def _supersedable_news_delivery(
+    db: Session,
+    destination: SocialDestination,
+    job: PublishJob,
+    aware_now: datetime,
+    stale_hours: int,
+    *,
+    lock: bool,
+) -> PublishDelivery | None:
+    """Oldest untouched news delivery on this destination whose slot would still be fresh for `job` (owner 2026-10-26: newest news first). None when there is none."""
+    aware_now_utc = aware_now if aware_now.tzinfo is not None else aware_now.replace(tzinfo=timezone.utc)
+    aware_now_naive = aware_now_utc.astimezone(timezone.utc).replace(tzinfo=None)
+
+    job_created_at = getattr(job, "created_at", None)
+    if job_created_at is None:
+        job_created_naive = aware_now_naive
+        job_created_aware = aware_now_utc
+    else:
+        if job_created_at.tzinfo is not None:
+            job_created_naive = job_created_at.astimezone(timezone.utc).replace(tzinfo=None)
+            job_created_aware = job_created_at.astimezone(timezone.utc)
+        else:
+            job_created_naive = job_created_at
+            job_created_aware = job_created_at.replace(tzinfo=timezone.utc)
+
+    if job_created_aware > aware_now_utc:
+        job_created_aware = aware_now_utc
+
+    filters = [
+        PublishDelivery.destination_id == destination.id,
+        PublishDelivery.state == "scheduled",
+        PublishDelivery.repliz_schedule_id.is_(None),
+        PublishDelivery.facebook_post_id.is_(None),
+        PublishDelivery.uncertain_since.is_(None),
+        PublishDelivery.claim_token.is_(None),
+        PublishDelivery.attempt_count == 0,
+        PublishDelivery.scheduled_for > aware_now_naive,
+        PublishJob.content_type == ContentType.news_content,
+        PublishJob.created_at < job_created_naive,
+        PublishJob.is_breaking.is_(False),
+    ]
+    if getattr(job, "id", None) is not None:
+        filters.append(PublishJob.id != job.id)
+
+    query = (
+        db.query(PublishDelivery)
+        .join(PublishJob, PublishDelivery.publish_job_id == PublishJob.id)
+        .filter(*filters)
+        .order_by(PublishJob.created_at.asc())
+        .limit(50)
+    )
+
+    if lock:
+        query = query.with_for_update(of=PublishDelivery)
+
+    rows = query.all()
+    for deliv in rows:
+        if deliv.scheduled_for is None:
+            continue
+        pj = getattr(deliv, "publish_job", None)
+        if pj and pj.created_at is not None:
+            pj_created = pj.created_at if pj.created_at.tzinfo is None else pj.created_at.astimezone(timezone.utc).replace(tzinfo=None)
+            if pj_created >= job_created_naive:
+                continue
+        slot_aware = (
+            deliv.scheduled_for
+            if deliv.scheduled_for.tzinfo is not None
+            else deliv.scheduled_for.replace(tzinfo=timezone.utc)
+        )
+        if _news_stale_reason(slot_aware, job_created_aware, stale_hours, getattr(destination, "timezone", None)) is None:
+            return deliv
+
+    return None
 
 
 def news_slot_available(
@@ -360,7 +442,7 @@ def news_slot_available(
         aware_now = _resolve_aware_now(now_utc)
 
         for destination in destinations:
-            _, is_stale_news, _, _ = _plan_slot(
+            _, is_stale_news, news_stale_hours, _ = _plan_slot(
                 db=db,
                 destination=destination,
                 job=job,
@@ -369,6 +451,10 @@ def news_slot_available(
                 sleep_end=sleep_end,
             )
             if not is_stale_news:
+                return True
+            if _supersedable_news_delivery(
+                db, destination, job, aware_now, news_stale_hours, lock=False
+            ) is not None:
                 return True
 
         return False
@@ -473,7 +559,7 @@ def next_news_slot_utc(
 
         slots: list[datetime] = []
         for destination in destinations:
-            next_slot_utc, _, _, _ = _plan_slot(
+            next_slot_utc, is_stale_news, news_stale_hours, _ = _plan_slot(
                 db=db,
                 destination=destination,
                 job=job,
@@ -481,8 +567,19 @@ def next_news_slot_utc(
                 sleep_start=sleep_start,
                 sleep_end=sleep_end,
             )
-            if next_slot_utc is not None:
-                slots.append(next_slot_utc)
+            dest_slot = next_slot_utc
+            if is_stale_news:
+                old = _supersedable_news_delivery(
+                    db, destination, job, aware_now, news_stale_hours, lock=False
+                )
+                if old is not None and old.scheduled_for is not None:
+                    dest_slot = (
+                        old.scheduled_for
+                        if old.scheduled_for.tzinfo is not None
+                        else old.scheduled_for.replace(tzinfo=timezone.utc)
+                    )
+            if dest_slot is not None:
+                slots.append(dest_slot)
 
         return min(slots) if slots else None
     except Exception as exc:
@@ -585,6 +682,43 @@ def ensure_deliveries(
 
         platform = destination.kind
         platform_accepted = {"youtube": {"video"}, "x": {"image", "album", "video"}}.get(platform)
+        if is_stale_news:
+            old = _supersedable_news_delivery(
+                db, destination, job, aware_now, news_stale_hours, lock=True
+            )
+            if old is not None:
+                freed_slot = old.scheduled_for
+                old.state = "skipped"
+                old.last_error = SUPERSEDE_REASON.format(job_id=job.id)
+                old.scheduled_for = None
+
+                old_deliveries = (
+                    db.query(PublishDelivery)
+                    .filter(PublishDelivery.publish_job_id == old.publish_job_id)
+                    .all()
+                )
+                if old_deliveries and all(
+                    d.state == "skipped" and (d.last_error or "").startswith("stale:")
+                    for d in old_deliveries
+                ):
+                    old_job = (
+                        db.query(PublishJob)
+                        .filter(PublishJob.id == old.publish_job_id)
+                        .first()
+                    )
+                    if old_job is not None:
+                        old_job.status = PublishJobStatus.skipped
+                        old_job.last_error = old.last_error
+
+                logger.info(
+                    "news job %s takes slot of older news job %s on destination %s",
+                    job.id,
+                    old.publish_job_id,
+                    destination.id,
+                )
+                is_stale_news = False
+                naive_scheduled_for = freed_slot
+
         if is_stale_news:
             state = "skipped"
             assigned_device_id = None

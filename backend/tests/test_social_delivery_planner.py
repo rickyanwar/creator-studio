@@ -270,7 +270,7 @@ def test_separate_page_method_quotas(db_session: Session):
     db_session.flush()
 
     # Create 3 jobs for the same local day
-    now_utc = datetime(2026, 10, 15, 8, 0, tzinfo=timezone.utc)
+    now_utc = datetime(2026, 10, 15, 9, 0, tzinfo=timezone.utc)
     jobs = []
     for i in range(3):
         job = PublishJob(

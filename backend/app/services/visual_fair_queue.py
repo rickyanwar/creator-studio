@@ -314,6 +314,64 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
     if not candidates:
         return None
 
+    from app.services.event_days import news_fresh_hours
+    from app.models.social_publishing import SocialDestination
+
+    now_aware = now_utc if now_utc.tzinfo is not None else now_utc.replace(tzinfo=timezone.utc)
+    today_wib = now_aware.astimezone(_WIB).date()
+
+    fp_cache: dict[int, TargetFanpage | None] = {}
+    base_cache: dict[int, int | None] = {}
+    surviving_candidates: list[PublishJob] = []
+    dropped_any = False
+
+    for job in candidates:
+        fid = job.fanpage_id
+        if fid not in fp_cache:
+            fp_cache[fid] = db.query(TargetFanpage).filter_by(id=fid).first()
+            try:
+                active_dests = (
+                    db.query(SocialDestination)
+                    .filter(
+                        SocialDestination.content_project_id == fid,
+                        SocialDestination.is_active.is_(True),
+                    )
+                    .all()
+                )
+                stale_hours_list = [
+                    d.news_stale_hours
+                    for d in active_dests
+                    if getattr(d, "news_stale_hours", None) is not None
+                ]
+                base_cache[fid] = min(stale_hours_list) if stale_hours_list else None
+            except Exception:
+                base_cache[fid] = None
+
+        fanpage = fp_cache[fid]
+        base = base_cache[fid]
+        hours = news_fresh_hours(db, fanpage, base, today_wib)
+
+        job_created = job.created_at
+        if job_created is not None:
+            job_created_naive = job_created if job_created.tzinfo is None else job_created.astimezone(timezone.utc).replace(tzinfo=None)
+            is_too_old = (now_naive - job_created_naive) > timedelta(hours=hours)
+        else:
+            is_too_old = False
+
+        if is_too_old and not job.is_breaking:
+            job.status = PublishJobStatus.skipped
+            job.last_error = f"stale: news older than {hours} h, not rendered"
+            dropped_any = True
+        else:
+            surviving_candidates.append(job)
+
+    if dropped_any:
+        db.commit()
+
+    candidates = surviving_candidates
+    if not candidates:
+        return None
+
     breaking_jobs = [j for j in candidates if j.is_breaking]
     breaking_jobs.sort(key=lambda j: j.created_at or datetime.min, reverse=True)
 

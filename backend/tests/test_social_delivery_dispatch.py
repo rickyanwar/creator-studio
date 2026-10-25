@@ -499,7 +499,7 @@ def test_mixed_1_plus_5_schedule(db_session):
     for i in range(6):
         job = PublishJob(
             fanpage_id=page_fanpage.id,
-            content_type=ContentType.news_content,
+            content_type=ContentType.discussion,
             design_image_url=f"https://cdn.example.com/img_{i}.png",
             ai_generated_caption=f"News caption {i}",
             status=PublishJobStatus.pending_publish,
@@ -714,7 +714,7 @@ def test_all_accepted_sets_cleanup_at_from_max_scheduled_for(db_session):
     )
     job = PublishJob(
         fanpage_id=fanpage.id,
-        content_type=ContentType.news_content,
+        content_type=ContentType.discussion,
         design_image_url="https://cdn.example.com/img.png",
         ai_generated_caption="Cleanup test",
         status=PublishJobStatus.pending_publish,
