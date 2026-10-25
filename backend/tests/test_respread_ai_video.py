@@ -213,6 +213,10 @@ def test_apply_moves_excess_deliveries_and_respects_cap(db_session: Session):
             state="repliz_scheduled",
             repliz_schedule_id=f"sched_{i}",
             scheduled_for=s,
+            claim_token=f"tok_{i}",
+            claimed_at=datetime(2026, 10, 26, 7, 0),
+            published_at=datetime(2026, 10, 26, 7, 0),
+            attempt_count=1,
         )
         db_session.add(deliv)
         deliveries.append(deliv)
@@ -243,6 +247,11 @@ def test_apply_moves_excess_deliveries_and_respects_cap(db_session: Session):
         assert deliveries[i].repliz_schedule_id is None
         assert deliveries[i].scheduled_for.date() > datetime(2026, 10, 26).date()
         assert deliveries[i].last_error == "respread: moved to respect the daily AI-video cap"
+        # The old submission is cleared so the dispatcher can claim the row again
+        assert deliveries[i].claim_token is None
+        assert deliveries[i].claimed_at is None
+        assert deliveries[i].published_at is None
+        assert deliveries[i].attempt_count == 0
 
         # Parent job status is pending_publish and repliz_schedule_id cleared
         parent_job = deliveries[i].publish_job

@@ -247,6 +247,11 @@ def respread(
                 row.repliz_schedule_id = None
                 row.scheduled_for = new_slot_naive
                 row.last_error = "respread: moved to respect the daily AI-video cap"
+                # Clear the old submission, or the dispatcher treats the row as already claimed.
+                row.claim_token = None
+                row.claimed_at = None
+                row.published_at = None
+                row.attempt_count = 0
 
                 if job is not None:
                     job.status = PublishJobStatus.pending_publish
