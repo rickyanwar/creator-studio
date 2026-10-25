@@ -283,13 +283,37 @@ def test_f1_and_health_cover_prompts_unchanged():
     assert "brochure photo" not in f1_img
 
     health_copy = build_cover_copy_prompt("Knee Joint", "caption", "health")
-    assert "3D anatomy " in health_copy and "everyday situation" in health_copy
-    assert "a dramatic CLOSE-UP" in health_copy
+    assert "hands pressed on the exact spot" in health_copy and "everyday situation" in health_copy
+    assert "never a real or famous person" in health_copy
     assert "WHOLE motorcycle" not in health_copy
 
     health_img = build_cover_image_prompt("Knee Joint", "scene", "health")
-    assert "3D anatomy render" in health_img
+    assert "semi-transparent 3D anatomy layer" in health_img
+    assert "ONE single photograph of ONE person" in health_img
     assert "WHOLE motorcycle" not in health_img
+
+
+def test_health_cover_prompts_rules_and_composition():
+    title = "Why your stomach hurts after eating"
+    health_copy = build_cover_copy_prompt(title, "", "health")
+    assert "hands pressed on the exact spot" in health_copy
+    assert "never a real or famous person" in health_copy
+    assert "no people's faces" not in health_copy
+
+    health_img = build_cover_image_prompt(title, "", "health")
+    assert "ONE single photograph of ONE person" in health_img
+    assert "semi-transparent 3D anatomy layer" in health_img
+    assert "no people's faces" not in health_img
+
+    # Regression: motogp image prompt retains DEFAULT_COMPOSITION's "no people's faces"
+    motogp_img = build_cover_image_prompt(title, "", "motogp")
+    assert "no people's faces" in motogp_img
+
+    # template_key="motorcycle_commercial" contains "the whole motorcycle"
+    moto_copy = build_cover_copy_prompt(title, "", "motogp", template_key="motorcycle_commercial")
+    assert "the whole motorcycle" in moto_copy.lower()
+    moto_img = build_cover_image_prompt(title, "", "motogp", template_key="motorcycle_commercial")
+    assert "the whole motorcycle" in moto_img.lower()
 
 
 def test_prepare_cover_motorcycle_commercial(sqlite_db):
