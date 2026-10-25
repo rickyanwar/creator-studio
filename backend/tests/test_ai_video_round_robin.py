@@ -5,6 +5,7 @@ import pytest
 
 from app.database import Base, SessionLocal, engine
 from app.models.ai_video import GflowAccount, GflowWorker, VideoIdea, VideoJob
+from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.settings import Settings
 from app.models.target_fanpages import PublishMode, TargetFanpage
 from app.services import ai_video_dispatch
@@ -24,6 +25,7 @@ def setup_db():
 
 
 def _clean(session):
+    session.query(PublishJob).delete()
     session.query(VideoJob).delete()
     session.query(VideoIdea).delete()
     session.query(GflowAccount).delete()
@@ -43,15 +45,27 @@ def db_session(setup_db):
         session.close()
 
 
-def _fanpage(db, suffix):
+def _fanpage(db, suffix, daily_count=1):
     fp = TargetFanpage(
         repliz_account_id=f"{TAG}_{suffix}", name=f"Page {suffix}", username=f"page{suffix}",
         is_active=True, publish_mode=PublishMode.auto, ai_video_enabled=True,
+        ai_video_daily_count=daily_count,
     )
     db.add(fp)
     db.commit()
     db.refresh(fp)
     return fp
+
+
+def _add_video_stock(db, fp, count: int, status=PublishJobStatus.pending_publish):
+    for _ in range(count):
+        db.add(PublishJob(
+            fanpage_id=fp.id,
+            content_type=ContentType.ai_video,
+            status=status,
+            is_deleted=False,
+        ))
+    db.commit()
 
 
 def _settings(db):
@@ -146,3 +160,57 @@ def test_sweep_keeps_pinned_job_whose_account_is_busy_or_resting(db_session):
 
     assert pinned.generation == generation_before
     assert pinned.account_id == acc.id
+
+
+def test_stock_heavy_page_waits_behind_thinner_page(db_session):
+    _settings(db_session)
+    db_session.add(GflowWorker(worker_id="w1", version="1", running_job_ids=[]))
+    db_session.add(GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=500))
+    db_session.commit()
+    page_a = _fanpage(db_session, "a", daily_count=3)
+    page_b = _fanpage(db_session, "b", daily_count=1)
+    _add_video_stock(db_session, page_a, 6)
+    _job(db_session, page_a, status="done", started_offset_min=2000)
+    _job(db_session, page_b, status="done", started_offset_min=1500)
+    old_a = _job(db_session, page_a, created_offset_min=120)
+    job_b = _job(db_session, page_b, created_offset_min=10)
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+
+    assert claimed is not None
+    assert claimed[0].id == job_b.id
+    assert old_a.status == "queued"
+
+
+def test_stock_heavy_page_still_claimed_if_only_queued_job(db_session):
+    _settings(db_session)
+    db_session.add(GflowWorker(worker_id="w1", version="1", running_job_ids=[]))
+    db_session.add(GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=500))
+    db_session.commit()
+    page_a = _fanpage(db_session, "a", daily_count=3)
+    _add_video_stock(db_session, page_a, 6)
+    job_a = _job(db_session, page_a, created_offset_min=10)
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+
+    assert claimed is not None
+    assert claimed[0].id == job_a.id
+
+
+def test_stock_below_threshold_follows_normal_round_robin(db_session):
+    _settings(db_session)
+    db_session.add(GflowWorker(worker_id="w1", version="1", running_job_ids=[]))
+    db_session.add(GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=500))
+    db_session.commit()
+    page_a = _fanpage(db_session, "a", daily_count=3)
+    page_b = _fanpage(db_session, "b", daily_count=1)
+    _add_video_stock(db_session, page_a, 5)
+    _job(db_session, page_a, status="done", started_offset_min=2000)
+    _job(db_session, page_b, status="done", started_offset_min=1500)
+    job_a = _job(db_session, page_a, created_offset_min=10)
+    job_b = _job(db_session, page_b, created_offset_min=10)
+
+    claimed = ai_video_dispatch.claim_job(db_session, "w1")
+
+    assert claimed is not None
+    assert claimed[0].id == job_a.id

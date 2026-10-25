@@ -230,6 +230,33 @@ def borrow_window(
     )
 
 
+def ai_video_daily_cap(fanpage) -> int | None:
+    """Most AI videos a page may post per local day (owner 2026-10-26); None = no cap."""
+    count = getattr(fanpage, "ai_video_daily_count", None) if fanpage is not None else None
+    return count if isinstance(count, int) and count > 0 else None
+
+
+def _block_day(
+    d: date,
+    current_existing: list[datetime],
+    phantoms: list[datetime],
+    blocked_days: set[Any],
+    target: int,
+    tz: Any,
+) -> None:
+    """Add phantom instants at local noon of day d until that day holds target entries."""
+    blocked_days.add(d)
+    existing_on_d = sum(
+        1 for dt in current_existing if dt.astimezone(tz).date() == d
+    )
+    needed = max(0, target - existing_on_d)
+    noon_utc = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz).astimezone(
+        timezone.utc
+    )
+    for _ in range(needed):
+        phantoms.append(noon_utc)
+
+
 def pick_slot(
     db: Session,
     destination: SocialDestination,
@@ -249,8 +276,57 @@ def pick_slot(
         target, destination.mode_shares, enabled
     )
     g = group_of(job.content_type)
+    cap = ai_video_daily_cap(fanpage) if g == "ai_video" else None
 
     if not quotas or g is None or g not in quotas:
+        if cap is None:
+            return compute_audience_slot(
+                now_utc=now_utc,
+                timezone_name=destination.timezone,
+                daily_target=target,
+                min_gap_minutes=destination.min_gap_minutes,
+                existing_slots_utc=list(all_reservations),
+                sleep_start_hour=sleep_start,
+                sleep_end_hour=sleep_end,
+                namespace=f"dest-{destination.id}",
+                hour_weights=hour_weights,
+            )
+
+        tz = zoneinfo.ZoneInfo(destination.timezone)
+        group_res = group_reservations(db, destination)
+        phantoms: list[datetime] = []
+        blocked_days: set[Any] = set()
+
+        while len(blocked_days) < 14:
+            current_existing = list(all_reservations) + phantoms
+            slot = compute_audience_slot(
+                now_utc=now_utc,
+                timezone_name=destination.timezone,
+                daily_target=target,
+                min_gap_minutes=destination.min_gap_minutes,
+                existing_slots_utc=current_existing,
+                sleep_start_hour=sleep_start,
+                sleep_end_hour=sleep_end,
+                namespace=f"dest-{destination.id}",
+                hour_weights=hour_weights,
+            )
+            d = slot.astimezone(tz).date()
+
+            used_ai = sum(
+                1
+                for instant, grp in group_res
+                if grp == "ai_video" and instant.astimezone(tz).date() == d
+            )
+
+            if used_ai < cap:
+                return slot
+
+            _block_day(d, current_existing, phantoms, blocked_days, target, tz)
+
+        logger.warning(
+            "ai video cap found no slot in 14 days for destination %s; using the plain slot",
+            destination.id,
+        )
         return compute_audience_slot(
             now_utc=now_utc,
             timezone_name=destination.timezone,
@@ -262,6 +338,9 @@ def pick_slot(
             namespace=f"dest-{destination.id}",
             hour_weights=hour_weights,
         )
+
+    if cap is not None:
+        quotas = {**quotas, g: min(quotas.get(g, 0), cap)}
 
     tz = zoneinfo.ZoneInfo(destination.timezone)
     group_res = group_reservations(db, destination)
@@ -301,7 +380,7 @@ def pick_slot(
             return slot
 
         # Try borrowing on day d
-        if borrow_hours > 0:
+        if borrow_hours > 0 and not (cap is not None and used_g >= quotas.get(g, 0)):
             w_start_utc, w_end_utc = borrow_window(
                 d, sleep_start, sleep_end, borrow_hours, tz
             )
@@ -333,16 +412,7 @@ def pick_slot(
                     return s2
 
         # Block day d: add phantom instants at local noon of day d until that day holds daily_target entries
-        blocked_days.add(d)
-        existing_on_d = sum(
-            1 for dt in current_existing if dt.astimezone(tz).date() == d
-        )
-        needed = max(0, target - existing_on_d)
-        noon_utc = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz).astimezone(
-            timezone.utc
-        )
-        for _ in range(needed):
-            phantoms.append(noon_utc)
+        _block_day(d, current_existing, phantoms, blocked_days, target, tz)
 
     logger.warning(
         "mode quota found no slot in 14 days for destination %s group %s; using the plain slot",

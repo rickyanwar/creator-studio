@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models.ai_video import GflowWorker, GflowAccount, VideoJob, VideoIdea
+from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.settings import Settings
+from app.models.target_fanpages import TargetFanpage
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ ACCOUNT_REST_MINUTES = (8, 20)
 WORKER_GAP_SECONDS = (60, 240)
 WORKER_ONLINE_SECONDS = 180
 ORPHAN_GRACE_SECONDS = 180
+STOCK_PRIORITY_DAYS = 2  # a page with >= 2 days of unposted AI videos waits behind pages with less (owner 2026-10-26)
 
 
 class ConflictError(Exception):
@@ -419,9 +422,48 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         .all()
     )
 
-    # Round-robin (owner rule 2026-10-21): every page gets one video before any page gets a second.
-    # The page with the fewest jobs started today (WIB day) goes first, then the page served
-    # longest ago, then the oldest job. Each page's ai_video_daily_count caps it when jobs are planned.
+    # Round-robin (owner rule 2026-10-21, 2026-10-26): pages with less stock go first so a page
+    # with >= 2 days of unposted videos waits behind thinner pages. Then the page with the fewest
+    # jobs started today (WIB day) goes first, then the page served longest ago, then the oldest job.
+    # Each page's ai_video_daily_count caps it when jobs are planned.
+    stock: dict[int, int] = {}
+    daily_count: dict[int, int] = {}
+    fp_ids = {j.fanpage_id for j in unpinned_jobs if j.fanpage_id is not None}
+    if fp_ids:
+        try:
+            stock = dict(
+                db.query(PublishJob.fanpage_id, func.count(PublishJob.id))
+                .filter(
+                    PublishJob.fanpage_id.in_(fp_ids),
+                    PublishJob.content_type == ContentType.ai_video,
+                    PublishJob.is_deleted.is_(False),
+                    PublishJob.status.in_([
+                        PublishJobStatus.pending_publish,
+                        PublishJobStatus.pending_review,
+                    ]),
+                )
+                .group_by(PublishJob.fanpage_id)
+                .all()
+            )
+            daily_count = dict(
+                db.query(TargetFanpage.id, TargetFanpage.ai_video_daily_count)
+                .filter(TargetFanpage.id.in_(fp_ids))
+                .all()
+            )
+        except Exception as e:
+            logger.warning("Failed to query video stock for fan pages %s: %s", fp_ids, e)
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            stock = {}
+            daily_count = {}
+
+    def stock_heavy(fid: Optional[int]) -> bool:
+        if fid is None:
+            return False
+        return stock.get(fid, 0) >= max(1, daily_count.get(fid) or 1) * STOCK_PRIORITY_DAYS
+
     last_started = dict(
         db.query(VideoJob.fanpage_id, func.max(VideoJob.started_at))
         .filter(VideoJob.started_at.isnot(None))
@@ -435,6 +477,7 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         .all()
     )
     unpinned_jobs.sort(key=lambda j: (
+        stock_heavy(j.fanpage_id),
         started_today.get(j.fanpage_id, 0),
         last_started.get(j.fanpage_id) or datetime.min,
         j.created_at,
