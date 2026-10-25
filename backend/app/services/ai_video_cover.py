@@ -83,10 +83,25 @@ MOTORCYCLE_PICTURE_RULES = """- the WHOLE motorcycle in full view, from the fron
 - do NOT describe the background, colours or style (the brand sets those);
 - {scene_rule}"""
 
+HEALTH_PICTURE_RULES = """- ONE real-looking adult (any ethnicity, aged 25 to 60, in ordinary everyday clothes) at home or in a doctor's room,
+  framed from the head to the waist, clearly feeling what the video is about: a tense, believable facial expression,
+  one or both hands pressed on the exact spot;
+- the body part the question names shows THROUGH the skin and clothes at that spot as a softly glowing,
+  semi-transparent, realistic anatomy layer (the bones, organ, nerve or muscle in its true place and true size), with
+  a warm red glow on the exact problem point; only that one body part is see-through, the rest is a normal photo;
+- the person's own eyes, skin and face always look natural and never glow; for a small part (an eye, a tooth, an
+  ear) the see-through layer shows its inner anatomy in place and a little larger than life (the eyeball with its tear
+  gland and tear film, the tooth with its root and nerve), so it reads clearly on a phone;
+- for an everyday situation without pain (reading in a car, a sneeze, falling asleep), the person is in that
+  situation and the related body part glows through in the same way;
+- no blood, no wounds, no opened body; never a real or famous person;
+- do NOT describe the background, lighting, colours or style (the brand sets those);
+- {scene_rule}"""
+
 SCENE_RULES = {
-    "health": ("the picture shows exactly what the question asks about: for a body part, a clean, realistic 3D anatomy "
-               "render of it; for an everyday situation (reading in a car, falling asleep, a sneeze), that situation itself "
-               "as a real-looking photo, the person seen from behind or with the face out of frame; no gore."),
+    "health": ("a real-looking adult at home or in a doctor's room with one or both hands on the exact spot the video "
+               "is about, that body part glowing through the skin and clothes as a semi-transparent, realistic anatomy "
+               "layer; no gore, no real or famous person."),
     "motorcycle": "a real-looking photo of the whole motorcycle in its real livery; the rider, if any, wears a closed dark visor so no face shows; no series logos.",
     "default": ("a real-looking motorsport close-up; a car or bike part in a real team's colours is fine, but no "
                 "real driver's or rider's face; no series logos."),
@@ -101,6 +116,13 @@ MOTORCYCLE_COMPOSITION = """Composition: the whole motorcycle, fully visible fro
 filling the LOWER part of the frame from about 40% to 95% of the height, razor sharp, in soft, even daylight with
 no deep shadows on it. Everything around it stays quiet and plain; minimal and uncluttered, no people's faces."""
 
+HEALTH_COMPOSITION = """Composition: ONE single photograph of ONE person, never a second copy of the person, an inset, a collage or a
+split frame. The camera stands a little further back, so the top 35% of the frame is plain, softly lit wall above the
+person's head with nothing in it; the head starts just below that and the body, from the head to the waist, fills the
+rest of the frame down to the bottom edge. The face and the glowing body part are both razor sharp and well lit from
+the front, and the glowing anatomy is the brightest point of the picture, so a viewer sees the symptom and the body
+part in half a second. The room behind is calm and softly out of focus."""
+
 COVER_IMAGE_PROMPT = """Vertical {aspect} cover image (thumbnail) for a short explainer video titled "{title}".
 Scene: {scene}
 Style: {style}
@@ -112,7 +134,8 @@ Bold contrast, rich colour, shallow depth of field, physically believable, like 
 Do NOT add any text, letters, numbers, captions, watermarks or logos anywhere in the image. Liveries, signs and screens carry plain colour blocks only, never words or brand names. No series logos."""
 
 STYLES = {
-    "health": "clean, realistic 3D anatomy render, the one structure glowing softly on a plain near-white background, medically plausible.",
+    "health": ("photorealistic lifestyle photo in soft natural window light, true skin texture and natural grain, combined with "
+               "ONE clean, softly glowing, semi-transparent 3D anatomy layer seen through the body; medically plausible, no gore."),
     "motorcycle": "premium motorcycle brochure photo, soft even daylight, true livery colours, natural textures, clean light background, no HDR look, no dark moody shadows.",
     "default": ("premium motorsport commercial photo, the subject brightly and clearly lit so every shape and colour reads at a "
                 "glance on a phone, real team colours, clean darker-toned background, natural textures, no HDR look."),
@@ -136,7 +159,12 @@ def build_cover_copy_prompt(title: str, caption: str | None, niche: str | None,
     recent = [c for c in (recent_covers or []) if c][:8]
     avoid_line = ("- Do not reuse a hook from this page's recent covers: " + "; ".join(recent) + "\n") if recent else ""
     key = _style_key(niche, template_key)
-    rules_template = MOTORCYCLE_PICTURE_RULES if key == "motorcycle" else DEFAULT_PICTURE_RULES
+    if key == "motorcycle":
+        rules_template = MOTORCYCLE_PICTURE_RULES
+    elif key == "health":
+        rules_template = HEALTH_PICTURE_RULES
+    else:
+        rules_template = DEFAULT_PICTURE_RULES
     scene_rule = SCENE_RULES.get(key, SCENE_RULES["default"])
     picture_rules = rules_template.format(scene_rule=scene_rule)
     return COVER_COPY_PROMPT.format(
@@ -229,7 +257,12 @@ def build_cover_image_prompt(title: str, scene: str | None, niche: str | None, a
     key = _style_key(niche, template_key)
     scene_rule = SCENE_RULES.get(key, SCENE_RULES["default"])
     scene = (scene or "").strip() or f"the main subject of the video, shown clearly. {scene_rule}"
-    composition = MOTORCYCLE_COMPOSITION if key == "motorcycle" else DEFAULT_COMPOSITION
+    if key == "motorcycle":
+        composition = MOTORCYCLE_COMPOSITION
+    elif key == "health":
+        composition = HEALTH_COMPOSITION
+    else:
+        composition = DEFAULT_COMPOSITION
     return COVER_IMAGE_PROMPT.format(
         aspect=aspect,
         title=(title or "").strip(),
