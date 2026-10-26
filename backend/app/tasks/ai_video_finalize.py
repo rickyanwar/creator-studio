@@ -74,14 +74,15 @@ def finalize_ai_video(video_job_id: int):
         passed = vision is None or vision["passed"]
         job.qc = {"technical": technical, "vision": vision, "passed": passed, "reasons": reasons}
         publish_status = PublishJobStatus.pending_publish if vision is None or vision["passed"] else PublishJobStatus.pending_review
-        from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS, clip_qc_dir
+        from app.services.ai_video_clip_qc import clip_qc_dir, max_attempts_for_job
         for clip in job.clips or []:
             qc = clip.get("qc") or {}
             if qc.get("accepted_best"):
                 publish_status = PublishJobStatus.pending_review
                 issues = qc.get("issues") or []
                 first_problem = issues[0].get("problem") if issues and isinstance(issues[0], dict) else "logic issues"
-                reasons.append(f"clip {clip['index']}: kept the best of {CLIP_QC_MAX_ATTEMPTS} attempts ({first_problem})")
+                attempts = max_attempts_for_job(job)
+                reasons.append(f"clip {clip['index']}: kept the best of {attempts} attempts ({first_problem})")
         publish_video_path, publish_video_url = job.video_path, job.video_url
         publish_thumbnail_path, publish_thumbnail_url = job.thumbnail_path, job.thumbnail_url
         overlays_enabled = bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))

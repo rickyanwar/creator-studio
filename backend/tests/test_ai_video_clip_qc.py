@@ -25,6 +25,31 @@ def test_constants_and_best_attempt():
     assert best_attempt(rows).attempt == 2
 
 
+@pytest.mark.parametrize("attempts", [1, 2, 4, 10])
+def test_brand_qc_attempt_limit_schema(attempts):
+    from app.schemas.fanpage import FanpageBase, FanpageUpdate
+
+    assert FanpageBase(ai_video_clip_qc_max_attempts=attempts).ai_video_clip_qc_max_attempts == attempts
+    update = FanpageUpdate(ai_video_clip_qc_max_attempts=attempts)
+    assert update.model_dump(exclude_unset=True)["ai_video_clip_qc_max_attempts"] == attempts
+
+
+@pytest.mark.parametrize("attempts", [0, -1, 11, 1.5, None])
+def test_brand_qc_attempt_limit_rejects_invalid_values(attempts):
+    from pydantic import ValidationError
+    from app.schemas.fanpage import FanpageUpdate
+
+    with pytest.raises(ValidationError):
+        FanpageUpdate(ai_video_clip_qc_max_attempts=attempts)
+
+
+def test_brand_qc_attempt_limit_default_and_partial_update():
+    from app.schemas.fanpage import FanpageBase, FanpageUpdate
+
+    assert FanpageBase().ai_video_clip_qc_max_attempts == 4
+    assert "ai_video_clip_qc_max_attempts" not in FanpageUpdate().model_dump(exclude_unset=True)
+
+
 def test_logic_prompt_previous_frame_sentence():
     without_previous = build_logic_prompt("A red car drives forward.", has_previous_frame=False)
     with_previous = build_logic_prompt("A red car drives forward.", has_previous_frame=True)

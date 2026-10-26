@@ -9,8 +9,8 @@ from app.database import SessionLocal
 from app.tasks.celery_app import celery_app
 from app.services.ai_video_dispatch import _utcnow
 from app.services.ai_video_clip_qc import (
-    CLIP_QC_MAX_ATTEMPTS, CLIP_QC_WAIT_LIMIT_S, CLIP_QC_WAIT_RETRY_S,
-    accept_attempt, best_attempt, logic_check,
+    CLIP_QC_WAIT_LIMIT_S, CLIP_QC_WAIT_RETRY_S,
+    accept_attempt, best_attempt, logic_check, max_attempts_for_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ def check_clip(qc_id: int):
         clip_index = row.clip_index
         clips_total = len(job.clips or [])
         job_id = job.id
+        max_attempts = max_attempts_for_job(job)
         generation = row.generation
         db.commit()
 
@@ -124,7 +125,7 @@ def check_clip(qc_id: int):
             db.commit()
             return
 
-        if clip_attempt < CLIP_QC_MAX_ATTEMPTS:
+        if clip_attempt < max_attempts:
             config = get_polish_config(db)
             db.commit()
             next_prompt = clip_prompt

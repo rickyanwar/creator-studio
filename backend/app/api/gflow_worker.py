@@ -94,7 +94,7 @@ def claim(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     job, acc = claimed
-    from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS
+    from app.services.ai_video_clip_qc import max_attempts_for_job
     fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
     return {
         "job": {
@@ -112,7 +112,7 @@ def claim(
             "project_name": f"ai-video-{job.id}-g{job.generation}",
             "cover_prompt": job.cover_prompt,
             "clip_qc": bool(fanpage and fanpage.ai_video_clip_qc_enabled),
-            "clip_qc_max_attempts": CLIP_QC_MAX_ATTEMPTS,
+            "clip_qc_max_attempts": max_attempts_for_job(job),
             "account": {
                 "id": acc.id,
                 "profile": acc.profile,
@@ -137,13 +137,13 @@ def upload_clip_qc(
     clip: UploadFile = File(...),
     token: ApiToken = Depends(require_hermes_scope("gflow:worker")),
 ):
-    from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS, clip_qc_path
+    from app.services.ai_video_clip_qc import max_attempts_for_job, clip_qc_path
     from app.tasks.ai_video_clip_qc import check_clip
     _validate_worker_id(worker_id)
     job = db.query(VideoJob).filter_by(id=id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if not 1 <= attempt <= CLIP_QC_MAX_ATTEMPTS:
+    if not 1 <= attempt <= max_attempts_for_job(job):
         raise HTTPException(status_code=422, detail="Invalid attempt")
     if index != len(job.clips_done or []) + 1:
         raise HTTPException(status_code=409, detail="Unexpected clip index")

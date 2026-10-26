@@ -16,6 +16,7 @@ from app.models.ai_video import GflowWorker, GflowAccount, VideoJob, VideoIdea
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
+from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +286,21 @@ def job_requires_i2v(job: VideoJob) -> bool:
     )
 
 
+def _snapshot_clip_qc_max_attempts(db: Session, job: VideoJob) -> None:
+    if job.clip_qc_max_attempts is not None:
+        return
+    if job.started_at is not None:
+        job.clip_qc_max_attempts = CLIP_QC_MAX_ATTEMPTS
+        return
+    fanpage = (
+        db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+        if job.fanpage_id is not None
+        else None
+    )
+    limit = getattr(fanpage, "ai_video_clip_qc_max_attempts", None) if fanpage else None
+    job.clip_qc_max_attempts = limit if limit is not None else CLIP_QC_MAX_ATTEMPTS
+
+
 def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAccount]]:
     """
     Claim a job for worker_id.
@@ -377,6 +393,7 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
             locked_job.account_id = acc.id
             locked_job.lease_until = now + timedelta(minutes=LEASE_MINUTES)
             locked_job.last_progress_at = now
+            _snapshot_clip_qc_max_attempts(db, locked_job)
             locked_job.started_at = locked_job.started_at or now
             acc.last_used_at = now
             if MIN_CLAIM_GAP_MINUTES > 0:
@@ -522,6 +539,7 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
         locked_job.account_id = best_acc.id
         locked_job.lease_until = now + timedelta(minutes=LEASE_MINUTES)
         locked_job.last_progress_at = now
+        _snapshot_clip_qc_max_attempts(db, locked_job)
         locked_job.started_at = locked_job.started_at or now
         best_acc.last_used_at = now
         if MIN_CLAIM_GAP_MINUTES > 0:

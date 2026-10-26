@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from gflow_worker.state import JobState
 from .conftest import payload
 
@@ -137,6 +139,28 @@ def test_qc_transient_status_keeps_polling(cfg, studio, runner, monkeypatch):
 def test_qc_retry_beyond_max_attempts_fails(cfg, studio, runner, monkeypatch):
     setup_qc(runner, monkeypatch, [{"state": "retry", "prompt": "P2"}] * 4)
     runner.run_job(qc_job(1))
+    assert studio.events("/fail")[0]["message"] == "clip QC asked for too many attempts"
+
+
+@pytest.mark.parametrize("limit", [1, 2, 6, 10])
+def test_qc_custom_attempt_limit(cfg, studio, runner, monkeypatch, limit):
+    job = qc_job(1)
+    job["clip_qc_max_attempts"] = limit
+    responses = [{"state": "retry", "prompt": f"P{i}"} for i in range(2, limit + 1)]
+    responses.append({"state": "use_attempt", "use_attempt": 1})
+    uploads = setup_qc(runner, monkeypatch, responses)
+    monkeypatch.setattr(runner.media, "thumbnail", lambda video, jpg: Path(jpg).write_bytes(b"dummy"))
+    runner.run_job(job)
+    assert [attempt for _, attempt, _, _ in uploads] == list(range(1, limit + 1))
+    assert not studio.events("/fail")
+
+
+def test_qc_custom_limit_rejects_extra_retry(cfg, studio, runner, monkeypatch):
+    job = qc_job(1)
+    job["clip_qc_max_attempts"] = 1
+    uploads = setup_qc(runner, monkeypatch, [{"state": "retry", "prompt": "P2"}])
+    runner.run_job(job)
+    assert len(uploads) == 1
     assert studio.events("/fail")[0]["message"] == "clip QC asked for too many attempts"
 
 

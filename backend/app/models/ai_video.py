@@ -102,6 +102,8 @@ class VideoJob(Base):
     flow_project_id = Column(String(128), nullable=True)
     clips_done = Column(JSON, nullable=False, default=list, server_default=text("'[]'::json"))
     clip_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    # Frozen at first claim; null preserves the legacy four-attempt limit.
+    clip_qc_max_attempts = Column(Integer, nullable=True)
     restarts = Column(Integer, nullable=False, default=0, server_default="0")
     unusual_hits = Column(Integer, nullable=False, default=0, server_default="0")
     lease_until = Column(DateTime, nullable=True)

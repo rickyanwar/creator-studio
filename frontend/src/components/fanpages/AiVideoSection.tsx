@@ -35,6 +35,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
   const MIN_PER_CLIP = 3; // measured: about 3 minutes of Flow time per 10-second clip
   const templateMaxS = Math.max(...clipOptions) * secs;
   const daily = form.ai_video_daily_count ?? 1;
+  const qcAttempts = form.ai_video_clip_qc_max_attempts ?? 4;
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -154,7 +155,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                   Per-clip logic check
                 </label>
                 <p className="text-[11px] text-text-secondary mt-0.5">
-                  After each 10 s clip, a vision check looks for illogical motion, shape or livery changes. A failing clip gets its prompt re-polished and is generated again (up to 3 times, 15 credits each). If it still fails, the best attempt is kept and the video goes to manual review.
+                  After each clip, a vision check looks for illogical motion, shape or livery changes. A failing clip gets its prompt re-polished and is generated again within the attempt limit below. If it still fails, the best attempt is kept and the video goes to manual review.
                 </p>
               </div>
               <input
@@ -165,6 +166,24 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                 onChange={(e) => set("ai_video_clip_qc_enabled", e.target.checked)}
               />
             </div>
+            {form.ai_video_clip_qc_enabled && (
+              <div className="sm:col-span-2">
+                <label htmlFor="clip-qc-attempts-ai-video" className="label">Maximum QC attempts per clip</label>
+                <select
+                  id="clip-qc-attempts-ai-video"
+                  className="input w-full sm:w-64"
+                  value={qcAttempts}
+                  onChange={(e) => set("ai_video_clip_qc_max_attempts", Number(e.target.value))}
+                >
+                  {Array.from({ length: 10 }, (_, index) => index + 1).map((count) => (
+                    <option key={count} value={count}>{count} {count === 1 ? "attempt" : "attempts"}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-text-secondary mt-1">
+                  Includes the first generation: {qcAttempts - 1} {qcAttempts === 2 ? "retry" : "retries"}, up to {(qcAttempts - 1) * credits} {(qcAttempts - 1) * credits === 1 ? "extra credit" : "extra credits"} per clip. Applies when the next video starts; running videos keep their saved limit.
+                </p>
+              </div>
+            )}
             <div className="sm:col-span-2">
               <label className="label">Allowed Video Templates</label>
               <p className="text-[11px] text-text-secondary mb-2">

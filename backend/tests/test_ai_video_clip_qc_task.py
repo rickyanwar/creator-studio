@@ -232,6 +232,45 @@ def test_attempt4_uses_best_attempt(db, configured_task, monkeypatch):
     repolish.assert_not_called()
 
 
+@pytest.mark.parametrize("limit", [1, 2, 6, 10])
+def test_custom_attempt_limit_stops_and_keeps_best(db, configured_task, monkeypatch, limit):
+    job = _job(db)
+    job.clip_qc_max_attempts = limit
+    for attempt in range(1, limit):
+        _row(db, job, attempt=attempt, status="failed", verdict="retry",
+             issues=[{"problem": "wheel disappears", "severity": "major"}],
+             major_count=1, minor_count=0)
+    row = _row(db, job, attempt=limit)
+    task.logic_check.return_value = [{"problem": "car reverses", "severity": "major"}] * 2
+    repolish = MagicMock()
+    monkeypatch.setattr("app.services.prompt_polish.repolish_clip", repolish)
+    result, updated_job = _run(db, row)
+    assert result.verdict == "use_attempt"
+    assert result.use_attempt == 1
+    assert updated_job.clips[0]["qc"]["accepted_best"] is True
+    repolish.assert_not_called()
+
+
+def test_custom_limit_allows_retry_beyond_four(db, configured_task):
+    job = _job(db)
+    job.clip_qc_max_attempts = 6
+    row = _row(db, job, attempt=4)
+    task.logic_check.return_value = [{"problem": "car reverses", "severity": "major"}]
+    result, _ = _run(db, row)
+    assert result.verdict == "retry"
+
+
+def test_running_job_uses_snapshot_after_brand_changes(db, configured_task):
+    job = _job(db)
+    job.clip_qc_max_attempts = 2
+    fanpage = db.get(TargetFanpage, job.fanpage_id)
+    fanpage.ai_video_clip_qc_max_attempts = 10
+    row = _row(db, job, attempt=2)
+    task.logic_check.return_value = [{"problem": "car reverses", "severity": "major"}]
+    result, _ = _run(db, row)
+    assert result.verdict == "use_attempt"
+
+
 def test_previous_clip_path_uses_chosen_attempt(db, configured_task):
     job = _job(db)
     for attempt in range(1, 5):

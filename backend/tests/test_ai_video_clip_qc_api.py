@@ -141,6 +141,56 @@ def test_claim_includes_clip_qc_flag(client, db, worker_token, setup):
     assert response.json()["job"]["clip_qc"] is False
 
 
+def test_claim_first_fresh_claim_stores_brand_limit_and_retains_on_reclaim(client, db, worker_token, setup):
+    fanpage = setup["fanpage"]
+    fanpage.ai_video_clip_qc_max_attempts = 2
+    fanpage.ai_video_clip_qc_enabled = True
+    job = setup["job"]
+    job.status = "queued"
+    job.worker_id = None
+    job.started_at = None
+    job.clip_qc_max_attempts = None
+    job.account_id = setup["account"].id
+    db.commit()
+
+    resp = client.post("/worker/gflow/claim", headers=auth(worker_token), json={"worker_id": setup["worker"].worker_id})
+    assert resp.status_code == 200
+    assert resp.json()["job"]["clip_qc_max_attempts"] == 2
+    db.refresh(job)
+    assert job.clip_qc_max_attempts == 2
+
+    fanpage.ai_video_clip_qc_max_attempts = 10
+    job.status = "queued"
+    job.worker_id = None
+    job.lease_until = None
+    db.commit()
+
+    resp2 = client.post("/worker/gflow/claim", headers=auth(worker_token), json={"worker_id": setup["worker"].worker_id})
+    assert resp2.status_code == 200
+    assert resp2.json()["job"]["clip_qc_max_attempts"] == 2
+    db.refresh(job)
+    assert job.clip_qc_max_attempts == 2
+
+
+def test_claim_legacy_started_job_with_null_snapshot_stores_default_4(client, db, worker_token, setup):
+    fanpage = setup["fanpage"]
+    fanpage.ai_video_clip_qc_max_attempts = 10
+    fanpage.ai_video_clip_qc_enabled = True
+    job = setup["job"]
+    job.status = "queued"
+    job.worker_id = None
+    job.started_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)
+    job.clip_qc_max_attempts = None
+    job.account_id = setup["account"].id
+    db.commit()
+
+    resp = client.post("/worker/gflow/claim", headers=auth(worker_token), json={"worker_id": setup["worker"].worker_id})
+    assert resp.status_code == 200
+    assert resp.json()["job"]["clip_qc_max_attempts"] == 4
+    db.refresh(job)
+    assert job.clip_qc_max_attempts == 4
+
+
 def test_upload_creates_row_file_and_enqueues(client, db, worker_token, setup, tmp_path, monkeypatch):
     mock = MagicMock()
     monkeypatch.setattr(check_clip, "delay", mock)
@@ -178,6 +228,28 @@ def test_upload_bad_attempt(client, worker_token, setup, tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.ai_video_clip_qc.clip_qc_dir", lambda: tmp_path)
     assert upload(client, worker_token, setup["job"], setup["worker"].worker_id, attempt=0).status_code == 422
     assert upload(client, worker_token, setup["job"], setup["worker"].worker_id, attempt=5).status_code == 422
+
+
+def test_upload_attempt_limits(client, db, worker_token, setup, tmp_path, monkeypatch):
+    monkeypatch.setattr(check_clip, "delay", MagicMock())
+    monkeypatch.setattr("app.services.ai_video_clip_qc.clip_qc_dir", lambda: tmp_path)
+    job = setup["job"]
+    worker_id = setup["worker"].worker_id
+
+    job.clip_qc_max_attempts = 1
+    db.commit()
+    assert upload(client, worker_token, job, worker_id, attempt=1).status_code == 200
+    assert upload(client, worker_token, job, worker_id, attempt=2).status_code == 422
+
+    job.clip_qc_max_attempts = 6
+    db.commit()
+    assert upload(client, worker_token, job, worker_id, attempt=6).status_code == 200
+    assert upload(client, worker_token, job, worker_id, attempt=7).status_code == 422
+
+    job.clip_qc_max_attempts = None
+    db.commit()
+    assert upload(client, worker_token, job, worker_id, attempt=4).status_code == 200
+    assert upload(client, worker_token, job, worker_id, attempt=5).status_code == 422
 
 
 def test_upload_retry_attempt_charges_credits(client, db, worker_token, setup, tmp_path, monkeypatch):
@@ -267,7 +339,7 @@ def test_status_conflict_and_missing(client, worker_token, setup):
     assert client.post(f"/worker/gflow/jobs/{setup['job'].id}/clips/1/qc-status", headers=auth(worker_token), json={"worker_id": setup["worker"].worker_id, "generation": 1, "attempt": 9}).status_code == 404
 
 
-def seed_finalize_job(db, tmp_path, *, accepted_best):
+def seed_finalize_job(db, tmp_path, *, accepted_best, clip_qc_max_attempts=None):
     fanpage = TargetFanpage(
         repliz_account_id=f"finalize-{os.urandom(8).hex()}",
         name="Finalize",
@@ -282,6 +354,7 @@ def seed_finalize_job(db, tmp_path, *, accepted_best):
         fanpage_id=fanpage.id, template_key="motorsport_tech_explainer", title="Title", caption="Caption", model="omni-flash", aspect="9:16", clip_seconds=4,
         clips=[{"index": 1, "prompt": "x", "qc": {"attempt": 2, "issues": [{"problem": "car reverses", "severity": "major"}], "accepted_best": True}}] if accepted_best else [{"index": 1, "prompt": "x"}],
         credits_per_clip=15, credits_estimate=15, status="uploaded", video_path=str(tmp_path / "video.mp4"), video_url="http://example/video.mp4", thumbnail_path=None, thumbnail_url=None, duration_s=4,
+        clip_qc_max_attempts=clip_qc_max_attempts,
     )
     db.add(job)
     db.commit()
@@ -298,6 +371,45 @@ def test_finalize_accepted_best_goes_to_review(db, tmp_path):
     assert publish.status == PublishJobStatus.pending_review
     assert "kept the best of 4 attempts" in " ".join(db.query(VideoJob).get(job_id).qc["reasons"])
     assert "car reverses" in " ".join(db.query(VideoJob).get(job_id).qc["reasons"])
+
+
+@pytest.mark.parametrize(
+    "clip_qc_max_attempts,expected_attempt_text",
+    [
+        (1, "kept the best of 1 attempts"),
+        (6, "kept the best of 6 attempts"),
+        (None, "kept the best of 4 attempts"),
+    ],
+)
+def test_finalize_accepted_best_reasons_use_limit_and_pending_review(
+    db, tmp_path, clip_qc_max_attempts, expected_attempt_text
+):
+    job_id = seed_finalize_job(db, tmp_path, accepted_best=True, clip_qc_max_attempts=clip_qc_max_attempts)
+    technical = {
+        "passed": True,
+        "reasons": [],
+        "duration_s": 4,
+        "width": 540,
+        "height": 960,
+        "has_audio": True,
+        "black_s": 0,
+        "frozen_s": 0,
+        "size_bytes": 300000,
+    }
+    with patch("app.services.ai_video_qc.technical_check", return_value=technical), patch.object(
+        publisher.publish_job, "delay"
+    ):
+        ai_video_finalize.finalize_ai_video(job_id)
+    publish = (
+        db.query(PublishJob)
+        .filter_by(content_type=ContentType.ai_video)
+        .order_by(PublishJob.id.desc())
+        .first()
+    )
+    video_job = db.query(VideoJob).get(job_id)
+    assert publish.status == PublishJobStatus.pending_review
+    assert expected_attempt_text in " ".join(video_job.qc["reasons"])
+    assert "car reverses" in " ".join(video_job.qc["reasons"])
 
 
 def test_finalize_without_accepted_best_unchanged(db, tmp_path):

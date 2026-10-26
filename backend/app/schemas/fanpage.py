@@ -219,6 +219,7 @@ class FanpageBase(BaseModel):
     qa_ai_video_enabled: bool = True
     ai_video_prompt_polish_enabled: bool = False
     ai_video_clip_qc_enabled: bool = False
+    ai_video_clip_qc_max_attempts: int = Field(4, ge=1, le=10)
 
     @field_validator(
         "qa_news_enabled",

@@ -279,6 +279,7 @@ class TargetFanpage(Base):
     qa_ai_video_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     ai_video_prompt_polish_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     ai_video_clip_qc_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    ai_video_clip_qc_max_attempts = Column(Integer, default=4, nullable=False, server_default="4")
 
     # ── Caption criteria ──────────────────────────
     caption_tone = Column(String(64), default="engaging", nullable=False)

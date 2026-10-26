@@ -23,6 +23,10 @@ CLIP_QC_WAIT_RETRY_S = 120
 CLIP_QC_WAIT_LIMIT_S = 6 * 3600
 
 
+def max_attempts_for_job(job) -> int:
+    return job.clip_qc_max_attempts or CLIP_QC_MAX_ATTEMPTS
+
+
 def clip_qc_dir() -> Path:
     path = Path(get_settings().storage_base_path) / "ai_videos" / "clip_qc"
     path.mkdir(parents=True, exist_ok=True)
