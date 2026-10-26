@@ -33,7 +33,7 @@ def test_f1_example_uses_template_lettering_and_timed_shots():
     _, prompt = _render(livery="copper_slate", channel_name="FORMULA WEEKEND")
     assert 'team name "FORMULA WEEKEND" in large bold white capitals on both sidepods, the rear wing and the front wing' in prompt
     assert "small, subtle" not in prompt
-    for marker in ("[00:00-00:02]", "[00:02-00:04]", "[00:04-00:07]", "[00:07-00:09]", "[00:09-00:10]"):
+    for marker in ("[00:00-00:02]", "[00:02-00:07]", "[00:07-00:10]"):
         assert marker in prompt
     assert len(prompt) <= 2750
 
@@ -128,3 +128,98 @@ def test_research_desk_item_and_fill_prompt_support_template():
     assert "macro_detail" in prompt
     assert "context_reveal" in prompt
     assert "effect_detail" in prompt
+
+
+def test_three_beat_contract_structure_and_markers():
+    template, prompt = _render(livery="copper_slate", channel_name="FORMULA WEEKEND")
+    clip = template.raw["clip_templates"][0]
+
+    # Exactly three timed beats spanning the 10-second clip: [00:00-00:02], [00:02-00:07], [00:07-00:10]
+    expected_markers = ["[00:00-00:02]", "[00:02-00:07]", "[00:07-00:10]"]
+    for marker in expected_markers:
+        assert marker in prompt
+
+    # No 5-stage intermediate markers in the revised contract
+    assert "[00:02-00:04]" not in prompt
+    assert "[00:04-00:07]" not in prompt
+    assert "[00:07-00:09]" not in prompt
+    assert "[00:09-00:10]" not in prompt
+
+    # Clip template duration matches 10s
+    assert template.raw["generation"]["clip_seconds"] == 10
+    assert template.raw["generation"]["total_seconds"] == 10
+
+
+def test_three_beat_middle_beat_and_visualization_rules():
+    template, prompt = _render(livery="copper_slate", channel_name="FORMULA WEEKEND")
+    rules_text = " ".join(template.raw.get("rules", []))
+    keywords_text = " ".join(template.raw.get("keywords_that_worked", []))
+    combined_docs = rules_text + " " + keywords_text
+
+    # Middle beat explains one real mechanism with clear component visibility and single cause/effect visual
+    assert "00:02-00:07" in combined_docs or "[00:02-00:07]" in combined_docs
+    assert any(term in combined_docs.lower() for term in ["cause", "cause/effect", "effect"])
+    assert any(term in combined_docs.lower() for term in ["component visibility", "visible component", "clearly visible"])
+
+    # Deliberate transparent/glowing technical visualization
+    style_text = template.raw["blocks"].get("style", "")
+    assert any(term in style_text.lower() for term in ["glass", "transparent", "glowing", "see-through"])
+    assert any(term in combined_docs.lower() for term in ["glass", "transparent", "glowing", "see-through"])
+
+    # No dependence on generated on-screen labels in rules/keywords
+    assert any(term in combined_docs.lower() for term in ["no on-screen label", "no labels", "no generated text", "no text overlay", "without on-screen label"])
+
+    # Rendered clip prompt requirements:
+    # 1. Exact prohibition on generated on-screen elements asserted in the actually rendered clip prompt
+    assert "no generated on-screen text, labels, or numbers" in prompt
+
+    # 2. Middle beat prompt describes one mechanism, component visibility, one causal airflow/force path, and payoff
+    assert "[00:02-00:07]" in prompt
+    middle_beat_section = prompt.split("[00:02-00:07]")[1].split("[00:07-00:10]")[0].lower()
+    assert any(term in middle_beat_section for term in ["mechanism", "brake", "gearbox", "winglet", "system"])
+    assert any(term in middle_beat_section for term in ["visible", "clearly", "glass", "revealing", "inside"])
+    assert any(term in middle_beat_section for term in ["airflow", "force", "fluid", "pressure", "path", "cool-blue", "orange"])
+    assert any(term in middle_beat_section for term in ["payoff", "glow", "fade", "stop", "cooling", "heat", "overheat", "effect"])
+
+
+def test_three_beat_narration_contract():
+    template = get_template("motorsport_tech_dive")
+    clip = template.raw["clip_templates"][0]
+
+    # Narration target in English is 26-32 words for brisk 10-second narrator
+    assert clip["narration_words"]["en"] == "26-32"
+
+    # Narration starts immediately at frame 0 and continues without intentional pause across beats
+    narration_guide = template.raw.get("narration_by_clips", {}).get("1", "")
+    rules_text = " ".join(template.raw.get("rules", []))
+    narrator_block = template.raw["blocks"].get("narrator_en", "")
+    combined = narration_guide + " " + rules_text + " " + narrator_block
+
+    assert any(term in combined.lower() for term in ["frame 0", "second 0", "very first second", "immediately"])
+    assert any(term in combined.lower() for term in ["without intentional pause", "no intentional pause", "continuous", "without pause", "brisk pace"])
+    assert any(term in combined.lower() for term in ["one sourced concrete fact", "one concrete fact", "concrete fact", "surprising fact"])
+    assert any(term in combined.lower() for term in ["plain-language consequence", "consequence"])
+
+    # Example narration conforms to 26-32 word budget
+    example_narration = template.raw["example"]["variables"]["narration_1"]
+    word_count = len(example_narration.split())
+    assert 26 <= word_count <= 32
+
+
+def test_vehicle_livery_and_logo_restrictions_preserved():
+    template = get_template("motorsport_tech_dive")
+    f1_preset = template.raw["blocks"]["vehicle_presets"]["f1"]
+    motogp_preset = template.raw["blocks"]["vehicle_presets"]["motogp_livery"]
+
+    # F1 restrictions: clean paint, no decals, logos, emblems, numbers, plain sidewalls, no series logos, no watermark
+    for phrase in [
+        "clean paint without decals, logos, emblems or numbers",
+        "unbranded slick tyres with plain black sidewalls and no lettering",
+        "no series logos",
+        "no watermark",
+    ]:
+        assert phrase in f1_preset
+        assert phrase in motogp_preset
+
+    # Livery preservation
+    assert len(liveries(template)) >= 12

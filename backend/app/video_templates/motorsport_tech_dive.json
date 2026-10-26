@@ -9,9 +9,9 @@
   ],
   "default_clips": 1,
   "id": "motorsport_tech_dive",
-  "name": "Motorsport Tech Dive-In — one camera flight through five stages, glass reveal of one hidden system (10 s)",
-  "status": "owner-approved style 2026-10-24 (4-shot tests: brakes, gearbox, MotoGP winglets passed QC on the first attempt)",
-  "inspiration": "Owner reference reels (GRID MECHANICS style): a real moment, the camera flies into the vehicle, the bodywork turns to glass, one system in extreme macro with its flow drawn in light, then the vehicle in action; dense, fact-based narration from the first second.",
+  "name": "Motorsport Tech Dive-In — three timed beats with two deliberate cuts, transparent reveal of one hidden system (10 s)",
+  "status": "owner-approved style 2026-10-26 (3-beat rework: braking hook, locked transparent reveal, corner exit; no five-stage flight)",
+  "inspiration": "Owner reference reels (GRID MECHANICS style): a real braking moment, a cut to the same assembly seen through transparent bodywork with one airflow path drawn in light, then the car exits the corner; dense fact-based narration from the first second.",
   "generation": {
     "engine": "Google Flow via gflow-cli",
     "model": "omni-flash",
@@ -24,7 +24,7 @@
     "narration": "spoken by Flow inside the clip; never external TTS"
   },
   "blocks": {
-    "style": "Ultra-realistic cinematic motorsport engineering film, vertical 9:16, real cinema-camera look at golden hour, long lens, shallow depth of field, film grain; glass reveals and glowing flows are the only CGI.",
+    "style": "Ultra-realistic cinematic motorsport engineering film, vertical 9:16, clear bright daylight with rich livery and track contrast, controlled highlights, deep focus, film grain; transparent cutaways and glowing flow lines are the only CGI.",
     "narrator_en": "Voice-over: a 35-year-old British male motorsport presenter recorded close to the microphone in a dry studio, with a clear, bright tenor voice and a confident, energetic, brisk pace from the very first second, says in English:",
     "narrator_en_followup": "Voice-over: a 35-year-old British male motorsport presenter recorded close to the microphone in a dry studio, with a clear, bright tenor voice and a confident, energetic, brisk pace from the very first second, says in English:",
     "lettering": {
@@ -107,40 +107,38 @@
   },
   "clip_templates": [
     {
-      "role": "five_stage_flight",
+      "role": "three_beat_reveal",
       "mode": "t2v",
-      "prompt": "{style} {vehicle} {part_layout} One continuous camera flight with no cuts, through five stages: [00:00-00:02] {hook_shot} [00:02-00:04] {context_reveal} [00:04-00:07] {macro_detail} [00:07-00:09] {effect_detail} [00:09-00:10] {result_shot} Every glow is soft light inside the parts or in the air, never flames, sparks or smoke. Audio: {sound_cues}, low under the voice, no music. {narrator} \"{narration_1}\"",
+      "prompt": "{style} {vehicle} {part_layout} Three shots with two deliberate cuts: [00:00-00:02] {hook_shot} [00:02-00:07] {context_reveal} {macro_detail} {effect_detail} [00:07-00:10] {result_shot} Every glow is soft light inside the parts or in the air, never flames, sparks or smoke; no generated on-screen text, labels, or numbers. Audio: {sound_cues}, low under the voice, no music. {narrator} \"{narration_1}\"",
       "narration_words": {
         "en": "26-32"
       }
     }
   ],
   "narration_by_clips": {
-    "1": "narration_1 has two halves that match the stages: the first half (the most surprising fact: a number, a temperature, a weight, a time or a rule) plays over context_reveal and macro_detail; the second half (the consequence or a twist) plays over effect_detail and result_shot. One or two concrete facts, all from research_notes. Never open with 'This is ...' or a definition."
+    "1": "narration_1 is continuous from frame 0 without intentional pause across the three beats: it opens with one sourced concrete fact (a number, a temperature, a weight or a rule), then the mechanism, then a plain-language consequence. One or two concrete facts, all from research_notes. Never open with 'This is ...' or a definition."
   },
   "rules": [
     "Pick ONE hidden system that fans wonder about (brakes, gearbox, fuel bag, halo, seat, pit-stop wheel nut, power steering, battery, cooling, mirrors, winglets, rider airbag, tyre heat). The vehicle keeps its normal real shape: never a topic that needs an unusual vehicle layout (six wheels, twin chassis, fan car, gas turbine).",
     "part_layout: one sentence on the real shape of the part, where it is mounted and which way it faces, naming 2 to 4 real components (for example: 'The front-left brake sits inside the front-left wheel: one large carbon disc drilled with many small holes, gripped by one caliper at the top-rear of the disc, with a thin brake line running into the caliper.').",
-    "hook_shot (seconds 0-2): one dramatic outside moment with one action, the camera already moving (for example a low chase shot of a hard stop into a hairpin, the camera rising behind the car).",
-    "context_reveal (seconds 2-4): the camera glides above or beside the vehicle and 'the same <outer part> becomes clear glass in place', revealing the whole system in its real position. When seen from above, name the real front-to-back order (for a car: the driver's helmet in the cockpit, then the fuel bag behind the seat, then the engine, then the gearbox at the rear) and say the driver's helmet stays clearly visible.",
-    "macro_detail (seconds 4-7): the camera descends smoothly to the key part, extreme macro, the mechanism filling the frame; the first flow travels along its real path with a fixed colour code: orange = brake fluid, fuel, heat or electrical power; cool blue = air, water or cooling; amber = force, downforce or meshing gears. It shows the first half of the narration. Every component moves only the way the real mechanism moves.",
-    "effect_detail (seconds 7-9): the camera slides around the same part to a new angle and shows the second effect or the consequence that the second half of the narration describes (for example the cooling air leaving the brake, the power reaching the wheels).",
-    "result_shot (seconds 9-10): the camera pulls back out diagonally to a wide shot of the whole vehicle, naming its main parts as unchanged (for a car: 'its front wing, rear wing and sidepods unchanged'); a straight line or one simple corner.",
+    "hook_shot [00:00-00:02]: one dramatic braking action with a strong visual hook, the camera already moving (for example a low chase shot of a hard stop into a hairpin, the nose dipping, the camera rising behind the car). One clear shot, no impossible camera flight.",
+    "context_reveal + macro_detail + effect_detail together form the middle beat [00:02-00:07]: the camera stays spatially locked on the target assembly; bodywork becomes transparent only around that assembly so every nearby component is clearly visible in its real position; the camera makes one slow stable push toward the part; show one accurate cause/effect path (for example cool airflow from an intake through internal passages, or fluid pressure through a caliper) using the colour code orange = heat, fluid or power, cool blue = air or cooling, amber = force or gears. No labels, no generated text or overlays. Keep other components correctly placed and still.",
+    "result_shot [00:07-00:10]: the camera cuts back to the whole vehicle moving forward, controlled braking and corner exit, naming its main parts as unchanged (for a car: 'its front wing, rear wing and sidepods unchanged'); no new trick or effect.",
     "sound_cues: two or three real sounds that match the shots (engine note, hydraulic hiss, mechanical click, rush of air).",
     "Narration: 26-32 words in English (shorter in other languages) so Flow never cuts the last word; it starts at second 0 with a surprising fact, includes one or two numbers or facts only from research_notes, and ends with the consequence or a twist.",
     "Length budgets so the final Flow prompt stays short enough: part_layout at most 170 characters, hook_shot 120, context_reveal 230, macro_detail 230, effect_detail 160, result_shot 140, sound_cues 80.",
     "Never name or show real teams, drivers, riders, makers or sponsors. Do not output livery or channel_name; the system sets them."
   ],
   "keywords_that_worked": [
-    "One continuous camera flight with no cuts, through five stages, timed [00:00-00:02] / [00:02-00:04] / [00:04-00:07] / [00:07-00:09] / [00:09-00:10] (owner reference reel: chase, context from above, macro, second angle, pull out)",
-    "the same <part> becomes clear glass in place; only one copy of every part",
-    "extreme macro from a different angle, the mechanism filling the frame",
+    "Three shots with two deliberate cuts, timed [00:00-00:02] / [00:02-00:07] / [00:07-00:10] (hook braking action, locked transparent reveal with one airflow path, corner exit)",
+    "bodywork becomes transparent only around the target assembly; every nearby component clearly visible in place",
+    "one slow stable push toward the part, cause/effect airflow or force path",
     "orange = fluid, fuel, heat, power; cool blue = air or cooling; amber = force or gears",
-    "result shot names the main parts as unchanged"
+    "no generated on-screen text, labels or numbers; result shot names the main parts as unchanged"
   ],
   "topic_ideas": {
     "f1": [
-      "carbon brakes: discs at a thousand degrees and the tiny cooling holes",
+      "carbon brakes: C/C discs exceed a thousand degrees and ducted air passes through internal microchannels",
       "seamless gearbox: hydraulics change gear in milliseconds",
       "the rubber fuel bag behind the driver (verify the current fuel limit)",
       "the halo: about seven kilos that can carry the weight of a bus",
@@ -166,14 +164,14 @@
     "topic": "F1 carbon brakes",
     "variables": {
       "vehicle_preset": "f1",
-      "part_layout": "The front-left brake sits inside the front-left wheel: one carbon disc drilled with many small holes, gripped by one caliper at its top-rear edge.",
-      "hook_shot": "Low rear three-quarter chase shot: the car brakes hard toward a hairpin, the nose dipping, the camera rising behind it.",
-      "macro_detail": "The camera descends to the front-left brake, the brake filling the frame: orange brake fluid surges into the caliper, the pistons push the pads onto the spinning disc, and the disc glows orange from the inside.",
-      "result_shot": "The camera pulls back diagonally to the whole car, its front wing, rear wing and sidepods unchanged, turning into the hairpin.",
+      "part_layout": "The front-left brake sits inside the front-left wheel: one carbon-carbon disc, one caliper at its top-rear edge, one brake duct feeding air in.",
+      "hook_shot": "Low rear three-quarter chase shot: the car brakes hard toward a hairpin, nose dipping, the camera rising behind it.",
+      "context_reveal": "Cut to the front-left wheel area: the bodywork around the brake assembly becomes transparent, revealing the disc, caliper and duct clearly visible inside.",
+      "macro_detail": "The camera makes one slow stable push toward the brake: orange heat glows from the disc surface, the pads press the spinning disc, and the disc glows brighter.",
+      "effect_detail": "One path of cool-blue airflow enters the brake duct and passes through internal passages in the disc, carrying heat out while the disc stays hot and glowing.",
+      "result_shot": "Cut back to the whole car, its front wing, rear wing and sidepods unchanged, completing the corner and accelerating away.",
       "sound_cues": "engine note dropping, a hydraulic hiss, rushing cooling air",
-      "narration_1": "One press of this pedal and the carbon discs hit a thousand degrees. Around fourteen hundred tiny holes pull cooling air through each one, or they would quickly overheat.",
-      "context_reveal": "The camera glides over the cockpit to above the nose: the same nose and front wheels become clear glass in place, revealing both front brakes and their brake lines; the driver's helmet stays clearly visible behind.",
-      "effect_detail": "The camera slides around behind the disc: cool-blue air rushes in from the brake duct and out through the small holes, and the orange glow starts to fade."
+      "narration_1": "Under heavy braking these carbon-carbon discs can exceed a thousand degrees Celsius. Ducted air passes through internal microchannels inside each disc to pull heat away before it causes brake fade."
     }
   },
   "research": {
@@ -188,5 +186,5 @@
   "usage": "10 s single clip. Muse writes topic, research_notes and the variables; the system picks a random original livery for the page's niche and uses the page name as the team name.",
   "language": "narration in the fan page's language; the template text stays in English",
   "polish_fallback": "render",
-  "polish_fallback_note": "Owner 2026-10-25: when Argon/ChatGPT cannot keep the five timed stages after all attempts, the template's own render is used instead of failing the idea."
+  "polish_fallback_note": "Owner 2026-10-26: when Argon/ChatGPT cannot keep the three timed beats after all attempts, the template's own render is used instead of failing the idea."
 }
