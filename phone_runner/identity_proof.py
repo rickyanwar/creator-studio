@@ -1172,6 +1172,21 @@ def _has_label(tree: ET.Element, labels: tuple[str, ...]) -> bool:
     return False
 
 
+PROFILE_TAB_LABEL_RE = re.compile(r"^(All|Posts), 1 of \d+$")
+
+
+def _profile_needs_scroll_to_top(tree: ET.Element) -> bool:
+    """True when a profile is scrolled into its feed: "Manage posts" or the first profile tab label is visible."""
+    if _has_label(tree, OWN_PROFILE_SCROLLED_MARKERS):
+        return True
+    for node in tree.iter("node"):
+        text = (node.attrib.get("text") or "").strip()
+        desc = (node.attrib.get("content-desc") or "").strip()
+        if PROFILE_TAB_LABEL_RE.match(text) or PROFILE_TAB_LABEL_RE.match(desc):
+            return True
+    return False
+
+
 def _wait_for_window_focus(serial: str, activity_suffix: str, timeout: float = COMPOSER_OPEN_WAIT_SECONDS) -> bool:
     """Polls the focused window until it is the given activity (a fixed sleep was too short on the real phone)."""
     deadline = time.monotonic() + timeout
@@ -1356,8 +1371,7 @@ def _try_open_own_root_without_model(
     # 4. fb://profile restores the last scroll position, so the profile header (owner controls,
     # More profile settings) can be above the screen. Scroll back to the top and re-check.
     for _ in range(PROFILE_SCROLL_TO_TOP_SWIPES):
-        # Only scroll on our own profile: "Manage posts" is an owner-only control.
-        if not ok_p or tree_p is None or not _has_label(tree_p, OWN_PROFILE_SCROLLED_MARKERS):
+        if not ok_p or tree_p is None or not _profile_needs_scroll_to_top(tree_p):
             break
         run_adb(["shell", "input", "swipe", "540", "700", "540", "1900", "300"], serial=serial)
         time.sleep(1.2)
@@ -1391,6 +1405,17 @@ def _bind_profile_id(
     screen_ok = False
     if ok and tree is not None:
         screen_ok, _ = find_own_profile_name_identity(tree, clean_main_name)
+
+    if not screen_ok and ok and tree is not None and _profile_needs_scroll_to_top(tree):
+        for _ in range(PROFILE_SCROLL_TO_TOP_SWIPES):
+            run_adb(["shell", "input", "swipe", "540", "700", "540", "1900", "300"], serial=serial)
+            time.sleep(1.2)
+            ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+            if not ok or tree is None:
+                break
+            screen_ok, _ = find_own_profile_name_identity(tree, clean_main_name)
+            if screen_ok or not _profile_needs_scroll_to_top(tree):
+                break
 
     if not screen_ok:
         time.sleep(1.5)

@@ -44,6 +44,7 @@ from phone_runner.identity_proof import (
     get_center,
     IdentityProofResult,
     parse_bounds,
+    PortalImeContext,
 )
 from phone_runner.humanize import human_pause, human_tap
 from phone_runner.media_staging import get_media_content_uri, is_video_path, stage_media_files
@@ -77,6 +78,12 @@ WAKE_SETTLE_SECONDS = 1.5
 VISION_INFRA_MARKER = "all vision models failed"   # vision_verify: every model errored (service down), not a content mismatch
 POSTED_VISION_RETRIES = 2                          # extra attempts when the vision service errors
 POSTED_VISION_RETRY_WAIT_S = 20
+
+
+def _short_error(exc: BaseException, limit: int = 200) -> str:
+    """One-line exception text for stage details (no newlines, bounded length)."""
+    text = " ".join(str(exc).split())
+    return text[:limit]
 
 
 def _screen_state(serial: str) -> str:
@@ -833,7 +840,7 @@ def execute_publish(
                     stages.append({
                         "stage": "media_staging",
                         "passed": False,
-                        "detail": f"Media staging failed: {type(exc).__name__}",
+                        "detail": f"Media staging failed: {type(exc).__name__}: {_short_error(exc)}",
                     })
                     return {
                         "status": "failed",
@@ -1058,7 +1065,7 @@ def execute_publish(
                     stages.append({
                         "stage": "media_staging",
                         "passed": False,
-                        "detail": f"Media staging failed: {type(exc).__name__}",
+                        "detail": f"Media staging failed: {type(exc).__name__}: {_short_error(exc)}",
                     })
                     evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
                     return {
@@ -1197,7 +1204,7 @@ def execute_publish(
                     stages.append({
                         "stage": "media_staging",
                         "passed": False,
-                        "detail": f"Media staging failed: {type(exc).__name__}",
+                        "detail": f"Media staging failed: {type(exc).__name__}: {_short_error(exc)}",
                     })
                     evidence["observation_file"] = save_composer_observation(serial, "media_attach_failed")
                     return {
@@ -1367,7 +1374,12 @@ def execute_publish(
             typed_state = composer_state(post_type_ui.stdout)
             if entry_method == "paste" and caption_str and _is_empty_input_text(typed_state.get("input_text")):
                 # Paste was ignored (input still empty): fall back to Portal typing once.
-                fallback = type_text(serial=serial, text=caption_str, clear=False, timeout=_caption_typing_timeout(caption_str))
+                try:
+                    with PortalImeContext(serial):
+                        fallback = type_text(serial=serial, text=caption_str, clear=False, timeout=_caption_typing_timeout(caption_str))
+                except Exception as ime_exc:
+                    logger.warning("PortalImeContext for caption fallback failed: %s", ime_exc)
+                    fallback = MobilerunResult(returncode=1, stdout="", stderr=str(ime_exc))
                 evidence["caption_entry"] = "paste_ignored_then_type"
                 if fallback.returncode == 0:
                     refreshed = query_ui_hierarchy(serial)
@@ -1931,7 +1943,12 @@ def execute_publish(
             typed_state = composer_state(post_type_ui.stdout)
             if entry_method == "paste" and caption_str and _is_empty_input_text(typed_state.get("input_text")):
                 # Paste was ignored (input still empty): fall back to Portal typing once.
-                fallback = type_text(serial=serial, text=caption_str, clear=False, timeout=_caption_typing_timeout(caption_str))
+                try:
+                    with PortalImeContext(serial):
+                        fallback = type_text(serial=serial, text=caption_str, clear=False, timeout=_caption_typing_timeout(caption_str))
+                except Exception as ime_exc:
+                    logger.warning("PortalImeContext for caption fallback failed: %s", ime_exc)
+                    fallback = MobilerunResult(returncode=1, stdout="", stderr=str(ime_exc))
                 evidence["caption_entry"] = "paste_ignored_then_type"
                 if fallback.returncode == 0:
                     refreshed = query_ui_hierarchy(serial)
