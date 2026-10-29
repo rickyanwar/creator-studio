@@ -303,6 +303,7 @@ def test_profile_only_success(mock_device_env, monkeypatch):
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -488,6 +489,7 @@ def test_clipboard_sentinel_readback_failed_fails(mock_device_env, monkeypatch):
         serial=TEST_SERIAL,
         main_name=TEST_ROOT_NAME,
         expected_root_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is False
@@ -580,6 +582,7 @@ def test_no_model_called_after_terminal_proof(mock_device_env, monkeypatch):
         serial=TEST_SERIAL,
         main_name=TEST_ROOT_NAME,
         expected_root_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -1127,6 +1130,7 @@ def test_reassert_portal_after_mobilerun_restores_default(mock_device_env, monke
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -1369,6 +1373,7 @@ def test_end_probe_drift_rejected(mock_device_env, monkeypatch):
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is False
@@ -1400,6 +1405,7 @@ def test_actual_observed_fields_fidelity(mock_device_env, monkeypatch):
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -1686,6 +1692,7 @@ def test_pre_proof_gallery_launches_fb_then_proves_ownroot(mock_device_env, monk
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -1734,6 +1741,7 @@ def test_gallery_after_url_proof_aborts_without_relaunching_fb(mock_device_env, 
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is False
@@ -1820,6 +1828,7 @@ def test_collect_own_url_proof_chain_polls_profile_settings_success(mock_device_
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -1849,6 +1858,7 @@ def test_collect_own_url_proof_chain_settings_timeout_fails_and_saves_observatio
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
         time_fn=lambda: clock[0],
+        profile_url_proof=True,
     )
 
     assert proof.passed is False

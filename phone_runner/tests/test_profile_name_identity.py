@@ -122,6 +122,7 @@ def mock_device_env(monkeypatch):
     monkeypatch.setattr("phone_runner.dry_run.put_to_sleep", lambda s: AdbResult(0, "OK", ""))
     monkeypatch.setattr("phone_runner.dry_run.launch_facebook_feed", lambda s: AdbResult(0, "OK", ""))
     monkeypatch.setattr("phone_runner.identity_proof.run_adb", AdbCommandRecorder())
+    monkeypatch.setattr("phone_runner.adb.run_adb", AdbCommandRecorder())
 
     default_probe = {
         "status": "ready",
@@ -278,6 +279,7 @@ def test_proof_chain_name_identity_profile_only_success(mock_device_env, monkeyp
     """Professional profile without More settings passes proof chain for profile-only target."""
     ui_dumps = [
         PROFESSIONAL_PROFILE_XML,
+        PROFESSIONAL_PROFILE_XML,
         COMPOSER_AGUNG_XML,
     ]
     ui_iter = iter(ui_dumps)
@@ -285,6 +287,7 @@ def test_proof_chain_name_identity_profile_only_success(mock_device_env, monkeyp
 
     adb_recorder = AdbCommandRecorder()
     monkeypatch.setattr("phone_runner.identity_proof.run_adb", adb_recorder)
+    monkeypatch.setattr("phone_runner.adb.run_adb", adb_recorder)
     monkeypatch.setattr("phone_runner.identity_proof.run_mobilerun", lambda **kwargs: MobilerunResult(0, "Navigated", ""))
 
     proof = collect_own_url_proof_chain(
@@ -312,12 +315,13 @@ def test_proof_chain_name_identity_profile_only_success(mock_device_env, monkeyp
     assert all(s["passed"] for s in proof.stages)
 
     root_stage = next(s for s in proof.stages if s["stage"] == "root_url")
-    assert root_stage["detail"] == "name-based owner-profile proof (URL route unavailable)"
+    assert root_stage["detail"] == "name-based owner-profile proof (Settings link route skipped for profile targets)"
     target_stage = next(s for s in proof.stages if s["stage"] == "target_url")
-    assert target_stage["detail"] == "name-based owner-profile proof (URL route unavailable)"
+    assert target_stage["detail"] == "name-based owner-profile proof (Settings link route skipped for profile targets)"
 
     # Check steps
     step_names = [s["step"] for s in proof.steps]
+    assert "root_profile_id_bound" in step_names
     assert "root_profile_name_verified" in step_names
     assert "composer_bound" in step_names
     name_step = next(s for s in proof.steps if s["step"] == "root_profile_name_verified")

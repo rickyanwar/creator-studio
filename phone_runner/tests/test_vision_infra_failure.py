@@ -351,6 +351,7 @@ def test_identity_copy_root_link_retry_success(mock_device_env, monkeypatch: pyt
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -390,6 +391,7 @@ def test_identity_copy_root_link_both_attempts_fail(mock_device_env, monkeypatch
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is False
@@ -441,6 +443,7 @@ def test_identity_copy_root_link_retry_deadline_exceeded(mock_device_env, monkey
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is False

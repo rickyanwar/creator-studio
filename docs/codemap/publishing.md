@@ -327,8 +327,8 @@ Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `pho
 ### 10.2 Identity & Navigation Gates
 - **Conflict Short-Circuit** (`publish._check_candidate_identity`): If candidate capture observes root ID $\ne$ expected main profile ID or composer ID $\ne$ expected target ID, immediately fails with `identity_mismatch`. Model navigation is never invoked on conflicting sessions.
 - **Proof Chain Verification** (`identity_proof.prove_identity`, `identity_proof.find_own_profile_name_identity`):
-  - Profiles use `own_profile_name_v1`: requires exact profile name on own-profile root screen, owner-only controls (Edit cover photo / Edit profile picture / Dashboard), and matching composer author header.
-  - `own_url_chain_v1` (sentinel clipboard readback) is used when available but not required for profiles (no More-profile-settings dependency).
+  - Profiles use `own_profile_name_v1` as the primary path (2026-10-30): exact profile name on the own-profile root screen, owner-only controls (Edit cover photo / Edit profile picture / Dashboard), then ONE deep link `fb://profile/<expected id>` that must show the owner view (a visitor view with Follow / Add friend / Message fails closed, `Profile id binding failed`), then the matching composer author header. No Settings visit, clipboard or scrolling for profiles.
+  - `own_url_chain_v1` (Settings → Copy link → clipboard) only runs for profiles when `collect_own_url_proof_chain(profile_url_proof=True)` is passed (tests only). Facebook renamed the button to "Copy <name>'s link" (child text "Copy link") around 2026-10-28; `find_root_settings_controls` / `find_page_settings_controls` accept both labels.
   - Pages retain strict URL chain verification.
 - **IME Restoration Guard** (`identity_proof.PortalImeContext`): Records default IME on entry. In `finally` block, restores original IME and verifies readback. If restoration fails, returns `IME_RESTORATION_FAILED` and halts publishing.
 
@@ -359,7 +359,7 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
 ### 11.1 Identity & Navigation Protocol
 - **Profile Name Identity (`own_profile_name_v1`)**:
   - Facebook Profile destinations require: exact profile name on own-profile root screen, presence of owner-only controls ("Edit cover photo", "Edit profile picture", or "Dashboard"), and composer author header matching exact profile name (`identity_proof.find_own_profile_name_identity`).
-  - URL/numeric-ID chain (`own_url_chain_v1`) is used when available, but not mandatory for profiles. Pages strictly require URL chain.
+  - The numeric id is bound by the `fb://profile/<id>` owner-view check (`identity_proof._bind_profile_id`, live-verified 2026-10-30: own id → owner view, other id → visitor view with "Follow"). The URL chain (`own_url_chain_v1`) is not used for profiles in production. Pages strictly require URL chain.
   - Exact match prevents posting as Page or mismatched account ("Agung Baelah" != "Agung"). If session is a Page, name check fails and nothing is typed.
   - **Page id on the phone**: for New Pages Experience pages the URL chain sees the page's profile-style id (e.g. GP Weekend `100094901131361`), not the classic page id Repliz reports as `generatedId` (`113659828455762`). A phone `facebook_page` destination must store the profile-style id in `facebook_actor_id`; the classic id fails closed with `identity_unverified`. Page rehearsal (GP Weekend under Agung) passed every gate on 2026-10-17, and a profile run that starts in the Page session switches back to the root profile.
 - **Deterministic Root Navigation** (`identity_proof._try_open_own_root_without_model`):
@@ -446,5 +446,5 @@ backend/app/services/publishing_schedule.py:182 - Candidate slot jitter within e
 backend/app/services/social_delivery_policy.py:216 - Automated fallback to Repliz is strictly limited to Pages (kind == 'page'), requires incident state needs_human, forbids uncertain deliveries, and requires verified absence of duplicates.
 phone_runner/recovery.py:563 - Larger repairs enter awaiting_approval with an automatic approval deadline set to exactly 15 minutes (deadline = now + timedelta(minutes=15)) if the owner has not responded.
 backend/app/services/social_post_reconciliation.py:30 - Post reconciliation against Repliz GET /public/content queries up to 3 pages (MAX_PAGINATION_PAGES = 3) and enforces an expected publish time tolerance of +/- 2 hours (DEFAULT_RECONCILIATION_WINDOW = timedelta(hours=2)).
-phone_runner/identity_proof.py - Profile destination identity verification accepts own_profile_name_v1 (exact profile name, owner-only controls, matching composer author) without requiring own_url_chain_v1.
+phone_runner/identity_proof.py - Profile destination identity verification uses own_profile_name_v1 (exact profile name, owner-only controls, fb://profile/<id> owner view, matching composer author) and skips the Settings/Copy-link chain unless profile_url_proof=True.
 phone_runner/media_staging.py - Photo attachments on modern Facebook composer use Android SEND share intent to ImplicitShareIntentHandlerDefaultAlias with MediaStore content URI.

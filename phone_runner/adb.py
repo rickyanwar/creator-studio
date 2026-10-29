@@ -210,6 +210,25 @@ def launch_facebook_own_profile(serial: str) -> AdbResult:
     )
 
 
+def launch_facebook_profile_by_id(serial: str, profile_id: str) -> AdbResult:
+    clean = str(profile_id).strip()
+    if not re.fullmatch(r"\d{4,32}", clean):
+        raise ValueError("profile_id must be numeric")
+    return run_adb(
+        [
+            "shell",
+            "am",
+            "start",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            f"fb://profile/{clean}",
+            "com.facebook.katana",
+        ],
+        serial=serial,
+    )
+
+
 def query_ui_hierarchy(serial: str) -> AdbResult:
     """Dumps and reads the active UI hierarchy XML safely.
 

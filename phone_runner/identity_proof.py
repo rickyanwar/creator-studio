@@ -15,6 +15,7 @@ from phone_runner.adb import (
     is_device_secure_locked,
     launch_facebook_feed,
     launch_facebook_own_profile,
+    launch_facebook_profile_by_id,
     parse_rotation,
     parse_screen_state,
     query_activity_state,
@@ -203,6 +204,7 @@ MODEL_NAV_MAX_SECONDS = 120.0
 MODEL_NAV_RESERVE_SECONDS = 60.0
 SETTINGS_WAIT_SECONDS = 6.0
 SETTINGS_POLL_SECONDS = 0.5
+PROFILE_ID_BIND_WAIT_SECONDS = 2.0
 VISITOR_MARKERS = {"add friend", "message", "follow", "follow back"}
 
 
@@ -847,9 +849,20 @@ def find_root_settings_controls(
         )):
             has_owned_controls = True
 
-        if (desc_lower in ("copy profile link", "profile link", "your profile link") or
-                text_lower in ("copy profile link", "profile link", "your profile link")) and clickable:
-            copy_link_bounds = b
+        if clickable and copy_link_bounds is None:
+            # Original exact labels
+            if (desc_lower in ("copy profile link", "profile link", "your profile link") or
+                    text_lower in ("copy profile link", "profile link", "your profile link")):
+                copy_link_bounds = b
+            # New format: content-desc like "Copy Agung's link" (straight or curly apostrophe)
+            elif re.match(r"copy .+['\u2019]s link$", desc_lower):
+                copy_link_bounds = b
+            # Clickable parent with child text exactly "Copy link"
+            elif any(
+                (child.attrib.get("text") or "").strip() == "Copy link"
+                for child in node
+            ):
+                copy_link_bounds = b
 
     if not has_title:
         return False, "Screen title is not 'Profile Settings'", None, None
@@ -894,9 +907,20 @@ def find_page_settings_controls(
         )):
             has_owned_controls = True
 
-        if (desc_lower in ("page link", "your page link", "copy page link") or
-                text_lower in ("page link", "your page link", "copy page link")) and clickable:
-            page_link_bounds = b
+        if clickable and page_link_bounds is None:
+            # Original exact labels
+            if (desc_lower in ("page link", "your page link", "copy page link") or
+                    text_lower in ("page link", "your page link", "copy page link")):
+                page_link_bounds = b
+            # New format: content-desc like "Copy MyPage's link" (straight or curly apostrophe)
+            elif re.match(r"copy .+['\u2019]s link$", desc_lower):
+                page_link_bounds = b
+            # Clickable parent with child text exactly "Copy link"
+            elif any(
+                (child.attrib.get("text") or "").strip() == "Copy link"
+                for child in node
+            ):
+                page_link_bounds = b
 
     if not has_title:
         return False, "Screen title is not 'Page Settings'", None
@@ -1345,6 +1369,47 @@ def _try_open_own_root_without_model(
     return False
 
 
+def _bind_profile_id(
+    serial: str,
+    expected_root_id: str | None,
+    clean_main_name: str,
+    expected_geometry: str | None = None,
+) -> tuple[bool, str, ET.Element | None, str | None]:
+    clean_id = str(expected_root_id).strip() if expected_root_id is not None else ""
+    if not re.fullmatch(r"\d{4,32}", clean_id):
+        return False, "Profile id binding failed: expected id is not numeric", None, None
+
+    launch_facebook_profile_by_id(serial, clean_id)
+    time.sleep(PROFILE_ID_BIND_WAIT_SECONDS)
+    ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+
+    if ok and tree is not None and _is_profile_switcher_open(tree):
+        run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+        time.sleep(1.2)
+        ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+
+    screen_ok = False
+    if ok and tree is not None:
+        screen_ok, _ = find_own_profile_name_identity(tree, clean_main_name)
+
+    if not screen_ok:
+        time.sleep(1.5)
+        ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+        if ok and tree is not None and _is_profile_switcher_open(tree):
+            run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+            time.sleep(1.2)
+            ok, err, tree, raw_xml = verify_foreground_facebook(serial, expected_geometry)
+
+    if not ok or tree is None:
+        return False, f"Profile id binding failed: {err}", tree, raw_xml
+
+    name_ok, name_err = find_own_profile_name_identity(tree, clean_main_name)
+    if not name_ok:
+        return False, f"Profile id binding failed: {name_err}", tree, raw_xml
+
+    return True, "", tree, raw_xml
+
+
 def find_composer_open_trigger(
     tree: ET.Element,
 ) -> tuple[bool, str, tuple[int, int, int, int] | None]:
@@ -1641,11 +1706,13 @@ def collect_own_url_proof_chain(
     timeout: float = 240.0,
     time_fn: Callable[[], float] | None = None,
     discovery_mode: bool = False,
+    profile_url_proof: bool = False,
 ) -> IdentityProofResult:
     """Collects host-owned, deterministic proof chain for root and target URLs bound to composer.
 
     Total operation budget: 240 seconds.
     Restores original IME default and enabled state guaranteed in finally block.
+    profile_url_proof=True forces the old Settings / Copy-link URL chain for profile targets (default False: profile targets use the exact-name owner proof).
     """
     if time_fn is None:
         time_fn = time.monotonic
@@ -1839,9 +1906,33 @@ def collect_own_url_proof_chain(
             root_prof_digest = compute_xml_digest(raw_xml)
             ok, err, more_bounds = find_own_profile_controls(tree, clean_main_name)
             name_proof_path = False
-            if not ok or more_bounds is None:
-                name_ok, _ = find_own_profile_name_identity(tree, clean_main_name)
-                if (not is_page_target) and name_ok:
+
+            if not is_page_target and not profile_url_proof:
+                # Profile targets: name proof is the PRIMARY path (owner decision 2026-10-16).
+                # Skips the Settings / IME-bind / clipboard / scroll / Copy-link chain.
+                name_ok, name_err = find_own_profile_name_identity(tree, clean_main_name)
+                if name_ok:
+                    timeout_err = check_deadline("profile id binding")
+                    if timeout_err:
+                        return make_fail(timeout_err, "root_url")
+
+                    bind_ok, bind_err, bind_tree, bind_raw = _bind_profile_id(
+                        serial, expected_root_id, clean_main_name, expected_geometry
+                    )
+                    if bind_raw:
+                        last_raw_xml = bind_raw
+                    if not bind_ok:
+                        return make_fail(bind_err, "root_url")
+
+                    tree = bind_tree
+                    raw_xml = bind_raw
+                    root_prof_digest = compute_xml_digest(raw_xml)
+                    steps.append({
+                        "step": "root_profile_id_bound",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "digest": root_prof_digest,
+                        "detail": f"Owner view confirmed via fb://profile/{expected_root_id}",
+                    })
                     name_proof_path = True
                     proof_method = "own_profile_name_v1"
                     observed_root_id = str(expected_root_id).strip()
@@ -1857,14 +1948,45 @@ def collect_own_url_proof_chain(
                     stages.append({
                         "stage": "root_url",
                         "passed": True,
-                        "detail": "name-based owner-profile proof (URL route unavailable)",
+                        "detail": "name-based owner-profile proof (Settings link route skipped for profile targets)",
                     })
                     stages.append({
                         "stage": "target_url",
                         "passed": True,
-                        "detail": "name-based owner-profile proof (URL route unavailable)",
+                        "detail": "name-based owner-profile proof (Settings link route skipped for profile targets)",
                     })
                 else:
+                    return make_fail(f"Root own profile invalid: {name_err}", "root_url")
+            elif not ok or more_bounds is None:
+                if (not is_page_target) and profile_url_proof:
+                    name_ok, _ = find_own_profile_name_identity(tree, clean_main_name)
+                    if name_ok:
+                        name_proof_path = True
+                        proof_method = "own_profile_name_v1"
+                        observed_root_id = str(expected_root_id).strip()
+                        observed_target_id = str(expected_root_id).strip()
+                        observed_root_url = None
+                        observed_target_url = None
+                        steps.append({
+                            "step": "root_profile_name_verified",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "digest": root_prof_digest,
+                            "detail": "Own profile verified by exact name + owner controls (owner policy 2026-10-16)",
+                        })
+                        stages.append({
+                            "stage": "root_url",
+                            "passed": True,
+                            "detail": "name-based owner-profile proof (URL route unavailable)",
+                        })
+                        stages.append({
+                            "stage": "target_url",
+                            "passed": True,
+                            "detail": "name-based owner-profile proof (URL route unavailable)",
+                        })
+                    else:
+                        return make_fail(f"Root own profile invalid: {err}", "root_url")
+                else:
+                    # Page target but find_own_profile_controls failed
                     return make_fail(f"Root own profile invalid: {err}", "root_url")
             else:
                 steps.append({

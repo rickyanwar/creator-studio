@@ -209,6 +209,7 @@ def test_settings_tap_visible_retry_flow(monkeypatch, tmp_path):
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
         time_fn=lambda: clock[0],
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -319,6 +320,7 @@ def test_settings_tap_swipe_fallback_success(monkeypatch, tmp_path):
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
         time_fn=lambda: clock[0],
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -368,6 +370,7 @@ def test_settings_tap_swipe_fallback_still_covered_fails(monkeypatch, tmp_path):
         expected_root_id=TEST_ROOT_ID,
         target_name=TEST_ROOT_NAME,
         expected_target_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is False

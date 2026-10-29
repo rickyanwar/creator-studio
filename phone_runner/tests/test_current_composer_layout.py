@@ -372,6 +372,7 @@ def test_collector_step6_actor_title_success(monkeypatch):
         serial=TEST_SERIAL,
         main_name=TEST_ROOT_NAME,
         expected_root_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
     assert proof.passed is True
     assert proof.active_composer_actor_id == TEST_ROOT_ID
@@ -409,6 +410,7 @@ def test_collector_step6_actor_title_rejected_rotation_nonzero(monkeypatch):
         serial=TEST_SERIAL,
         main_name=TEST_ROOT_NAME,
         expected_root_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
     assert proof.passed is False
     assert proof.active_composer_actor_id is None

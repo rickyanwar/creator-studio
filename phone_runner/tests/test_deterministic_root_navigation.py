@@ -336,6 +336,7 @@ def test_collector_candidate_ready_skips_mobilerun_and_passes_full_chain(monkeyp
         serial=TEST_SERIAL,
         main_name=TEST_ROOT_NAME,
         expected_root_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is True
@@ -396,6 +397,7 @@ def test_collector_wrong_numeric_ids_still_reject(monkeypatch):
         serial=TEST_SERIAL,
         main_name=TEST_ROOT_NAME,
         expected_root_id=TEST_ROOT_ID,
+        profile_url_proof=True,
     )
 
     assert proof.passed is False
