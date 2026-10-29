@@ -13,6 +13,7 @@ from phone_runner.media_staging import (
     PinnedIPHTTPSConnection,
     PinnedIPHTTPSHandler,
     ProhibitRedirectHandler,
+    _push_timeout_seconds,
     download_media_file,
     get_media_content_uri,
     is_video_path,
@@ -361,6 +362,34 @@ def test_push_media_to_device_defaults_by_type():
         # Explicit remote_dir respected
         rem_exp = push_media_to_device("serial_1", "/local/stage_abc.mp4", remote_dir="/sdcard/Custom")
         assert rem_exp == "/sdcard/Custom/stage_abc.mp4"
+
+
+def test_push_timeout_scales_with_file_size(tmp_path):
+    target = tmp_path / "stage_a.png"
+    target.write_bytes(b"\0" * 5_246_479)
+    assert _push_timeout_seconds(str(target)) == pytest.approx(45 + 5_246_479 / 262_144)
+
+    missing = str(tmp_path / "does_not_exist.png")
+    assert _push_timeout_seconds(missing) == 45.0
+
+    with mock.patch("phone_runner.media_staging.os.path.getsize", return_value=10**9):
+        assert _push_timeout_seconds(str(target)) == 600.0
+
+
+def test_push_media_to_device_passes_timeout_and_reports_stderr(tmp_path):
+    local_file = tmp_path / "stage_test.jpg"
+    local_file.write_bytes(b"small-data")
+    path = str(local_file)
+
+    with mock.patch(
+        "phone_runner.media_staging.run_adb",
+        side_effect=[AdbResult(0, "", ""), AdbResult(-1, "", "Command timed out after 46.0s")],
+    ) as mock_adb:
+        with pytest.raises(RuntimeError, match="timed out after 46.0s"):
+            push_media_to_device("serial_1", path)
+
+        assert mock_adb.call_count == 2
+        assert mock_adb.call_args_list[1].kwargs.get("timeout") == pytest.approx(_push_timeout_seconds(path))
 
 
 def test_get_media_content_uri_video_success():

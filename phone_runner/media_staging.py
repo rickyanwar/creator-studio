@@ -16,6 +16,7 @@ import urllib.request
 
 from phone_runner.adb import AdbResult, run_adb
 from phone_runner.config import (
+    get_default_timeout,
     get_max_media_bytes,
     get_media_timeout,
     is_media_host_allowed,
@@ -25,6 +26,9 @@ CHUNK_SIZE = 64 * 1024
 TAILSCALE_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
 SAFE_STAGED_NAME_RE = re.compile(r"^stage_[A-Za-z0-9_]+\.[a-z0-9]{1,6}$")
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
+PUSH_TIMEOUT_BASE_SECONDS = 45.0
+PUSH_MIN_BYTES_PER_SECOND = 256 * 1024
+PUSH_TIMEOUT_MAX_SECONDS = 600.0
 
 
 def is_video_path(path: str) -> bool:
@@ -291,6 +295,16 @@ def download_media_file(
         raise
 
 
+def _push_timeout_seconds(local_path: str) -> float:
+    """Allows slow Tailscale links: base time plus a floor transfer rate, capped."""
+    try:
+        size = os.path.getsize(local_path)
+    except OSError:
+        size = 0
+    timeout = PUSH_TIMEOUT_BASE_SECONDS + size / PUSH_MIN_BYTES_PER_SECOND
+    return min(max(timeout, get_default_timeout()), PUSH_TIMEOUT_MAX_SECONDS)
+
+
 def push_media_to_device(
     serial: str,
     local_path: str,
@@ -308,11 +322,11 @@ def push_media_to_device(
     # Ensure target directory exists without shell interpolation
     mkdir_res = run_adb(["shell", "mkdir", "-p", remote_dir], serial=serial)
     if mkdir_res.returncode != 0:
-        raise RuntimeError(f"Failed to create remote staging directory (exit code {mkdir_res.returncode})")
+        raise RuntimeError(f"Failed to create remote staging directory (exit code {mkdir_res.returncode}): {mkdir_res.stderr.strip()[:200]}")
 
-    push_res = run_adb(["push", local_path, remote_path], serial=serial)
+    push_res = run_adb(["push", local_path, remote_path], serial=serial, timeout=_push_timeout_seconds(local_path))
     if push_res.returncode != 0:
-        raise RuntimeError(f"ADB push failed (exit code {push_res.returncode})")
+        raise RuntimeError(f"ADB push failed (exit code {push_res.returncode}): {push_res.stderr.strip()[:200]}")
 
     # Notify MediaStore to index new file
     run_adb(
