@@ -221,6 +221,7 @@ CI/CD deployment is controlled by `.github/workflows/deploy.yml` and verified by
 5. **VPS Resource Boundaries**:
    - Free RAM is constrained (~1.4 GB free).
    - `worker-video` has `cpus: 2`, `mem_limit: 1500m`, `oom_score_adj: 500`, and `stop_grace_period: 5m` (`docker-compose.server.yml:121-124`). Under host pressure, the Linux OOM-killer kills the video worker before touching production API or database containers.
+   - `worker-delivery` has `stop_grace_period: 11m` so a deploy lets an in-flight phone post (runner call up to 600 s) record its result instead of leaving the delivery claimed and later `uncertain`.
 6. **Host Services Lifecycle (`phone-runner` & `gflow-worker`)**:
    - Both run outside Docker on the host as systemd units.
    - `phone-runner` binds strictly to Docker bridge gateway `172.18.0.1:8765` or loopback; never expose on `0.0.0.0`.

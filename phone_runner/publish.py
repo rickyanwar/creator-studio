@@ -464,6 +464,17 @@ def _post_link_stage(post_id: str | None, permalink: str | None, resolve_detail:
     }
 
 
+PERMALINK_OWNER_ID_RE = re.compile(r"[?&]id=([0-9]{4,32})(?:&|$)")
+
+
+def _permalink_owner_id(permalink: str | None) -> str | None:
+    """Owner id from a permalink.php?story_fbid=...&id=<owner> link, or None."""
+    if not permalink:
+        return None
+    m = PERMALINK_OWNER_ID_RE.search(permalink)
+    return m.group(1) if m else None
+
+
 def execute_publish(
     serial: str,
     main_profile: dict[str, Any] | str,
@@ -1831,25 +1842,34 @@ def execute_publish(
                             "detail": "skipped: vision service unavailable; post id proven on own profile",
                         })
                     else:
-                        evidence["resolved_post_id"] = post_id
-                        evidence["resolved_permalink"] = permalink
-                        stages.append({
-                            "stage": "vision_gate_posted",
-                            "passed": False,
-                            "detail": f"Vision gate posted failed: {v_ev.get('detail')}",
-                        })
-                        evidence["observation_file"] = save_composer_observation(serial, "post_vision_mismatch")
-                        return {
-                            "status": "uncertain",
-                            "facebook_post_id": None,
-                            "permalink": None,
-                            "actor_id": expected_target_id,
-                            "publish_may_have_started": True,
-                            "error_code": "post_vision_mismatch",
-                            "evidence": evidence,
-                            "stages": stages,
-                            "checked_at": checked_at,
-                        }
+                        if _permalink_owner_id(permalink) == str(expected_target_id):
+                            evidence["vision_posted_overridden"] = str(v_ev.get("detail", ""))
+                            evidence["observation_file"] = save_composer_observation(serial, "post_vision_overridden")
+                            stages.append({
+                                "stage": "vision_gate_posted",
+                                "passed": True,
+                                "detail": f"overridden: caption-matched post id with owner id in permalink; vision said: {v_ev.get('detail')}",
+                            })
+                        else:
+                            evidence["resolved_post_id"] = post_id
+                            evidence["resolved_permalink"] = permalink
+                            stages.append({
+                                "stage": "vision_gate_posted",
+                                "passed": False,
+                                "detail": f"Vision gate posted failed: {v_ev.get('detail')}",
+                            })
+                            evidence["observation_file"] = save_composer_observation(serial, "post_vision_mismatch")
+                            return {
+                                "status": "uncertain",
+                                "facebook_post_id": None,
+                                "permalink": None,
+                                "actor_id": expected_target_id,
+                                "publish_may_have_started": True,
+                                "error_code": "post_vision_mismatch",
+                                "evidence": evidence,
+                                "stages": stages,
+                                "checked_at": checked_at,
+                            }
                 else:
                     stages.append({
                         "stage": "vision_gate_posted",

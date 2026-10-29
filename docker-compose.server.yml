@@ -103,6 +103,8 @@ services:
 
   # ── Celery Worker (social delivery dispatch: phone posting + phone watchdog) ──
   # One slot: there is one phone, and a single post takes 5-10 min (see celery_app task_routes).
+  # The stop grace outlasts the 600 s phone-runner publish call, so a deploy lets an in-flight
+  # post record its result instead of leaving it claimed and later uncertain (delivery 1350).
   worker-delivery:
     init: true
     image: studio-backend:latest
@@ -112,6 +114,7 @@ services:
     env_file: .env
     volumes:
       - media_data:/opt/studio/media
+    stop_grace_period: 11m
     depends_on:
       db:
         condition: service_healthy

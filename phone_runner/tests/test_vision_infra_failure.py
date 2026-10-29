@@ -8,6 +8,7 @@ from phone_runner.publish import (
     POSTED_VISION_RETRIES,
     POSTED_VISION_RETRY_WAIT_S,
     VISION_INFRA_MARKER,
+    _permalink_owner_id,
     execute_publish,
 )
 from phone_runner.tests.test_identity_proof import (
@@ -287,6 +288,95 @@ def test_posted_gate_real_mismatch_fails_uncertain(monkeypatch: pytest.MonkeyPat
     assert "vision_posted_skipped" not in res["evidence"]
     assert posted_attempts == 1
     assert len([g for g in res["evidence"]["vision_gates"] if g["gate"] == "posted"]) == 1
+
+
+def test_posted_gate_mismatch_kept_published_when_permalink_owner_matches(monkeypatch: pytest.MonkeyPatch):
+    posted_attempts = 0
+
+    def posted_gate():
+        nonlocal posted_attempts
+        posted_attempts += 1
+        return False, {
+            "gate": "posted",
+            "model": "gemini-flash",
+            "ok": False,
+            "detail": "photo not visible on profile",
+            "answer": {},
+        }
+
+    sleep_calls, taps, gates_called = _setup_publish_mocks(monkeypatch, posted_gate)
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c, **kw: (
+            "4743496072641653",
+            f"https://www.facebook.com/permalink.php?story_fbid=4743496072641653&id={TEST_DEST_ID}",
+            "resolved",
+        ),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "published"
+    assert res["facebook_post_id"] == "4743496072641653"
+    assert res["error_code"] is None
+    assert res["evidence"]["vision_posted_overridden"] == "photo not visible on profile"
+    assert any(
+        s["stage"] == "vision_gate_posted"
+        and s["passed"] is True
+        and s["detail"].startswith("overridden:")
+        for s in res["stages"]
+    )
+
+
+def test_posted_gate_mismatch_stays_uncertain_when_permalink_owner_differs(monkeypatch: pytest.MonkeyPatch):
+    posted_attempts = 0
+
+    def posted_gate():
+        nonlocal posted_attempts
+        posted_attempts += 1
+        return False, {
+            "gate": "posted",
+            "model": "gemini-flash",
+            "ok": False,
+            "detail": "photo not visible on profile",
+            "answer": {},
+        }
+
+    sleep_calls, taps, gates_called = _setup_publish_mocks(monkeypatch, posted_gate)
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c, **kw: (
+            "4743496072641653",
+            "https://www.facebook.com/permalink.php?story_fbid=4743496072641653&id=100000000000004",
+            "resolved",
+        ),
+    )
+
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+
+    assert res["status"] == "uncertain"
+    assert res["error_code"] == "post_vision_mismatch"
+    assert res["facebook_post_id"] is None
+    assert "vision_posted_overridden" not in res["evidence"]
+
+
+def test_permalink_owner_id():
+    assert _permalink_owner_id("https://www.facebook.com/permalink.php?story_fbid=1&id=100009439229483") == "100009439229483"
+    assert _permalink_owner_id("https://facebook.com/posts/post_12345") is None
+    assert _permalink_owner_id(None) is None
+    assert _permalink_owner_id("https://x/permalink.php?story_fbid=1&id=12ab") is None
 
 
 def test_posted_gate_sleep_called_between_retries(monkeypatch: pytest.MonkeyPatch):
