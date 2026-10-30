@@ -445,7 +445,7 @@ def test_stale_news_skipped_with_error(db_session: Session):
     assert d.state == "skipped"
     assert d.scheduled_for is None
     assert d.last_error.startswith("stale:")
-    assert "24 h" in d.last_error or "day the news arrived" in d.last_error
+    assert "12 h" in d.last_error or "24 h" in d.last_error or "day the news arrived" in d.last_error
 
     # Confirm it did NOT reserve a slot: get_destination_reservations_utc is empty
     from app.services.publishing_schedule import get_destination_reservations_utc

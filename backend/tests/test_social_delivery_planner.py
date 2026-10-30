@@ -34,6 +34,7 @@ from app.models.social_publishing import (
 from app.models.target_fanpages import TargetFanpage
 from app.services.social_delivery_planner import (
     DeliveryPayload,
+    _news_stale_reason,
     build_delivery_payload,
     compute_caption_hash,
     compute_media_hash,
@@ -270,7 +271,7 @@ def test_separate_page_method_quotas(db_session: Session):
     db_session.flush()
 
     # Create 3 jobs for the same local day
-    now_utc = datetime(2026, 10, 15, 9, 0, tzinfo=timezone.utc)
+    now_utc = datetime(2026, 10, 15, 9, 30, tzinfo=timezone.utc)
     jobs = []
     for i in range(3):
         job = PublishJob(
@@ -509,7 +510,7 @@ def test_news_next_day_rollover_is_stale(db_session: Session):
 
     d2 = ensure_deliveries(db_session, job2, now_utc=t0)[0]
     assert d2.state == "skipped"
-    assert d2.last_error == "stale: no News slot on the day the news arrived"
+    assert d2.last_error == "stale: no News slot within 12 h"
     assert d2.scheduled_for is None
 
 
@@ -728,3 +729,53 @@ def test_concurrent_integrity_error_recovery(db_session: Session):
     deliveries = ensure_deliveries(db_session, job)
     assert len(deliveries) == 1
     assert deliveries[0].id == existing_del.id
+
+
+def test_overnight_news_stale_reason():
+    """Verify overnight news exception (lead hours before sleep, wake hours after wake)."""
+    tz = zoneinfo.ZoneInfo("Asia/Jakarta")
+
+    # a. created 21:30 local, slot next day 07:20, stale 12 -> None
+    c_a = datetime(2026, 10, 21, 21, 30, tzinfo=tz)
+    s_a = datetime(2026, 10, 22, 7, 20, tzinfo=tz)
+    assert _news_stale_reason(s_a, c_a, 12, "Asia/Jakarta", sleep_start=23, sleep_end=7) is None
+
+    # b. created 21:30, slot next day 10:30, stale 24 -> "stale: no News slot on the day the news arrived"
+    s_b = datetime(2026, 10, 22, 10, 30, tzinfo=tz)
+    assert (
+        _news_stale_reason(s_b, c_a, 24, "Asia/Jakarta", sleep_start=23, sleep_end=7)
+        == "stale: no News slot on the day the news arrived"
+    )
+
+    # c. created 15:00 (more than 4 h before 23:00), slot next day 07:20, stale 24 -> day reason
+    c_c = datetime(2026, 10, 21, 15, 0, tzinfo=tz)
+    assert (
+        _news_stale_reason(s_a, c_c, 24, "Asia/Jakarta", sleep_start=23, sleep_end=7)
+        == "stale: no News slot on the day the news arrived"
+    )
+
+    # d. created 21:30, slot next day 07:20, stale 6 -> "stale: no News slot within 6 h"
+    assert (
+        _news_stale_reason(s_a, c_a, 6, "Asia/Jakarta", sleep_start=23, sleep_end=7)
+        == "stale: no News slot within 6 h"
+    )
+
+    # e. created 02:00 (during sleep), slot same day 07:30, stale 12 -> None (same date, unchanged)
+    c_e = datetime(2026, 10, 22, 2, 0, tzinfo=tz)
+    s_e = datetime(2026, 10, 22, 7, 30, tzinfo=tz)
+    assert _news_stale_reason(s_e, c_e, 12, "Asia/Jakarta", sleep_start=23, sleep_end=7) is None
+
+    # f. sleep None/None (default 22 -> 7): created 19:00, slot next day 07:10, stale 24 -> None; created 17:30 -> day reason
+    c_f1 = datetime(2026, 10, 21, 19, 0, tzinfo=tz)
+    s_f = datetime(2026, 10, 22, 7, 10, tzinfo=tz)
+    assert _news_stale_reason(s_f, c_f1, 24, "Asia/Jakarta", sleep_start=None, sleep_end=None) is None
+    c_f2 = datetime(2026, 10, 21, 17, 30, tzinfo=tz)
+    assert (
+        _news_stale_reason(s_f, c_f2, 24, "Asia/Jakarta", sleep_start=None, sleep_end=None)
+        == "stale: no News slot on the day the news arrived"
+    )
+
+    # g. same-day slot, within hours -> None (unchanged behaviour)
+    c_g = datetime(2026, 10, 21, 10, 0, tzinfo=tz)
+    s_g = datetime(2026, 10, 21, 14, 0, tzinfo=tz)
+    assert _news_stale_reason(s_g, c_g, 12, "Asia/Jakarta", sleep_start=23, sleep_end=7) is None

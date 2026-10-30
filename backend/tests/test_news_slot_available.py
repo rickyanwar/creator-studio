@@ -382,7 +382,7 @@ def test_ensure_deliveries_next_day_slot_stale_skipped(db_session: Session):
     d = deliveries[0]
     assert d.state == "skipped"
     assert d.scheduled_for is None
-    assert d.last_error == "stale: no News slot on the day the news arrived"
+    assert d.last_error == "stale: no News slot within 12 h"
 
 
 def test_news_slot_available_same_day_vs_next_day(db_session: Session):

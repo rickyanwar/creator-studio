@@ -8,7 +8,7 @@ slot allocation, method quotas, and media capability checks.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 import hashlib
 import json
 import logging
@@ -28,12 +28,19 @@ from app.models.social_publishing import (
 )
 from app.models.target_fanpages import TargetFanpage
 from app.services.event_days import news_fresh_hours
+from app.services.publishing_schedule import (
+    DEFAULT_ACTIVE_END_HOUR,
+    DEFAULT_ACTIVE_START_HOUR,
+)
 from app.services.social_delivery_policy import (
     choose_method_for_slot,
     compute_next_slot,
 )
 
 logger = logging.getLogger(__name__)
+
+OVERNIGHT_NEWS_LEAD_HOURS = 4   # news this close to the sleep window may wait for the morning
+OVERNIGHT_NEWS_WAKE_HOURS = 3   # ...but only into the first hours after wake-up
 
 
 def compute_caption_hash(caption: str | None) -> str:
@@ -255,13 +262,37 @@ def _resolve_sleep_window(db: Session, job: PublishJob) -> tuple[int | None, int
     return sleep_start, sleep_end
 
 
+def _overnight_news_ok(
+    slot_local: datetime,
+    created_local: datetime,
+    sleep_start: int,
+    sleep_end: int,
+) -> bool:
+    sleep_len = (sleep_end - sleep_start) % 24
+    if sleep_len == 0:
+        return False
+    wake = datetime.combine(slot_local.date(), time(sleep_end), tzinfo=slot_local.tzinfo)
+    night_start = wake - timedelta(hours=sleep_len)
+    return (
+        night_start - timedelta(hours=OVERNIGHT_NEWS_LEAD_HOURS) <= created_local < wake
+        and wake <= slot_local < wake + timedelta(hours=OVERNIGHT_NEWS_WAKE_HOURS)
+    )
+
+
 def _news_stale_reason(
     slot_utc: datetime,
     created_utc: datetime,
     stale_hours: int,
     tz_name: str | None,
+    sleep_start: int | None = None,
+    sleep_end: int | None = None,
 ) -> str | None:
-    """Why a news slot is too late, or None when it is fine. Owner rule 2026-10-21: news posts on the same local day it arrived (destination timezone), and within stale_hours."""
+    """Why a news slot is too late, or None when it is fine.
+
+    Owner rule 2026-10-21 / 2026-10-30: news posts on the same local day it arrived
+    (destination timezone) OR within overnight exception (OVERNIGHT_NEWS_LEAD_HOURS
+    before sleep, OVERNIGHT_NEWS_WAKE_HOURS after wake), always within stale_hours.
+    """
     try:
         tz = zoneinfo.ZoneInfo(tz_name) if tz_name else zoneinfo.ZoneInfo("Asia/Jakarta")
     except Exception:
@@ -270,11 +301,22 @@ def _news_stale_reason(
     slot_aware = slot_utc if slot_utc.tzinfo is not None else slot_utc.replace(tzinfo=timezone.utc)
     created_aware = created_utc if created_utc.tzinfo is not None else created_utc.replace(tzinfo=timezone.utc)
 
-    if slot_aware.astimezone(tz).date() != created_aware.astimezone(tz).date():
-        return "stale: no News slot on the day the news arrived"
-    elif (slot_aware - created_aware) > timedelta(hours=stale_hours):
+    if (slot_aware - created_aware) > timedelta(hours=stale_hours):
         return f"stale: no News slot within {stale_hours} h"
-    return None
+
+    slot_local = slot_aware.astimezone(tz)
+    created_local = created_aware.astimezone(tz)
+
+    if slot_local.date() == created_local.date():
+        return None
+
+    start = sleep_start if sleep_start is not None else DEFAULT_ACTIVE_END_HOUR
+    end = sleep_end if sleep_end is not None else DEFAULT_ACTIVE_START_HOUR
+
+    if _overnight_news_ok(slot_local, created_local, start, end):
+        return None
+
+    return "stale: no News slot on the day the news arrived"
 
 
 def _plan_slot(
@@ -328,7 +370,14 @@ def _plan_slot(
 
     is_stale_news = (
         group_of(job.content_type) == "news"
-        and _news_stale_reason(next_slot_utc, job_created_at_utc, news_stale_hours, getattr(destination, "timezone", None)) is not None
+        and _news_stale_reason(
+            next_slot_utc,
+            job_created_at_utc,
+            news_stale_hours,
+            getattr(destination, "timezone", None),
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
+        ) is not None
     )
 
     return next_slot_utc, is_stale_news, news_stale_hours, existing_slots_utc
@@ -345,6 +394,8 @@ def _supersedable_news_delivery(
     stale_hours: int,
     *,
     lock: bool,
+    sleep_start: int | None = None,
+    sleep_end: int | None = None,
 ) -> PublishDelivery | None:
     """Oldest untouched news delivery on this destination whose slot would still be fresh for `job` (owner 2026-10-26: newest news first). None when there is none."""
     aware_now_utc = aware_now if aware_now.tzinfo is not None else aware_now.replace(tzinfo=timezone.utc)
@@ -406,7 +457,17 @@ def _supersedable_news_delivery(
             if deliv.scheduled_for.tzinfo is not None
             else deliv.scheduled_for.replace(tzinfo=timezone.utc)
         )
-        if _news_stale_reason(slot_aware, job_created_aware, stale_hours, getattr(destination, "timezone", None)) is None:
+        if (
+            _news_stale_reason(
+                slot_aware,
+                job_created_aware,
+                stale_hours,
+                getattr(destination, "timezone", None),
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
+            )
+            is None
+        ):
             return deliv
 
     return None
@@ -453,7 +514,14 @@ def news_slot_available(
             if not is_stale_news:
                 return True
             if _supersedable_news_delivery(
-                db, destination, job, aware_now, news_stale_hours, lock=False
+                db,
+                destination,
+                job,
+                aware_now,
+                news_stale_hours,
+                lock=False,
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
             ) is not None:
                 return True
 
@@ -570,7 +638,14 @@ def next_news_slot_utc(
             dest_slot = next_slot_utc
             if is_stale_news:
                 old = _supersedable_news_delivery(
-                    db, destination, job, aware_now, news_stale_hours, lock=False
+                    db,
+                    destination,
+                    job,
+                    aware_now,
+                    news_stale_hours,
+                    lock=False,
+                    sleep_start=sleep_start,
+                    sleep_end=sleep_end,
                 )
                 if old is not None and old.scheduled_for is not None:
                     dest_slot = (
@@ -684,7 +759,14 @@ def ensure_deliveries(
         platform_accepted = {"youtube": {"video"}, "x": {"image", "album", "video"}}.get(platform)
         if is_stale_news:
             old = _supersedable_news_delivery(
-                db, destination, job, aware_now, news_stale_hours, lock=True
+                db,
+                destination,
+                job,
+                aware_now,
+                news_stale_hours,
+                lock=True,
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
             )
             if old is not None:
                 freed_slot = old.scheduled_for
@@ -737,6 +819,8 @@ def ensure_deliveries(
                 job_created_at_utc,
                 news_stale_hours,
                 destination.timezone,
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
             ) or f"stale: no News slot within {news_stale_hours} h"
         elif platform_accepted and payload.media_kind not in platform_accepted:
             state = "skipped"
