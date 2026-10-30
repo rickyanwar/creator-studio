@@ -349,13 +349,16 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
 
         fanpage = fp_cache[fid]
         base = base_cache[fid]
-        hours = news_fresh_hours(db, fanpage, base, today_wib)
 
         job_created = job.created_at
         if job_created is not None:
-            job_created_naive = job_created if job_created.tzinfo is None else job_created.astimezone(timezone.utc).replace(tzinfo=None)
+            job_created_aware = job_created.replace(tzinfo=timezone.utc) if job_created.tzinfo is None else job_created.astimezone(timezone.utc)
+            created_day = job_created_aware.astimezone(_WIB).date()
+            job_created_naive = job_created_aware.replace(tzinfo=None)
+            hours = news_fresh_hours(db, fanpage, base, created_day)
             is_too_old = (now_naive - job_created_naive) > timedelta(hours=hours)
         else:
+            hours = news_fresh_hours(db, fanpage, base, today_wib)
             is_too_old = False
 
         if is_too_old and not job.is_breaking:

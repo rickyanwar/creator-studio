@@ -365,8 +365,8 @@ def _plan_slot(
         dest_tz = zoneinfo.ZoneInfo(destination.timezone)
     except Exception:
         dest_tz = zoneinfo.ZoneInfo("Asia/Jakarta")
-    local_day = aware_now.astimezone(dest_tz).date()
-    news_stale_hours = news_fresh_hours(db, dest_fanpage, getattr(destination, "news_stale_hours", None), local_day)
+    created_day = job_created_at_utc.astimezone(dest_tz).date()
+    news_stale_hours = news_fresh_hours(db, dest_fanpage, getattr(destination, "news_stale_hours", None), created_day)
 
     is_stale_news = (
         group_of(job.content_type) == "news"

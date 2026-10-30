@@ -1996,18 +1996,21 @@ def _news_dispatch_gate(db: Session, delivery: PublishDelivery, now: datetime) -
             dest_tz = zoneinfo.ZoneInfo(destination.timezone) if destination and destination.timezone else zoneinfo.ZoneInfo("Asia/Jakarta")
         except Exception:
             dest_tz = zoneinfo.ZoneInfo("Asia/Jakarta")
-        local_day = now_aware.astimezone(dest_tz).date()
-
-        dest_stale_hours = getattr(destination, "news_stale_hours", None) if destination else None
-        hours = news_fresh_hours(db, fanpage, dest_stale_hours, local_day)
 
         job_created_at = getattr(job, "created_at", None)
         if job_created_at is None:
             job_created_naive = now_naive
-        elif job_created_at.tzinfo is not None:
-            job_created_naive = job_created_at.astimezone(timezone.utc).replace(tzinfo=None)
+            created_day = now_aware.astimezone(dest_tz).date()
         else:
-            job_created_naive = job_created_at
+            if job_created_at.tzinfo is not None:
+                job_created_aware = job_created_at.astimezone(timezone.utc)
+            else:
+                job_created_aware = job_created_at.replace(tzinfo=timezone.utc)
+            job_created_naive = job_created_aware.replace(tzinfo=None)
+            created_day = job_created_aware.astimezone(dest_tz).date()
+
+        dest_stale_hours = getattr(destination, "news_stale_hours", None) if destination else None
+        hours = news_fresh_hours(db, fanpage, dest_stale_hours, created_day)
 
         delivery_scheduled = getattr(delivery, "scheduled_for", None)
         if delivery_scheduled is not None and delivery_scheduled.tzinfo is not None:

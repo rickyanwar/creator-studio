@@ -363,6 +363,8 @@ def pick_slot(
     if borrow_hours is None:
         borrow_hours = 3
 
+    video_cap = ai_video_daily_cap(fanpage)
+
     phantoms: list[datetime] = []
     blocked_days: set[Any] = set()
 
@@ -399,16 +401,22 @@ def pick_slot(
 
             borrowable = 0
             for h in quotas:
-                if h != g and h not in waiting:
+                if h != g:
                     used_h = sum(
                         1
                         for instant, grp in group_res
                         if grp == h and instant.astimezone(tz).date() == d
                     )
-                    borrowable += max(0, quotas[h] - used_h)
+                    free_h = max(0, quotas[h] - used_h)
+                    if h not in waiting:
+                        borrowable += free_h
+                    elif h == "ai_video" and video_cap is not None:
+                        borrowable += min(free_h, max(0, quotas[h] - video_cap))
 
             borrowed = max(0, used_g - quotas.get(g, 0))
             if borrowed < borrowable:
+                if g == "news":
+                    return slot
                 s2 = compute_audience_slot(
                     now_utc=max(now_utc, w_start_utc),
                     timezone_name=destination.timezone,

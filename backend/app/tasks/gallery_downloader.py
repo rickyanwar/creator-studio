@@ -130,6 +130,10 @@ _FAR_FROM_EVENT_INTERVAL_TIERS = (
 # keyword — independent of that task's own run cadence, so a keyword with no
 # discoverable schedule doesn't get hammered with search calls daily.
 _EVENT_LOOKUP_INTERVAL_DAYS = 5
+# A stored event date that has already passed is re-checked about daily, so the next race (often the very next weekend) is found before its window opens.
+_EVENT_PASSED_LOOKUP_INTERVAL_HOURS = 20
+# The fast re-check only runs for two weeks after an event; after that the normal 5-day interval applies, e.g. in the off-season.
+_EVENT_PASSED_FAST_RECHECK_DAYS = 14
 
 
 def _far_from_event_interval_hours(days_until_event: int) -> int:
@@ -575,10 +579,11 @@ def refresh_keyword_event_dates():
     harder, see _far_from_event_interval_hours).
 
     Runs daily; each keyword is only re-checked once its own
-    event_date_checked_at is older than _EVENT_LOOKUP_INTERVAL_DAYS (or a
-    previously-detected date has already passed), so this doesn't spend the
-    paid web-search fallback in event_calendar.detect_next_event_date any
-    more often than that per keyword, however frequently the task itself runs.
+    event_date_checked_at is older than _EVENT_LOOKUP_INTERVAL_DAYS (or
+    _EVENT_PASSED_LOOKUP_INTERVAL_HOURS if a previously-detected date has
+    passed within _EVENT_PASSED_FAST_RECHECK_DAYS), so this doesn't spend the
+    paid web-search fallback in event_calendar.detect_next_event_date any more
+    often than that per keyword, however frequently the task itself runs.
     """
     db = SessionLocal()
     try:
@@ -587,13 +592,14 @@ def refresh_keyword_event_dates():
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         today = datetime.now(_WIB).date()
-        lookup_cutoff = now - timedelta(days=_EVENT_LOOKUP_INTERVAL_DAYS)
 
         keywords = db.query(GalleryKeyword).filter(GalleryKeyword.is_active == True).all()
         for kw in keywords:
             if kw.next_event_date and kw.next_event_date >= today:
                 continue  # already know about an upcoming event — nothing to refresh yet
-            if kw.event_date_checked_at and kw.event_date_checked_at >= lookup_cutoff:
+            passed_recently = kw.next_event_date is not None and today - timedelta(days=_EVENT_PASSED_FAST_RECHECK_DAYS) <= kw.next_event_date < today
+            interval = timedelta(hours=_EVENT_PASSED_LOOKUP_INTERVAL_HOURS) if passed_recently else timedelta(days=_EVENT_LOOKUP_INTERVAL_DAYS)
+            if kw.event_date_checked_at and kw.event_date_checked_at >= now - interval:
                 continue  # checked too recently to justify another paid search fallback
 
             try:

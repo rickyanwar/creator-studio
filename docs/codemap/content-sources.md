@@ -92,8 +92,7 @@ Comprehensive architecture and implementation map covering content discovery, de
 ### 3.2 Editorial Gate & Copywriting
 - **Editorial Gate** (`backend/app/services/editorial_gate.py:123` `evaluate_article`):
   - Opt-in via `TargetFanpage.mode2_editorial_gate_enabled` (`tasks/news_copywriter.py:93`). Fails open on exception (`tasks/news_copywriter.py:107-114`).
-  - **Pass 1 (Fact-Check)** (`editorial_gate.py:69`): Web search snippets retrieved via 9Router web-fetch (`_search_snippets`, `editorial_gate.py:52-67`). Prompt assesses claim vs search snippets into `consistent`, `outdated`, `contradicted`, or `unverifiable` (`editorial_gate.py:83-88`).
-  - **Pass 2 (Worthiness & Engagement)** (`editorial_gate.py:97`): AI evaluates headline, content, and fact-check verdict. Rejects (`post_worthy=False`) if contradicted, outdated, or low-value rumor (`editorial_gate.py:110`). Classifies engagement: `low`, `medium`, `high` (`editorial_gate.py:113`).
+  - **One editorial call** (`_judge_post_worthiness`): no fact-check and no web search since 2026-10-31 (owner: the model's knowledge lags the current season and it rejected real news as "fabricated"). The prompt says never to judge whether facts are true; it rejects only off-niche, purely promotional, or empty/garbled articles, and predicts engagement `low`/`medium`/`high`. `EditorialVerdict.fact_check` is always `"off"`.
 - **News Copywriting Prompt** (`backend/app/services/news_copywriter.py:137` `build_news_copy_prompt`):
   - Classifies into `"news"` vs `"quote"`. Defaults to `"news"` for ~90% of stories; `"quote"` is chosen only when a spoken statement is the headline itself (`news_copywriter.py:203-205`).
   - Red Highlight Syntax: wraps exactly ONE key phrase (2–5 words) in `**double asterisks**` (`news_copywriter.py:166, 175`).
@@ -258,6 +257,7 @@ Comprehensive architecture and implementation map covering content discovery, de
 - **Event Window Logic** (`gallery_downloader.py:188` `_in_event_window`):
   - Window opens before `next_event_date`: MotoGP (H-3), F1 (H-2), UFC/Boxing (H-3), other (H-2) (`_NICHE_EVENT_WINDOW_DAYS_BEFORE`, `gallery_downloader.py:102-107`).
   - Window closes: `next_event_date + 1 day` (`_EVENT_WINDOW_DAYS_AFTER = 1`, `gallery_downloader.py:185`).
+  - Event date refresh (`refresh_keyword_event_dates`, beat 02:00 WIB): a future date is never re-checked; a date that passed within the last 14 days is re-checked every 20 h (`_EVENT_PASSED_LOOKUP_INTERVAL_HOURS`, `_EVENT_PASSED_FAST_RECHECK_DAYS`) so back-to-back race weekends are found in time; otherwise every 5 days (`_EVENT_LOOKUP_INTERVAL_DAYS`). News freshness (6 h race day / 12 h other days, `event_days.news_fresh_hours`) is decided by the day the news job was created, not by today (2026-10-31).
   - Inside window: interval tightens from 24h to 4h (`_EVENT_WINDOW_INTERVAL_HOURS = 4`, `gallery_downloader.py:147, 208`).
   - Tight Hourly Window: If `next_event_datetime_utc` is known, interval tightens to 1 hour (`_EVENT_TIME_TIGHT_INTERVAL_HOURS = 1`, `gallery_downloader.py:160, 206`) during estimated upload window (event time + 3h upload buffer, spanning -1h to +4h; `gallery_downloader.py:157-159`).
   - Far From Event Tiers: 3–6 days out $\to$ 48h; 7–13 days out $\to$ 96h; 14+ days out $\to$ 168h (weekly) (`_FAR_FROM_EVENT_INTERVAL_TIERS`, `gallery_downloader.py:123-140`).
