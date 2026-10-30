@@ -17,6 +17,7 @@ from app.services.publishing_schedule import (
     _pick_slot_instant,
     build_legacy_reservations_query,
     compute_audience_slot,
+    fitting_daily_target,
     is_legacy_repliz_eligible,
 )
 
@@ -272,10 +273,17 @@ def pick_slot(
     enabled = enabled_groups(fanpage) if fanpage else []
     local_day = now_utc.astimezone(zoneinfo.ZoneInfo(destination.timezone)).date()
     target = effective_daily_target(db, destination, fanpage, local_day)
+    target = min(
+        target,
+        fitting_daily_target(
+            target, destination.min_gap_minutes, sleep_start, sleep_end
+        ),
+    )
     quotas = group_quotas(
         target, destination.mode_shares, enabled
     )
     g = group_of(job.content_type)
+    prefer_peak = g is not None and g != "news"
     cap = ai_video_daily_cap(fanpage) if g == "ai_video" else None
 
     if not quotas or g is None or g not in quotas:
@@ -290,6 +298,7 @@ def pick_slot(
                 sleep_end_hour=sleep_end,
                 namespace=f"dest-{destination.id}",
                 hour_weights=hour_weights,
+                prefer_peak=prefer_peak,
             )
 
         tz = zoneinfo.ZoneInfo(destination.timezone)
@@ -309,6 +318,7 @@ def pick_slot(
                 sleep_end_hour=sleep_end,
                 namespace=f"dest-{destination.id}",
                 hour_weights=hour_weights,
+                prefer_peak=prefer_peak,
             )
             d = slot.astimezone(tz).date()
 
@@ -337,6 +347,7 @@ def pick_slot(
             sleep_end_hour=sleep_end,
             namespace=f"dest-{destination.id}",
             hour_weights=hour_weights,
+            prefer_peak=prefer_peak,
         )
 
     if cap is not None:
@@ -367,6 +378,7 @@ def pick_slot(
             sleep_end_hour=sleep_end,
             namespace=f"dest-{destination.id}",
             hour_weights=hour_weights,
+            prefer_peak=prefer_peak,
         )
         d = slot.astimezone(tz).date()
 
@@ -407,6 +419,7 @@ def pick_slot(
                     sleep_end_hour=sleep_end,
                     namespace=f"dest-{destination.id}",
                     hour_weights=hour_weights,
+                    prefer_peak=prefer_peak,
                 )
                 if s2.astimezone(tz).date() == d and w_start_utc <= s2 < w_end_utc:
                     return s2
@@ -429,4 +442,5 @@ def pick_slot(
         sleep_end_hour=sleep_end,
         namespace=f"dest-{destination.id}",
         hour_weights=hour_weights,
+        prefer_peak=prefer_peak,
     )

@@ -333,7 +333,7 @@ def test_planner_without_weights_identical_to_before():
 def test_compute_audience_slot_with_weights_picks_heavier_hour():
     """compute_audience_slot with hour_weights prefers candidates in heavier local hours."""
     now_utc = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
-    # Baseline without weights: earliest valid candidate is at 12:07 UTC
+    # Baseline without weights: earliest valid candidate is at 12:48 UTC
     slot_unweighted = compute_audience_slot(
         now_utc=now_utc,
         timezone_name="UTC",
@@ -341,19 +341,19 @@ def test_compute_audience_slot_with_weights_picks_heavier_hour():
         min_gap_minutes=60,
         existing_slots_utc=[],
     )
-    assert slot_unweighted == datetime(2026, 10, 20, 12, 7, tzinfo=timezone.utc)
+    assert slot_unweighted == datetime(2026, 10, 20, 12, 48, tzinfo=timezone.utc)
 
-    # With hour 19 heavily weighted (and others low/zero), candidate at 19:35 is chosen
+    # With hour 18 heavily weighted (and others low/zero), candidate at 18:25 is chosen
     slot_weighted = compute_audience_slot(
         now_utc=now_utc,
         timezone_name="UTC",
         daily_target=4,
         min_gap_minutes=60,
         existing_slots_utc=[],
-        hour_weights={"19": 100.0, "12": 0.0, "17": 0.0},
+        hour_weights={"18": 100.0, "12": 0.0, "20": 0.0},
     )
-    assert slot_weighted == datetime(2026, 10, 20, 19, 35, tzinfo=timezone.utc)
-    assert slot_weighted.hour == 19
+    assert slot_weighted == datetime(2026, 10, 20, 18, 25, tzinfo=timezone.utc)
+    assert slot_weighted.hour == 18
 
 
 def test_compute_audience_slot_never_inside_quiet_hours():

@@ -118,28 +118,33 @@ Implemented in `backend/app/services/publishing_schedule.py`.
 - `DEFAULT_ACTIVE_END_HOUR = 22` (22:00 local, line 32).
 - `_MAX_BOUNDED_DAYS = 60` (search horizon limit, line 33).
 - `MIN_LEAD_SECONDS = 60` (minimum lead time from current instant, line 34).
-- `MAX_DAILY_TARGET = 1000` (line 88).
-- Jitter bounds: `[0.15, 0.85]` of quantile cell (line 184).
+- `MIN_GAP_FLOOR_MINUTES = 15` (minimum gap floor between posts on one destination).
+- `GRID_JITTER_SPAN = 0.70` (maximum jitter span within quantile cells).
+- `MAX_DAILY_TARGET = 1000`.
+- Jitter bounds: `0.5 + (rnd - 0.5) * span` where span shrinks below 0.70 in narrow cells (`span = min(0.70, max(0.0, 1.0 - gap_minutes / cell_minutes))`).
 
-### 4.2 Audience Hour Weighting (`get_hour_weight`, lines 37-46)
-- Midday window (12:00 to 14:00 local): weight = `1.3`.
-- Evening window (18:00 to 21:00 local): weight = `1.3`.
+### 4.2 Audience Hour Weighting (`get_hour_weight`)
+- Midday window (12:00 to 14:00 local): weight = `1.5`.
+- Evening window (18:00 to 21:00 local): weight = `2.0`.
 - Baseline active window: weight = `1.0`.
 - Sleep window: weight = `0.0`.
 
-### 4.3 Quantile Grid & Deterministic Jitter Math (`compute_audience_slot`, lines 58-236)
-1. **Minute Array**: 1,440 minute weights computed per local calendar day based on sleep window or defaults.
-2. **Target Cell**: Daily target $N$ partitions total weight $W$: $[ \frac{i}{N} W, \frac{i+1}{N} W ]$.
-3. **Cumulative Search**: Finds index interval $[k_{start}, k_{end}]$ within active minutes where cumulative weight matches cell bounds.
-4. **Deterministic Pseudo-Random Jitter**:
+### 4.3 Quantile Grid & Deterministic Jitter Math (`compute_audience_slot`)
+1. **Minute Array**: 1,440 minute weights computed per local calendar day based on sleep window or defaults (`_day_minute_weights`).
+2. **Fitting Daily Cap**: Day capacity capped by `fitting_daily_target` so every cell in the heaviest hour is at least `gap` wide (`total // (peak * gap)` with `gap = max(min_gap, 15)`).
+3. **Target Cell**: Capped target $N$ partitions total weight $W$: $[ \frac{i}{N} W, \frac{i+1}{N} W ]$.
+4. **Cumulative Search**: Finds index interval $[k_{start}, k_{end}]$ within active minutes where cumulative weight matches cell bounds.
+5. **Deterministic Pseudo-Random Jitter**:
    $$\text{seed} = \text{SHA256}(\texttt{"YYYY-MM-DD:namespace:idx"})$$
-   $$\text{rnd} = \frac{\text{uint64}(\text{seed}[0:8])}{2^{64}-1}, \quad \text{jitter} = 0.15 + 0.70 \times \text{rnd}$$
+   $$\text{rnd} = \frac{\text{uint64}(\text{seed}[0:8])}{2^{64}-1}, \quad \text{span} = \min(0.70, \max(0.0, 1.0 - \frac{\text{gap}}{\text{cell\_minutes}}))$$
+   $$\text{jitter} = 0.5 + (\text{rnd} - 0.5) \times \text{span}$$
    $$k_{chosen} = \text{round}(k_{start} + \text{jitter} \times (k_{end} - k_{start}))$$
-5. **Candidate Filtering**:
+6. **Candidate Filtering & Selection**:
    - `cand_utc >= now_utc + 60s`
    - `cand_local` outside sleep window
-   - Bidirectional gap separation: for every existing reservation $E$, $|cand - E| \ge \text{min\_gap\_minutes} \times 60$.
-   - Rollover: if calendar day has $\ge \text{daily\_target}$ reservations or no candidates qualify, advances to next day (up to 60 days).
+   - Bidirectional gap separation: for every existing reservation $E$, $|cand - E| \ge \max(\text{min\_gap\_minutes}, 15) \times 60$.
+   - Selection: if `prefer_peak=True` (non-news), picks the candidate in the highest weighted local hour (evening/midday) with earliest tiebreak; otherwise returns earliest valid candidate (news keeps earliest).
+   - Rollover: if calendar day has $\ge \text{n\_slots}$ reservations or no candidates qualify, advances to next day (up to 60 days).
 
 ### 4.4 Reservation Loading (`get_destination_reservations_utc`, lines 307-342)
 1. Active `PublishDelivery` rows for destination where `scheduled_for IS NOT NULL` and `state NOT IN ('failed', 'skipped')`.
@@ -154,7 +159,7 @@ Implemented in `backend/app/services/publishing_schedule.py`.
 - `social_delivery_planner.news_slot_available(db, job, now_utc)` and `_plan_slot()`:
   - Shared slot math between pre-render stale check and `ensure_deliveries`.
   - Read-only (no row locks, no database writes) and fail-open (returns `True` on missing fan page, no active destinations, or unexpected errors).
-  - Inspects all active destinations for the fan page: returns `True` if at least one destination can schedule the news job within `destination.news_stale_hours` (default 24 h) from job creation. Used by `visual_fair_queue` to skip dead news jobs before generating images.
+  - Inspects all active destinations for the fan page: returns `True` if at least one destination can schedule the news job within `destination.news_stale_hours` (default 24 h) from job creation. News arriving within 4 hours before sleep or during sleep may post in the first 3 waking hours the next morning. Used by `visual_fair_queue` to skip dead news jobs before generating images.
 
 ---
 
@@ -442,7 +447,7 @@ backend/app/services/social_delivery_dispatch.py:184 - Immediate phone or live d
 backend/app/services/social_delivery_dispatch.py:330 - Stale publishing claims expire after exactly 45 minutes (stale_ttl_minutes = 45) and transition to uncertain to prevent automatic duplicate posting.
 backend/app/services/social_delivery_dispatch.py:585 - Phone device leases are acquired exclusively for 45 minutes (lease_ttl_minutes = 45) in the device_leases table.
 backend/app/services/publishing_schedule.py:31 - Audience scheduling uses default active hours of 07:00 to 22:00 (DEFAULT_ACTIVE_START_HOUR = 7, DEFAULT_ACTIVE_END_HOUR = 22), minimum lead of 60 seconds (MIN_LEAD_SECONDS = 60), and search horizon of 60 days (_MAX_BOUNDED_DAYS = 60).
-backend/app/services/publishing_schedule.py:182 - Candidate slot jitter within each quantile cell is deterministically bounded to [0.15, 0.85] via the SHA-256 digest of f"{current_date.isoformat()}:{namespace}:{idx}".
+backend/app/services/publishing_schedule.py - Candidate slot jitter within each quantile cell uses seed SHA-256 digest of f"{current_date.isoformat()}:{namespace}:{idx}"; jitter span is centered at 0.5 and bounded by GRID_JITTER_SPAN (0.70) in wide cells, shrinking in narrow cells to prevent gap violations; gap floor is 15 minutes and day capacity is capped by fitting_daily_target.
 backend/app/services/social_delivery_policy.py:216 - Automated fallback to Repliz is strictly limited to Pages (kind == 'page'), requires incident state needs_human, forbids uncertain deliveries, and requires verified absence of duplicates.
 phone_runner/recovery.py:563 - Larger repairs enter awaiting_approval with an automatic approval deadline set to exactly 15 minutes (deadline = now + timedelta(minutes=15)) if the owner has not responded.
 backend/app/services/social_post_reconciliation.py:30 - Post reconciliation against Repliz GET /public/content queries up to 3 pages (MAX_PAGINATION_PAGES = 3) and enforces an expected publish time tolerance of +/- 2 hours (DEFAULT_RECONCILIATION_WINDOW = timedelta(hours=2)).
