@@ -242,6 +242,7 @@ Comprehensive architecture and implementation map covering content discovery, de
 
 ### 8.1 Download Engine & Quality Gates
 - **Search Backend**: 9Router `/v1/web/fetch` (jina-reader) fetches Getty Images editorial search results as markdown (`backend/app/services/image_downloader.py:3-11`).
+- **Flickr (second source, same `download_images` call)**: Flickr search (`gallery_flickr_search_url_template`, taken yesterday 00:00 .. today 23:59 WIB, pages 1-2) runs first and stores up to half of `max_num` as `source_engine="flickr"` (`_collect_urls_flickr`); thumbnails are upgraded to the 1024 px `_b` size (`_h` returns 410); `captured_at` = window start (search results carry no per-photo date). A Flickr failure is logged and Getty still runs. Off switch: `gallery_flickr_enabled`.
 - **Dateline Parsing**: Regex `_CAPTION_DATE_RE` (`image_downloader.py:133`) extracts shot date directly from Getty image captions (`"on August 09, 2026"`).
 - **Quality & Usability Gates** (`image_downloader.py:387` `_fetch_and_store`):
   1. Time Budget: 15-minute hard execution cap (`_FETCH_LOOP_TIME_BUDGET_SECONDS = 900`, `image_downloader.py:48, 390`).

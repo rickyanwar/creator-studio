@@ -79,7 +79,7 @@ class GalleryImage(Base):
     public_url = Column(String(512), nullable=False)
     width = Column(Integer, nullable=False)
     height = Column(Integer, nullable=False)
-    source_engine = Column(String(16), nullable=False)  # bing | google | 9router
+    source_engine = Column(String(16), nullable=False)  # bing | google | 9router | flickr | ...
     license_info = Column(String(64), nullable=True)
     # Vision label at download time: "face" | "action" | "other" — lets the
     # designer pick the right kind of photo per news context.

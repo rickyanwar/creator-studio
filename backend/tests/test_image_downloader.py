@@ -115,7 +115,8 @@ def test_download_images_passes_search_hint_and_keeps_bare_keyword_as_vision_sub
     fake_urls = ["https://media.gettyimages.com/id/999/photo/test.jpg"]
     fake_dates = {}
 
-    with patch("app.services.image_downloader._collect_urls_9router", return_value=(fake_urls, fake_dates)) as mock_collect, \
+    with patch("app.services.image_downloader._collect_urls_flickr", return_value=([], {})), \
+         patch("app.services.image_downloader._collect_urls_9router", return_value=(fake_urls, fake_dates)) as mock_collect, \
          patch("app.services.image_downloader._fetch_and_store", return_value=[]) as mock_store:
 
         download_images(

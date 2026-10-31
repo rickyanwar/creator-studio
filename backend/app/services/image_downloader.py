@@ -1,14 +1,13 @@
-"""Gallery image downloader — collects candidate image URLs via 9Router.
+"""Gallery image downloader — collects candidate image URLs via Getty + Flickr.
 
-Backend: 9Router's `/v1/web/fetch` (jina-reader provider). For each keyword we
-build a search-results URL (default: Getty editorial search), have jina-reader
-fetch it as markdown — which gets past bot-walls that block plain HTTP — and
-extract the image URLs from that markdown.
+Sources fetched per keyword (in the same download_images call):
+  - Flickr (first, up to half of max_num): taken-date window yesterday..today WIB,
+    via Flickr search page rendered as markdown by 9Router/jina-reader.
+  - Getty (remainder): editorial search via 9Router/jina-reader, newest-first.
 
-The collected URLs are then downloaded, deduped-by-source-URL, Pillow
-min-size validated, and vision-gated for design usability (rejects
-crowd/stage/logo-only shots, screenshots, unusably blurry/tiny/obstructed
-subjects) in one shared code path (`_fetch_and_store`).
+Both sources use `_fetch_and_store` for dedup, min-size validation, and
+vision-gating (rejects crowd/stage/logo-only shots, screenshots, unusably
+blurry/tiny/obstructed subjects).
 
 Note: search-result previews are often watermarked/licensed thumbnails capped at
 ~612px on the long side. Ensure the caller's min-size and licensing fit the use.
@@ -19,7 +18,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -55,7 +54,7 @@ class DownloadedImage:
     filename: str
     width: int
     height: int
-    engine: str  # "9router"
+    engine: str  # "9router" (Getty) | "flickr" | "manual"
     label: str | None = None  # vision label: "face" | "action" | "other"
     captured_at: date | None = None  # shot date parsed from the Getty caption, if found
     attributes: dict | None = None
@@ -86,8 +85,12 @@ def download_images(
     allow_topup: bool = True,
     search_hint: str | None = None,
 ) -> list[DownloadedImage]:
-    """Collect image URLs for a keyword via 9Router web-fetch and download the
-    ones that pass dedup (skip_urls) and min-size validation.
+    """Collect image URLs for a keyword and download the ones that pass dedup
+    (skip_urls) and min-size validation.
+
+    Sources (same call, Flickr first):
+      - Flickr: taken yesterday..today WIB, up to half of max_num.
+      - Getty (9router): remainder of max_num.
 
     `allow_topup=False` skips the "{keyword} press" top-up phrase even if the
     bare search underdelivers — a second paid web/fetch call that only pays
@@ -95,17 +98,39 @@ def download_images(
     downloader passes False for quiet-tier keywords (see
     gallery_downloader.download_keyword); an explicit "Download Now" leaves
     the default True."""
-    urls, captured_dates = _collect_urls_9router(
-        keyword, max_num * 2, skip_urls, max_pages, allow_topup, search_hint=search_hint,
-    )
+    results: list[DownloadedImage] = []
 
-    if not urls:
-        logger.info("Gallery: no new image URLs for keyword %r (all already downloaded)", keyword)
-        return []
+    flickr_max = (max_num + 1) // 2
+    try:
+        f_urls, f_dates = _collect_urls_flickr(keyword, flickr_max * 2, skip_urls)
+        if f_urls:
+            results += _fetch_and_store(
+                f_urls, dest_dir, flickr_max, min_size, skip_urls,
+                "flickr", subject=keyword, captured_dates=f_dates,
+            )
+    except Exception as exc:
+        logger.warning(
+            "Gallery: Flickr source failed for %r (%s); continuing with Getty", keyword, exc,
+        )
 
-    return _fetch_and_store(
-        urls, dest_dir, max_num, min_size, skip_urls, "9router", subject=keyword, captured_dates=captured_dates,
-    )
+    remaining = max_num - len(results)
+    if remaining > 0:
+        urls, captured_dates = _collect_urls_9router(
+            keyword, remaining * 2, skip_urls, max_pages, allow_topup, search_hint=search_hint,
+        )
+        if not urls:
+            if not results:
+                logger.info(
+                    "Gallery: no new image URLs for keyword %r (all already downloaded)", keyword,
+                )
+            return results
+
+        results += _fetch_and_store(
+            urls, dest_dir, remaining, min_size, skip_urls, "9router",
+            subject=keyword, captured_dates=captured_dates,
+        )
+
+    return results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -379,8 +404,92 @@ def _collect_urls_9router(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Shared download + validate + store path
+# URL collector — Flickr search (second source, same call as Getty)
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Matches Flickr photo CDN URLs; captures (server, photo_id, secret).
+# Non-photo assets (combo.staticflickr.com, SVGs, etc.) don't match.
+_FLICKR_IMG_RE = re.compile(
+    r"https://live\.staticflickr\.com/(\d+)/(\d+)_([0-9a-f]+)(?:_[a-z])?\.jpg"
+)
+
+# WIB = UTC+7 (Waktu Indonesia Barat); used to define the taken-date window.
+_WIB = timezone(timedelta(hours=7))
+
+
+def flickr_taken_window(now: datetime | None = None) -> tuple[int, int, date]:
+    """Return (min_ts, max_ts, window_start_date) for the Flickr taken-date
+    filter, where the window covers yesterday 00:00 WIB through today
+    23:59:59.999999 WIB (so Flickr's date filter catches everything shot in
+    the last ~48 h that straddles WIB midnight)."""
+    today = (now or datetime.now(timezone.utc)).astimezone(_WIB).date()
+    start = datetime.combine(today - timedelta(days=1), dtime.min, tzinfo=_WIB)
+    end = datetime.combine(today, dtime.max, tzinfo=_WIB)
+    return int(start.timestamp()), int(end.timestamp()), today - timedelta(days=1)
+
+
+def flickr_large_url(server: str, photo_id: str, secret: str) -> str:
+    """Return the 1024-px Flickr CDN URL for a photo (size suffix _b)."""
+    return f"https://live.staticflickr.com/{server}/{photo_id}_{secret}_b.jpg"
+
+
+def _collect_urls_flickr(
+    keyword: str,
+    max_num: int,
+    skip_urls: set[str] | frozenset[str],
+    now: datetime | None = None,
+) -> tuple[list[str], dict[str, date]]:
+    """Collect Flickr photo URLs for *keyword* within yesterday..today WIB.
+
+    Returns (urls, captured_dates) — all urls are _b (1024 px) variants.
+    captured_dates maps each url's dedup key to the window start date (Flickr
+    search results carry no per-photo date, so the window start is used).
+    Returns ([], {}) immediately when gallery_flickr_enabled is False."""
+    settings = get_settings()
+    if not settings.gallery_flickr_enabled:
+        return [], {}
+
+    min_ts, max_ts, start_date = flickr_taken_window(now)
+    encoded = quote(keyword)
+
+    urls: list[str] = []
+    captured: dict[str, date] = {}
+    collected_keys: set[str] = set()
+
+    for page in range(1, settings.gallery_flickr_max_pages + 1):
+        url = settings.gallery_flickr_search_url_template.format(
+            query=encoded, min_ts=min_ts, max_ts=max_ts, page=page,
+        )
+        try:
+            markdown = _9router_fetch_markdown(url, context="gallery", keyword=keyword)
+        except Exception as exc:
+            logger.warning("Gallery: Flickr fetch failed for %r page %d (%s)", keyword, page, exc)
+            break
+
+        page_matches = list(_FLICKR_IMG_RE.finditer(markdown))
+        if not page_matches:
+            break  # no photos on this page — stop
+
+        for m in page_matches:
+            if len(urls) >= max_num:
+                break
+            server, photo_id, secret = m.group(1), m.group(2), m.group(3)
+            big = flickr_large_url(server, photo_id, secret)
+            key = _dedup_key(big)
+            if key in skip_urls or key in collected_keys:
+                continue
+            collected_keys.add(key)
+            urls.append(big)
+            captured[key] = start_date
+
+        if len(urls) >= max_num:
+            break
+
+    logger.info(
+        "Gallery: Flickr %r — %d new url(s) from %d page(s)",
+        keyword, len(urls), min(page, settings.gallery_flickr_max_pages),
+    )
+    return urls, captured
 
 def _fetch_and_store(
     urls: list[str],

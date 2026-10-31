@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     # Results are newest-first, so a run of duplicates means everything after is
     # older and already downloaded too. Set 0 to disable this early-stop.
     gallery_stop_after_consecutive_dupes: int = 20
+    # Second gallery source, fetched in the same download_images call as Getty (owner 2026-10-31).
+    # {query} = URL-encoded keyword; {min_ts}/{max_ts} = unix seconds of the taken-date window
+    # (yesterday 00:00 WIB .. today 23:59:59 WIB); {page} is 1-based.
+    gallery_flickr_enabled: bool = True
+    gallery_flickr_search_url_template: str = (
+        "https://www.flickr.com/search/?text={query}&min_taken_date={min_ts}&max_taken_date={max_ts}&page={page}"
+    )
+    gallery_flickr_max_pages: int = 2
 
     # ── Gallery Labeler (external provider for backfill) ──
     labeler_base_url: str = ""
