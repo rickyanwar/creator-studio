@@ -368,17 +368,22 @@ def _plan_slot(
     created_day = job_created_at_utc.astimezone(dest_tz).date()
     news_stale_hours = news_fresh_hours(db, dest_fanpage, getattr(destination, "news_stale_hours", None), created_day)
 
-    is_stale_news = (
-        group_of(job.content_type) == "news"
-        and _news_stale_reason(
-            next_slot_utc,
-            job_created_at_utc,
-            news_stale_hours,
-            getattr(destination, "timezone", None),
-            sleep_start=sleep_start,
-            sleep_end=sleep_end,
-        ) is not None
-    )
+    from app.services.event_days import is_live_event_news
+    if is_live_event_news(db, job, dest_fanpage, created_day):
+        is_stale_news = (next_slot_utc - job_created_at_utc) > timedelta(hours=news_stale_hours)
+    else:
+        is_stale_news = (
+            group_of(job.content_type) == "news"
+            and _news_stale_reason(
+                next_slot_utc,
+                job_created_at_utc,
+                news_stale_hours,
+                getattr(destination, "timezone", None),
+                sleep_start=sleep_start,
+                sleep_end=sleep_end,
+            )
+            is not None
+        )
 
     return next_slot_utc, is_stale_news, news_stale_hours, existing_slots_utc
 

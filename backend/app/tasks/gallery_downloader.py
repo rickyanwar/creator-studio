@@ -90,9 +90,8 @@ _EVENT_WINDOW_EVICTION_BATCH = 30
 # event-week structure, researched 2026-08-20 rather than assumed:
 #   MotoGP: Thu press conf, Fri practice, Sat quali+SPRINT (a race itself),
 #            Sun race → window opens H-3 (Thursday).
-#   F1:     Fri driver press + FP1/FP2, Sat FP3+quali+team press, Sun race
-#            → window opens H-2 (Friday) — press moved off Thursday in the
-#            current format.
+#   F1:     Thu driver press conf, Fri practice, Sat quali, Sun race
+#            → window opens H-3 (Thursday) — press conferences on Thursday too.
 #   UFC/Boxing: Wed media day, Thu press conf, Fri weigh-in, Sat/Sun fight
 #            → window opens H-3 (Wednesday).
 #   Everything else (e.g. NBA — no multi-day press/practice lead-up, games
@@ -101,7 +100,7 @@ _EVENT_WINDOW_EVICTION_BATCH = 30
 #            next_event_date out of event_calendar anyway.
 _NICHE_EVENT_WINDOW_DAYS_BEFORE = {
     "motogp": 3,
-    "f1": 2,
+    "f1": 3,
     "ufc": 3,
     "boxing": 3,
 }

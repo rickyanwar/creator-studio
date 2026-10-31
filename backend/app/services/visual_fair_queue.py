@@ -375,10 +375,23 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
     if not candidates:
         return None
 
-    breaking_jobs = [j for j in candidates if j.is_breaking]
+    from app.services.event_days import is_live_event_news
+
+    def _is_priority(j: PublishJob) -> bool:
+        if j.is_breaking:
+            return True
+        fp = fp_cache.get(j.fanpage_id)
+        if j.created_at is not None:
+            j_aware = j.created_at.replace(tzinfo=timezone.utc) if j.created_at.tzinfo is None else j.created_at.astimezone(timezone.utc)
+            d = j_aware.astimezone(_WIB).date()
+        else:
+            d = today_wib
+        return is_live_event_news(db, j, fp, d)
+
+    breaking_jobs = [j for j in candidates if _is_priority(j)]
     breaking_jobs.sort(key=lambda j: j.created_at or datetime.min, reverse=True)
 
-    non_breaking = [j for j in candidates if not j.is_breaking]
+    non_breaking = [j for j in candidates if not _is_priority(j)]
     sorted_fps: list[int] = []
     jobs_by_fp: dict[int, list[PublishJob]] = collections.defaultdict(list)
     if non_breaking:

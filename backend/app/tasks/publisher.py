@@ -81,9 +81,22 @@ def _event_boosted_daily_limit(db, fanpage, base_limit: int, day: "datetime.date
     event schedule is tracked per KEYWORD (rider/driver/fighter name), not
     per niche as a whole — see gallery_downloader.py's own event-window
     machinery, which this reuses via _in_event_window rather than
-    reimplementing the niche-specific window-length rules (F1 opens 2 days
-    out, MotoGP/UFC 3) a second time."""
-    niches = [n for n in (fanpage.mode2_gallery_niches or []) if n]
+    reimplementing the niche-specific window-length rules (F1/MotoGP/UFC open 3 days
+    out) a second time."""
+    raw_niches = fanpage.mode2_gallery_niches or []
+    if isinstance(raw_niches, list) and len(raw_niches) > 1 and raw_niches[0] == "[" and raw_niches[-1] == "]":
+        import json
+        try:
+            raw_niches = json.loads("".join(raw_niches))
+        except Exception:
+            pass
+    elif isinstance(raw_niches, str):
+        import json
+        try:
+            raw_niches = json.loads(raw_niches)
+        except Exception:
+            raw_niches = [raw_niches]
+    niches = [n for n in raw_niches if n]
     if not niches:
         return base_limit
     from app.models.gallery import GalleryKeyword
@@ -512,8 +525,11 @@ def _publish_news_job(db, job):
 
     client = get_repliz_client_from_db(db)
     from app.services.repliz_client import format_schedule_at
+    from app.services.event_days import is_live_event_news
 
-    scheduled_for = _next_schedule_at(db, job.fanpage_id, breaking=job.is_breaking)
+    today_local = datetime.now(timezone.utc).astimezone(_fanpage_tz(fanpage)).date()
+    is_live = is_live_event_news(db, job, fanpage, today_local)
+    scheduled_for = _next_schedule_at(db, job.fanpage_id, breaking=(job.is_breaking or is_live))
     response = client.create_image_schedule(
         account_id=fanpage.repliz_account_id,
         description=job.ai_generated_caption or "",

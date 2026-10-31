@@ -182,6 +182,7 @@ def _valid_day_candidates(
     sleep_start_hour: int | None = None,
     sleep_end_hour: int | None = None,
     namespace: str = "default",
+    clean_counted: Sequence[datetime] | None = None,
 ) -> tuple[list[datetime], list[float]]:
     """Compute and filter valid candidates for one local calendar day."""
     minute_weights = _day_minute_weights(sleep_start_hour, sleep_end_hour)
@@ -191,8 +192,9 @@ def _valid_day_candidates(
     if n_slots <= 0:
         return [], minute_weights
 
+    counted = clean_counted if clean_counted is not None else clean_existing
     slots_on_day = sum(
-        1 for s in clean_existing if s.astimezone(target_tz).date() == current_date
+        1 for s in counted if s.astimezone(target_tz).date() == current_date
     )
     if slots_on_day >= n_slots:
         return [], minute_weights
@@ -240,6 +242,7 @@ def compute_audience_slot(
     namespace: str = "default",
     hour_weights: dict[str, float] | dict[int, float] | None = None,
     prefer_peak: bool = False,
+    counted_slots_utc: Sequence[datetime] | None = None,
 ) -> datetime:
     """Compute the aware UTC scheduled delivery instant for the next audience slot.
 
@@ -285,6 +288,14 @@ def compute_audience_slot(
                 raise ValueError("existing_slots_utc items must be timezone-aware datetimes")
             clean_existing.append(s.astimezone(timezone.utc))
 
+    clean_counted: list[datetime] | None = None
+    if counted_slots_utc is not None:
+        clean_counted = []
+        for s in counted_slots_utc:
+            if not isinstance(s, datetime) or s.tzinfo is None or s.utcoffset() is None:
+                raise ValueError("counted_slots_utc items must be timezone-aware datetimes")
+            clean_counted.append(s.astimezone(timezone.utc))
+
     if (sleep_start_hour is None) != (sleep_end_hour is None):
         raise ValueError("sleep_start_hour and sleep_end_hour must be specified together")
     if sleep_start_hour is not None and sleep_end_hour is not None:
@@ -312,6 +323,7 @@ def compute_audience_slot(
             sleep_start_hour=sleep_start_hour,
             sleep_end_hour=sleep_end_hour,
             namespace=namespace,
+            clean_counted=clean_counted,
         )
         if not valid:
             continue

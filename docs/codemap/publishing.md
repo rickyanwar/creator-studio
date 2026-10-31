@@ -161,6 +161,13 @@ Implemented in `backend/app/services/publishing_schedule.py`.
   - Read-only (no row locks, no database writes) and fail-open (returns `True` on missing fan page, no active destinations, or unexpected errors).
   - Inspects all active destinations for the fan page: returns `True` if at least one destination can schedule the news job within `destination.news_stale_hours` (default 24 h) from job creation. News arriving within 4 hours before sleep or during sleep may post in the first 3 waking hours the next morning. Used by `visual_fair_queue` to skip dead news jobs before generating images.
 
+### 4.7 Event-Window Live News (`services/event_days.py:is_live_event_news`)
+- During an event window (MotoGP/F1/UFC/Boxing race/event weekend from Thursday press conference day to day after race), new news posts immediately outside the daily schedule:
+  1. **Minimum Gap**: 10 minutes between posts on the same destination (`scheduled_for = max(now + 60s, latest reservation/live send + 10 min)`). `claim_paced_delivery_for_dispatch` uses `min(destination.min_gap_minutes, 10)` as the pace gap.
+  2. **Sleep Window Bypass**: Posts even inside the audience's sleep window.
+  3. **Extra Posts (No Quota Consumption)**: Deliveries are extra; they do not count toward daily target or mode quotas in `pick_slot` / `fitting_daily_target`.
+  4. **Dispatch & Replan**: `_news_dispatch_gate` returns "go" immediately (skipping 45-min Repliz lead) while keeping 6 h stale check. `replan_stale_scheduled_deliveries` leaves live event news alone (never moves them back onto the normal grid).
+
 ---
 
 ## 5. Daily Caps & Interleaved Method Allocation

@@ -12,7 +12,7 @@ from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.social_publishing import PublishDelivery, SocialDestination
 from app.models.target_fanpages import TargetFanpage
 from app.services.content_groups import GROUP_IDS, enabled_groups, group_of
-from app.services.event_days import effective_daily_target
+from app.services.event_days import effective_daily_target, is_event_window, is_live_event_news
 from app.services.publishing_schedule import (
     _pick_slot_instant,
     build_legacy_reservations_query,
@@ -244,11 +244,13 @@ def _block_day(
     blocked_days: set[Any],
     target: int,
     tz: Any,
+    ignored_instants: set[datetime] | None = None,
 ) -> None:
     """Add phantom instants at local noon of day d until that day holds target entries."""
     blocked_days.add(d)
+    ignored = ignored_instants or set()
     existing_on_d = sum(
-        1 for dt in current_existing if dt.astimezone(tz).date() == d
+        1 for dt in current_existing if dt.astimezone(tz).date() == d and dt not in ignored
     )
     needed = max(0, target - existing_on_d)
     noon_utc = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz).astimezone(
@@ -270,9 +272,59 @@ def pick_slot(
     sleep_end: int | None = None,
 ) -> datetime:
     """Find next slot enforcing per-mode quota and borrowing rules."""
-    enabled = enabled_groups(fanpage) if fanpage else []
-    local_day = now_utc.astimezone(zoneinfo.ZoneInfo(destination.timezone)).date()
-    target = effective_daily_target(db, destination, fanpage, local_day)
+    try:
+        dest_tz = zoneinfo.ZoneInfo(destination.timezone) if destination and destination.timezone else zoneinfo.ZoneInfo("UTC")
+    except Exception:
+        dest_tz = zoneinfo.ZoneInfo("UTC")
+    local_day = now_utc.astimezone(dest_tz).date()
+
+    dest_fanpage = fanpage
+    if dest_fanpage is None and destination and destination.content_project_id and db is not None:
+        dest_fanpage = db.query(TargetFanpage).filter_by(id=destination.content_project_id).first()
+
+    # Live event news: post right away outside the daily schedule
+    if is_live_event_news(db, job, dest_fanpage, local_day):
+        candidates = []
+        for r in all_reservations:
+            r_utc = r if r.tzinfo is not None else r.replace(tzinfo=timezone.utc)
+            candidates.append(r_utc)
+        if db is not None and destination and getattr(destination, "id", None):
+            try:
+                from sqlalchemy import or_
+                recent_cutoff = (now_utc - timedelta(hours=24)).astimezone(timezone.utc).replace(tzinfo=None)
+                delivs = (
+                    db.query(
+                        PublishDelivery.scheduled_for,
+                        PublishDelivery.published_at,
+                        PublishDelivery.claimed_at,
+                    )
+                    .filter(
+                        PublishDelivery.destination_id == destination.id,
+                        PublishDelivery.state.in_(["publishing", "published", "repliz_scheduled", "scheduled"]),
+                        or_(
+                            PublishDelivery.scheduled_for >= recent_cutoff,
+                            PublishDelivery.published_at >= recent_cutoff,
+                            PublishDelivery.claimed_at >= recent_cutoff,
+                        ),
+                    )
+                    .all()
+                )
+                for s_for, p_at, c_at in delivs:
+                    for dt in (s_for, p_at, c_at):
+                        if dt is not None:
+                            candidates.append(dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc))
+            except Exception as exc:
+                logger.warning("Failed querying recent live sends for destination %s: %s", getattr(destination, "id", None), exc)
+
+        earliest = now_utc + timedelta(seconds=60)
+        relevant = [c for c in candidates if c <= now_utc + timedelta(minutes=10)]
+        if relevant:
+            latest = max(relevant)
+            return max(earliest, latest + timedelta(minutes=10))
+        return earliest
+
+    enabled = enabled_groups(dest_fanpage) if dest_fanpage else []
+    target = effective_daily_target(db, destination, dest_fanpage, local_day)
     target = min(
         target,
         fitting_daily_target(
@@ -284,9 +336,23 @@ def pick_slot(
     )
     g = group_of(job.content_type)
     prefer_peak = g is not None and g != "news"
-    cap = ai_video_daily_cap(fanpage) if g == "ai_video" else None
+    cap = ai_video_daily_cap(dest_fanpage) if g == "ai_video" else None
+
+    group_res = group_reservations(db, destination) if db is not None else []
+    event_news_instants: set[datetime] = set()
+    for instant, grp in group_res:
+        if grp == "news":
+            inst_date = instant.astimezone(dest_tz).date()
+            if is_event_window(db, dest_fanpage, inst_date):
+                event_news_instants.add(instant)
+
+    tz = dest_tz
 
     if not quotas or g is None or g not in quotas:
+        counted_all = [
+            r for r in all_reservations
+            if (r.replace(tzinfo=timezone.utc) if r.tzinfo is None else r.astimezone(timezone.utc)) not in event_news_instants
+        ]
         if cap is None:
             return compute_audience_slot(
                 now_utc=now_utc,
@@ -299,15 +365,15 @@ def pick_slot(
                 namespace=f"dest-{destination.id}",
                 hour_weights=hour_weights,
                 prefer_peak=prefer_peak,
+                counted_slots_utc=counted_all,
             )
 
-        tz = zoneinfo.ZoneInfo(destination.timezone)
-        group_res = group_reservations(db, destination)
         phantoms: list[datetime] = []
         blocked_days: set[Any] = set()
 
         while len(blocked_days) < 14:
             current_existing = list(all_reservations) + phantoms
+            counted_existing = [dt for dt in current_existing if dt not in event_news_instants]
             slot = compute_audience_slot(
                 now_utc=now_utc,
                 timezone_name=destination.timezone,
@@ -319,19 +385,20 @@ def pick_slot(
                 namespace=f"dest-{destination.id}",
                 hour_weights=hour_weights,
                 prefer_peak=prefer_peak,
+                counted_slots_utc=counted_existing,
             )
             d = slot.astimezone(tz).date()
 
             used_ai = sum(
                 1
                 for instant, grp in group_res
-                if grp == "ai_video" and instant.astimezone(tz).date() == d
+                if grp == "ai_video" and instant.astimezone(tz).date() == d and instant not in event_news_instants
             )
 
             if used_ai < cap:
                 return slot
 
-            _block_day(d, current_existing, phantoms, blocked_days, target, tz)
+            _block_day(d, current_existing, phantoms, blocked_days, target, tz, ignored_instants=event_news_instants)
 
         logger.warning(
             "ai video cap found no slot in 14 days for destination %s; using the plain slot",
@@ -348,28 +415,28 @@ def pick_slot(
             namespace=f"dest-{destination.id}",
             hour_weights=hour_weights,
             prefer_peak=prefer_peak,
+            counted_slots_utc=counted_all,
         )
 
     if cap is not None:
         quotas = {**quotas, g: min(quotas.get(g, 0), cap)}
 
-    tz = zoneinfo.ZoneInfo(destination.timezone)
-    group_res = group_reservations(db, destination)
     waiting = waiting_groups(
         db, destination.content_project_id, destination.id, now_utc
-    )
+    ) if db is not None else set()
 
     borrow_hours = getattr(destination, "borrow_hours_before_sleep", 3)
     if borrow_hours is None:
         borrow_hours = 3
 
-    video_cap = ai_video_daily_cap(fanpage)
+    video_cap = ai_video_daily_cap(dest_fanpage)
 
     phantoms: list[datetime] = []
     blocked_days: set[Any] = set()
 
     while len(blocked_days) < 14:
         current_existing = list(all_reservations) + phantoms
+        counted_existing = [dt for dt in current_existing if dt not in event_news_instants]
         slot = compute_audience_slot(
             now_utc=now_utc,
             timezone_name=destination.timezone,
@@ -381,13 +448,14 @@ def pick_slot(
             namespace=f"dest-{destination.id}",
             hour_weights=hour_weights,
             prefer_peak=prefer_peak,
+            counted_slots_utc=counted_existing,
         )
         d = slot.astimezone(tz).date()
 
         used_g = sum(
             1
             for instant, grp in group_res
-            if grp == g and instant.astimezone(tz).date() == d
+            if grp == g and instant.astimezone(tz).date() == d and instant not in event_news_instants
         )
 
         if used_g < quotas.get(g, 0):
@@ -405,7 +473,7 @@ def pick_slot(
                     used_h = sum(
                         1
                         for instant, grp in group_res
-                        if grp == h and instant.astimezone(tz).date() == d
+                        if grp == h and instant.astimezone(tz).date() == d and instant not in event_news_instants
                     )
                     free_h = max(0, quotas[h] - used_h)
                     if h not in waiting:
@@ -428,18 +496,23 @@ def pick_slot(
                     namespace=f"dest-{destination.id}",
                     hour_weights=hour_weights,
                     prefer_peak=prefer_peak,
+                    counted_slots_utc=counted_existing,
                 )
                 if s2.astimezone(tz).date() == d and w_start_utc <= s2 < w_end_utc:
                     return s2
 
         # Block day d: add phantom instants at local noon of day d until that day holds daily_target entries
-        _block_day(d, current_existing, phantoms, blocked_days, target, tz)
+        _block_day(d, current_existing, phantoms, blocked_days, target, tz, ignored_instants=event_news_instants)
 
     logger.warning(
         "mode quota found no slot in 14 days for destination %s group %s; using the plain slot",
         destination.id,
         g,
     )
+    counted_all = [
+        r for r in all_reservations
+        if (r.replace(tzinfo=timezone.utc) if r.tzinfo is None else r.astimezone(timezone.utc)) not in event_news_instants
+    ]
     return compute_audience_slot(
         now_utc=now_utc,
         timezone_name=destination.timezone,
@@ -451,4 +524,5 @@ def pick_slot(
         namespace=f"dest-{destination.id}",
         hour_weights=hour_weights,
         prefer_peak=prefer_peak,
+        counted_slots_utc=counted_all,
     )

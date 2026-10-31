@@ -21,6 +21,34 @@ def event_multiplier(db, fanpage, day: date) -> int:
         return 1
 
 
+def is_event_window(db, fanpage, day: date) -> bool:
+    """True when `day` falls inside an event window for this fan page (reusing event_multiplier)."""
+    try:
+        return event_multiplier(db, fanpage, day) > 1
+    except Exception as exc:
+        logger.warning("is_event_window failed for fanpage %s: %s", getattr(fanpage, "id", None), exc)
+        return False
+
+
+def is_live_event_news(db, job, fanpage, day: date) -> bool:
+    """True when the job is a news job AND is_event_window(...) (fails safe to False)."""
+    try:
+        if job is None:
+            return False
+        from app.services.content_groups import group_of
+        if group_of(getattr(job, "content_type", None)) != "news":
+            return False
+        if fanpage is None and getattr(job, "fanpage_id", None) and db is not None:
+            from app.models.target_fanpages import TargetFanpage
+            fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+        if fanpage is None:
+            return False
+        return is_event_window(db, fanpage, day)
+    except Exception as exc:
+        logger.warning("is_live_event_news failed for job %s: %s", getattr(job, "id", None), exc)
+        return False
+
+
 def effective_daily_target(db, destination, fanpage, day: date) -> int:
     """destination.daily_target, doubled on race days."""
     return (destination.daily_target or 0) * event_multiplier(db, fanpage, day)

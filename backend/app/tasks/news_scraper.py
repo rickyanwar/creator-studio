@@ -24,6 +24,38 @@ _MAX_NEW_ARTICLES_PER_RUN = 10
 logger = logging.getLogger(__name__)
 
 
+def is_source_in_event_window(db, source, day) -> bool:
+    """True if ANY subscribed active fanpage for this source is in an event window on `day`."""
+    try:
+        from app.models.fanpage_news_sources import FanpageNewsSource
+        from app.models.target_fanpages import TargetFanpage
+        from app.services.event_days import is_event_window
+
+        fanpages = (
+            db.query(TargetFanpage)
+            .join(FanpageNewsSource, FanpageNewsSource.fanpage_id == TargetFanpage.id)
+            .filter(
+                FanpageNewsSource.news_source_id == source.id,
+                FanpageNewsSource.is_active == True,
+                TargetFanpage.is_active == True,
+            )
+            .all()
+        )
+        return any(is_event_window(db, fp, day) for fp in fanpages)
+    except Exception as exc:
+        logger.warning("is_source_in_event_window failed for source %s: %s", getattr(source, "id", None), exc)
+        return False
+
+
+def effective_scrape_interval_minutes(db, source, now: datetime | None = None) -> int:
+    """Effective scrape interval in minutes: min(scrape_interval_minutes, 15) during event windows."""
+    base = source.scrape_interval_minutes or 60
+    today = (now or datetime.now(timezone.utc)).date()
+    if is_source_in_event_window(db, source, today):
+        return min(base, 15)
+    return base
+
+
 @celery_app.task(name="app.tasks.news_scraper.scrape_all_sources")
 def scrape_all_sources():
     """Dispatch a scrape task for every active source whose interval has elapsed."""
@@ -35,11 +67,12 @@ def scrape_all_sources():
         sources = db.query(NewsSource).filter(NewsSource.is_active == True).all()
 
         for source in sources:
-            interval = timedelta(minutes=source.scrape_interval_minutes or 60)
+            eff_mins = effective_scrape_interval_minutes(db, source, datetime.now(timezone.utc))
+            interval = timedelta(minutes=eff_mins)
             if source.last_scraped_at and now - source.last_scraped_at < interval:
                 continue
             scrape_source.delay(source.id)
-            logger.info("News scraper: dispatched source %d (%s)", source.id, source.name)
+            logger.info("News scraper: dispatched source %d (%s) [interval %dm]", source.id, source.name, eff_mins)
     finally:
         db.close()
 

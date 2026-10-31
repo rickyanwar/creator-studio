@@ -256,9 +256,11 @@ Comprehensive architecture and implementation map covering content discovery, de
   - Global pause kill-switch: skips if `Settings.gallery_scraping_paused == True` (`gallery_downloader.py:373`).
   - Base interval: 24 hours (`_KEYWORD_INTERVAL_HOURS = 24`, `gallery_downloader.py:43`).
 - **Event Window Logic** (`gallery_downloader.py:188` `_in_event_window`):
-  - Window opens before `next_event_date`: MotoGP (H-3), F1 (H-2), UFC/Boxing (H-3), other (H-2) (`_NICHE_EVENT_WINDOW_DAYS_BEFORE`, `gallery_downloader.py:102-107`).
+  - Window opens before `next_event_date`: MotoGP (H-3), F1 (H-3), UFC/Boxing (H-3), other (H-2) (`_NICHE_EVENT_WINDOW_DAYS_BEFORE`, `gallery_downloader.py:102-107`).
   - Window closes: `next_event_date + 1 day` (`_EVENT_WINDOW_DAYS_AFTER = 1`, `gallery_downloader.py:185`).
   - Event date refresh (`refresh_keyword_event_dates`, beat 02:00 WIB): a future date is never re-checked; a date that passed within the last 14 days is re-checked every 20 h (`_EVENT_PASSED_LOOKUP_INTERVAL_HOURS`, `_EVENT_PASSED_FAST_RECHECK_DAYS`) so back-to-back race weekends are found in time; otherwise every 5 days (`_EVENT_LOOKUP_INTERVAL_DAYS`). News freshness (6 h race day / 12 h other days, `event_days.news_fresh_hours`) is decided by the day the news job was created, not by today (2026-10-31).
+  - Inside window: news sources for fan pages in event window are checked every 15 minutes (`effective_scrape_interval_minutes = min(scrape_interval_minutes, 15)`, `tasks/news_scraper.py`).
+  - Event-window live news (`services/event_days.py:is_live_event_news`): posts immediately outside normal schedule rules with minimum 10-minute gap on destination (`scheduled_for = max(now + 60s, latest + 10 min)`), bypasses daily targets, mode quotas/borrowing, grid, and sleep windows. Live event news deliveries are extra and do not consume daily target or mode quotas.
   - Inside window: interval tightens from 24h to 4h (`_EVENT_WINDOW_INTERVAL_HOURS = 4`, `gallery_downloader.py:147, 208`).
   - Tight Hourly Window: If `next_event_datetime_utc` is known, interval tightens to 1 hour (`_EVENT_TIME_TIGHT_INTERVAL_HOURS = 1`, `gallery_downloader.py:160, 206`) during estimated upload window (event time + 3h upload buffer, spanning -1h to +4h; `gallery_downloader.py:157-159`).
   - Far From Event Tiers: 3–6 days out $\to$ 48h; 7–13 days out $\to$ 96h; 14+ days out $\to$ 168h (weekly) (`_FAR_FROM_EVENT_INTERVAL_TIERS`, `gallery_downloader.py:123-140`).

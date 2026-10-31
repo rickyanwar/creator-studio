@@ -208,7 +208,22 @@ def claim_paced_delivery_for_dispatch(
             return None, None
 
         # B. Check min_gap_minutes against recent live sends
-        min_gap_min = getattr(dest, "min_gap_minutes", None) or 0
+        from app.services.event_days import is_live_event_news
+        c_job = getattr(candidate, "job", None) or (db.query(PublishJob).filter_by(id=candidate.publish_job_id).first() if candidate.publish_job_id else None)
+        c_fp = db.query(TargetFanpage).filter_by(id=dest.content_project_id).first() if dest.content_project_id else None
+        try:
+            c_tz = zoneinfo.ZoneInfo(dest.timezone) if dest and dest.timezone else zoneinfo.ZoneInfo("Asia/Jakarta")
+        except Exception:
+            c_tz = zoneinfo.ZoneInfo("Asia/Jakarta")
+        c_local_day = now.astimezone(c_tz).date()
+        is_live_cand = is_live_event_news(db, c_job, c_fp, c_local_day)
+
+        dest_gap = getattr(dest, "min_gap_minutes", None) or 0
+        if is_live_cand:
+            min_gap_min = min(dest_gap, 10) if dest_gap > 0 else 10
+        else:
+            min_gap_min = dest_gap
+
         if min_gap_min > 0:
             gap_cutoff = naive_now - timedelta(minutes=float(min_gap_min))
 
@@ -1993,6 +2008,15 @@ def replan_stale_scheduled_deliveries(
                 and deliv.scheduled_for is not None
                 and deliv.scheduled_for < stale_cutoff
             ):
+                from app.services.event_days import is_live_event_news
+                d_job = db.query(PublishJob).filter_by(id=deliv.publish_job_id).first() if deliv.publish_job_id else None
+                try:
+                    d_tz = zoneinfo.ZoneInfo(destination.timezone) if destination and destination.timezone else zoneinfo.ZoneInfo("Asia/Jakarta")
+                except Exception:
+                    d_tz = zoneinfo.ZoneInfo("Asia/Jakarta")
+                local_day = now.astimezone(d_tz).date()
+                if is_live_event_news(db, d_job, fanpage, local_day):
+                    continue
                 eligible_delivs.append(deliv)
 
         if not eligible_delivs:
@@ -2060,7 +2084,7 @@ def _news_dispatch_gate(db: Session, delivery: PublishDelivery, now: datetime) -
             return "go"
 
         job = db.query(PublishJob).filter_by(id=delivery.publish_job_id).first()
-        if not job or job.content_type != ContentType.news_content or job.is_breaking:
+        if not job or job.content_type != ContentType.news_content:
             return "go"
 
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first() if job.fanpage_id else None
@@ -2086,6 +2110,12 @@ def _news_dispatch_gate(db: Session, delivery: PublishDelivery, now: datetime) -
             job_created_naive = job_created_aware.replace(tzinfo=None)
             created_day = job_created_aware.astimezone(dest_tz).date()
 
+        from app.services.event_days import is_live_event_news
+        is_live_news = is_live_event_news(db, job, fanpage, created_day)
+
+        if not is_live_news and job.is_breaking:
+            return "go"
+
         dest_stale_hours = getattr(destination, "news_stale_hours", None) if destination else None
         hours = news_fresh_hours(db, fanpage, dest_stale_hours, created_day)
 
@@ -2100,6 +2130,9 @@ def _news_dispatch_gate(db: Session, delivery: PublishDelivery, now: datetime) -
             and (delivery_scheduled_naive - job_created_naive) > timedelta(hours=hours)
         ) or (now_naive - job_created_naive) > timedelta(hours=hours):
             return "stale"
+
+        if is_live_news:
+            return "go"
 
         if (
             delivery.intended_method == "repliz"

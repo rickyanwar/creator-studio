@@ -151,8 +151,13 @@ def copywrite_article(self, article_id: int):
             db.add(job)
             db.commit()
             created += 1
-            if copy.is_breaking:
-                logger.info("Copywriter: article %d fanpage %d flagged BREAKING — will skip normal publish pacing", article_id, fp.id)
+            from app.services.event_days import is_event_window
+            today = datetime.now(timezone.utc).date()
+            is_live_event = is_event_window(db, fp, today)
+            breaking_or_event = bool(copy.is_breaking or is_live_event)
+
+            if breaking_or_event:
+                logger.info("Copywriter: article %d fanpage %d flagged BREAKING/EVENT — will skip normal publish pacing", article_id, fp.id)
 
             # Auto mode: render (staggered so fanpages sharing this article
             # don't all publish within seconds of each other); review mode
@@ -163,7 +168,7 @@ def copywrite_article(self, article_id: int):
             if fp.mode2_publish_mode == PublishMode.auto:
                 from app.tasks.design_renderer import render_design
                 from app.services.engine_router import render_queue_for
-                stagger = _fanpage_stagger(slot, breaking=copy.is_breaking)
+                stagger = _fanpage_stagger(slot, breaking=breaking_or_event)
                 q = render_queue_for(db, fp, "news")
                 if q == "visual":
                     pass  # Fair visual dispatcher picks it up one at a time
