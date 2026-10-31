@@ -49,6 +49,7 @@ celery_app = Celery(
         "app.tasks.phone_watchdog",
         "app.tasks.queue_watchdog",
         "app.tasks.prompt_polish_watchdog",
+        "app.tasks.ai_video_alerts",
     ],
 )
 

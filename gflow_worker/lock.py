@@ -3,11 +3,15 @@ import fcntl
 import os
 from pathlib import Path
 import re
+import threading
 import time
 
 
 class LockTimeout(Exception):
     """The Flow lock was not available before the configured deadline."""
+
+
+_tls = threading.local()
 
 
 def _open_lock(path: Path):
@@ -34,6 +38,22 @@ def flow_lock(path: Path | None, timeout: float, profile: str | None = None):
         yield
         return
 
+    locks = getattr(_tls, "locks", None)
+    if locks is None:
+        locks = {}
+        _tls.locks = locks
+
+    key = (str(path.resolve()), profile)
+    if key in locks:
+        locks[key] += 1
+        try:
+            yield
+        finally:
+            locks[key] -= 1
+            if locks[key] == 0:
+                del locks[key]
+        return
+
     deadline = time.monotonic() + timeout
     global_file = _open_lock(path)
     try:
@@ -45,7 +65,13 @@ def flow_lock(path: Path | None, timeout: float, profile: str | None = None):
                 prof_path = path.parent / f"gflow-flow.{safe_prof}.lock"
                 profile_file = _open_lock(prof_path)
                 _acquire(profile_file, fcntl.LOCK_EX, deadline)
-            yield
+            locks[key] = 1
+            try:
+                yield
+            finally:
+                locks[key] -= 1
+                if locks[key] == 0:
+                    del locks[key]
         finally:
             if profile_file is not None:
                 try:

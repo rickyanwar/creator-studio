@@ -176,22 +176,25 @@ def record_heartbeat(db: Session, worker_id: str, payload: dict) -> dict:
                 account.credits = int(credits)
                 account.credits_checked_at = now
             continue
-        account.authenticated = authenticated
-        if account.status != "needs_terms":
-            account.last_error = acc_data.get("error")
-
         credits = acc_data.get("credits")
         if credits is not None:
             account.credits = int(credits)
             account.credits_checked_at = now
 
-        error_class = acc_data.get("error_class")
-        if authenticated:
-            account.status = "needs_terms" if account.status == "needs_terms" else "ok"
-        elif error_class == "FlowAccessUnavailableError":
-            account.status = "no_access"
+        if account.status in ("needs_confirm", "needs_login"):
+            account.authenticated = False
+        elif account.status == "needs_terms":
+            account.authenticated = authenticated
         else:
-            account.status = "auth_error"
+            account.authenticated = authenticated
+            account.last_error = acc_data.get("error")
+            error_class = acc_data.get("error_class")
+            if authenticated:
+                account.status = "ok"
+            elif error_class == "FlowAccessUnavailableError":
+                account.status = "no_access"
+            else:
+                account.status = "auth_error"
 
     db.commit()
 
@@ -826,6 +829,12 @@ def record_failure(
             account.credits_checked_at = now
         _requeue()
 
+    elif reason == "identity_check":
+        if account:
+            reason_msg = (message or "Google asks to confirm the account")[:500]
+            _flag_account_session(db, account, "needs_confirm", reason_msg, now)
+        _requeue()
+
     elif reason == "auth":
         if account:
             account.status = "auth_error"
@@ -860,6 +869,7 @@ def record_failure(
 
     _apply_worker_pause(db, worker_id, now)
     db.commit()
+    _dispatch_queued_alerts(db)
     db.refresh(job)
 
 
@@ -1094,3 +1104,152 @@ def retry_job(db: Session, job: VideoJob):
 
     db.commit()
     db.refresh(job)
+
+
+def _enqueue_alert(db: Session, message: str, dedupe_key: str) -> None:
+    db.info.setdefault("pending_gflow_alerts", []).append((message, dedupe_key))
+
+
+def _dispatch_queued_alerts(db: Session) -> None:
+    alerts = db.info.pop("pending_gflow_alerts", [])
+    for msg, key in alerts:
+        try:
+            from app.tasks.ai_video_alerts import send_gflow_alert
+            send_gflow_alert.delay(msg, key)
+        except Exception as exc:
+            logger.warning("Failed to queue gflow alert (%s): %s", key, exc)
+
+
+def _maybe_pause_for_sessions(db: Session, worker_id: str, now: datetime) -> bool:
+    now_naive = now.replace(tzinfo=None) if getattr(now, "tzinfo", None) else now
+    cutoff = now_naive - timedelta(hours=1)
+    accounts = (
+        db.query(GflowAccount)
+        .filter(
+            GflowAccount.worker_id == worker_id,
+            GflowAccount.status.in_(("needs_confirm", "needs_login")),
+            GflowAccount.session_flagged_at.isnot(None),
+            GflowAccount.session_flagged_at >= cutoff,
+        )
+        .all()
+    )
+    if len(accounts) >= 3:
+        worker_row = db.query(GflowWorker).filter(GflowWorker.worker_id == worker_id).first()
+        target_pause = now + timedelta(hours=6)
+        if worker_row:
+            target_pause_naive = target_pause.replace(tzinfo=None) if getattr(target_pause, "tzinfo", None) else target_pause
+            if worker_row.paused_until is None:
+                worker_row.paused_until = target_pause_naive
+            else:
+                existing_paused = worker_row.paused_until.replace(tzinfo=None) if getattr(worker_row.paused_until, "tzinfo", None) else worker_row.paused_until
+                worker_row.paused_until = max(existing_paused, target_pause_naive)
+        names = ", ".join([a.label or a.profile for a in accounts])
+        msg = (
+            f"Flow worker paused for 6 hours: {len(accounts)} accounts lost their session within 1 hour ({names}). "
+            f"Google is probably re-checking all accounts. Confirm one account first; the worker resumes by itself and "
+            f"only uses accounts that pass a session check."
+        )
+        dedupe_key = f"gflow_session_pause:{worker_id}:{now:%Y%m%d}"
+        _enqueue_alert(db, msg, dedupe_key)
+        return True
+    return False
+
+
+def _flag_account_session(
+    db: Session,
+    account: GflowAccount,
+    status: str,
+    reason_text: str,
+    now: datetime,
+) -> bool:
+    if account.status == status:
+        account.last_error = reason_text
+        return False
+
+    now_naive = now.replace(tzinfo=None) if getattr(now, "tzinfo", None) else now
+    account.status = status
+    account.authenticated = False
+    account.last_error = reason_text
+    account.session_flagged_at = now_naive
+
+    if account.id is None:
+        db.flush()
+
+    name = account.label or account.profile
+    email = account.email or "no email"
+    if status == "needs_confirm":
+        msg = (
+            f"Flow account {name} ({email}) needs you: Google is asking to confirm it's you, so Flow shows its public page. "
+            f"Open this account in Chrome on the phone proxy and complete the check (or run: gflow auth login --profile {account.profile} as user gflow). "
+            f"The worker skips this account until a session check passes."
+        )
+    elif status == "needs_login":
+        msg = (
+            f"Flow account {name} ({email}) is signed out ({reason_text}). "
+            f"Sign in again with: gflow auth login --profile {account.profile} as user gflow. "
+            f"The worker skips this account until a session check passes."
+        )
+    else:
+        msg = f"Flow account {name} ({email}) session flagged as {status}: {reason_text}"
+
+    dedupe_key = f"gflow_session:{account.id}:{status}:{now:%Y%m%d%H%M}"
+    _enqueue_alert(db, msg, dedupe_key)
+    _maybe_pause_for_sessions(db, account.worker_id, now)
+    return True
+
+
+def record_session_check(
+    db: Session,
+    worker_id: str,
+    req: Any,
+    now: Optional[datetime] = None,
+) -> str:
+    if now is None:
+        now = _utcnow()
+
+    profile = getattr(req, "profile", None) if hasattr(req, "profile") else req.get("profile")
+    result = getattr(req, "result", None) if hasattr(req, "result") else req.get("result")
+    credits = getattr(req, "credits", None) if hasattr(req, "credits") else req.get("credits")
+    email = getattr(req, "email", None) if hasattr(req, "email") else req.get("email")
+
+    account = (
+        db.query(GflowAccount)
+        .filter(GflowAccount.worker_id == worker_id, GflowAccount.profile == profile)
+        .first()
+    )
+    if not account:
+        return "unknown"
+
+    if result == "renewed":
+        if account.status in ("needs_confirm", "needs_login", "auth_error"):
+            account.status = "ok"
+            account.authenticated = True
+            account.last_error = None
+        if isinstance(credits, int) and not isinstance(credits, bool):
+            now_naive = now.replace(tzinfo=None) if getattr(now, "tzinfo", None) else now
+            account.credits = credits
+            account.credits_checked_at = now_naive
+        if email:
+            account.email = email
+    elif result == "public_landing":
+        _flag_account_session(
+            db,
+            account,
+            "needs_confirm",
+            "Google asks to confirm the account (Flow /about page)",
+            now,
+        )
+    elif result in ("launch_error", "skipped", "in_use", "busy"):
+        pass
+    else:
+        _flag_account_session(
+            db,
+            account,
+            "needs_login",
+            f"Session check: {result}",
+            now,
+        )
+
+    db.commit()
+    _dispatch_queued_alerts(db)
+    return account.status

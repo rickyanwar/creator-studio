@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone, timedelta
 import logging
 import json
 import os
@@ -12,6 +13,7 @@ import sys
 import threading
 import time
 import subprocess
+import zoneinfo
 
 from . import __version__, memory
 from .api import JobLost, StudioClient, TransientApiError
@@ -25,8 +27,26 @@ from .state import cleanup
 log = logging.getLogger(__name__)
 
 
+def is_in_keepalive_window(dt: datetime, window_str: str, tz_str: str) -> bool:
+    try:
+        tz = zoneinfo.ZoneInfo(tz_str)
+    except Exception:
+        tz = timezone.utc
+    local_dt = dt.astimezone(tz)
+    m = re.fullmatch(r"(\d{2}):(\d{2})-(\d{2}):(\d{2})", window_str)
+    if not m:
+        return True
+    h1, m1, h2, m2 = map(int, m.groups())
+    start_min = h1 * 60 + m1
+    end_min = h2 * 60 + m2
+    cur_min = local_dt.hour * 60 + local_dt.minute
+    if start_min <= end_min:
+        return start_min <= cur_min <= end_min
+    return cur_min >= start_min or cur_min <= end_min
+
+
 class Worker:
-    def __init__(self, cfg, api=None, gflow=None):
+    def __init__(self, cfg, api=None, gflow=None, clock=None, uniform=None):
         self.cfg = cfg
         self.api = api or StudioClient(cfg)
         self.gflow = gflow or GflowRunner(cfg)
@@ -34,6 +54,12 @@ class Worker:
         self.accounts = []
         self._accounts_lock = threading.Lock()
         self._refresh_thread = None
+        self._clock = clock
+        self._uniform_fn = uniform
+        self._keepalive_thread = None
+        self._keepalive_lock = threading.Lock()
+        self._keepalive_state = {"profiles": {}, "next_any_at": None}
+        self._keepalive_file_existed = (self.cfg.work_dir / "keepalive.json").exists()
         self.phase = None
         self._credits_heartbeat_pending = False
         self.last_refresh = None
@@ -43,6 +69,7 @@ class Worker:
         self.executor = ThreadPoolExecutor(max_workers=cfg.max_concurrent)
         self.stop = threading.Event()
         self._load_accounts_cache()
+        self._load_keepalive_state()
 
     def startup(self):
         for executable in (self.cfg.ffmpeg, self.cfg.ffprobe):
@@ -99,6 +126,158 @@ class Worker:
             temp_path.replace(cache_path)
         except OSError as exc:
             log.warning("Failed to save accounts cache: %s", exc)
+
+    def _now(self):
+        if self._clock is not None:
+            dt = self._clock()
+        else:
+            dt = datetime.now(timezone.utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    def _uniform(self, a, b):
+        if self._uniform_fn is not None:
+            return self._uniform_fn(a, b)
+        return random.uniform(a, b)
+
+    def _load_keepalive_state(self):
+        path = self.cfg.work_dir / "keepalive.json"
+        try:
+            data = json.loads(path.read_text())
+            if isinstance(data, dict) and isinstance(data.get("profiles"), dict):
+                self._keepalive_state = {
+                    "profiles": dict(data["profiles"]),
+                    "next_any_at": data.get("next_any_at"),
+                }
+                self._keepalive_file_existed = True
+                return
+        except Exception:
+            pass
+        self._keepalive_state = {"profiles": {}, "next_any_at": None}
+        self._keepalive_file_existed = False
+
+    def _save_keepalive_state(self):
+        try:
+            self.cfg.work_dir.mkdir(parents=True, exist_ok=True)
+            path = self.cfg.work_dir / "keepalive.json"
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._keepalive_state, indent=2))
+            os.replace(tmp, path)
+        except OSError as exc:
+            log.warning("Failed to save keepalive state: %s", exc)
+
+    def _sync_keepalive_schedule(self):
+        with self._accounts_lock:
+            known = [a["profile"] for a in self.accounts if isinstance(a, dict) and "profile" in a]
+        if not known and self.cfg.profiles:
+            known = list(self.cfg.profiles)
+        if not known:
+            return
+
+        now = self._now()
+        with self._keepalive_lock:
+            profiles = self._keepalive_state["profiles"]
+            changed = False
+
+            if not self._keepalive_file_existed:
+                for p in known:
+                    next_dt = now + timedelta(seconds=self._uniform(30 * 60, self.cfg.keepalive_hours_max * 3600))
+                    profiles[p] = {
+                        "next_at": next_dt.isoformat(),
+                        "last_at": None,
+                        "last_result": None,
+                    }
+                self._keepalive_file_existed = True
+                changed = True
+            else:
+                for p in known:
+                    if p not in profiles:
+                        next_dt = now + timedelta(seconds=self._uniform(self.cfg.keepalive_new_min * 60, self.cfg.keepalive_new_max * 60))
+                        profiles[p] = {
+                            "next_at": next_dt.isoformat(),
+                            "last_at": None,
+                            "last_result": None,
+                        }
+                        changed = True
+
+            for p in list(profiles.keys()):
+                if p not in known:
+                    del profiles[p]
+                    changed = True
+
+            if changed:
+                self._save_keepalive_state()
+
+    def _start_keepalive_thread(self, target, profile):
+        if self._keepalive_thread is not None and self._keepalive_thread.is_alive():
+            return
+        thread = threading.Thread(target=target, args=(profile,), daemon=True)
+        self._keepalive_thread = thread
+        thread.start()
+
+    def _run_keepalive(self, p):
+        try:
+            with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=p):
+                row = self.gflow.auth_renew(p)
+                result = row.get("result", "launch_error")
+                if result == "renewed":
+                    cu = self.gflow.credits_user(p)
+                    raw_credits = cu.get("credits")
+                    credits = raw_credits if isinstance(raw_credits, int) and not isinstance(raw_credits, bool) else None
+                    email = row.get("email") or cu.get("email")
+                    authenticated = True
+                    should_post = True
+                else:
+                    credits = None
+                    email = row.get("email")
+                    if result in ("launch_error", "skipped", "in_use", "busy"):
+                        authenticated = None
+                        should_post = False
+                    else:
+                        authenticated = False
+                        should_post = True
+
+                if should_post:
+                    self.api.session(self.cfg.worker_id, p, result, email=email, credits=credits, authenticated=authenticated)
+
+                with self._accounts_lock:
+                    for account in self.accounts:
+                        if account.get("profile") == p:
+                            if result == "renewed":
+                                account["authenticated"] = True
+                                if credits is not None:
+                                    # /session already stored this balance; a credits heartbeat would
+                                    # stamp every cached balance as freshly checked.
+                                    account["credits"] = credits
+                                if email:
+                                    account["email"] = email
+                                account["error"] = None
+                                account["error_class"] = None
+                            elif result not in ("launch_error", "skipped", "in_use", "busy"):
+                                account["authenticated"] = False
+                                if email:
+                                    account["email"] = email
+                            break
+
+                now = self._now()
+                with self._keepalive_lock:
+                    if result in ("launch_error", "skipped", "in_use", "busy"):
+                        next_dt = now + timedelta(seconds=self._uniform(30 * 60, 90 * 60))
+                    else:
+                        next_dt = now + timedelta(seconds=self._uniform(self.cfg.keepalive_hours_min * 3600, self.cfg.keepalive_hours_max * 3600))
+                    next_any_dt = now + timedelta(seconds=self._uniform(self.cfg.keepalive_gap_min * 60, self.cfg.keepalive_gap_max * 60))
+                    self._keepalive_state["profiles"][p] = {
+                        "next_at": next_dt.isoformat(),
+                        "last_at": now.isoformat(),
+                        "last_result": result,
+                    }
+                    self._keepalive_state["next_any_at"] = next_any_dt.isoformat()
+                    self._save_keepalive_state()
+
+                log.info("Keep-alive: profile %s -> %s (credits %s)", p, result, credits)
+        except Exception as exc:
+            log.warning("Keep-alive run failed for profile %s: %s", p, exc)
 
     def _start_refresh_thread(self, target):
         if self._refresh_thread is not None and self._refresh_thread.is_alive():
@@ -257,6 +436,40 @@ class Worker:
                     self.last_refresh = now
                     self._start_refresh_thread(self._refresh_accounts)
         refresh_alive = self._refresh_thread is not None and self._refresh_thread.is_alive()
+        keepalive_alive = self._keepalive_thread is not None and self._keepalive_thread.is_alive()
+        if self.cfg.keepalive_enabled:
+            self._sync_keepalive_schedule()
+            if not self.jobs and not refresh_alive and not keepalive_alive and memory.can_start(self.cfg, len(self.jobs)):
+                now_dt = self._now()
+                if is_in_keepalive_window(now_dt, self.cfg.keepalive_window, self.cfg.keepalive_tz):
+                    with self._keepalive_lock:
+                        next_any_raw = self._keepalive_state.get("next_any_at")
+                        next_any_ok = True
+                        if next_any_raw:
+                            try:
+                                next_any_dt = datetime.fromisoformat(next_any_raw)
+                                if next_any_dt.tzinfo is None:
+                                    next_any_dt = next_any_dt.replace(tzinfo=timezone.utc)
+                                if now_dt < next_any_dt:
+                                    next_any_ok = False
+                            except Exception:
+                                pass
+                        if next_any_ok:
+                            due = []
+                            for p, info in self._keepalive_state.get("profiles", {}).items():
+                                try:
+                                    p_next_dt = datetime.fromisoformat(info["next_at"])
+                                    if p_next_dt.tzinfo is None:
+                                        p_next_dt = p_next_dt.replace(tzinfo=timezone.utc)
+                                    if p_next_dt <= now_dt:
+                                        due.append((p_next_dt, p))
+                                except Exception:
+                                    continue
+                            if due:
+                                due.sort(key=lambda item: item[0])
+                                target_profile = due[0][1]
+                                self._start_keepalive_thread(self._run_keepalive, target_profile)
+                                keepalive_alive = True
         send_credits = self._credits_heartbeat_pending and not refresh_alive
         with self._accounts_lock:
             accounts = [dict(profile=account["profile"], email=account.get("email"),
@@ -277,7 +490,7 @@ class Worker:
                 except JobLost:
                     with self.runner.lock:
                         self.runner.cancel_ids.add(jid)
-        while not self.stop.is_set() and not refresh_alive and reply.get("accept_jobs", False) and memory.can_start(self.cfg, len(self.jobs)):
+        while not self.stop.is_set() and not refresh_alive and not keepalive_alive and reply.get("accept_jobs", False) and memory.can_start(self.cfg, len(self.jobs)):
             job = self.api.claim()
             if job is None:
                 break
@@ -302,6 +515,8 @@ class Worker:
             self.executor.shutdown(wait=True)
             if self._refresh_thread and self._refresh_thread.is_alive():
                 self._refresh_thread.join(timeout=5)
+            if self._keepalive_thread and self._keepalive_thread.is_alive():
+                self._keepalive_thread.join(timeout=5)
             self.api.close()
 
 

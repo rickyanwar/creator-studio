@@ -45,6 +45,16 @@ class HeartbeatRequest(BaseModel):
     mem_available_mb: Optional[int] = None
     running_job_ids: List[int] = Field(default_factory=list)
     accounts: List[AccountHeartbeat] = Field(default_factory=list)
+    phase: Optional[str] = None
+
+
+class SessionCheckRequest(BaseModel):
+    worker_id: str
+    profile: str
+    result: str
+    email: Optional[str] = None
+    credits: Optional[int] = None
+    authenticated: Optional[bool] = None
 
 
 class ClaimRequest(BaseModel):
@@ -67,7 +77,18 @@ class FailRequest(BaseModel):
     message: str
 
 
-VALID_FAIL_REASONS = {"transient", "out_of_credits", "auth", "policy", "lost_checkpoint", "other", "upload_terms", "unusual_activity", "usage_limit", "agent_only"}
+VALID_FAIL_REASONS = {"transient", "out_of_credits", "auth", "policy", "lost_checkpoint", "other", "upload_terms", "unusual_activity", "usage_limit", "agent_only", "identity_check"}
+
+
+@router.post("/session")
+def session(
+    req: SessionCheckRequest,
+    db: DB,
+    token: ApiToken = Depends(require_hermes_scope("gflow:worker")),
+):
+    _validate_worker_id(req.worker_id)
+    account_status = ai_video_dispatch.record_session_check(db, req.worker_id, req)
+    return {"status": account_status}
 
 
 @router.post("/heartbeat")

@@ -14,7 +14,8 @@ User=gflow
 Group=gflow
 WorkingDirectory=/opt/studio
 EnvironmentFile=/etc/gflow-worker.env
-ExecStart=/home/gflow/.local/bin/uv run --project /home/gflow/gflow-cli-083 python -m gflow_worker
+# GFLOW_CLI_DIR selects the gflow-cli install (venv) the worker runs in; gflow-cli >= 0.88 also needs GFLOW_CLI_BROWSER_PROXY=<same proxy as GFLOW_PROXY>.
+ExecStart=/home/gflow/.local/bin/uv run --project ${GFLOW_CLI_DIR} python -m gflow_worker
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=30

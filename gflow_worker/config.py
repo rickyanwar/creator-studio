@@ -39,6 +39,16 @@ class Config:
     proxy: str | None = None
     cover_image_model: str = "nano2-lite"
     cover_gap_seconds: tuple = (5, 15)
+    keepalive_enabled: bool = True
+    keepalive_hours_min: float = 8.0
+    keepalive_hours_max: float = 16.0
+    keepalive_gap_min: float = 20.0
+    keepalive_gap_max: float = 90.0
+    keepalive_new_min: float = 10.0
+    keepalive_new_max: float = 60.0
+    keepalive_window: str = "07:00-22:00"
+    keepalive_tz: str = "Asia/Jakarta"
+    keepalive_timeout: float = 240.0
 
     @classmethod
     def from_env(cls):
@@ -76,6 +86,16 @@ class Config:
         for name in ("poll_seconds", "clip_qc_poll_seconds", "credits_refresh_minutes", "credits_refresh_jitter_minutes", "clip_timeout_seconds", "keep_done_days"):
             values[name] = float(os.getenv("GFLOW_" + name.upper(), str(cls.__dataclass_fields__[name].default)))
         values["cover_image_model"] = os.getenv("GFLOW_COVER_IMAGE_MODEL", str(cls.__dataclass_fields__["cover_image_model"].default))
+        raw_enabled = os.getenv("GFLOW_KEEPALIVE_ENABLED", "1").strip()
+        try:
+            values["keepalive_enabled"] = bool(int(raw_enabled))
+        except ValueError:
+            raise ValueError("invalid GFLOW_KEEPALIVE_ENABLED")
+        for name in ("keepalive_hours_min", "keepalive_hours_max", "keepalive_gap_min", "keepalive_gap_max",
+                     "keepalive_new_min", "keepalive_new_max", "keepalive_timeout"):
+            values[name] = float(os.getenv("GFLOW_" + name.upper(), str(cls.__dataclass_fields__[name].default)))
+        values["keepalive_window"] = os.getenv("GFLOW_KEEPALIVE_WINDOW", "07:00-22:00").strip()
+        values["keepalive_tz"] = os.getenv("GFLOW_KEEPALIVE_TZ", "Asia/Jakarta").strip()
         gap_raw = os.getenv("GFLOW_COVER_GAP_SECONDS", "").strip()
         if gap_raw:
             parts = [float(p.strip()) for p in gap_raw.split(",") if p.strip()]
@@ -104,4 +124,23 @@ class Config:
             raise ValueError("invalid cover gap limits")
         if not shlex.split(cfg.probe_python_cmd) or shlex.split(cfg.probe_prefix) is None:
             raise ValueError("invalid probe command")
+        if cfg.keepalive_hours_min < 0 or cfg.keepalive_hours_min > cfg.keepalive_hours_max:
+            raise ValueError("invalid keepalive hours limits")
+        if cfg.keepalive_gap_min < 0 or cfg.keepalive_gap_min > cfg.keepalive_gap_max:
+            raise ValueError("invalid keepalive gap limits")
+        if cfg.keepalive_new_min < 0 or cfg.keepalive_new_min > cfg.keepalive_new_max:
+            raise ValueError("invalid keepalive new limits")
+        if cfg.keepalive_timeout <= 0:
+            raise ValueError("keepalive timeout must be positive")
+        m = re.fullmatch(r"(\d{2}):(\d{2})-(\d{2}):(\d{2})", cfg.keepalive_window)
+        if not m:
+            raise ValueError("invalid keepalive window")
+        h1, m1, h2, m2 = map(int, m.groups())
+        if not (0 <= h1 <= 23 and 0 <= m1 <= 59 and 0 <= h2 <= 23 and 0 <= m2 <= 59):
+            raise ValueError("invalid keepalive window")
+        try:
+            import zoneinfo
+            zoneinfo.ZoneInfo(cfg.keepalive_tz)
+        except Exception:
+            raise ValueError("invalid keepalive tz")
         return cfg

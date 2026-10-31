@@ -1,8 +1,11 @@
 import contextlib
 import json
+import logging
 from pathlib import Path
 
 import httpx
+
+log = logging.getLogger(__name__)
 
 
 class JobLost(Exception):
@@ -43,6 +46,21 @@ class StudioClient:
 
     def heartbeat(self, payload):
         return self._post("heartbeat", json={**payload, "worker_id": self.worker_id})
+
+    def session(self, worker_id, profile, result, email=None, credits=None, authenticated=None):
+        payload = {
+            "worker_id": worker_id or self.worker_id,
+            "profile": profile,
+            "result": result,
+            "email": email,
+            "credits": credits,
+            "authenticated": authenticated,
+        }
+        try:
+            return self._post("session", json=payload)
+        except Exception as exc:
+            log.warning("Keep-alive session report failed for profile %s: %s", profile, exc)
+            return None
 
     def claim(self):
         result = self._post("claim", json={"worker_id": self.worker_id})

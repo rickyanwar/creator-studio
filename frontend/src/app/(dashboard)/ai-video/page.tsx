@@ -61,6 +61,8 @@ const statusStyles: Record<string, { bg: string; fg: string }> = {
   rejected: { bg: "var(--surface2)", fg: "var(--text2)" },
   failed: { bg: "var(--bad-soft)", fg: "var(--bad)" },
   needs_terms: { bg: "var(--warn-soft)", fg: "var(--warn)" },
+  needs_confirm: { bg: "var(--warn-soft)", fg: "var(--warn)" },
+  needs_login: { bg: "var(--warn-soft)", fg: "var(--warn)" },
   ok: { bg: "var(--pri-soft)", fg: "var(--pri-text)" },
 };
 
@@ -1318,6 +1320,22 @@ function AccountCard({
           >
             I accepted the terms
           </button>
+        </div>
+      )}
+
+      {account.status === "needs_confirm" && (
+        <div className="rounded-xl border border-warn/30 bg-warn-soft p-3 space-y-2">
+          <p className="text-xs text-warn leading-relaxed">
+            Google asks to confirm this account. Complete the check, then wait for the next session check.
+          </p>
+        </div>
+      )}
+
+      {account.status === "needs_login" && (
+        <div className="rounded-xl border border-warn/30 bg-warn-soft p-3 space-y-2">
+          <p className="text-xs text-warn leading-relaxed">
+            Signed out. Sign in again with gflow auth login.
+          </p>
         </div>
       )}
 

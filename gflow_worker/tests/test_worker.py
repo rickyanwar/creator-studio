@@ -109,6 +109,12 @@ def test_transient_classification(code):
     assert classify(GflowResult(False, {}, code)) == "transient"
 
 
+def test_identity_check_classification():
+    msg = "Flow redirected to its public landing page (flow.google.com/about)"
+    assert classify(GflowResult(False, {}, 31, message=msg)) == "identity_check"
+    assert classify(GflowResult(False, {"error_message": msg}, 31)) == "identity_check"
+
+
 @pytest.mark.parametrize("word", ["SAFETY", "UNSAFE", "POLICY", "BLOCKED", "PROHIBITED", "RAI"])
 def test_policy_classification(word):
     assert classify(GflowResult(False, {"status": "fail", "error_message": word}, 1)) == "policy"

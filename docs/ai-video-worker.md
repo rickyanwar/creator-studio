@@ -58,7 +58,8 @@ The worker is a standalone package and runs from the repository root as `python 
 
 The worker calls these studio routes under `/worker/gflow`, all requiring the `gflow:worker` scope. `worker_id` must match `^[A-Za-z0-9._-]{1,64}$`.
 
-- `POST /heartbeat` accepts `worker_id`, `version`, `max_concurrent`, `mem_available_mb`, `running_job_ids`, and `accounts`. Each account has `profile`, `email`, `authenticated`, `credits`, `error`, and `error_class`. It returns `accept_jobs`, `credit_reserve`, `cancel_job_ids`, and `server_time`.
+- `POST /heartbeat` accepts `worker_id`, `version`, `max_concurrent`, `mem_available_mb`, `running_job_ids`, `accounts`, and `phase`. Each account has `profile`, `email`, `authenticated`, `credits`, `error`, and `error_class`. It returns `accept_jobs`, `credit_reserve`, `cancel_job_ids`, and `server_time`.
+- `POST /session` accepts `worker_id`, `profile`, `result`, `email`, `credits`, and `authenticated`. It reports keep-alive session renewal and identity check status to the studio, returning `status`.
 - `POST /claim` accepts `worker_id`. It returns `204` when there is no job, otherwise `job` with `id`, `generation`, `fanpage_id`, `template_key`, `title`, `model`, `aspect`, `clip_seconds`, `clips`, `clips_done`, `flow_project_id`, `project_name`, `account` (`id`, `profile`), and `lease_seconds`.
 - `POST /jobs/{id}/progress` accepts `worker_id`, `generation`, `event`, and optional `flow_project_id`, `clip_index`, and `media_id`. It returns `ok` and `lease_seconds`.
 - `POST /jobs/{id}/fail` accepts `worker_id`, `generation`, `reason`, and `message`; it returns `status`. Reasons are `transient`, `out_of_credits`, `auth`, `policy`, `lost_checkpoint`, and `other`.
@@ -147,7 +148,7 @@ Hermes and this worker coordinate via flock on `/tmp/gflow-flow.lock`:
 - Hermes `flow.sh` takes `LOCK_EX` on `/tmp/gflow-flow.lock`.
 Thus Hermes and the worker exclude each other, while two worker jobs on distinct profiles can run concurrently when `GFLOW_MAX_CONCURRENT=2` is enabled. Every lock file is owned by the process that creates it; ensure the `gflow` user can open the existing file or create it in the lock directory before starting the service.
 
-To add another Flow account later, log that profile in as user `gflow` using the CLI. The worker picks it up on the next credits refresh and automatically creates a `credit-probe` project for it.
+To add another Flow account later, log that profile in as user `gflow` using the CLI. The worker picks it up on the next credits refresh; for credit probes it uses `GFLOW_PROBE_PROJECTS`, `probe_projects.json`, or falls back to "(none)".
 
 The unit is:
 
@@ -162,7 +163,7 @@ User=gflow
 Group=gflow
 WorkingDirectory=/opt/studio
 EnvironmentFile=/etc/gflow-worker.env
-ExecStart=/home/gflow/.local/bin/uv run --project /home/gflow/gflow-cli-083 python -m gflow_worker
+ExecStart=/home/gflow/.local/bin/uv run --project ${GFLOW_CLI_DIR} python -m gflow_worker
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=true
@@ -175,7 +176,7 @@ Check paths and permissions before enabling the unit. The `gflow` user must be a
 
 ## Credits, Concurrency, Resume, and Failure
 
-The worker refreshes credits at startup and every `GFLOW_CREDITS_REFRESH_MINUTES`, but only when `can_start` is true and no job is running because a credits check may open a browser. When `credits list` returns an account with no balance, the worker runs `gflow_worker/probe_credits.py` in the gflow-cli environment. The probe opens the Flow UI, prints `CREDITS: <n>` or `CREDITS: unknown`, and exits before submitting generation; its non-zero exit is expected. Probe projects are selected from `GFLOW_PROBE_PROJECTS`, then `GFLOW_WORK_DIR/probe_projects.json`, then created once with the `credit-probe` name. Only the latest probe output is kept under `GFLOW_WORK_DIR/probes/<profile>/`. A missing credit line or timeout leaves the original `credits list` error unchanged. The studio reserves `ai_video_credit_reserve` credits globally. A candidate account belongs to the worker, is enabled and authenticated, has status `ok`, has known credits, and does not already own a claimed or generating job.
+The worker refreshes credits at startup and every `GFLOW_CREDITS_REFRESH_MINUTES`, but only when `can_start` is true and no job is running because a credits check may open a browser. When `credits list` returns an account with no balance, the worker runs `gflow_worker/probe_credits.py` in the gflow-cli environment. The probe opens the Flow UI, prints `CREDITS: <n>` or `CREDITS: unknown`, and exits before submitting generation; its non-zero exit is expected. Probe projects are selected from `GFLOW_PROBE_PROJECTS`, then `GFLOW_WORK_DIR/probe_projects.json`, or fall back to "(none)". Only the latest probe output is kept under `GFLOW_WORK_DIR/probes/<profile>/`. A missing credit line or timeout leaves the original `credits list` error unchanged. The studio reserves `ai_video_credit_reserve` credits globally. A candidate account belongs to the worker, is enabled and authenticated, has status `ok`, has known credits, and does not already own a claimed or generating job.
 
 Local state is stored at `GFLOW_WORK_DIR/jobs/<job_id>-g<generation>/state.json` with `job_id`, `generation`, `project_id`, `clips`, and `uploaded`. State writes are atomic. A worker resumes completed clips from local state and the studio's `clips_done` checkpoint. If the server has a checkpoint missing locally, the worker reports `lost_checkpoint` and stops rather than guessing.
 
@@ -186,6 +187,32 @@ Cancellation stops a job quietly before the next clip. A `409` ownership respons
 Free technical checks always run. The global `ai_video_vision_qc_enabled` setting is off by default. When enabled, QC makes one vision call per video using a contact sheet and fails closed if the call fails or its response cannot be parsed. A failed QC video is not auto-published.
 
 For a fanpage configured for Auto, a passed video creates a pending publish job and queues it automatically. Manual-review pages leave the publish job in the review queue. Mode 8 remains disabled for a page unless `ai_video_enabled` is true.
+
+## Session Keep-Alive
+
+To keep Google Flow sessions alive and detect pending Google identity checks (`public_landing` / `flow.google.com/about`) without spending credits, the worker runs scheduled session renewals using `gflow auth renew` and `gflow credits user`.
+
+The keep-alive scheduler:
+- Runs one account at a time inside a configured local time window (`GFLOW_KEEPALIVE_WINDOW`, default `07:00-22:00` in `GFLOW_KEEPALIVE_TZ`, default `Asia/Jakarta`).
+- Spreads renewals across accounts: each account is renewed every 8–16 hours (`GFLOW_KEEPALIVE_HOURS_MIN` to `GFLOW_KEEPALIVE_HOURS_MAX`), with a minimum gap of 20–90 minutes between any two renewals (`GFLOW_KEEPALIVE_GAP_MIN` to `GFLOW_KEEPALIVE_GAP_MAX`). Newly discovered profiles get their first renewal in 10–60 minutes (`GFLOW_KEEPALIVE_NEW_MIN` to `GFLOW_KEEPALIVE_NEW_MAX`).
+- First deploy run spreads accounts between 30 minutes and `GFLOW_KEEPALIVE_HOURS_MAX` to prevent bursts. Schedule state persists across restarts in `GFLOW_WORK_DIR/keepalive.json`.
+- Runs only when idle (no jobs running, no other refresh/keepalive thread active, and sufficient memory). It runs even while the backend has the worker paused (pause only stops claiming new jobs). Job claims are blocked while a keep-alive run is active.
+- Reports each renewal result to the studio via `POST /worker/gflow/session` (`worker_id`, `profile`, `result`, `email`, `credits`, `authenticated`).
+
+Configurable environment settings:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GFLOW_KEEPALIVE_ENABLED` | `1` | Enable (1) or disable (0) the keep-alive scheduler |
+| `GFLOW_KEEPALIVE_HOURS_MIN` | `8` | Minimum hours between renewals for a single profile |
+| `GFLOW_KEEPALIVE_HOURS_MAX` | `16` | Maximum hours between renewals for a single profile |
+| `GFLOW_KEEPALIVE_GAP_MIN` | `20` | Minimum minutes between any two renewals |
+| `GFLOW_KEEPALIVE_GAP_MAX` | `90` | Maximum minutes between any two renewals |
+| `GFLOW_KEEPALIVE_NEW_MIN` | `10` | Minimum minutes before first renewal of a new profile |
+| `GFLOW_KEEPALIVE_NEW_MAX` | `60` | Maximum minutes before first renewal of a new profile |
+| `GFLOW_KEEPALIVE_WINDOW` | `07:00-22:00` | Allowed local time window for renewals (`HH:MM-HH:MM`) |
+| `GFLOW_KEEPALIVE_TZ` | `Asia/Jakarta` | Timezone name for the keep-alive window |
+| `GFLOW_KEEPALIVE_TIMEOUT` | `240` | Timeout in seconds for `auth renew` |
 
 ## Troubleshooting
 

@@ -64,6 +64,34 @@ elif args[:2] == ["image", "t2i"]:
     subprocess.run([os.environ["FAKE_FFMPEG"], "-v", "error", "-y", "-f", "lavfi", "-i",
                     "color=c=blue:s=180x320", "-frames:v", "1", str(out)], check=True)
     payload = {"status": "ok", "local_path": str(out), "failure_reasons": [], "error_message": None}
+elif args[:2] == ["auth", "renew"]:
+    profile = flag("--profile")
+    res_env = os.getenv(f"FAKE_GF_AUTH_{profile.upper()}", os.getenv("FAKE_GF_AUTH_RENEW", "renewed"))
+    if res_env == "invalid":
+        print("not JSON")
+        sys.exit(1)
+    if res_env == "empty":
+        print("[]")
+        sys.exit(1)
+    email = os.getenv(f"FAKE_GF_AUTH_EMAIL_{profile.upper()}", os.getenv("FAKE_GF_AUTH_EMAIL"))
+    row = {"profile": profile, "result": res_env, "email": email, "hint": None}
+    print(json.dumps([row]))
+    sys.exit(0 if res_env == "renewed" else 1)
+elif args[:2] == ["credits", "user"]:
+    profile = flag("--profile")
+    cu_mode = os.getenv(f"FAKE_GF_CREDITS_{profile.upper()}", os.getenv("FAKE_GF_CREDITS_USER", "ok"))
+    if cu_mode == "fail":
+        print(json.dumps({"status": "fail", "error": {"class": "ApiError", "detail": "failed"}}))
+        sys.exit(1)
+    if cu_mode == "invalid":
+        print("not JSON")
+        sys.exit(1)
+    raw_credits = os.getenv(f"FAKE_GF_CREDITS_VAL_{profile.upper()}", os.getenv("FAKE_GF_CREDITS_VAL", "250"))
+    credits_val = int(raw_credits) if (raw_credits and raw_credits.isdigit()) else None
+    email = os.getenv(f"FAKE_GF_CREDITS_EMAIL_{profile.upper()}", os.getenv("FAKE_GF_CREDITS_EMAIL", f"{profile}@example.test"))
+    payload = {"profile": profile, "email": email, "authenticated": True, "credits": credits_val}
+    print(json.dumps(payload))
+    sys.exit(0)
 else:
     if args[1] == "i2v":
         assert Path(flag("--initial-frame")).is_file()

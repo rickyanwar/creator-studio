@@ -24,6 +24,7 @@ class GflowResult:
     error_class: str | None = None
     retryable: bool = False
     message: str = ""
+    stdout: str = ""
 
 
 def all_json(stdout):
@@ -73,6 +74,10 @@ def classify(result):
         return "policy"
     if "AGENT-ONLY COMPOSER" in detail or "COMPOSER IS AGENT-ONLY" in detail:
         return "agent_only"
+    if result.exit_code == 31:
+        msg = ((result.message or "") + " " + str(result.payload.get("error_message") or "") + " " + json.dumps(result.payload.get("error") or {})).lower()
+        if "public landing" in msg or "flow.google.com/about" in msg:
+            return "identity_check"
     if result.exit_code in (9, 10, 15, 23, 25, 28, 31, 36) or result.error_class == "TimeoutExpired":
         return "transient"
     return "other"
@@ -82,7 +87,7 @@ class GflowRunner:
     def __init__(self, cfg):
         self.cfg = cfg
 
-    def run(self, args, profile=None):
+    def run(self, args, profile=None, timeout=None):
         if self.cfg.proxy:
             try:
                 ensure_proxy_ready(self.cfg.proxy)
@@ -97,13 +102,14 @@ class GflowRunner:
             env["ALL_PROXY"] = self.cfg.proxy
             env["HTTP_PROXY"] = self.cfg.proxy
             env["HTTPS_PROXY"] = self.cfg.proxy
+        effective_timeout = timeout if timeout is not None else self.cfg.clip_timeout_seconds
         try:
             with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=profile):
                 process = subprocess.Popen([*shlex.split(self.cfg.gflow_cmd), *map(str, args), "--json"],
                                            cwd=self.cfg.cli_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                            text=True, env=env, start_new_session=True)
                 try:
-                    stdout, _ = process.communicate(timeout=self.cfg.clip_timeout_seconds)
+                    stdout, _ = process.communicate(timeout=effective_timeout)
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.communicate()
@@ -115,16 +121,49 @@ class GflowRunner:
         try:
             payload = last_json(stdout)
         except ValueError as exc:
-            return GflowResult(False, {}, process.returncode, "InvalidOutput", False, str(exc))
+            return GflowResult(False, {}, process.returncode, "InvalidOutput", False, str(exc), stdout=stdout)
         error = payload.get("error") or {}
         if not isinstance(error, dict):
             error = {"detail": str(error)}
         return GflowResult(process.returncode == 0 and payload.get("status") not in ("fail", "error"),
                            payload, process.returncode, error.get("class"), bool(error.get("retryable", False)),
-                           error.get("detail") or error.get("title") or payload.get("error_message") or "gflow failed")
+                           error.get("detail") or error.get("title") or payload.get("error_message") or "gflow failed",
+                           stdout=stdout)
 
     def credits_list(self):
         return self.run(["credits", "list"])
+
+    def auth_renew(self, profile) -> dict:
+        timeout = getattr(self.cfg, "keepalive_timeout", 240.0)
+        result = self.run(["auth", "renew", "--profile", profile], profile=profile, timeout=timeout)
+        try:
+            data = None
+            if result.stdout:
+                try:
+                    data = json.loads(result.stdout)
+                except Exception:
+                    start = result.stdout.find("[")
+                    end = result.stdout.rfind("]")
+                    if start >= 0 and end > start:
+                        data = json.loads(result.stdout[start:end + 1])
+            if isinstance(data, list):
+                for row in data:
+                    if isinstance(row, dict) and row.get("profile") == profile:
+                        return row
+            elif isinstance(data, dict) and data.get("profile") == profile:
+                return data
+            for row in all_json(result.stdout):
+                if isinstance(row, dict) and row.get("profile") == profile:
+                    return row
+        except Exception:
+            pass
+        return {"profile": profile, "result": "launch_error"}
+
+    def credits_user(self, profile) -> dict:
+        result = self.run(["credits", "user", "--profile", profile], profile=profile, timeout=120)
+        if not result.ok or not isinstance(result.payload, dict):
+            return {}
+        return result.payload
 
     def create_project(self, profile, name):
         return self.run(["project", "create", "--profile", profile, "--name", name], profile=profile)

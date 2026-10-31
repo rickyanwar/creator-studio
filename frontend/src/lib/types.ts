@@ -725,11 +725,12 @@ export interface GflowAccount {
   label: string | null;
   enabled: boolean;
   authenticated: boolean;
-  status: "ok" | "auth_error" | "no_access" | "needs_terms" | "error" | string;
+  status: "ok" | "auth_error" | "no_access" | "needs_terms" | "needs_confirm" | "needs_login" | "error" | string;
   credits: number | null;
   credits_checked_at: string | null;
   last_error: string | null;
   cooldown_until?: string | null;
+  session_flagged_at?: string | null;
   last_seen_at: string | null;
   last_used_at: string | null;
   busy_job_id: number | null;

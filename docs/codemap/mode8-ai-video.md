@@ -141,17 +141,17 @@ Defined in `backend/app/models/ai_video.py:88` (`VideoJob.status`).
 | `cancelled` | Administratively stopped via API | No | `queued`, `claimed`, `generating` | `queued` (via manual retry) | `ai_video_dispatch.py:669` |
 
 ### 4.2 Distributed Claim Protocol (`claim_job`)
-Implemented in `ai_video_dispatch.py:151-317`:
-1. **Worker Pause Check**: Fails if `GflowWorker.paused_until > now` or last claim was `< 10 minutes` ago (`MIN_CLAIM_GAP_MINUTES = 10`, lines 179-189).
-2. **Account Candidate Pool**: Accounts for worker with `enabled=True`, `authenticated=True`, `status="ok"`, credits known, and not present in any other `claimed` or `generating` job (`get_candidate_accounts`, line 41).
+Implemented in `ai_video_dispatch.py:307-550`:
+1. **Worker Pause Check**: Fails if `GflowWorker.paused_until > now`. After claiming, sets a per-account 8-20 min `cooldown_until` plus a 60-240 s worker pause (`WORKER_GAP_SECONDS = (60, 240)`).
+2. **Account Candidate Pool**: Accounts for worker with `enabled=True`, `authenticated=True`, `status="ok"`, credits known, and not present in any other `claimed` or `generating` job (`get_candidate_accounts`, line 67). Accounts with status `needs_confirm`, `needs_login`, `needs_terms`, `auth_error` are excluded.
 3. **Step 1 - Pinned Jobs**: Jobs in `queued` with non-null `account_id` matching an available candidate and `not_before <= now`.
    - Remaining cost = `(len(clips) - len(clips_done)) * credits_per_clip`.
    - `ai_video_dispatch.effective_credits(db, acc)`: the credits minus the clips made on this account since `credits_checked_at`.
    - Selected if `effective_credits - credit_reserve >= remaining_cost`.
    - A pinned job whose account cannot pay for the remaining clips is restarted on another account (`generation += 1`, `clips_done = []`, `account_id = None`, `status = "queued"`; `restarts` is not incremented).
 4. **Step 2 - Unpinned Jobs (Fair Share)**:
-   - Sorted by fanpage whose previous job started longest ago: `last_started = max(VideoJob.started_at) group by fanpage_id` (`ai_video_dispatch.py:267-273`).
-5. **Step 3 - Sticky Account Selection (`acc_sort_key`, line 288)**:
+   - Sorted by fanpage whose previous job started longest ago: `last_started = max(VideoJob.started_at) group by fanpage_id`.
+5. **Step 3 - Sticky Account Selection (`acc_sort_key`)**:
    - Filters candidates where `effective_credits - credit_reserve >= credits_estimate`.
    - Sort key: `(0, -last_used_at.timestamp(), -credits)` for previously used accounts; `(1, 0.0, -credits)` for fresh accounts.
    - The sticky account choice is intentional (Google flags hosts that hop between accounts).
@@ -160,20 +160,37 @@ Implemented in `ai_video_dispatch.py:151-317`:
    - Sets `status="claimed"`, `lease_until=now + 20m`, `worker_id=W`, `account_id=acc.id`, `last_progress_at=now`.
 
 ### 4.3 Error Handling & Restart Backoff (`record_failure`)
-`ai_video_dispatch.py:377-495`:
+`ai_video_dispatch.py:716-880`:
 
 | Failure Reason | Worker Condition | Action on Job & Account |
 | :--- | :--- | :--- |
-| `unusual_activity` / no submit reply / agent-only | Flow anti-bot trigger, submit timeout ("of clicking submit"), or agent-only composer | Increments `unusual_hits`. Sets escalating account cooldown by strike within 24h (1st: 60-120m, 2nd: 120-180m, 3rd+: 180-240m) subject to share guard (max 40% cooling accounts per worker). Job requeues with backoff (30m, 60m, 120m * 0.85..1.25) before next account; restarts if `clips_done`. Circuit breaker pauses worker 30-60m if 3 distinct accounts hit within 30m or share guard trips. Fails permanently if `unusual_hits > 3`. |
-| `policy` | Safety / NSFW / RAI block | Fails job and idea immediately (`status="failed"`, line 451). |
-| `out_of_credits` | Balance 0 or exit code 37 | Sets `account.credits = 0`, requeues job unpinned (`status="queued"`, line 455). |
-| `auth` | Session expired (exit 8, 12, 14, 38) | Sets `account.status="auth_error"`, `authenticated=False`, requeues job unpinned (line 461). |
-| `lost_checkpoint` | Local file missing vs server `clips_done` | Triggers `_restart()`: increments `generation`, `restarts+=1`, clears `clips_done`, unpins account. Fails if `restarts > 2` (line 469). |
-| `upload_terms` | Flow upload terms dialog | Sets `account.status="needs_terms"`, triggers `_restart()` on another account (line 471). |
-| `transient` / `other` | Network glitch, timeout, UI drift | Increments `clip_attempts`. If <= 3, retries on same account with backoff `(2, 5, 10)` mins. If > 3 attempts, triggers `_restart()` on another account (line 477). |
+| `unusual_activity` / no submit reply | Flow anti-bot trigger, submit timeout ("of clicking submit") | Increments `unusual_hits`. Sets escalating account cooldown by strike within 24h (1st: 60-120m, 2nd: 120-180m, 3rd+: 180-240m) subject to share guard (max 40% cooling accounts per worker). Job requeues with backoff (30m, 60m, 120m * 0.85..1.25) before next account; restarts if `clips_done`. Circuit breaker pauses worker 30-60m if 3 distinct accounts hit within 30m or share guard trips. Fails permanently if `unusual_hits > 3`. |
+| `agent_only` | Flow marks account as agent-only | Sets 2-3 h cooldown (`AGENT_ONLY_COOLDOWN_HOURS = (2, 3)`), requeues unpinned without clip attempt increment. |
+| `usage_limit` | Daily generation limit hit | Sets 6-8 h cooldown (`USAGE_LIMIT_COOLDOWN_HOURS = (6, 8)`), requeues unpinned without clip attempt increment. |
+| `identity_check` | Google identity check required (Flow `/about` page) | Flags account `status="needs_confirm"`, sets `session_flagged_at=now`, `authenticated=False`, queues owner alert, and requeues job unpinned like `out_of_credits` (no clip attempt increment, no strike). |
+| `policy` | Safety / NSFW / RAI block | Fails job and idea immediately (`status="failed"`). |
+| `out_of_credits` | Balance 0 or exit code 37 | Sets `account.credits = 0`, requeues job unpinned (`status="queued"`). |
+| `auth` | Session expired (exit 8, 12, 14, 38, 39) | Sets `account.status="auth_error"`, `authenticated=False`, requeues job unpinned. |
+| `lost_checkpoint` | Local file missing vs server `clips_done` | Triggers `_restart()`: increments `generation`, `restarts+=1`, clears `clips_done`, unpins account. Fails if `restarts > 2`. |
+| `upload_terms` | Flow upload terms dialog | Sets `account.status="needs_terms"`, triggers `_restart()` on another account. |
+| `transient` / `other` | Network glitch, timeout, UI drift | Increments `clip_attempts`. If <= 3, retries on same account with backoff `(2, 5, 10)` mins. If > 3 attempts, triggers `_restart()` on another account. |
 
-### 4.4 Sweep Engine (`sweep`)
-`ai_video_dispatch.py:497-592`:
+### 4.4 Session Keep-Alive & Account Status Rules
+Implemented in `ai_video_dispatch.py:1115-1215` and `api/gflow_worker.py:router.post("/session")`:
+- **New Account Statuses**:
+  - `needs_confirm` — Google asks to confirm identity (Flow `/about` page). Set by session check (`public_landing`) or job fail (`identity_check`).
+  - `needs_login` — Saved session is signed out or expired. Set by session check (`labs_stale`, `labs_unverified`, or other non-renewed result).
+- **Heartbeat Protection (`record_heartbeat`)**:
+  - Accounts in `needs_terms`, `needs_confirm`, and `needs_login` are protected: worker heartbeats never reset their status to `ok` and never set `authenticated=True`.
+  - Only a session check returning `renewed` resets `needs_confirm`, `needs_login`, or `auth_error` back to `status="ok"` and `authenticated=True`.
+- **3-in-1-Hour Worker Auto-Pause**:
+  - If >= 3 accounts on the same worker have `status in ("needs_confirm", "needs_login")` with `session_flagged_at >= now - 1h`, `worker.paused_until = max(paused_until or now, now + 6h)`.
+  - Queues an owner alert via Celery task `app.tasks.ai_video_alerts.send_gflow_alert` with dedupe key `gflow_session_pause:{worker_id}:{now:%Y%m%d}` (at most once per day).
+- **Single Account Alerts**:
+  - First transition to `needs_confirm` or `needs_login` queues an owner alert with dedupe key `gflow_session:{account.id}:{status}:{now:%Y%m%d%H%M}`. Duplicate checks in the same status do not re-alert.
+
+### 4.5 Sweep Engine (`sweep`)
+`ai_video_dispatch.py:886-980`:
 - **Expired Active Leases**: `status in ('claimed', 'generating')` with `lease_until < now` reset to `status="queued"`, `worker_id=None`, `lease_until=None`. Pins and `clips_done` preserved.
 - **Empty Checkpoint Unpinning**: `status="queued"` with `clips_done == []` has `account_id=None`, `flow_project_id=None` cleared to allow other accounts to claim.
 - **Stale Pinned Rescue**: `status="queued"` with non-empty `clips_done` and `last_progress_at < now - 12h` (`PIN_MAX_HOURS = 12`) whose pinned account is no longer a candidate or lacks credits triggers `_restart()` (increments generation, clears clips, unpins).
@@ -187,7 +204,7 @@ Implemented in `ai_video_dispatch.py:151-317`:
 - Memory check (`gflow_worker/memory.py:23`): `can_start = running < max_concurrent and (avail - 1200 >= 1536)`. Reads Linux `/proc/meminfo` (`MemAvailable`) or macOS `vm_stat`.
 - Main poll loop in `Worker.tick` (`gflow_worker/main.py:124`):
   1. Purges finished jobs from `self.jobs`.
-  2. Runs account credits refresh every `credits_refresh_minutes` (30m) only when `jobs` is empty (prevents opening extra Chrome on active profiles).
+  2. Runs account credits refresh (24 h ± 4 h) only when `jobs` is empty (prevents opening extra Chrome on active profiles).
   3. Probes unreadable credit accounts via Playwright headless browser (`probe_credits.py`).
   4. Transmits `POST /heartbeat` with version, memory, running jobs, account states.
   5. Sends `progress(event="alive")` for active jobs to extend lease.
