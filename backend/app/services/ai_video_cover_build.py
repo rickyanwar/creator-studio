@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.config import get_settings
-from app.models.ai_video import VideoJob
+from app.models.ai_video import VideoIdea, VideoJob
 from app.services.ai_video_cover import (
     COVER_FADE_SECONDS,
     COVER_HOLD_SECONDS,
     build_cover_copy_prompt,
+    cover_bike_description,
     motorcycle_cover_copy,
     build_cover_html,
     build_cover_image_prompt,
@@ -50,7 +51,21 @@ def apply_prepared_cover(job: VideoJob, cover: dict) -> None:
     job.cover_prompt = cover["image_prompt"]
 
 
-def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob) -> None:
+def _idea_variables(db: Session, job: VideoJob) -> dict | None:
+    idea_id = getattr(job, "idea_id", None)
+    if not idea_id:
+        return None
+    try:
+        idea = db.get(VideoIdea, idea_id)
+    except Exception as exc:
+        logger.warning("prepare_cover could not load idea %s: %s", idea_id, exc)
+        return None
+    return getattr(idea, "variables", None) if idea else None
+
+
+def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob, variables: dict | None = None) -> None:
+    """variables: the idea's variables; when None they are loaded from job.idea_id. Their bike_look (or livery)
+    makes a motorcycle cover show the same bike and livery as the video."""
     try:
         if not getattr(fanpage, "ai_video_cover_enabled", True):
             return
@@ -75,6 +90,9 @@ def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob) -> None:
             bike = motorcycle_cover_copy(job.title or "")
             if bike:
                 copy = {**copy, **bike}
+        if variables is None:
+            variables = _idea_variables(db, job)
+        bike = cover_bike_description(variables)
         job.cover_lines = copy["lines"]
         job.cover_highlight = copy["highlight"]
         job.cover_prompt = build_cover_image_prompt(
@@ -83,6 +101,7 @@ def prepare_cover(db: Session, fanpage: TargetFanpage, job: VideoJob) -> None:
             niche,
             getattr(job, "aspect", None) or "9:16",
             template_key=job.template_key,
+            bike=bike,
         )
     except Exception as exc:
         logger.warning("prepare_cover failed for job %s: %s", getattr(job, "id", None), exc)

@@ -87,7 +87,7 @@ def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title,
     if isinstance(cover, dict):
         apply_prepared_cover(job, cover)
     else:
-        prepare_cover(db, fanpage, job)
+        prepare_cover(db, fanpage, job, variables=variables)
     db.commit()
 
 

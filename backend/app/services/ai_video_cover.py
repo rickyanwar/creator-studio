@@ -9,6 +9,10 @@ Owner decisions (2026-10-21):
 - The cover is the video's first frame (FB Reels ignores API cover images), shown ~1 s then faded
   out over 0.4 s while the narration keeps playing. 0.3 s was too short: FB Reels often picked a
   frame after the cover as the thumbnail (owner report 2026-10-24).
+
+Owner decision (2026-11-01):
+- Motorcycle covers show the same bike as the video (its idea's bike_look), on paddock stands in front of its team
+  garage, with the real livery, sponsor logos and lettering kept; only series logos are forbidden.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ MAX_COVER_LINES = 4
 MAX_LINE_CHARS = 14
 MAX_COVER_WORDS = 8
 MAX_SCENE_CHARS = 400
+MAX_BIKE_CHARS = 600
 
 COVER_COPY_PROMPT = """You write the cover (thumbnail) text for a short vertical explainer video on a {niche} fan page.
 A viewer scrolling past sees the cover for under a second. The cover must tell them at once WHAT the video is about
@@ -75,12 +80,11 @@ DEFAULT_PICTURE_RULES = """- a dramatic CLOSE-UP of the one object or moment the
 - do NOT describe the background, lighting, colours or style (the brand sets those);
 - {scene_rule}"""
 
-MOTORCYCLE_PICTURE_RULES = """- the WHOLE motorcycle in full view, from the front wheel to the tail, in a three-quarter side view, standing on its
-  stands or riding on a real road or circuit, so it is instantly recognisable;
-- soft, even daylight on the whole bike: no deep shadows, no dark mood, no silhouette;
-- never a close-up of a part, never an opened engine, cutaway, exploded view or loose parts;
-- ONE motorcycle, nothing else competing: no crowds, no other vehicles;
-- do NOT describe the background, colours or style (the brand sets those);
+MOTORCYCLE_PICTURE_RULES = """- the WHOLE motorcycle in full view, from the front wheel to the tail, in a three-quarter view, standing alone on its
+  paddock stands in the pit lane in front of its team's open garage, so it is instantly recognisable;
+- the motorcycle in its REAL livery for that exact bike and year: name its real main colours and where they sit, and
+  the real sponsor and maker names on it;
+- no rider and no people; never a close-up of a part, an opened engine, a cutaway, an exploded view or loose parts;
 - {scene_rule}"""
 
 HEALTH_PICTURE_RULES = """- ONE real-looking adult (any ethnicity, aged 25 to 60, in ordinary everyday clothes) at home or in a doctor's room,
@@ -102,7 +106,7 @@ SCENE_RULES = {
     "health": ("a real-looking adult at home or in a doctor's room with one or both hands on the exact spot the video "
                "is about, that body part glowing through the skin and clothes as a semi-transparent, realistic anatomy "
                "layer; no gore, no real or famous person."),
-    "motorcycle": "a real-looking photo of the whole motorcycle in its real livery; the rider, if any, wears a closed dark visor so no face shows; no series logos.",
+    "motorcycle": "a real-looking paddock photo of the whole motorcycle on its stands in front of its team garage, in its real livery with its real sponsor logos; no people; no series logos.",
     "default": ("a real-looking motorsport close-up; a car or bike part in a real team's colours is fine, but no "
                 "real driver's or rider's face; no series logos."),
 }
@@ -112,9 +116,14 @@ the height, razor sharp and fully visible, well lit from the front with a rim li
 spark, reflection or hot edge) as the focal point. A viewer must recognise the subject in half a second: no heavy
 shadows over it, not an abstract macro. Everything around it stays quiet and plain; minimal and uncluttered, no people's faces."""
 
-MOTORCYCLE_COMPOSITION = """Composition: the whole motorcycle, fully visible from the front wheel to the tail, in a three-quarter side view,
-filling the LOWER part of the frame from about 40% to 95% of the height, razor sharp, in soft, even daylight with
-no deep shadows on it. Everything around it stays quiet and plain; minimal and uncluttered, no people's faces."""
+MOTORCYCLE_SCENE = """{bike} It stands alone on its paddock stands on the concrete pit lane, right in front of its own team's open
+garage; the garage walls, shutters and boards are in the same team colours and carry the same sponsor names as the
+bike. No rider, no people."""
+
+MOTORCYCLE_COMPOSITION = """Composition: one real photograph, like a professional paddock photo on a bright overcast day. The whole motorcycle,
+fully visible from the front wheel to the tail, in a front or rear three-quarter view on its paddock stands, filling
+the LOWER part of the frame from about 40% to 95% of the height, razor sharp, every panel of the livery clearly lit,
+no deep shadows on it. Behind it, the team garage front and the pit lane, slightly out of focus."""
 
 HEALTH_COMPOSITION = """Composition: ONE single photograph of ONE person, never a second copy of the person, an inset, a collage or a
 split frame. The camera stands a little further back, so the top 35% of the frame is plain, softly lit wall above the
@@ -131,12 +140,20 @@ The UPPER 40% of the frame is calm and simple: the SAME continuous background as
 darker toward the top, with no objects, so large title text placed there later stays readable. One seamless picture:
 no band, panel, border, horizontal line or split between the top and the rest.
 Bold contrast, rich colour, shallow depth of field, physically believable, like a premium commercial still.
-Do NOT add any text, letters, numbers, captions, watermarks or logos anywhere in the image. Liveries, signs and screens carry plain colour blocks only, never words or brand names. No series logos."""
+{text_rules}"""
+
+DEFAULT_TEXT_RULES = """Do NOT add any text, letters, numbers, captions, watermarks or logos anywhere in the image. Liveries, signs and screens carry plain colour blocks only, never words or brand names. No series logos."""
+
+MOTORCYCLE_TEXT_RULES = """The motorcycle wears its REAL livery exactly as described: the same colours in the same places, with its real sponsor
+and maker logos and lettering crisp and correctly spelled, like a photo of the real race bike. Never repaint it in other
+colours, never blank out or invent its logos. Its number boards show a race number only when the description names
+one; otherwise they stay plain in the livery colour. Do NOT add any caption, title, watermark or other text to the
+picture, and no series logos (MotoGP, WorldSBK, FIM, Dorna)."""
 
 STYLES = {
     "health": ("photorealistic lifestyle photo in soft natural window light, true skin texture and natural grain, combined with "
                "ONE clean, softly glowing, semi-transparent 3D anatomy layer seen through the body; medically plausible, no gore."),
-    "motorcycle": "premium motorcycle brochure photo, soft even daylight, true livery colours, natural textures, clean light background, no HDR look, no dark moody shadows.",
+    "motorcycle": "real professional paddock photo of a racing motorcycle, soft overcast daylight, true livery colours, crisp real sponsor decals, natural textures and grain, no HDR look, no dark moody shadows, never CGI.",
     "default": ("premium motorsport commercial photo, the subject brightly and clearly lit so every shape and colour reads at a "
                 "glance on a phone, real team colours, clean darker-toned background, natural textures, no HDR look."),
 }
@@ -147,9 +164,27 @@ def _niche_key(niche: str | None) -> str:
 
 
 def _style_key(niche: str | None, template_key: str | None = None) -> str:
-    if template_key == "motorcycle_commercial":
+    if template_key == "motorcycle_commercial" or (niche or "").strip().lower() == "motogp":
         return "motorcycle"
     return _niche_key(niche)
+
+
+def cover_bike_description(variables: dict | None) -> str | None:
+    """The video's own bike description, so the cover shows the same bike and livery as the video."""
+    if not isinstance(variables, dict):
+        return None
+    bike_look = variables.get("bike_look")
+    if isinstance(bike_look, str) and bike_look.strip():
+        return bike_look
+    livery = variables.get("livery")
+    if isinstance(livery, str) and livery.strip():
+        return "The motorcycle in this livery: " + livery
+    return None
+
+
+def _clean_bike(bike: str) -> str:
+    text = " ".join(bike.split())[:MAX_BIKE_CHARS].strip()
+    return text if text.endswith((".", "!", "?")) else text + "."
 
 
 def build_cover_copy_prompt(title: str, caption: str | None, niche: str | None,
@@ -181,7 +216,7 @@ def build_cover_copy_prompt(title: str, caption: str | None, niche: str | None,
 
 BIKE_LINE_CHARS = 16  # a model name like DESMOSEDICI GP7 stays on one line
 _BIKE_TITLE_HEAD = re.compile(r"^\s*(.+?\(\s*\d{4}\s*\))")
-_BIKE_TITLE_YEAR_FIRST = re.compile(r"^\s*((?:19|20)\d{2})\s+([^:–—-]{3,40}?)\s*[:–—-]")
+_BIKE_TITLE_YEAR_FIRST = re.compile(r"^\s*(?:the\s+)?((?:19|20)\d{2})\s+([^:–—-]{3,40}?)\s*[:–—-]", re.IGNORECASE)
 
 
 def motorcycle_cover_copy(title: str) -> dict | None:
@@ -253,9 +288,13 @@ def parse_cover_copy(raw: str, title: str, *, strict: bool = False) -> dict:
 
 
 def build_cover_image_prompt(title: str, scene: str | None, niche: str | None, aspect: str = "9:16",
-                             template_key: str | None = None) -> str:
+                             template_key: str | None = None, bike: str | None = None) -> str:
+    """bike: the video's own bike description (cover_bike_description); for motorcycle covers it replaces the
+    copywriter's scene so the cover shows the same bike and livery as the video."""
     key = _style_key(niche, template_key)
     scene_rule = SCENE_RULES.get(key, SCENE_RULES["default"])
+    if key == "motorcycle" and isinstance(bike, str) and bike.strip():
+        scene = MOTORCYCLE_SCENE.format(bike=_clean_bike(bike))
     scene = (scene or "").strip() or f"the main subject of the video, shown clearly. {scene_rule}"
     if key == "motorcycle":
         composition = MOTORCYCLE_COMPOSITION
@@ -269,6 +308,7 @@ def build_cover_image_prompt(title: str, scene: str | None, niche: str | None, a
         scene=scene,
         style=STYLES.get(key, STYLES["default"]),
         composition=composition,
+        text_rules=MOTORCYCLE_TEXT_RULES if key == "motorcycle" else DEFAULT_TEXT_RULES,
     )
 
 

@@ -257,17 +257,18 @@ def test_motorcycle_commercial_cover_prompts():
     copy_p = build_cover_copy_prompt(title, caption, "motogp", template_key="motorcycle_commercial")
 
     assert "WHOLE motorcycle" in copy_p
-    assert "no deep shadows" in copy_p
+    assert "paddock stands in the pit lane in front of its team's open garage" in copy_p
     assert "a dramatic CLOSE-UP" not in copy_p
     assert "a touch of mystery" not in copy_p
-    assert "a real-looking photo of the whole motorcycle in its real livery" in copy_p
+    assert "a real-looking paddock photo of the whole motorcycle on its stands in front of its team garage" in copy_p
 
     img_p = build_cover_image_prompt(title, None, "motogp", template_key="motorcycle_commercial")
-    assert "WHOLE motorcycle" in img_p or "whole motorcycle, fully visible" in img_p
+    assert "whole motorcycle,\nfully visible" in img_p
     assert "no deep shadows" in img_p
     assert "a dramatic close-up" not in img_p.lower()
     assert "a touch of mystery" not in img_p.lower()
-    assert "premium motorcycle brochure photo" in img_p
+    assert "real professional paddock photo of a racing motorcycle" in img_p
+    assert "plain colour blocks" not in img_p
 
 
 def test_f1_and_health_cover_prompts_unchanged():
@@ -280,7 +281,7 @@ def test_f1_and_health_cover_prompts_unchanged():
     f1_img = build_cover_image_prompt(title, "scene", "f1", template_key="f1_template")
     assert "a dramatic close-up" in f1_img.lower()
     assert "WHOLE motorcycle" not in f1_img
-    assert "brochure photo" not in f1_img
+    assert "paddock photo" not in f1_img
 
     health_copy = build_cover_copy_prompt("Knee Joint", "caption", "health")
     assert "hands pressed on the exact spot" in health_copy and "everyday situation" in health_copy
@@ -305,9 +306,10 @@ def test_health_cover_prompts_rules_and_composition():
     assert "semi-transparent 3D anatomy layer" in health_img
     assert "no people's faces" not in health_img
 
-    # Regression: motogp image prompt retains DEFAULT_COMPOSITION's "no people's faces"
+    # Owner 2026-11-01: a motogp fan page's covers use the motorcycle style (no people at all)
     motogp_img = build_cover_image_prompt(title, "", "motogp")
-    assert "no people's faces" in motogp_img
+    assert "No rider" not in motogp_img  # no bike given: the scene is the copywriter's / default one
+    assert "real professional paddock photo of a racing motorcycle" in motogp_img
 
     # template_key="motorcycle_commercial" contains "the whole motorcycle"
     moto_copy = build_cover_copy_prompt(title, "", "motogp", template_key="motorcycle_commercial")
@@ -345,7 +347,7 @@ def test_prepare_cover_motorcycle_commercial(sqlite_db):
     assert job.cover_lines == ["NSR500", "LEGEND"]
     assert job.cover_prompt is not None
     assert "whole motorcycle" in job.cover_prompt.lower()
-    assert "brochure photo" in job.cover_prompt
+    assert "real professional paddock photo" in job.cover_prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
