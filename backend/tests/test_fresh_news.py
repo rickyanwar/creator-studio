@@ -646,3 +646,60 @@ def test_news_slot_available_with_supersede(db_session: Session, monkeypatch: py
     deliv_old.attempt_count = 1
     db_session.commit()
     assert news_slot_available(db_session, job_new, now_utc) is False
+
+
+def test_stale_phone_news_with_pre_share_attempts_is_skipped(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """A stale phone delivery whose earlier attempts stopped before SHARE is skipped, not left scheduled forever."""
+    monkeypatch.setattr("app.services.event_days.event_multiplier", lambda *args, **kwargs: 1)
+    fanpage = TargetFanpage(name="FP Phone Stale", is_active=True)
+    db_session.add(fanpage)
+    db_session.flush()
+    dest = SocialDestination(
+        content_project_id=fanpage.id,
+        kind="facebook_profile",
+        name="Dest Phone Stale",
+        mode="phone",
+        timezone="UTC",
+        daily_target=1,
+        supported_media=["image"],
+        is_active=True,
+    )
+    db_session.add(dest)
+    db_session.flush()
+    now_utc = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+
+    def _stale(method: str) -> PublishDelivery:
+        job = PublishJob(
+            fanpage_id=fanpage.id,
+            content_type=ContentType.news_content,
+            created_at=now_utc - timedelta(hours=13),
+            status=PublishJobStatus.pending_publish,
+        )
+        db_session.add(job)
+        db_session.flush()
+        deliv = PublishDelivery(
+            publish_job_id=job.id,
+            destination_id=dest.id,
+            state="scheduled",
+            intended_method=method,
+            scheduled_for=datetime(2026, 10, 15, 11, 0, 0),
+            caption_snapshot="Old news",
+            media_snapshot=["https://cdn.example.com/old.png"],
+            media_kind="image",
+            attempt_count=2,
+        )
+        db_session.add(deliv)
+        db_session.commit()
+        return deliv
+
+    phone = _stale("phone")
+    repliz = _stale("repliz")
+
+    dispatch_due_deliveries(db_session, job_id=phone.publish_job_id, now_utc=now_utc)
+    dispatch_due_deliveries(db_session, job_id=repliz.publish_job_id, now_utc=now_utc, repliz_client=MagicMock())
+    db_session.refresh(phone)
+    db_session.refresh(repliz)
+
+    assert phone.state == "skipped"
+    assert phone.last_error == "stale: news too old to post at dispatch"
+    assert repliz.state == "scheduled"  # a Repliz attempt may have reached Repliz: keep the strict rule

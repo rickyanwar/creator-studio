@@ -296,8 +296,9 @@ def test_collector_failure_fails_closed():
             caption="Modern post",
         )
 
-    assert res["status"] == "failed"
-    assert res["error_code"] == "identity_unverified"
+    # Unreadable UI (timeout) never posts; it waits for a capped retry instead of losing the post.
+    assert res["status"] == "waiting_for_device"
+    assert res["error_code"] == "identity_ui_unready"
     assert res["publish_may_have_started"] is False
     assert res["facebook_post_id"] is None
     assert res["permalink"] is None
@@ -321,8 +322,8 @@ def test_collector_exception_fails_sanitized():
             caption="Modern post",
         )
 
-    assert res["status"] == "failed"
-    assert res["error_code"] == "identity_unverified"
+    assert res["status"] == "waiting_for_device"
+    assert res["error_code"] == "identity_ui_unready"
     assert res["publish_may_have_started"] is False
     # Sanitized type-only diagnostic
     assert "PRIVATE_KEY_TOKEN_SECRET" not in str(res["stages"])
@@ -348,8 +349,8 @@ def test_collector_ime_restoration_failure_fails_closed():
             caption="Modern post",
         )
 
-    assert res["status"] == "failed"
-    assert res["error_code"] == "identity_unverified"
+    assert res["status"] == "waiting_for_device"
+    assert res["error_code"] == "identity_ui_unready"
     assert res["publish_may_have_started"] is False
 
 

@@ -35,6 +35,7 @@ VALID_REASON_CODES = {
     "unknown_failure",
     "vision_unavailable",
     "time_budget_exceeded",
+    "identity_ui_unready",
 }
 
 SERIAL_REGEX = re.compile(r"^[a-zA-Z0-9.:_-]{1,64}$")

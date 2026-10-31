@@ -92,6 +92,17 @@ VISION_INFRA_MARKER = "all vision models failed"   # vision_verify: every model 
 POSTED_VISION_RETRIES = 2                          # extra attempts when the vision service errors
 POSTED_VISION_RETRY_WAIT_S = 20
 
+# Identity proof errors that mean "the screen could not be read", not "a different account was seen".
+IDENTITY_UI_STATE_MARKERS = ("not found", "missing", "window focus", "ime restoration", "timed out", "timeout")
+# Errors that name a contradicting id, name or version stay terminal even when a UI marker also matches.
+IDENTITY_CONTRADICTION_MARKERS = ("mismatch", "observed", "does not match", "visitor")
+
+# The Play Store sometimes pops up over Facebook (production 2026-10: "Contradictory window focus:
+# focus=com.android.vending"); it is closed before the identity gate. Never Settings or a system updater.
+PLAY_STORE_PACKAGE = "com.android.vending"
+FOREGROUND_CLEANUP_SETTLE_SECONDS = 1.0
+FOCUS_PACKAGE_RE = re.compile(r"mCurrentFocus=Window\{[^\}]*\s+(?:u\d+\s+)?([a-zA-Z0-9_\.]+)[/\}]")
+
 
 def _short_error(exc: BaseException, limit: int = 200) -> str:
     """One-line exception text for stage details (no newlines, bounded length)."""
@@ -121,6 +132,46 @@ def _pre_share_vision_failure(v_ev: dict) -> tuple[str, str]:
     if v_ev.get("answer") is None:
         return "waiting_for_device", "vision_unavailable"
     return "failed", "vision_gate_failed"
+
+
+def _identity_failure_is_ui_state(
+    proof: IdentityProofResult | None,
+    exc: BaseException | None,
+) -> bool:
+    """True when the identity gate could not read the screen (retry later), False when the proof
+    contradicts the expected identity or the cause is unclear (terminal failure). Never a pass."""
+    if exc is not None:
+        return True
+    if proof is None or proof.passed is True:
+        return False
+    error = str(proof.error or "").lower().replace("_", " ")
+    if not error:
+        return False
+    if any(marker in error for marker in IDENTITY_CONTRADICTION_MARKERS):
+        return False
+    return any(marker in error for marker in IDENTITY_UI_STATE_MARKERS)
+
+
+def _close_play_store_if_focused(serial: str) -> str | None:
+    """Force-stops the Play Store when it holds window focus. Best effort: an error is logged and
+    ignored. Returns a stage detail only when something was closed."""
+    try:
+        focus_res = run_adb(["shell", "dumpsys window | grep mCurrentFocus"], serial=serial, timeout=5.0)
+        if focus_res.returncode != 0:
+            return None
+        m_focus = FOCUS_PACKAGE_RE.search(focus_res.stdout or "")
+        if not m_focus or m_focus.group(1) != PLAY_STORE_PACKAGE:
+            return None
+        stop_res = run_adb(["shell", "am", "force-stop", PLAY_STORE_PACKAGE], serial=serial)
+        if stop_res.returncode != 0:
+            logger.warning("Foreground cleanup: force-stop %s failed (exit %s)", PLAY_STORE_PACKAGE, stop_res.returncode)
+            return None
+        time.sleep(FOREGROUND_CLEANUP_SETTLE_SECONDS)
+        logger.info("Foreground cleanup: closed %s before the identity gate", PLAY_STORE_PACKAGE)
+        return f"Closed {PLAY_STORE_PACKAGE}"
+    except Exception as exc:
+        logger.warning("Foreground cleanup failed: %s", type(exc).__name__)
+        return None
 
 
 def _query_device_capture_with_retry(
@@ -1046,6 +1097,10 @@ def _execute_publish_core(
                         staging_cm = None
 
         # Modern path: both IDs absent in candidate capture
+        cleanup_detail = _close_play_store_if_focused(serial)
+        if cleanup_detail:
+            stages.append({"stage": "foreground_cleanup", "passed": True, "detail": cleanup_detail})
+
         try:
             proof = collect_own_url_proof_chain(
                 serial=serial,
@@ -1065,13 +1120,15 @@ def _execute_publish_core(
                 "passed": False,
                 "detail": f"Identity proof collection failed: {type(exc).__name__}",
             })
+            # Nothing was posted: an unreadable screen waits for a capped retry instead of losing the post.
+            is_ui_state = _identity_failure_is_ui_state(None, exc)
             return {
-                "status": "failed",
+                "status": "waiting_for_device" if is_ui_state else "failed",
                 "facebook_post_id": None,
                 "permalink": None,
                 "actor_id": expected_target_id,
                 "publish_may_have_started": False,
-                "error_code": "identity_unverified",
+                "error_code": "identity_ui_unready" if is_ui_state else "identity_unverified",
                 "evidence": evidence,
                 "stages": stages,
                 "checked_at": checked_at,
@@ -1111,13 +1168,15 @@ def _execute_publish_core(
                 "passed": False,
                 "detail": detail,
             })
+            # A passed-but-contradictory proof or a seen mismatch stays terminal; only unreadable UI retries.
+            is_ui_state = _identity_failure_is_ui_state(proof, None)
             return {
-                "status": "failed",
+                "status": "waiting_for_device" if is_ui_state else "failed",
                 "facebook_post_id": None,
                 "permalink": None,
                 "actor_id": expected_target_id,
                 "publish_may_have_started": False,
-                "error_code": "identity_unverified",
+                "error_code": "identity_ui_unready" if is_ui_state else "identity_unverified",
                 "evidence": evidence,
                 "stages": stages,
                 "checked_at": checked_at,

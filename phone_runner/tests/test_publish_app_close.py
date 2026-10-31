@@ -75,8 +75,9 @@ def test_publish_share_not_tapped_due_to_identity_failure_force_stops_at_end(mon
         caption="test caption",
     )
 
-    assert res["status"] == "failed"
-    assert res["error_code"] == "identity_unverified"
+    # "not found" is an unreadable-UI failure: nothing posted, waits for a capped retry.
+    assert res["status"] == "waiting_for_device"
+    assert res["error_code"] == "identity_ui_unready"
 
     # Force-stop called TWICE: 1 at start (app_reset), 1 at end (app_closed)
     force_stops = [cmd for cmd in adb_commands if cmd[:3] == ["shell", "am", "force-stop"]]

@@ -49,6 +49,11 @@ from app.services.social_delivery_policy import (
 
 logger = logging.getLogger(__name__)
 
+# The phone could not read the Facebook identity (UI state, nothing posted): retry this many times,
+# then fail. Accuracy over availability: a post never goes out without a passed identity proof.
+IDENTITY_UI_UNREADY_CODE = "identity_ui_unready"
+IDENTITY_UI_MAX_RETRIES = 2
+
 
 @dataclass
 class PhonePublishResult:
@@ -1475,6 +1480,20 @@ def _compose_phone_last_error(base_error: str, stages: list[dict[str, Any]] | No
     return sanitize_error(composed, max_length=300)
 
 
+def _identity_ui_retry_count(db: Session, delivery_id: int) -> int:
+    """Earlier waits of this delivery caused by an unreadable identity screen (filtered in Python:
+    JSON querying differs between SQLite and Postgres)."""
+    events = (
+        db.query(DeliveryEvent)
+        .filter(DeliveryEvent.delivery_id == delivery_id, DeliveryEvent.event_type == "waiting_for_device")
+        .all()
+    )
+    return sum(
+        1 for ev in events
+        if isinstance(ev.details, dict) and ev.details.get("error_code") == IDENTITY_UI_UNREADY_CODE
+    )
+
+
 def dispatch_phone_delivery(
     db: Session,
     delivery: PublishDelivery,
@@ -1695,6 +1714,24 @@ def dispatch_phone_delivery(
                         created_at=naive_now,
                     )
                 )
+        elif (
+            result.status == "waiting_for_device"
+            and result.error_code == IDENTITY_UI_UNREADY_CODE
+            and _identity_ui_retry_count(db, delivery.id) >= IDENTITY_UI_MAX_RETRIES
+        ):
+            # Third unreadable identity for this delivery: stop retrying (nothing was posted) and skip auto-recovery.
+            delivery.state = "failed"
+            delivery.last_error = (
+                f"identity_unverified: identity could not be read after {IDENTITY_UI_MAX_RETRIES + 1} tries"
+            )
+            db.add(
+                DeliveryEvent(
+                    delivery_id=delivery.id,
+                    event_type="failed",
+                    details={"error_code": "identity_unverified", "stages": result.stages},
+                    created_at=naive_now,
+                )
+            )
         elif result.status == "waiting_for_device":
             delivery.state = "waiting_for_device"
             delivery.last_error = _compose_phone_last_error(
@@ -2218,7 +2255,10 @@ def dispatch_due_deliveries(
         if gate == "hold":
             continue
         if gate == "stale":
-            if candidate.attempt_count == 0 and candidate.claim_token is None and candidate.repliz_schedule_id is None and candidate.facebook_post_id is None and candidate.uncertain_since is None:
+            # A phone attempt that may have reached SHARE leaves the delivery uncertain, so a scheduled phone
+            # delivery with no ids was never posted even after attempts (e.g. vision or identity retries).
+            never_sent = candidate.attempt_count == 0 or candidate.intended_method == "phone"
+            if never_sent and candidate.claim_token is None and candidate.repliz_schedule_id is None and candidate.facebook_post_id is None and candidate.uncertain_since is None:
                 candidate.state = "skipped"
                 candidate.last_error = "stale: news too old to post at dispatch"
                 candidate.scheduled_for = None

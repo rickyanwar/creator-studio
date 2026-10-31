@@ -1113,6 +1113,119 @@ def find_switcher_root_row(
     return True, "", matches[0]
 
 
+SWITCHER_OTHER_ACCOUNT_MARKERS = ("another account", "other account", "switch account", "see all profiles")
+SWITCHER_OTHER_ACCOUNT_PREFERRED = "another account"
+SWITCHER_OTHER_ACCOUNT_EXCLUDED = ("create", "log out", "add account", "remove")
+SWITCHER_DIAG_MAX_ROWS = 25
+SWITCHER_DIAG_MAX_CHARS = 40
+_EMAIL_RE = re.compile(r"[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+")
+_PHONE_RE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
+
+
+def _redact_contact_info(text: str) -> str:
+    """Replaces email- and phone-looking substrings with <redacted>."""
+    return _PHONE_RE.sub("<redacted>", _EMAIL_RE.sub("<redacted>", text))
+
+
+def _row_display_label(row: ET.Element) -> str:
+    """Original-case label of a row: its own content-desc, else its unique descendant texts."""
+    own_desc = (row.attrib.get("content-desc") or "").strip()
+    if own_desc:
+        return own_desc
+    parts: list[str] = []
+    for n in row.iter():
+        for attr in ("text", "content-desc"):
+            val = (n.attrib.get(attr) or "").strip()
+            if val and val not in parts:
+                parts.append(val)
+    return " | ".join(parts)
+
+
+def describe_switcher_rows(tree: ET.Element | None) -> list[str]:
+    """Visible clickable row labels (redacted, truncated, capped) for diagnostics logs."""
+    if tree is None:
+        return []
+    labels: list[str] = []
+    for row in _get_clickable_or_selected_rows(tree):
+        label = _redact_contact_info(_row_display_label(row))
+        if not label:
+            continue
+        label = label[:SWITCHER_DIAG_MAX_CHARS]
+        if label not in labels:
+            labels.append(label)
+        if len(labels) >= SWITCHER_DIAG_MAX_ROWS:
+            break
+    return labels
+
+
+def _log_switcher_rows(stage: str, tree: ET.Element | None) -> None:
+    logger.info("Switcher rows (%s): %s", stage, describe_switcher_rows(tree))
+
+
+def _looks_like_login_screen(tree: ET.Element) -> bool:
+    """A screen with a text input (login or password form): never interact with it.
+
+    Wording alone is not enough: the account list itself can show a "Log in to another account" button.
+    """
+    return any("EditText" in (n.attrib.get("class") or "") for n in tree.iter())
+
+
+def find_switcher_other_account_entry(
+    tree: ET.Element,
+) -> tuple[bool, str, tuple[int, int, int, int] | None]:
+    """Finds the unique account-level switch entry ("Switch to another account") in the switcher sheet.
+
+    Returns (True, label, bounds) on a unique match, else (False, error, None).
+    Rows mentioning create / log out / add account / remove are never candidates.
+    """
+    if tree is None:
+        return False, "UI hierarchy tree is None", None
+
+    candidates: list[tuple[ET.Element, str]] = []
+    for row in _get_clickable_or_selected_rows(tree):
+        if row.attrib.get("clickable") != "true":
+            continue
+        text = _row_texts(row)
+        if not any(marker in text for marker in SWITCHER_OTHER_ACCOUNT_MARKERS):
+            continue
+        if any(word in text for word in SWITCHER_OTHER_ACCOUNT_EXCLUDED):
+            continue
+        candidates.append((row, text))
+
+    # A clickable container around a matching row is the same entry: keep the innermost rows.
+    candidate_rows = [row for row, _ in candidates]
+    innermost = [
+        (row, text) for row, text in candidates
+        if not any(other is not row and other in row.iter() for other in candidate_rows)
+    ]
+
+    matches: list[tuple[ET.Element, str, tuple[int, int, int, int]]] = []
+    for row, text in innermost:
+        b = parse_bounds(row.attrib.get("bounds", ""))
+        if not b:
+            for c in row.iter():
+                cb = parse_bounds(c.attrib.get("bounds", ""))
+                if cb:
+                    b = cb
+                    break
+        if b and all(b != m[2] for m in matches):
+            matches.append((row, text, b))
+
+    if len(matches) > 1:
+        preferred = [m for m in matches if SWITCHER_OTHER_ACCOUNT_PREFERRED in m[1]]
+        if len(preferred) == 1:
+            matches = preferred
+
+    if len(matches) == 0:
+        return False, "No other-account entry found in switcher", None
+    if len(matches) > 1:
+        return False, f"Ambiguous other-account entries: found {len(matches)}", None
+
+    row, _, bounds = matches[0]
+    label = _redact_contact_info(_row_display_label(row))[:SWITCHER_DIAG_MAX_CHARS]
+    return True, label, bounds
+
+
 def find_go_to_profile_button(tree: ET.Element) -> tuple[bool, str, tuple[int, int, int, int] | None]:
     """Finds unique safe 'Go to profile' button on Page Feed after switching."""
     matches = []
@@ -1266,38 +1379,102 @@ def _switch_back_to_root_session(
         run_adb(["shell", "input", "keyevent", "4"], serial=serial)
         return False
 
+    def _tap_root_row_and_verify(root_bounds: tuple[int, int, int, int]) -> bool:
+        rcx, rcy = get_center(root_bounds)
+        logger.info("Tapping root profile row '%s' at (%d, %d)", main_name, rcx, rcy)
+        run_adb(["shell", "input", "tap", str(rcx), str(rcy)], serial=serial)
+
+        profile_launched = False
+        for poll_idx in range(1, 9):
+            time.sleep(1.5)
+            ok_p, err_p, tree_p, _ = verify_foreground_facebook(serial, expected_geometry)
+            if ok_p and tree_p is not None:
+                is_own, _, _ = find_own_profile_controls(tree_p, main_name)
+                if is_own:
+                    logger.info("Switched back to root session: verified own profile controls for '%s' on poll %d", main_name, poll_idx)
+                    return True
+
+            if poll_idx == 2 and not profile_launched:
+                logger.info("Still not on own root for '%s' after 2 polls, launching fb://profile", main_name)
+                launch_facebook_own_profile(serial)
+                profile_launched = True
+
+        logger.info("Failed to switch back to root session for '%s' after 8 polls", main_name)
+        return False
+
     sw_open = _is_profile_switcher_open(tree_sw)
     root_ok, root_err, root_bounds = find_switcher_root_row(tree_sw, main_name)
+    if not root_ok or root_bounds is None:
+        _log_switcher_rows("profile switcher", tree_sw)
+
     if not sw_open and not root_ok:
         logger.info("Neither profile switcher nor root row visible after tap, pressing Back")
         run_adb(["shell", "input", "keyevent", "4"], serial=serial)
         return False
 
-    if not root_ok or root_bounds is None:
+    if root_ok and root_bounds is not None:
+        return _tap_root_row_and_verify(root_bounds)
+
+    # Only a missing root row (never an ambiguous one) may look behind the account-level switch entry.
+    other_ok, other_label, other_bounds = (False, "", None)
+    if not root_err.startswith("Ambiguous"):
+        other_ok, other_label, other_bounds = find_switcher_other_account_entry(tree_sw)
+    if not other_ok or other_bounds is None:
         logger.info("Root row '%s' not found or ambiguous (%s), pressing Back", main_name, root_err)
         run_adb(["shell", "input", "keyevent", "4"], serial=serial)
         return False
 
-    rcx, rcy = get_center(root_bounds)
-    logger.info("Tapping root profile row '%s' at (%d, %d)", main_name, rcx, rcy)
-    run_adb(["shell", "input", "tap", str(rcx), str(rcy)], serial=serial)
+    return _switch_via_other_account_entry(
+        serial, main_name, expected_geometry, other_label, other_bounds, _tap_root_row_and_verify,
+    )
 
-    profile_launched = False
-    for poll_idx in range(1, 9):
-        time.sleep(1.5)
-        ok_p, err_p, tree_p, _ = verify_foreground_facebook(serial, expected_geometry)
-        if ok_p and tree_p is not None:
-            is_own, _, _ = find_own_profile_controls(tree_p, main_name)
-            if is_own:
-                logger.info("Switched back to root session: verified own profile controls for '%s' on poll %d", main_name, poll_idx)
-                return True
 
-        if poll_idx == 2 and not profile_launched:
-            logger.info("Still not on own root for '%s' after 2 polls, launching fb://profile", main_name)
-            launch_facebook_own_profile(serial)
-            profile_launched = True
+def _press_back_twice(serial: str) -> None:
+    run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+    time.sleep(0.8)
+    run_adb(["shell", "input", "keyevent", "4"], serial=serial)
 
-    logger.info("Failed to switch back to root session for '%s' after 8 polls", main_name)
+
+def _switch_via_other_account_entry(
+    serial: str,
+    main_name: str,
+    expected_geometry: str | None,
+    entry_label: str,
+    entry_bounds: tuple[int, int, int, int],
+    tap_root_row_and_verify: Callable[[tuple[int, int, int, int]], bool],
+) -> bool:
+    """Opens the account-level switch entry and taps the exact root row there (scrolling once).
+
+    Never types. Backs out of any screen that shows a text field.
+    """
+    logger.info("Root row not in switcher; tapping '%s' to look for '%s'", entry_label, main_name)
+    ecx, ecy = get_center(entry_bounds)
+    run_adb(["shell", "input", "tap", str(ecx), str(ecy)], serial=serial)
+    time.sleep(1.5)
+
+    ok, err, tree, _ = verify_foreground_facebook(serial, expected_geometry)
+    for attempt in range(2):
+        if not ok or tree is None:
+            logger.info("Screen capture failed after tapping '%s' (%s), pressing Back twice", entry_label, err)
+            _press_back_twice(serial)
+            return False
+        if _looks_like_login_screen(tree):
+            logger.info("Screen after tapping '%s' asks for a login or text input, pressing Back twice", entry_label)
+            _press_back_twice(serial)
+            return False
+
+        root_ok, root_err, root_bounds = find_switcher_root_row(tree, main_name)
+        if root_ok and root_bounds is not None:
+            return tap_root_row_and_verify(root_bounds)
+
+        _log_switcher_rows(f"after '{entry_label}', scroll {attempt}", tree)
+        if attempt == 0 and not root_err.startswith("Ambiguous"):
+            ok, err, tree, _ = scroll_settings_and_recapture(serial, expected_geometry=expected_geometry)
+            continue
+        break
+
+    logger.info("Root row '%s' still not found after tapping '%s' (%s), pressing Back twice", main_name, entry_label, root_err)
+    _press_back_twice(serial)
     return False
 
 
