@@ -228,3 +228,27 @@ def test_prepare_cover_without_idea_uses_copywriter_scene(sqlite_db):
         prepare_cover(sqlite_db, fanpage, job)
 
     assert "Scene: an invented yellow bike on a road\n" in job.cover_prompt
+
+
+def test_motorcycle_cover_keeps_the_race_number_never_blank_boards():
+    """Owner 2026-11-01: race numbers stay on motorcycles; the cover shows the number the description gives."""
+    bike = "A 2002 Repsol Honda RC211V with a yellow number 46 on the nose and tail."
+    prompt = build_cover_image_prompt("2002 Honda RC211V", "", "motogp", "9:16",
+                                      template_key="motorcycle_commercial", bike=bike)
+    assert "yellow number 46" in prompt
+    assert "race number exactly as the description gives" in prompt
+    assert "never blanked out" in prompt
+    assert "stay plain" not in prompt
+
+
+def test_motorcycle_template_always_asks_for_a_race_number():
+    """Owner 2026-11-01: the idea writer never falls back to plain number boards for a race bike."""
+    from pathlib import Path
+
+    template_path = Path(__file__).resolve().parents[1] / "app" / "video_templates" / "motorcycle_commercial.json"
+    template = json.loads(template_path.read_text())
+    text = json.dumps(template)
+    assert "otherwise write 'plain number boards'" not in text
+    assert "race numbers and series logos may not" not in text
+    assert "a race bike always carries its race number" in text
+    assert "always shows its real race number" in template["usage"]

@@ -146,8 +146,8 @@ DEFAULT_TEXT_RULES = """Do NOT add any text, letters, numbers, captions, waterma
 
 MOTORCYCLE_TEXT_RULES = """The motorcycle wears its REAL livery exactly as described: the same colours in the same places, with its real sponsor
 and maker logos and lettering crisp and correctly spelled, like a photo of the real race bike. Never repaint it in other
-colours, never blank out or invent its logos. Its number boards show a race number only when the description names
-one; otherwise they stay plain in the livery colour. Do NOT add any caption, title, watermark or other text to the
+colours, never blank out or invent its logos. Its number boards show the race number exactly as the description gives
+it: the same digits, colour and places, never blanked out. Do NOT add any caption, title, watermark or other text to the
 picture, and no series logos (MotoGP, WorldSBK, FIM, Dorna)."""
 
 STYLES = {
