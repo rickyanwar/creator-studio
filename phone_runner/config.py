@@ -96,9 +96,9 @@ def get_allowed_media_hosts() -> set[str]:
 
 def get_max_media_bytes() -> int:
     try:
-        return int(os.environ.get("PHONE_RUNNER_MAX_MEDIA_BYTES", str(50 * 1024 * 1024)))
+        return int(os.environ.get("PHONE_RUNNER_MAX_MEDIA_BYTES", str(300 * 1024 * 1024)))
     except ValueError:
-        return 50 * 1024 * 1024
+        return 300 * 1024 * 1024
 
 
 def get_media_timeout() -> float:

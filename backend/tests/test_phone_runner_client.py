@@ -1146,3 +1146,93 @@ def test_publish_delivery_stages_default_empty_on_non_list_or_errors(dummy_model
             destination=destination,
         )
     assert res_connect.stages == []
+
+
+def test_resolve_post_409_busy(dummy_models):
+    device, delivery, main_profile, destination = dummy_models
+    mock_resp = httpx.Response(409, json={"status": "busy"})
+    with mock.patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        result = client.resolve_post(
+            serial=device.adb_serial,
+            main_profile=main_profile,
+            destination=destination,
+            caption="Test caption",
+            media_kind="image",
+            max_seconds=150,
+            close_app_after=False,
+        )
+    assert result == {"status": "busy"}
+    mock_post.assert_called_once()
+    call_args, call_kwargs = mock_post.call_args
+    assert call_args[0] == f"{TEST_BASE_URL}/resolve-post"
+    assert call_kwargs["headers"]["Authorization"] == f"Bearer {TEST_TOKEN}"
+    payload = call_kwargs["json"]
+    assert payload["serial"] == TEST_SERIAL
+    assert payload["caption"] == "Test caption"
+    assert payload["media_kind"] == "image"
+    assert payload["max_seconds"] == 150
+    assert payload["close_app_after"] is False
+
+
+def test_resolve_post_timeout_error(dummy_models):
+    device, delivery, main_profile, destination = dummy_models
+    with mock.patch("httpx.Client.post", side_effect=httpx.ReadTimeout("Read timed out")):
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        result = client.resolve_post(
+            serial=device.adb_serial,
+            main_profile=main_profile,
+            destination=destination,
+            caption="Test caption",
+            media_kind="video",
+            max_seconds=150,
+            close_app_after=True,
+        )
+    assert result["status"] == "error"
+    assert "timeout" in result.get("detail", "")
+
+
+def test_resolve_post_success_found(dummy_models):
+    device, delivery, main_profile, destination = dummy_models
+    fake_response = {
+        "status": "found",
+        "facebook_post_id": "11223344",
+        "permalink": "https://facebook.com/2000111222/posts/11223344",
+        "actor_id": "2000111222",
+        "detail": "post found on profile feed",
+    }
+    mock_resp = httpx.Response(200, json=fake_response)
+    with mock.patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        result = client.resolve_post(
+            serial=device.adb_serial,
+            main_profile=main_profile,
+            destination=destination,
+            caption="Test caption",
+            media_kind="image",
+            max_seconds=150,
+            close_app_after=True,
+        )
+    assert result["status"] == "found"
+    assert result["facebook_post_id"] == "11223344"
+    assert result["permalink"] == "https://facebook.com/2000111222/posts/11223344"
+    assert result["actor_id"] == "2000111222"
+    payload = mock_post.call_args[1]["json"]
+    assert payload["close_app_after"] is True
+
+
+def test_resolve_post_500_error(dummy_models):
+    device, delivery, main_profile, destination = dummy_models
+    mock_resp = httpx.Response(500, text="Internal Server Error")
+    with mock.patch("httpx.Client.post", return_value=mock_resp):
+        client = PhoneRunnerClient(base_url=TEST_BASE_URL, token=TEST_TOKEN)
+        result = client.resolve_post(
+            serial=device.adb_serial,
+            main_profile=main_profile,
+            destination=destination,
+            caption="Test caption",
+            media_kind="image",
+        )
+    assert result["status"] == "error"
+    assert "http_500" in result.get("detail", "")
+

@@ -596,7 +596,7 @@ def test_pre_submit_candidate_capture_exception_returns_failed_pre_submit_failed
     assert res["permalink"] is None
     assert mock_stage.call_count == 0
 
-    err_stage = res["stages"][-1]
+    err_stage = next(s for s in res["stages"] if s["stage"] == "execution_error")
     assert err_stage["stage"] == "execution_error"
     assert err_stage["passed"] is False
     assert "RuntimeError" in err_stage["detail"]
@@ -623,7 +623,7 @@ def test_pre_submit_legacy_composition_exception_returns_failed_pre_submit_faile
     assert res["facebook_post_id"] is None
     assert res["permalink"] is None
 
-    err_stage = res["stages"][-1]
+    err_stage = next(s for s in res["stages"] if s["stage"] == "execution_error")
     assert err_stage["stage"] == "execution_error"
     assert err_stage["passed"] is False
     assert "RuntimeError" in err_stage["detail"]
@@ -1693,7 +1693,7 @@ def test_screen_that_stays_asleep_waits_for_device_without_posting(monkeypatch):
     assert res["status"] == "waiting_for_device"
     assert res["error_code"] == "device_asleep"
     assert res["publish_may_have_started"] is False
-    assert res["stages"][-1]["stage"] == "wake" and res["stages"][-1]["passed"] is False
+    assert any(s["stage"] == "wake" and s["passed"] is False for s in res["stages"])
     assert wake.call_count == 1 + 3  # the normal wake plus three retries
     capture.assert_not_called()
     put_to_sleep.assert_called_with(TEST_SERIAL)

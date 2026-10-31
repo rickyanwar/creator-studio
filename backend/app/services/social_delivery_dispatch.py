@@ -22,6 +22,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.social_publishing import (
     DeliveryEvent,
@@ -867,6 +868,57 @@ def select_and_lease_phone_device(
     return None, "No eligible and available phone device could be leased"
 
 
+def resolve_main_profile_for_destination(db: Session, destination: SocialDestination) -> SocialDestination | None:
+    """Resolve the main profile SocialDestination for a page or profile destination."""
+    main_profile = destination if destination.kind == "facebook_profile" else destination.parent_profile
+    if main_profile is None and destination.parent_profile_id:
+        main_profile = db.query(SocialDestination).filter_by(id=destination.parent_profile_id).first()
+    return main_profile
+
+
+def lease_phone_device_by_id(
+    db: Session,
+    device_id: int,
+    delivery_id: int,
+    now_utc: datetime | None = None,
+    lease_ttl_minutes: int = 45,
+) -> tuple[PhoneDevice | None, str | None]:
+    """Acquire exclusive lease on a specific phone device for follow-up."""
+    now = _now(now_utc)
+    naive_now = now.replace(tzinfo=None)
+    try:
+        locked_device = (
+            db.query(PhoneDevice)
+            .filter(PhoneDevice.id == device_id)
+            .with_for_update()
+            .first()
+        )
+        if not locked_device or locked_device.status != "available":
+            return None, "unavailable"
+
+        lease = db.query(DeviceLease).filter_by(device_id=locked_device.id).first()
+        if lease:
+            if lease.expires_at > naive_now:
+                return None, "busy"
+            lease.delivery_id = delivery_id
+            lease.acquired_at = naive_now
+            lease.expires_at = naive_now + timedelta(minutes=lease_ttl_minutes)
+        else:
+            lease = DeviceLease(
+                device_id=locked_device.id,
+                delivery_id=delivery_id,
+                acquired_at=naive_now,
+                expires_at=naive_now + timedelta(minutes=lease_ttl_minutes),
+            )
+            db.add(lease)
+
+        db.commit()
+        return locked_device, None
+    except IntegrityError:
+        db.rollback()
+        return None, "busy"
+
+
 def release_device_lease(db: Session, device_id: int, delivery_id: int) -> None:
     """Release exclusive device lease upon safe completion."""
     db.query(DeviceLease).filter(
@@ -1440,6 +1492,33 @@ def dispatch_phone_delivery(
         db.commit()
         return delivery
 
+    # Reel duration pre-check (before leasing a device)
+    job = delivery.publish_job
+    if job is None and delivery.publish_job_id:
+        job = db.query(PublishJob).filter_by(id=delivery.publish_job_id).first()
+    settings = get_settings()
+    max_duration = getattr(settings, "phone_video_max_seconds", 90)
+    if (
+        delivery.media_kind == "video"
+        and job is not None
+        and job.video_duration_s is not None
+        and job.video_duration_s > max_duration
+    ):
+        err_msg = f"video_too_long: {job.video_duration_s:.0f} s > {max_duration} s"
+        delivery.state = "failed"
+        delivery.last_error = _compose_phone_last_error(err_msg, None)
+        failed_details: dict[str, Any] = {"error_code": sanitize_error(err_msg)}
+        db.add(
+            DeliveryEvent(
+                delivery_id=delivery.id,
+                event_type="failed",
+                details=failed_details,
+                created_at=naive_now,
+            )
+        )
+        db.commit()
+        return delivery
+
     device, err_reason = select_and_lease_phone_device(db, delivery, now_utc=now)
     if not device:
         delivery.state = "waiting_for_device"
@@ -1528,9 +1607,7 @@ def dispatch_phone_delivery(
 
     # Device leased successfully
     delivery.device_id = device.id
-    main_profile = destination if destination.kind == "facebook_profile" else destination.parent_profile
-    if main_profile is None and destination.parent_profile_id:
-        main_profile = db.query(SocialDestination).filter_by(id=destination.parent_profile_id).first()
+    main_profile = resolve_main_profile_for_destination(db, destination)
 
     client = runner_client
     if client is None:
@@ -2193,3 +2270,193 @@ def dispatch_due_deliveries(
         db.commit()
 
     return processed
+
+
+FOLLOW_UP_OFFSETS_MIN = (2, 5, 10, 20)
+
+
+def follow_up_uncertain_phone_post(
+    db: Session,
+    runner_client: Any = None,
+    now_utc: datetime | None = None,
+) -> str:
+    """Follow up on uncertain phone deliveries to find late posts on the profile.
+
+    Processes at most one due delivery per tick (oldest uncertain_since first).
+    Follow-up schedule: +2m, +5m, +10m, +20m from uncertain_since.
+    Read-only checks via runner /resolve-post. Never resubmits or marks failed.
+    """
+    now = _now(now_utc)
+    naive_now = now.replace(tzinfo=None)
+    cutoff_45 = naive_now - timedelta(minutes=45)
+
+    candidates = (
+        db.query(PublishDelivery)
+        .filter(
+            PublishDelivery.state == "uncertain",
+            PublishDelivery.device_id.isnot(None),
+            PublishDelivery.facebook_post_id.is_(None),
+            PublishDelivery.uncertain_since >= cutoff_45,
+        )
+        .order_by(PublishDelivery.uncertain_since.asc())
+        .all()
+    )
+
+    target_delivery = None
+    target_done = 0
+
+    for deliv in candidates:
+        u_since = deliv.uncertain_since
+        if u_since is None:
+            continue
+        u_since_naive = u_since.replace(tzinfo=None) if u_since.tzinfo else u_since
+        if u_since_naive < cutoff_45:
+            continue
+        done = (
+            db.query(DeliveryEvent)
+            .filter(
+                DeliveryEvent.delivery_id == deliv.id,
+                DeliveryEvent.event_type == "post_link_followup",
+            )
+            .count()
+        )
+        if done >= 4:
+            continue
+        due_time = u_since_naive + timedelta(minutes=FOLLOW_UP_OFFSETS_MIN[done])
+        if naive_now >= due_time:
+            target_delivery = deliv
+            target_done = done
+            break
+
+    if not target_delivery:
+        return "no_due_deliveries"
+
+    delivery = target_delivery
+    done = target_done
+
+    destination = delivery.destination or db.query(SocialDestination).filter_by(id=delivery.destination_id).first()
+    if not destination:
+        return f"delivery_{delivery.id}_no_destination"
+
+    main_profile = resolve_main_profile_for_destination(db, destination) or destination
+
+    device, lease_err = lease_phone_device_by_id(db, delivery.device_id, delivery.id, now_utc=now)
+    if not device:
+        return f"device_{delivery.device_id}_{lease_err or 'unavailable'}"
+
+    client = runner_client
+    if client is None:
+        if PhoneRunnerClient is not None:
+            client = PhoneRunnerClient()
+        else:
+            release_device_lease(db, device.id, delivery.id)
+            return "client_unavailable"
+
+    close_app_after = (done == 3)
+
+    try:
+        res = client.resolve_post(
+            serial=device.adb_serial,
+            main_profile=main_profile,
+            destination=destination,
+            caption=delivery.caption_snapshot or "",
+            media_kind=delivery.media_kind or "image",
+            max_seconds=150,
+            close_app_after=close_app_after,
+        )
+    except Exception as exc:
+        logger.exception("Runner error in follow_up_uncertain_phone_post for delivery %d: %s", delivery.id, exc)
+        res = {"status": "error", "detail": sanitize_error(f"{type(exc).__name__}: {exc}")}
+    finally:
+        release_device_lease(db, device.id, delivery.id)
+
+    status = res.get("status")
+    if status == "busy":
+        return f"delivery_{delivery.id}_busy"
+
+    if status == "found":
+        post_id = res.get("facebook_post_id")
+        is_valid_post_id = bool(post_id and isinstance(post_id, str) and post_id.strip())
+        actor_id = res.get("actor_id")
+        is_matching_actor = bool(
+            actor_id
+            and destination.facebook_actor_id
+            and str(actor_id).strip() == str(destination.facebook_actor_id).strip()
+        )
+        if is_valid_post_id and is_matching_actor:
+            clean_post_id = post_id.strip()
+            delivery.state = "published"
+            delivery.actual_method = "phone"
+            delivery.facebook_post_id = clean_post_id
+            delivery.facebook_permalink = res.get("permalink")
+            delivery.published_at = naive_now
+            delivery.last_error = None
+            db.add(
+                DeliveryEvent(
+                    delivery_id=delivery.id,
+                    event_type="post_link_followup",
+                    details={
+                        "attempt": done + 1,
+                        "status": "found",
+                        "detail": res.get("detail", ""),
+                    },
+                    created_at=naive_now,
+                )
+            )
+            db.add(
+                DeliveryEvent(
+                    delivery_id=delivery.id,
+                    event_type="published",
+                    details={
+                        "facebook_post_id": clean_post_id,
+                        "permalink": res.get("permalink"),
+                        "actual_method": "phone",
+                        "actor_id": str(actor_id).strip(),
+                        "via": "post_link_followup",
+                    },
+                    created_at=naive_now,
+                )
+            )
+            db.commit()
+            return f"delivery_{delivery.id}_published"
+        elif not is_matching_actor:
+            event_status = "actor_mismatch"
+        else:
+            event_status = "missing_post_id"
+    else:
+        event_status = status or "error"
+
+    # Delivery stays uncertain
+    event_details: dict[str, Any] = {
+        "attempt": done + 1,
+        "status": event_status,
+        "detail": res.get("detail", ""),
+    }
+    if event_status == "actor_mismatch":
+        event_details["actor_id"] = res.get("actor_id")
+
+    db.add(
+        DeliveryEvent(
+            delivery_id=delivery.id,
+            event_type="post_link_followup",
+            details=event_details,
+            created_at=naive_now,
+        )
+    )
+
+    if done + 1 == 4:
+        dest_name = destination.name if destination and destination.name else str(delivery.destination_id)
+        alert_msg = (
+            f"Phone post for delivery {delivery.id} ({dest_name}) is still unconfirmed 20 minutes after SHARE. "
+            f"The post link was not found on the profile. Check the profile and use Mark posted / Mark not posted. "
+            f"It will not be posted again automatically."
+        )
+        notify_owner_via_hermes(
+            message=alert_msg,
+            dedupe_key=f"phone_post_followup:{delivery.id}",
+            db=db,
+            runner_client=client,
+        )
+
+    db.commit()
+    return f"delivery_{delivery.id}_{event_status}"

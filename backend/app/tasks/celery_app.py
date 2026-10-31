@@ -87,6 +87,7 @@ celery_app.conf.update(
         # (one-shot Hermes repair). On the 2-slot default queue they starved renders and, worse,
         # two slow renders stopped every phone post (2026-10-17 test). Own single-slot worker.
         "app.tasks.social_delivery.dispatch_social_deliveries": {"queue": "delivery"},
+        "app.tasks.social_delivery.follow_up_phone_posts": {"queue": "delivery"},
         "app.tasks.phone_watchdog.check_phone_devices": {"queue": "delivery"},
         # Always an AI redesign; explicit apply_async(queue="visual") everywhere, this is the safety net.
         "app.tasks.ig_recreate.run_preview_redesign": {"queue": "visual"},
@@ -357,6 +358,12 @@ celery_app.conf.beat_schedule = {
     # Social delivery dispatch: ticks every 60s
     "dispatch-social-deliveries": {
         "task": "app.tasks.social_delivery.dispatch_social_deliveries",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
+    # Follow up uncertain phone posts: ticks every 60s
+    "follow-up-phone-posts": {
+        "task": "app.tasks.social_delivery.follow_up_phone_posts",
         "schedule": 60,
         "options": {"expires": 55},
     },

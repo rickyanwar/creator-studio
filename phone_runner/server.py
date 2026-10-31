@@ -15,7 +15,7 @@ from phone_runner.config import (
 from phone_runner.discovery import DiscoveryError, discover_devices
 from phone_runner.dry_run import execute_dry_run
 from phone_runner.probe import probe_device
-from phone_runner.publish import execute_publish
+from phone_runner.publish import execute_publish, resolve_post_followup
 
 logger = logging.getLogger("phone_runner")
 MAX_REQUEST_SIZE = 64 * 1024  # 64 KB
@@ -111,7 +111,7 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        if self.path not in ("/probe", "/dry-run", "/publish", "/rehearse", "/recover", "/notify"):
+        if self.path not in ("/probe", "/dry-run", "/publish", "/rehearse", "/recover", "/notify", "/resolve-post"):
             self.send_json(404, {"error": "not_found"})
             return
 
@@ -159,10 +159,14 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
             self.send_json(200, res)
             return
 
-        # Mutating device operations (/dry-run, /publish, /rehearse, /recover) acquire exclusive non-blocking per-serial lock
+        # Mutating device operations (/dry-run, /publish, /rehearse, /recover, /resolve-post) acquire exclusive non-blocking per-serial lock
         serial_lock = get_serial_lock(serial)
         if not serial_lock.acquire(blocking=False):
-            self.send_json(409, {"error": "device_busy", "detail": f"Device {serial} is busy running another operation"})
+            self.send_json(409, {
+                "status": "busy",
+                "error": "device_busy",
+                "detail": f"Device {serial} is busy running another operation",
+            })
             return
 
         try:
@@ -251,6 +255,40 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
                     expected_geometry=expected_geometry,
                     app_card_version=app_card_version,
                     rehearsal=True,
+                )
+                self.send_json(200, res)
+                return
+
+            if self.path == "/resolve-post":
+                main_profile = body.get("main_profile")
+                if not main_profile or not isinstance(main_profile, (dict, str)):
+                    self.send_json(400, {"error": "missing_main_profile"})
+                    return
+
+                destination = body.get("destination")
+                if not destination or not isinstance(destination, dict):
+                    self.send_json(400, {"error": "missing_destination"})
+                    return
+
+                caption = str(body.get("caption") or "")
+                media_kind = body.get("media_kind")
+
+                raw_max = body.get("max_seconds", 150)
+                try:
+                    max_seconds = max(30, min(240, int(raw_max)))
+                except (ValueError, TypeError):
+                    max_seconds = 150
+
+                close_app_after = bool(body.get("close_app_after", False))
+
+                res = resolve_post_followup(
+                    serial=serial,
+                    main_profile=main_profile,
+                    destination=destination,
+                    caption=caption,
+                    media_kind=media_kind,
+                    max_seconds=max_seconds,
+                    close_app_after=close_app_after,
                 )
                 self.send_json(200, res)
                 return

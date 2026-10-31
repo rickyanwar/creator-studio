@@ -739,3 +739,102 @@ class PhoneRunnerClient:
                 "status": "runner_unreachable",
                 "detail": sanitize_error(type(exc).__name__),
             }
+
+    def resolve_post(
+        self,
+        serial: str,
+        main_profile: Any,
+        destination: Any,
+        caption: str,
+        media_kind: str,
+        max_seconds: int = 150,
+        close_app_after: bool = False,
+    ) -> dict[str, Any]:
+        """Queries host runner POST /resolve-post to check if late post appeared on profile."""
+        if not self.base_url or not self.token:
+            return {"status": "error", "detail": "missing_configuration"}
+
+        payload: dict[str, Any] = {
+            "serial": serial,
+            "main_profile": _format_main_profile_payload(main_profile),
+            "destination": _format_destination_payload(destination),
+            "caption": caption or "",
+            "media_kind": media_kind,
+            "max_seconds": int(max_seconds),
+            "close_app_after": bool(close_app_after),
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        url = f"{self.base_url}/resolve-post"
+        timeout_cfg = httpx.Timeout(
+            timeout=float(max_seconds + 60),
+            connect=self.connect_timeout,
+        )
+
+        try:
+            with httpx.Client(timeout=timeout_cfg) as client:
+                resp = client.post(url, json=payload, headers=headers)
+
+            if resp.status_code == 409:
+                return {"status": "busy"}
+
+            if resp.status_code >= 500:
+                return {"status": "error", "detail": sanitize_error(f"http_{resp.status_code}")}
+
+            if resp.status_code != 200:
+                err_detail = f"http_{resp.status_code}"
+                try:
+                    err_json = resp.json()
+                    if isinstance(err_json, dict) and err_json.get("detail"):
+                        err_detail = str(err_json["detail"])
+                except Exception:
+                    pass
+                return {"status": "error", "detail": sanitize_error(err_detail)}
+
+            try:
+                data = resp.json()
+                if not isinstance(data, dict):
+                    return {"status": "error", "detail": "malformed_response"}
+                return data
+            except Exception as exc:
+                return {"status": "error", "detail": sanitize_error(f"malformed_json_{type(exc).__name__}")}
+
+        except (httpx.TimeoutException, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            return {"status": "error", "detail": sanitize_error(f"timeout: {type(exc).__name__}")}
+        except Exception as exc:
+            return {"status": "error", "detail": sanitize_error(f"client_error: {type(exc).__name__}: {exc}")}
+
+
+def _format_main_profile_payload(profile: Any) -> dict[str, Any]:
+    if isinstance(profile, dict):
+        return profile
+    main_id = str(getattr(profile, "facebook_actor_id", "") or "").strip()
+    main_record_id = str(profile.id) if getattr(profile, "id", None) is not None else None
+    return {
+        "id": main_id,
+        "record_id": main_record_id,
+        "name": getattr(profile, "name", None),
+    }
+
+
+def _format_destination_payload(dest: Any) -> dict[str, Any]:
+    if isinstance(dest, dict):
+        return dest
+    dest_id = str(getattr(dest, "facebook_actor_id", "") or "").strip()
+    dest_record_id = str(dest.id) if getattr(dest, "id", None) is not None else None
+    parent_profile_id = (
+        str(dest.parent_profile_id)
+        if getattr(dest, "parent_profile_id", None) is not None
+        else None
+    )
+    return {
+        "id": dest_id,
+        "record_id": dest_record_id,
+        "name": getattr(dest, "name", None),
+        "kind": getattr(dest, "kind", None),
+        "parent_profile_id": parent_profile_id,
+    }
+

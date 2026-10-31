@@ -59,7 +59,7 @@ Defined in `backend/app/models/social_publishing.py:215-219` (`ck_publish_delive
 | `publishing` | Atomic lease/claim held; remote execution running | `scheduled`, `waiting_for_device`, `waiting_for_slot` | `repliz_scheduled`, `published`, `uncertain`, `failed` | `social_delivery_dispatch.py:245, 301` |
 | `repliz_scheduled` | Repliz accepted schedule payload via REST | `publishing` | `published`, `failed` | `social_delivery_dispatch.py:486`, `status_sync.py:166, 212` |
 | `published` | Terminal success; post verified live on Facebook | `publishing`, `repliz_scheduled` | _Terminal_ | `social_delivery_dispatch.py:1370`, `status_sync.py:172, 250`, `social_post_reconciliation.py:320` |
-| `uncertain` | In-flight failure, timeout, 5xx, or unproven post ID | `publishing` | `published` (via reconciliation) | `social_delivery_dispatch.py:352, 504, 523, 547, 565, 1389, 1440, 1469` |
+| `uncertain` | In-flight failure, timeout, 5xx, or unproven post ID | `publishing` | `published` (via follow-up checks; manual buttons otherwise) | `social_delivery_dispatch.py:387, 1608, 1644, 1682, 2277` |
 | `needs_human` | Fallback blocked (e.g. repliz disconnected) or recovery exhausted | `waiting_for_device`, `publishing` | _Manual action_ | `social_delivery_dispatch.py:1133`, `phone_runner/recovery.py:545, 646` |
 | `failed` | Deterministic unrecoverable error (e.g. 4xx, bad auth) | `publishing`, `repliz_scheduled` | _Terminal_ | `social_delivery_dispatch.py:415, 429, 528, 1346, 1455`, `status_sync.py:168, 237` |
 | `skipped` | Administrative bypass or unroutable destination | `scheduled`, `waiting_for_slot` | _Terminal_ | Database constraint supported |
@@ -350,10 +350,33 @@ Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `pho
 
 - **Photo albums (2-9 photos)** (`album_composer.attach_album_from_gallery`): `am start` cannot send a list of URIs, so SEND_MULTIPLE is not used. The album path keeps the empty, author-verified proof composer open, stages the photos at least 1.5 s apart (`stage_media_files(min_gap_seconds=...)`), opens the composer's **Gallery** → **Select multiple**, checks that the newest N picker items ("Photo, item K, taken on <minute>") fall inside the phone-clock staging window (and item N+1 does not), taps them oldest-first so the album keeps the media order, taps **Next** and requires tiles "Photo 1..N of N". Over 9 photos, any video, an unreadable phone clock/timezone, or any mismatch fails closed with `media_attach_failed`. Live rehearsal with 2 photos passed every gate on 2026-10-17.
 - **Facebook pop-ups** (`interstitials.clear_interstitials`): taps only exact safe labels ("Not now", "Maybe later", "Skip", "No thanks", "Got it", and "Wait" on an Android "isn't responding" dialog). It never acts on composer/picker/share-sheet screens, and never when a danger label (Retry, Discard, Delete, Post, Share, Allow, Update, Log out, ...) is in the same dialog container. It is called when the own profile is not found, when the share intent does not reach the composer, and before each post-link search. After SHARE, a posting problem on screen ("Couldn't post", a "Retry"/"Try again" button) stops the search with no tap, and the delivery stays `uncertain`.
+- **Reel duration pre-check** (`dispatch_phone_delivery`): configured by `phone_video_max_seconds: int = 90` in `backend/app/config.py:Settings`. Evaluated before device selection/leasing: if `delivery.media_kind == "video"` and the parent `PublishJob.video_duration_s` is not None and exceeds `phone_video_max_seconds`, publishing aborts immediately without leasing a device or calling the runner. The delivery is set to `state="failed"`, `last_error="video_too_long: <dur:.0f> s > <max> s"`, and emits a `failed` event. No device lease is acquired, runner is not invoked, and no Repliz fallback is attempted. When `video_duration_s` is None, no check is performed.
+- **300 MiB media cap and size-aware pre-SHARE budget** (runner side): `media_staging.MAX_MEDIA_BYTES = 300 * 1024 * 1024` (300 MiB hard limit); files exceeding 300 MiB fail closed with `media_too_large` before download or staging. Pre-SHARE time budget dynamically scales with media payload size up to the deadline before SHARE, preventing slow video transfers from starving validation.
 
 ### 10.5 Post-Tap Verification Gate
 - **Single Submission**: `SHARE` button tapped exactly once with humanized coordinate jitter (`publish_may_have_started = True`).
-- **Post Link Resolution & Downgrade** (`modern_composer.resolve_latest_post_link`): Resolves permalink by finding post matching first 30 normalized caption characters on profile. If unproven within 4 attempts (10s apart), delivery downgrades to `uncertain` (`post_identity_unproven`). Post-SHARE vision failure (`posted` gate) also downgrades to `uncertain` (`post_vision_mismatch`). Never retries after SHARE.
+- **Post Link Resolution & Downgrade** (`modern_composer.resolve_latest_post_link`): Resolves permalink by finding post matching first 30 normalized caption characters on profile. For photo posts, attempts link resolution. For video/Reels: 8 attempts 15s apart bounded by a deadline, checking profile posts, All tab + pull-to-reload + Feed fallback. If unproven within the deadline, delivery downgrades to `uncertain` (`post_identity_unproven`). Post-SHARE vision failure (`posted` gate) also downgrades to `uncertain` (`post_vision_mismatch`). Never retries after SHARE.
+- **Posted-Gate Mismatch Override**: A `posted` gate mismatch is overridden to `published` when the permalink owner ID matches the destination actor ID (commit `720ebe3`).
+- **When Facebook is Closed**:
+  Facebook app is explicitly force-stopped/closed:
+  1. At the start of every run (ensures clean initial state).
+  2. After a confirmed post (leaves app in clean background state).
+  3. Right away after a failure before SHARE (discards dirty draft and cleans up).
+  4. Never right after SHARE (allows background upload/processing to complete; also closed after 4th unconfirmed follow-up attempt).
+
+### 10.6 Follow-up Checks for Late Phone Posts (`follow_up_uncertain_phone_post`)
+- **Celery Task & Beat**: `follow_up_phone_posts` (`backend/app/tasks/social_delivery.py`) routes to queue `delivery` in `celery_app.py` and ticks every 60s via beat schedule `follow-up-phone-posts`.
+- **Candidates**: `state == "uncertain"`, `device_id` is not null, `facebook_post_id` is null, `uncertain_since >= now - 45 min`.
+- **Schedule**: `FOLLOW_UP_OFFSETS_MIN = (2, 5, 10, 20)` minutes after `uncertain_since`. `done` = count of `DeliveryEvent(event_type="post_link_followup")`. Due when `done < 4` and `now >= uncertain_since + FOLLOW_UP_OFFSETS_MIN[done]`. At most one due delivery is processed per call (oldest `uncertain_since` first).
+- **Device Lease**: Leases device exclusively (`lease_phone_device_by_id`, TTL 45m). If busy or unavailable, skips WITHOUT recording an attempt. Always releases the lease in `finally`.
+- **Runner Query**: Read-only `POST /resolve-post` (`serial`, `main_profile`, `destination`, `caption`, `media_kind`, `max_seconds=150`, `close_app_after=(done == 3)`). Response 409 `busy` records no attempt.
+- **Resolution**:
+  - `found` AND valid post ID AND `actor_id == destination.facebook_actor_id`: sets `state="published"`, `actual_method="phone"`, `facebook_post_id`, `facebook_permalink`, `published_at=now`, `last_error=None`, records `post_link_followup` event (`status="found"`), and adds `DeliveryEvent(event_type="published", details={"via": "post_link_followup", ...})`.
+  - `found` with mismatched actor: stays `uncertain`, records event with `status="actor_mismatch"`.
+  - `not_found` / `error`: stays `uncertain`, records event with `status=...` and attempt number.
+  - Invariants: NEVER sets `failed`, never re-dispatches, never calls `/publish`.
+- **Owner Alert**: After the 4th attempt without success (`done == 3`), leaves `uncertain` and sends ONE owner alert via `notify_owner_via_hermes` (`dedupe_key=f"phone_post_followup:{delivery.id}"`):
+  `"Phone post for delivery <id> (<destination name>) is still unconfirmed 20 minutes after SHARE. The post link was not found on the profile. Check the profile and use Mark posted / Mark not posted. It will not be posted again automatically."`
 
 ---
 
@@ -372,10 +395,10 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
   - Model navigation (`mobilerun`) is last resort: capped at 120s with 60s reserved (`MODEL_NAV_MAX_SECONDS = 120`, `MODEL_NAV_RESERVE_SECONDS = 60`).
 
 ### 11.2 Media Attachment via Share Intent
-- Photo attached via Android `SEND` share intent instead of UI gallery picker:
+- Photo and Video/Reel media attached via Android `SEND` share intent instead of UI gallery picker:
   - Component: `com.facebook.katana/com.facebook.composer.shareintent.ImplicitShareIntentHandlerDefaultAlias`.
-  - Media URI: `content://media/external/images/media/<id>` from MediaStore content query on staged image file (`media_staging.get_media_content_uri`).
-  - Opens `ComposerActivity` with photo attached ("Photo", "Edit photo", "Remove photo"), correct author header, and empty "What's on your mind?" field.
+  - Media URI: `content://media/external/images/media/<id>` (photo) or `content://media/external/video/media/<id>` (video) from MediaStore content query on staged media file (`media_staging.get_media_content_uri`).
+  - Opens `ComposerActivity` with media attached, correct author header, and empty "What's on your mind?" field.
   - Back dialog shows "Discard changes?" with `KEEP EDITING` / `DISCARD` (contrasts with proof composer's "Discard post").
 
 ### 11.3 Step-by-Step Modern Publishing Pipeline
@@ -385,10 +408,10 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
         │  Verify own-profile identity; open & verify empty proof composer -> DISCARD
         ▼
 [2. Stage Media & Launch Share Intent]
-        │  Stage image via MediaStore -> SEND share intent opens ComposerActivity
+        │  Stage image or video via MediaStore -> SEND share intent opens ComposerActivity
         ▼
 [3. Vision Gate: composer_before_typing]
-        │  Verify author header, attached photo, empty input (fail-closed)
+        │  Verify author header, attached media, empty input (fail-closed)
         ▼
 [4. Type Caption via Portal IME]
         │  mobilerun type -> A11y tree check confirms exact caption text
@@ -408,7 +431,8 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
 [9. Resolve Post Link]
         │  modern_composer.resolve_latest_post_link: profile search matching first 30
         │  chars of normalized caption -> "More options" above post -> "Copy link"
-        │  (up to 4 attempts, 10s apart). Missing link -> state='uncertain'
+        │  (for video: 8 attempts 15s apart bounded by deadline, All tab + pull-to-reload
+        │  + Feed fallback). Missing link -> state='uncertain'
         ▼
 [10. Vision Gate: posted]
         │  Verify live post on profile feed (mismatch -> state='uncertain')
@@ -452,4 +476,4 @@ backend/app/services/social_delivery_policy.py:216 - Automated fallback to Repli
 phone_runner/recovery.py:563 - Larger repairs enter awaiting_approval with an automatic approval deadline set to exactly 15 minutes (deadline = now + timedelta(minutes=15)) if the owner has not responded.
 backend/app/services/social_post_reconciliation.py:30 - Post reconciliation against Repliz GET /public/content queries up to 3 pages (MAX_PAGINATION_PAGES = 3) and enforces an expected publish time tolerance of +/- 2 hours (DEFAULT_RECONCILIATION_WINDOW = timedelta(hours=2)).
 phone_runner/identity_proof.py - Profile destination identity verification uses own_profile_name_v1 (exact profile name, owner-only controls, fb://profile/<id> owner view, matching composer author) and skips the Settings/Copy-link chain unless profile_url_proof=True.
-phone_runner/media_staging.py - Photo attachments on modern Facebook composer use Android SEND share intent to ImplicitShareIntentHandlerDefaultAlias with MediaStore content URI.
+phone_runner/media_staging.py - Photo and video/Reel attachments on modern Facebook composer use Android SEND share intent to ImplicitShareIntentHandlerDefaultAlias with MediaStore content URI.

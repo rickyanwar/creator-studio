@@ -47,7 +47,13 @@ from phone_runner.identity_proof import (
     PortalImeContext,
 )
 from phone_runner.humanize import human_pause, human_tap
-from phone_runner.media_staging import get_media_content_uri, is_video_path, stage_media_files
+from phone_runner.media_staging import (
+    PUSH_TIMEOUT_BASE_SECONDS,
+    get_media_content_uri,
+    is_video_path,
+    push_timeout_seconds,
+    stage_media_files,
+)
 from phone_runner.mobilerun import MobilerunResult, run_mobilerun, type_text
 from phone_runner.modern_composer import (
     attach_first_gallery_item,
@@ -69,6 +75,13 @@ logger = logging.getLogger("phone_runner")
 
 PUBLISH_BUDGET_SECONDS = 540.0  # backend PhoneRunnerClient.publish_timeout is 600 s
 PRE_SHARE_MAX_SECONDS = 300.0
+
+
+def pre_share_max_seconds(total_media_bytes: int = 0) -> float:
+    """Size-aware pre-SHARE budget: 300s baseline plus extra push time for large media, capped at 420s."""
+    push_timeout = push_timeout_seconds(int(total_media_bytes or 0))
+    extra = max(0.0, push_timeout - PUSH_TIMEOUT_BASE_SECONDS)
+    return min(300.0 + extra, 420.0)
 PHOTO_REVEAL_SWIPES = 3
 PHOTO_REFLOW_CHECKS = 3
 PHOTO_SWIPE_MAX_START_Y = 2050
@@ -475,7 +488,148 @@ def _permalink_owner_id(permalink: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def execute_publish(
+def _close_app_if_safe(serial: str, res: dict[str, Any], share_tapped: bool) -> None:
+    """Closes Facebook app if run failed before SHARE or succeeded with verified post id."""
+    if res.get("status") == "uncertain":
+        return
+
+    should_close = False
+    detail = ""
+    if not share_tapped:
+        should_close = True
+        detail = "Facebook force-stopped (pre-SHARE exit)"
+    elif res.get("status") == "published" and bool(res.get("facebook_post_id")):
+        should_close = True
+        detail = "Facebook force-stopped after verified publish"
+
+    if should_close:
+        try:
+            run_adb(["shell", "am", "force-stop", "com.facebook.katana"], serial=serial)
+        except Exception as exc:
+            logger.warning("Failed to force-stop Facebook: %s", type(exc).__name__)
+        stages = res.get("stages")
+        if isinstance(stages, list):
+            stages.append({"stage": "app_closed", "passed": True, "detail": detail})
+
+
+def resolve_post_followup(
+    serial: str,
+    main_profile: dict[str, Any] | str,
+    destination: dict[str, Any],
+    caption: str = "",
+    media_kind: str | None = None,
+    max_seconds: int = 150,
+    close_app_after: bool = False,
+) -> dict[str, Any]:
+    """Read-only follow-up to locate a late-appearing Facebook post link after SHARE.
+
+    Never taps Share/Post/Publish or enters text.
+    """
+    try:
+        max_sec = max(30, min(240, int(max_seconds if max_seconds is not None else 150)))
+    except (ValueError, TypeError):
+        max_sec = 150
+
+    dest_kind = str(destination.get("kind") or "facebook_profile").strip() if isinstance(destination, dict) else ""
+    if dest_kind not in ("facebook_profile", "facebook_page"):
+        return {
+            "status": "unsupported",
+            "detail": f"Destination kind '{dest_kind}' does not use post-SHARE link resolver",
+        }
+
+    stages: list[dict[str, Any]] = []
+    was_asleep = False
+    try:
+        probe = probe_device(serial)
+        if not probe.get("reachable", False):
+            return {
+                "status": "error",
+                "detail": f"Device {serial} is unreachable",
+                "stages": stages,
+            }
+        was_asleep = probe.get("screen") == "asleep"
+
+        unlock_res = wake_and_unlock(serial)
+        if unlock_res.returncode != 0:
+            stages.append({
+                "stage": "unlock",
+                "passed": False,
+                "detail": f"Failed to dismiss keyguard (exit code {unlock_res.returncode})",
+            })
+            return {
+                "status": "error",
+                "detail": f"Failed to dismiss keyguard: {unlock_res.stderr or unlock_res.stdout}",
+                "stages": stages,
+            }
+
+        if is_device_secure_locked(serial):
+            stages.append({
+                "stage": "unlock",
+                "passed": False,
+                "detail": "Device is protected with PIN/Password/Pattern lock; bypass prohibited",
+            })
+            return {
+                "status": "error",
+                "detail": "Device is protected with PIN/Password/Pattern lock; bypass prohibited",
+                "stages": stages,
+            }
+
+        caption_str = str(caption or "")
+        deadline = time.monotonic() + max_sec
+        post_id, permalink, resolve_detail = resolve_latest_post_link(
+            serial=serial,
+            caption=caption_str,
+            attempts=3,
+            wait=10.0,
+            deadline=deadline,
+        )
+        stages.append(_post_link_stage(post_id, permalink, resolve_detail))
+
+        if post_id and permalink:
+            actor_id = _permalink_owner_id(permalink)
+            run_adb(["shell", "am", "force-stop", "com.facebook.katana"], serial=serial)
+            stages.append({
+                "stage": "app_closed",
+                "passed": True,
+                "detail": "Facebook force-stopped after post link found",
+            })
+            return {
+                "status": "found",
+                "facebook_post_id": post_id,
+                "permalink": permalink,
+                "actor_id": actor_id,
+                "detail": resolve_detail,
+                "stages": stages,
+            }
+
+        if close_app_after:
+            run_adb(["shell", "am", "force-stop", "com.facebook.katana"], serial=serial)
+            stages.append({
+                "stage": "app_closed",
+                "passed": True,
+                "detail": "Facebook force-stopped (close_app_after=True)",
+            })
+
+        return {
+            "status": "not_found",
+            "detail": resolve_detail,
+            "stages": stages,
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "detail": f"Follow-up resolution error: {type(exc).__name__}: {exc}",
+            "stages": stages,
+        }
+    finally:
+        if was_asleep:
+            try:
+                put_to_sleep(serial)
+            except Exception as sleep_exc:
+                logger.warning("Failed to restore sleep state: %s", type(sleep_exc).__name__)
+
+
+def _execute_publish_core(
     serial: str,
     main_profile: dict[str, Any] | str,
     destination: dict[str, Any],
@@ -485,6 +639,7 @@ def execute_publish(
     expected_geometry: Any = None,
     app_card_version: str | None = None,
     rehearsal: bool = False,
+    publish_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Executes the guarded multi-gate Facebook publishing workflow.
 
@@ -514,6 +669,7 @@ def execute_publish(
 
     expected_target_id = dest_id
     media_list = list(media_urls or [])
+    total_media_bytes = 0
     caption_str = str(caption or "")
 
     caption_sha256 = hashlib.sha256(caption_str.encode("utf-8")).hexdigest() if caption_str else None
@@ -675,6 +831,8 @@ def execute_publish(
     })
 
     was_asleep = probe["screen"] == "asleep"
+    if publish_state is not None:
+        publish_state["was_asleep"] = was_asleep
 
     # 3. Geometry verification
     expected_geom_str = normalize_geometry(expected_geometry)
@@ -705,8 +863,6 @@ def execute_publish(
             "passed": False,
             "detail": f"Failed to dismiss keyguard (exit code {unlock_res.returncode})",
         })
-        if was_asleep:
-            put_to_sleep(serial)
         return {
             "status": "failed",
             "facebook_post_id": None,
@@ -724,6 +880,8 @@ def execute_publish(
     run_adb(["shell", "am", "force-stop", "com.facebook.katana"], serial=serial)
     time.sleep(1.0)
     stages.append({"stage": "app_reset", "passed": True, "detail": "Facebook restarted fresh before the run"})
+    if publish_state is not None:
+        publish_state["app_reset"] = True
 
     if is_device_secure_locked(serial):
         stages.append({
@@ -731,8 +889,6 @@ def execute_publish(
             "passed": False,
             "detail": "Device is protected with PIN/Password/Pattern lock; bypass prohibited",
         })
-        if was_asleep:
-            put_to_sleep(serial)
         return {
             "status": "waiting_for_device",
             "facebook_post_id": None,
@@ -841,6 +997,7 @@ def execute_publish(
                 try:
                     staging_cm = stage_media_files(media_list, serial=serial)
                     staged = staging_cm.__enter__()
+                    total_media_bytes = sum(int(item.get("bytes", 0)) for item in staged if isinstance(item, dict))
                     staged_remote_files = [str(item["remote_path"]) for item in staged]
                     stages.append({
                         "stage": "media_staging",
@@ -1066,6 +1223,7 @@ def execute_publish(
                 try:
                     staging_cm = stage_media_files(media_list, serial=serial)
                     staged = staging_cm.__enter__()
+                    total_media_bytes = sum(int(item.get("bytes", 0)) for item in staged if isinstance(item, dict))
                     staged_remote_files = [str(item["remote_path"]) for item in staged]
                     stages.append({
                         "stage": "media_staging",
@@ -1204,6 +1362,7 @@ def execute_publish(
                 try:
                     staging_cm = stage_media_files(media_list, serial=serial, min_gap_seconds=ALBUM_STAGE_GAP_SECONDS)
                     staged = staging_cm.__enter__()
+                    total_media_bytes = sum(int(item.get("bytes", 0)) for item in staged if isinstance(item, dict))
                     staged_remote_files = [str(item["remote_path"]) for item in staged]
                     stages.append({
                         "stage": "media_staging",
@@ -1722,7 +1881,7 @@ def execute_publish(
             elapsed = time.monotonic() - started
             evidence["pre_share_seconds"] = round(elapsed, 1)
 
-            if elapsed > PRE_SHARE_MAX_SECONDS:
+            if elapsed > pre_share_max_seconds(total_media_bytes):
                 discard_composer(serial)
                 stages.append({
                     "stage": "time_budget",
@@ -1762,6 +1921,8 @@ def execute_publish(
                 }
 
             # Step j: Tap SHARE exactly once
+            if publish_state is not None:
+                publish_state["share_tapped"] = True
             human_tap(serial, s_state["share_bounds"])
             evidence["publish_may_have_started"] = True
 
@@ -2078,7 +2239,7 @@ def execute_publish(
             elapsed = time.monotonic() - started
             evidence["pre_share_seconds"] = round(elapsed, 1)
 
-            if elapsed > PRE_SHARE_MAX_SECONDS:
+            if elapsed > pre_share_max_seconds(0):
                 discard_composer(serial)
                 stages.append({
                     "stage": "time_budget",
@@ -2118,6 +2279,8 @@ def execute_publish(
                 }
 
             # Tap SHARE exactly once
+            if publish_state is not None:
+                publish_state["share_tapped"] = True
             human_tap(serial, s_state["share_bounds"])
             evidence["publish_may_have_started"] = True
 
@@ -2201,7 +2364,38 @@ def execute_publish(
             except Exception as cleanup_exc:
                 logger.warning("Remote staging cleanup error: %s", type(cleanup_exc).__name__)
             staging_cm = None
-        if was_asleep:
+
+
+def execute_publish(
+    serial: str,
+    main_profile: dict[str, Any] | str,
+    destination: dict[str, Any],
+    caption: str = "",
+    media_urls: list[str] | None = None,
+    media_kind: str | None = None,
+    expected_geometry: Any = None,
+    app_card_version: str | None = None,
+    rehearsal: bool = False,
+) -> dict[str, Any]:
+    publish_state: dict[str, Any] = {"share_tapped": False, "app_reset": False, "was_asleep": False}
+    try:
+        res = _execute_publish_core(
+            serial=serial,
+            main_profile=main_profile,
+            destination=destination,
+            caption=caption,
+            media_urls=media_urls,
+            media_kind=media_kind,
+            expected_geometry=expected_geometry,
+            app_card_version=app_card_version,
+            rehearsal=rehearsal,
+            publish_state=publish_state,
+        )
+        if publish_state.get("app_reset"):
+            _close_app_if_safe(serial, res, publish_state.get("share_tapped", False))
+        return res
+    finally:
+        if publish_state.get("was_asleep"):
             try:
                 put_to_sleep(serial)
             except Exception as sleep_exc:

@@ -154,6 +154,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # ── Phone Runner ──────────────────────────────
+    phone_video_max_seconds: int = 90
+
     # ── Environment ───────────────────────────────
     app_env: str = "development"
     log_level: str = "INFO"

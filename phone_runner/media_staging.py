@@ -295,14 +295,19 @@ def download_media_file(
         raise
 
 
+def push_timeout_seconds(size_bytes: int) -> float:
+    """Allows slow Tailscale links: base time plus a floor transfer rate, capped."""
+    timeout = PUSH_TIMEOUT_BASE_SECONDS + max(0, int(size_bytes or 0)) / PUSH_MIN_BYTES_PER_SECOND
+    return min(max(timeout, get_default_timeout()), PUSH_TIMEOUT_MAX_SECONDS)
+
+
 def _push_timeout_seconds(local_path: str) -> float:
     """Allows slow Tailscale links: base time plus a floor transfer rate, capped."""
     try:
         size = os.path.getsize(local_path)
     except OSError:
         size = 0
-    timeout = PUSH_TIMEOUT_BASE_SECONDS + size / PUSH_MIN_BYTES_PER_SECOND
-    return min(max(timeout, get_default_timeout()), PUSH_TIMEOUT_MAX_SECONDS)
+    return push_timeout_seconds(size)
 
 
 def push_media_to_device(

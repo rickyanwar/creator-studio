@@ -392,3 +392,95 @@ def test_devices_discovery_failure_returns_503(running_server):
     assert status == 503
     assert body["error"] == "discovery_failed"
     assert body["detail"] == "Tailscale discovery unavailable"
+
+
+def test_resolve_post_endpoint_requires_auth(running_server):
+    status, body = make_request(
+        f"{running_server}/resolve-post",
+        method="POST",
+        data={"serial": TEST_SERIAL},
+    )
+    assert status == 401
+    assert body["error"] == "unauthorized"
+
+
+def test_resolve_post_endpoint_busy_when_locked(running_server):
+    from phone_runner.server import get_serial_lock
+
+    lock = get_serial_lock(TEST_SERIAL)
+    assert lock.acquire(blocking=False)
+    try:
+        status, body = make_request(
+            f"{running_server}/resolve-post",
+            method="POST",
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            data={
+                "serial": TEST_SERIAL,
+                "main_profile": {"id": "1001", "name": "Ricky"},
+                "destination": {"id": "1001", "name": "Ricky", "kind": "facebook_profile"},
+                "caption": "test caption",
+            },
+        )
+        assert status == 409
+        assert body["status"] == "busy"
+        assert body["error"] == "device_busy"
+    finally:
+        lock.release()
+
+
+def test_resolve_post_endpoint_passthrough(running_server):
+    fake_res = {
+        "status": "found",
+        "facebook_post_id": "987654321",
+        "permalink": "https://www.facebook.com/permalink.php?story_fbid=987654321&id=1001",
+        "actor_id": "1001",
+        "detail": "found on profile",
+    }
+    with mock.patch("phone_runner.server.resolve_post_followup", return_value=fake_res) as mock_resolve:
+        status, body = make_request(
+            f"{running_server}/resolve-post",
+            method="POST",
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            data={
+                "serial": TEST_SERIAL,
+                "main_profile": {"id": "1001", "name": "Ricky"},
+                "destination": {"id": "1001", "name": "Ricky", "kind": "facebook_profile"},
+                "caption": "test caption",
+                "media_kind": "video",
+                "max_seconds": 120,
+                "close_app_after": True,
+            },
+        )
+    assert status == 200
+    assert body == fake_res
+    mock_resolve.assert_called_once_with(
+        serial=TEST_SERIAL,
+        main_profile={"id": "1001", "name": "Ricky"},
+        destination={"id": "1001", "name": "Ricky", "kind": "facebook_profile"},
+        caption="test caption",
+        media_kind="video",
+        max_seconds=120,
+        close_app_after=True,
+    )
+
+
+def test_resolve_post_endpoint_validation_errors(running_server):
+    # Missing main_profile
+    status1, body1 = make_request(
+        f"{running_server}/resolve-post",
+        method="POST",
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        data={"serial": TEST_SERIAL, "destination": {"id": "1001", "kind": "facebook_profile"}},
+    )
+    assert status1 == 400
+    assert body1["error"] == "missing_main_profile"
+
+    # Missing destination
+    status2, body2 = make_request(
+        f"{running_server}/resolve-post",
+        method="POST",
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        data={"serial": TEST_SERIAL, "main_profile": {"id": "1001", "name": "Ricky"}},
+    )
+    assert status2 == 400
+    assert body2["error"] == "missing_destination"

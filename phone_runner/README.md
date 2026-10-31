@@ -24,7 +24,7 @@ Host-side automation service for physical Android devices connected via Tailscal
 | `PHONE_RUNNER_TOKEN` | *Required* | Constant-time shared secret token for request authorization. |
 | `PHONE_RUNNER_ALLOWED_SERIALS` | *Required* | Comma-separated list of exact ADB serials (e.g. `100.64.96.50:5555`). |
 | `PHONE_RUNNER_MEDIA_HOSTS` | *Required for media* | Comma-separated list of allowed HTTPS media hosts (e.g. `cdn.example.com`). |
-| `PHONE_RUNNER_MAX_MEDIA_BYTES` | `52428800` | Maximum size in bytes for a single media file (default 50MB). |
+| `PHONE_RUNNER_MAX_MEDIA_BYTES` | `314572800` | Maximum size in bytes for a single media file (default 300MB). |
 | `PHONE_RUNNER_MEDIA_TIMEOUT_SEC` | `30.0` | Timeout in seconds for media staging downloads. |
 | `OPENAI_API_KEY` | *Required for LLM* | API key for local LLM gateway (held in process env; never passed on argv or logged). |
 | `MOBILERUN_PROVIDER` | `OpenAILike` | Mobilerun provider name. |
