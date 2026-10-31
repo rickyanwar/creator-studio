@@ -14,7 +14,7 @@ the brief, docs and feedback for leaks. Keep it that way when changing `app/serv
 - **Idea bank (days)** (default 3): each channel keeps videos/day × days ideas waiting (any source:
   pilot, proposed, approved). Muse's brief asks for the gap, emptiest channel first.
 - **Pilot ideas per channel** (pilot mode only) (default 3): at most this many Muse ideas wait for your review per channel.
-- With Muse as researcher the in-app idea writer is off; video jobs are claimed fanpage by fanpage (fair share).
+- With Muse as researcher the in-app idea writer is off, except for a fan page whose idea bank is empty and that got no Muse idea for 6 h (`MUSE_DRY_HOURS`); video jobs are claimed fanpage by fanpage (fair share).
 - **References** per niche, one link per line (`url | note`).
 - **Activity**: every Muse call, Muse's notes and its last run report.
 

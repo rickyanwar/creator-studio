@@ -57,7 +57,7 @@ VideoIdea (status: proposed / pilot / approved)
 | :--- | :--- | :--- | :--- | :--- |
 | `owner` | `POST /ai-video/ideas` | `approved` | Clips must be in template options; immediate approval; no score required | `ai_video_ideas.py:71` |
 | `hermes` | `POST /hermes/video-ideas` | `proposed` | Requires `score` (0-100) and `rationale`; max 30 proposed per page; 30d topic dedup | `ai_video_ideas.py:60` |
-| `ai` (in-app) | `top_up_ai_video_ideas` | `proposed` | Disabled when `ai_video_researcher == 'muse'`; batch <= 4; 30d topic avoidance | `ai_video_plan.py:134` |
+| `ai` (in-app) | `top_up_ai_video_ideas` | `proposed` | Off when `ai_video_researcher == 'muse'`, except for pages with an empty bank and no Muse idea for `MUSE_DRY_HOURS` (6 h); batch <= 4; 30d topic avoidance | `ai_video_plan.py:134` |
 | `muse` | `POST /research/packs` | `pilot` or `approved` | Multi-channel pack; pilot mode holds as `pilot`; live mode auto-approves if score >= min | `research_desk.py:347` |
 
 ### 2.2 VideoIdea State Machine

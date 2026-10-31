@@ -271,10 +271,11 @@ def test_face_ref_scene_prompt():
     assert direction.refs == ("/images/verstappen_face.jpg", "/images/gt3_portimao.jpg")
 
     p = direction.prompt
-    assert "Use it ONLY for his face and likeness; ignore his clothing, vehicle and background." in p
+    assert "Use it for his exact face and likeness." in p
+    assert "Never give him a plain, unbranded or logo-free kit." in p
+    assert "Dress him in his real team kit for this event with its real team and sponsor logos" in p
     assert (
-        "Search the web for real photos of Max Verstappen at GT World Challenge Europe Portimao 2026 "
-        "so his kit, helmet and vehicle are accurate for this event."
+        "search the web for real photos of Max Verstappen at GT World Challenge Europe Portimao 2026 and copy that kit."
     ) in p
     assert "Show his face from the front like this photo." in p
     assert "Max Verstappen must be recognisably himself: show his face clearly, turned toward the camera (front or three-quarter view)" in p
@@ -348,7 +349,7 @@ def test_realism_and_template_space_sections_present():
     assert "Sharp and detailed" not in p
     assert "- But keep it natural" not in p
     assert "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen." in p
-    assert "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters." in p
+    assert "- Logos, sponsor names and numbers on kits, caps, helmets and vehicles must be copied from the reference photos, crisp and correct as in real photos. Never blank out, blur, cover or remove a real team or sponsor logo." in p
 
     # Template space section
     assert "Space for the fan page template:" in p
@@ -552,7 +553,7 @@ def test_concept_graphic_words_line_cases():
     p_words = direct(brief, selection, concept=concept_words).prompt
     # Owner 2026-10-24: the artwork never carries words, even when the concept suggests some.
     assert "- Graphic words:" not in p_words and '"P9"' not in p_words
-    assert "- No words, letters or numbers anywhere in the artwork" in p_words
+    assert "- No added words, letters or numbers in the artwork" in p_words
     assert generic_line not in p_words
 
     # 2. Without graphic words (empty tuple)
@@ -563,13 +564,13 @@ def test_concept_graphic_words_line_cases():
         graphic_words=(),
     )
     p_no_words = direct(brief, selection, concept=concept_no_words).prompt
-    assert "- No words, letters or numbers anywhere in the artwork" in p_no_words
+    assert "- No added words, letters or numbers in the artwork" in p_no_words
     assert generic_line not in p_no_words
 
     # 3. No concept given -> generic line kept
     p_generic = direct(brief, selection, concept=None).prompt
     assert generic_line not in p_generic
-    assert "- No words, letters or numbers anywhere in the artwork" in p_generic
+    assert "- No added words, letters or numbers in the artwork" in p_generic
     assert "- Graphic words: use exactly these" not in p_generic
     assert "- Do not add any words or numbers." not in p_generic
 
@@ -614,4 +615,38 @@ def test_realism_lines_have_no_sharpness_push():
     # Existing realism lines still present
     assert "- It must look like a real photograph by a professional sports photographer, then designed: realistic skin with pores and natural imperfections, real lens depth of field and motion, natural light and colour." in p
     assert "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen." in p
-    assert "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters." in p
+    assert "- Logos, sponsor names and numbers on kits, caps, helmets and vehicles must be copied from the reference photos, crisp and correct as in real photos. Never blank out, blur, cover or remove a real team or sponsor logo." in p
+
+
+def test_prompt_never_asks_to_strip_logos():
+    forbidden_phrases = (
+        "leave it plain",
+        "keep it plain",
+        "ignore his clothing",
+        "No words, letters or numbers anywhere",
+    )
+    must_have = "Never blank out, blur, cover or remove a real team or sponsor logo."
+
+    ctx = _make_check(role="context", path="/images/ctx.jpg")
+    hero_check = _make_check(role="hero", path="/images/hero.jpg")
+    face_check = _make_check(role="hero", path="/images/face.jpg")
+
+    # (a) hero-from-event case
+    brief_a = _make_brief(series="Formula 1")
+    sel_a = PhotoSelection(hero=hero_check, context=(ctx,))
+    prompt_a = direct(brief_a, sel_a).prompt
+
+    # (b) strict face_ref case
+    brief_b = _make_brief(series="MotoGP")
+    sel_b = PhotoSelection(hero=None, face_ref=face_check, context=(ctx,))
+    prompt_b = direct(brief_b, sel_b).prompt
+
+    # (c) non-strict face_ref case
+    brief_c = _make_brief(series="Formula 1")
+    sel_c = PhotoSelection(hero=None, face_ref=face_check, context=(ctx,))
+    prompt_c = direct(brief_c, sel_c).prompt
+
+    for p in (prompt_a, prompt_b, prompt_c):
+        for phrase in forbidden_phrases:
+            assert phrase not in p
+        assert must_have in p

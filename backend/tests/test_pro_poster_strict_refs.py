@@ -61,5 +61,5 @@ def test_hero_news_card_uses_the_instagram_house_style_without_words():
     assert "the same as its Instagram cards" in prompt and "close and BIG" in prompt
     assert "softly out of focus" in prompt and "Do not stage a new scene" in prompt
     assert "- Main image:" not in prompt and '"102"' not in prompt and "- Graphic words:" not in prompt
-    assert "- No words, letters or numbers anywhere in the artwork" in prompt
+    assert "- No added words, letters or numbers in the artwork" in prompt
     assert "large circle (about 40-45% of the card width)" in prompt

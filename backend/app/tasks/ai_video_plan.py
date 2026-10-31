@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 # so a Flow outage cannot loop through ideas and credits (owner 2026-10-22).
 MAX_FAILED_REPLACEMENTS_PER_DAY = 2
 AI_VIDEO_STOCK_DAYS = 20
+# While Muse researches, the in-app writer still fills a fan page whose idea bank is empty and that got no Muse idea for this many hours.
+MUSE_DRY_HOURS = 6
 
 
 def video_stock(db, fanpage_id: int) -> int:
@@ -248,12 +250,13 @@ def plan_ai_videos():
 
 @celery_app.task(name="app.tasks.ai_video_plan.top_up_ai_video_ideas")
 def top_up_ai_video_ideas():
-    """Keep each Mode 8 fanpage's idea bank (videos per day x bank days) filled, emptiest first; off while Muse researches."""
+    """Keep each Mode 8 fanpage's idea bank (videos per day x bank days) filled, emptiest first; off while Muse researches, except for fan pages whose bank is empty and got no Muse idea for MUSE_DRY_HOURS."""
     db = SessionLocal()
     try:
         row = db.query(Settings).first()
-        if row is None or (row.ai_video_researcher or "muse") == "muse":
-            return  # Muse researches Mode 8 ideas; the in-app writer stays off.
+        if row is None:
+            return
+        muse_mode = row is not None and (row.ai_video_researcher or "muse") == "muse"
         bank_days = max(1, row.ai_video_idea_bank_days or 1)
         plans = []
         for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True, project_can_generate()).all():  # noqa: E712
@@ -262,6 +265,16 @@ def top_up_ai_video_ideas():
                 VideoIdea.fanpage_id == fanpage.id,
                 VideoIdea.status.in_(["pilot", "proposed", "approved"]),
             ).count()
+            if muse_mode:
+                if waiting != 0:
+                    continue
+                has_recent_muse = db.query(VideoIdea).filter(
+                    VideoIdea.fanpage_id == fanpage.id,
+                    VideoIdea.source == "muse",
+                    VideoIdea.created_at >= _now() - timedelta(hours=MUSE_DRY_HOURS),
+                ).first() is not None
+                if has_recent_muse:
+                    continue
             target = max(2, daily * bank_days)
             if waiting >= target:
                 continue
@@ -282,7 +295,7 @@ def top_up_ai_video_ideas():
                 db.rollback()
                 logger.warning("Mode 8 idea writer failed for fanpage %s: %s", fanpage.id, exc)
                 continue
-            logger.info("Mode 8 idea writer: fanpage %s wrote %s idea(s)", fanpage.id, created)
+            logger.info("Mode 8 idea writer: fanpage %s wrote %s idea(s)%s", fanpage.id, created, " (Muse dry)" if muse_mode else "")
     finally:
         db.close()
 

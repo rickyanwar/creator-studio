@@ -196,9 +196,73 @@ def test_writer_off_while_muse_researches(db, clean, monkeypatch):
     monkeypatch.setattr(planner, "write_ideas", lambda db, fp, need: calls.append((fp.id, need)))
 
     try:
-        make_fanpage(db, clean, ai_video_daily_count=1)
+        fp = make_fanpage(db, clean, ai_video_daily_count=1)
+        db.add(VideoIdea(
+            fanpage_id=fp.id,
+            template_key="motorsport_tech_explainer",
+            topic="M1",
+            status="done",
+            source="muse",
+        ))
+        db.commit()
         planner.top_up_ai_video_ideas.run()
-        assert len(calls) == 0
+        fixture_calls = [cid for cid, _need in calls if cid == fp.id]
+        assert len(fixture_calls) == 0
+    finally:
+        row = research_desk.get_settings_row(db)
+        row.ai_video_researcher = orig_researcher
+        row.ai_video_idea_bank_days = orig_days
+        db.commit()
+
+
+def test_writer_fills_page_when_muse_dry(db, clean, monkeypatch):
+    row = research_desk.get_settings_row(db)
+    orig_researcher = row.ai_video_researcher
+    orig_days = row.ai_video_idea_bank_days
+    row.ai_video_researcher = "muse"
+    row.ai_video_idea_bank_days = 3
+    db.commit()
+
+    calls = []
+    monkeypatch.setattr(planner, "SessionLocal", lambda: db)
+    monkeypatch.setattr(planner, "write_ideas", lambda db, fp, need: (calls.append(fp.id), need)[1])
+
+    try:
+        fp_a = make_fanpage(db, clean, name="Fanpage Dry A", ai_video_daily_count=1)
+        fp_b = make_fanpage(db, clean, name="Fanpage Active B", ai_video_daily_count=1)
+        fp_c = make_fanpage(db, clean, name="Fanpage Waiting C", ai_video_daily_count=1)
+
+        now = datetime.utcnow()
+        idea_a = VideoIdea(
+            fanpage_id=fp_a.id,
+            template_key="motorsport_tech_explainer",
+            topic="A1",
+            status="done",
+            source="muse",
+            created_at=now - timedelta(hours=7),
+        )
+        idea_b = VideoIdea(
+            fanpage_id=fp_b.id,
+            template_key="motorsport_tech_explainer",
+            topic="B1",
+            status="done",
+            source="muse",
+            created_at=now - timedelta(hours=1),
+        )
+        idea_c = VideoIdea(
+            fanpage_id=fp_c.id,
+            template_key="motorsport_tech_explainer",
+            topic="C1",
+            status="approved",
+            source="muse",
+            created_at=now - timedelta(hours=7),
+        )
+        db.add_all([idea_a, idea_b, idea_c])
+        db.commit()
+
+        planner.top_up_ai_video_ideas.run()
+        fixture_calls = [fid for fid in calls if fid in (fp_a.id, fp_b.id, fp_c.id)]
+        assert fixture_calls == [fp_a.id]
     finally:
         row = research_desk.get_settings_row(db)
         row.ai_video_researcher = orig_researcher

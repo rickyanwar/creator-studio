@@ -157,8 +157,9 @@ def direct(
         else:
             ref_lines.append(
                 f"- Image {img_num}: a real photo of {hero} from a different event. "
-                "Use it ONLY for his face and likeness; ignore his clothing, vehicle and background. "
-                f"Search the web for real photos of {hero} at {at_event} so his kit, helmet and vehicle are accurate for this event. "
+                "Use it for his exact face and likeness. "
+                f"Dress him in his real team kit for this event with its real team and sponsor logos: if this photo shows the same team, keep its kit, cap and sponsor logos exactly as they are; otherwise search the web for real photos of {hero} at {at_event} and copy that kit. "
+                "Never give him a plain, unbranded or logo-free kit. "
                 "Show his face from the front like this photo."
             )
         img_num += 1
@@ -181,7 +182,7 @@ def direct(
     if strict:
         ref_lines.append(
             "Use ONLY these reference images. Do not search for, copy or invent any other photo, person, bike, kit or venue. "
-            "If something is not shown in a reference image, leave it out or keep it plain."
+            "If something is not shown in a reference image, leave it out. Real team and sponsor logos that ARE shown on his kit, cap, helmet or vehicle in the reference photos must stay exactly as shown."
         )
     else:
         ref_lines.append(
@@ -240,14 +241,14 @@ def direct(
         f"- Everything in the poster belongs to {brief.event.series}: no athletes, venues or equipment from another sport (no octagon, ring, fighter, football pitch or court)."
     )
     must_do_lines.append(
-        "- No words, letters or numbers anywhere in the artwork (no graphic words, no scores, no years): the page template adds the headline later."
+        "- No added words, letters or numbers in the artwork (no graphic words, no scores, no years): the page template adds the headline later. Real team names, sponsor logos and race numbers that belong on kits, caps, helmets and vehicles are not added words: keep them exactly as in the reference photos."
     )
 
     realism_lines = [
         "Photographic realism (very important):",
         "- It must look like a real photograph by a professional sports photographer, then designed: realistic skin with pores and natural imperfections, real lens depth of field and motion, natural light and colour.",
         "- No airbrushed, waxy or plastic skin, no painterly or illustrated textures, no over-saturated glow, no HDR, no AI sheen.",
-        "- Logos, numbers and text on kits and vehicles must be crisp and correct as in real photos; if you cannot render one correctly, leave it plain instead of inventing letters.",
+        "- Logos, sponsor names and numbers on kits, caps, helmets and vehicles must be copied from the reference photos, crisp and correct as in real photos. Never blank out, blur, cover or remove a real team or sponsor logo.",
     ]
 
     template_lines = [
