@@ -7,6 +7,7 @@ export interface BrandToday {
   timezone: string;
   published_today: number;
   waiting_review: number;
+  needs_review: number;
   failed_today: number;
   active_channels: number;
   daily_target: number;

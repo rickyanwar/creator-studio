@@ -13,7 +13,7 @@ from sqlalchemy.schema import DefaultClause
 from app.api.deps import get_current_user, get_db
 from app.api import dashboard
 from app.main import app
-from app.models.social_publishing import PublishDelivery
+from app.models.social_publishing import DeliveryEvent, PublishDelivery
 from app.models.ai_copy_events import AICopyEvent
 from app.models.gallery_fetch_events import GalleryFetchEvent
 from app.models.posts import Post, MediaType, PostStatus
@@ -56,13 +56,21 @@ def db_session():
         TargetFanpage.__table__,
         SocialDestination.__table__,
         PublishDelivery.__table__,
+        DeliveryEvent.__table__,
         Post.__table__,
         PublishJob.__table__,
         AICopyEvent.__table__,
         GalleryFetchEvent.__table__,
     ]
-    for table in tables:
-        table.create(bind=engine)
+    # DeliveryEvent.details defaults to a Postgres-only '{}'::json literal; drop it while SQLite creates the table
+    de_col = DeliveryEvent.__table__.columns["details"]
+    orig_de_default = de_col.server_default
+    de_col.server_default = None
+    try:
+        for table in tables:
+            table.create(bind=engine)
+    finally:
+        de_col.server_default = orig_de_default
 
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -392,3 +400,158 @@ def test_latest_posts_report_the_real_go_live_time(db_session, client):
     post = next(p for p in client.get("/dashboard/stats").json()["latest_posts"] if p["id"] == 501)
     assert post["published_at"].startswith("2026-10-24T00:22")
     assert post["go_live_at"].startswith("2026-10-24T01:06")
+
+
+def _add_failed_delivery(db_session, job_id, dest_id, failed_at, with_event=True):
+    """A failed delivery for a job; the failed event (when present) is stamped at `failed_at`."""
+    delivery = PublishDelivery(publish_job_id=job_id, destination_id=dest_id, state="failed",
+                               intended_method="phone", updated_at=failed_at, created_at=failed_at)
+    db_session.add(delivery)
+    db_session.commit()
+    if with_event:
+        db_session.add(DeliveryEvent(delivery_id=delivery.id, event_type="failed", details={}, created_at=failed_at))
+        db_session.commit()
+    return delivery
+
+
+def test_failed_today_uses_the_real_failure_time_not_job_updated_at(db_session, client, monkeypatch):
+    """The nightly video cleanup rewrites PublishJob.updated_at; an old failure must not count as failed today."""
+    fixed_now = datetime(2026, 10, 31, 15, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(dashboard, "_utcnow", lambda: fixed_now)
+    now = datetime(2026, 10, 31, 15, 0, 0)
+    cleanup_touch = datetime(2026, 10, 31, 13, 30, 0)
+    three_days_ago = now - timedelta(days=3)
+
+    fp = TargetFanpage(id=1, name="Failure Brand", timezone="Europe/London", is_active=True)
+    db_session.add(fp)
+    db_session.commit()
+    dest = SocialDestination(id=30, content_project_id=fp.id, kind="facebook_profile", name="Profile",
+                             is_active=True, daily_target=5)
+    db_session.add(dest)
+    db_session.commit()
+
+    def failed_job(job_id, updated_at):
+        return PublishJob(id=job_id, fanpage_id=fp.id, status=PublishJobStatus.failed,
+                          updated_at=updated_at, is_deleted=False)
+
+    db_session.add_all([
+        failed_job(601, cleanup_touch),            # failed event 3 days ago, touched by the cleanup today
+        failed_job(602, datetime(2026, 10, 31, 10, 0, 0)),  # failed event today
+        failed_job(603, datetime(2026, 10, 31, 9, 0, 0)),   # pipeline failure today, no delivery
+        failed_job(604, cleanup_touch),            # failed delivery 3 days ago, no event, touched today
+    ])
+    db_session.commit()
+    _add_failed_delivery(db_session, 601, dest.id, three_days_ago)
+    _add_failed_delivery(db_session, 602, dest.id, datetime(2026, 10, 31, 10, 0, 0))
+    _add_failed_delivery(db_session, 604, dest.id, three_days_ago, with_event=False)
+
+    data = client.get("/dashboard/stats").json()
+    brand = next(b for b in data["brands_today"] if b["fanpage_id"] == fp.id)
+    assert brand["failed_today"] == 2  # 602 (event today) + 603 (no delivery, updated today)
+    assert data["failed_today"] == 2
+
+
+def test_old_delivery_failure_is_not_failed_today(db_session, client, monkeypatch):
+    """A job whose only failure is days old stays out of both the brand row and the global card."""
+    fixed_now = datetime(2026, 10, 31, 15, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(dashboard, "_utcnow", lambda: fixed_now)
+
+    fp = TargetFanpage(id=1, name="Old Failure Brand", timezone="Europe/London", is_active=True)
+    db_session.add(fp)
+    db_session.commit()
+    dest = SocialDestination(id=31, content_project_id=fp.id, kind="facebook_page", name="Page",
+                             is_active=True, daily_target=5)
+    db_session.add(dest)
+    db_session.add(PublishJob(id=611, fanpage_id=fp.id, status=PublishJobStatus.failed,
+                              updated_at=datetime(2026, 10, 31, 14, 59, 0), is_deleted=False))
+    db_session.commit()
+    _add_failed_delivery(db_session, 611, dest.id, datetime(2026, 10, 28, 8, 0, 0))
+
+    data = client.get("/dashboard/stats").json()
+    brand = next(b for b in data["brands_today"] if b["fanpage_id"] == fp.id)
+    assert brand["failed_today"] == 0
+    assert data["failed_today"] == 0
+
+
+def test_needs_review_counts_only_pending_review(db_session, client):
+    """needs_review drives the "Needs review" badge; waiting_review keeps the whole queue."""
+    fp = TargetFanpage(id=1, name="Review Brand", timezone="Europe/London", is_active=True)
+    db_session.add(fp)
+    db_session.commit()
+    db_session.add_all([
+        PublishJob(id=621, fanpage_id=fp.id, status=PublishJobStatus.pending_review, is_deleted=False),
+        PublishJob(id=622, fanpage_id=fp.id, status=PublishJobStatus.pending_review, is_deleted=False),
+        PublishJob(id=623, fanpage_id=fp.id, status=PublishJobStatus.pending_design, is_deleted=False),
+        PublishJob(id=624, fanpage_id=fp.id, status=PublishJobStatus.pending_publish, is_deleted=False),
+        PublishJob(id=625, fanpage_id=fp.id, status=PublishJobStatus.pending_review, is_deleted=True),
+    ])
+    db_session.commit()
+
+    brand = next(b for b in client.get("/dashboard/stats").json()["brands_today"] if b["fanpage_id"] == fp.id)
+    assert brand["needs_review"] == 2
+    assert brand["waiting_review"] == 4
+
+
+def test_needs_review_is_zero_when_only_the_queue_waits(db_session, client):
+    """Designs in progress and posts waiting for a slot are not something to review."""
+    fp = TargetFanpage(id=1, name="Queue Brand", timezone="Europe/London", is_active=True)
+    db_session.add(fp)
+    db_session.commit()
+    db_session.add_all([
+        PublishJob(id=631, fanpage_id=fp.id, status=PublishJobStatus.pending_design, is_deleted=False),
+        PublishJob(id=632, fanpage_id=fp.id, status=PublishJobStatus.pending_publish, is_deleted=False),
+    ])
+    db_session.commit()
+
+    brand = next(b for b in client.get("/dashboard/stats").json()["brands_today"] if b["fanpage_id"] == fp.id)
+    assert brand["needs_review"] == 0
+    assert brand["waiting_review"] == 2
+
+
+def test_next_post_comes_from_the_delivery_ledger(db_session, client, monkeypatch):
+    """Phone and Repliz brands keep their slot on PublishDelivery.scheduled_for, not on the job."""
+    fixed_now = datetime(2026, 10, 31, 15, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(dashboard, "_utcnow", lambda: fixed_now)
+
+    phone_fp = TargetFanpage(id=1, name="Phone Brand", timezone="Europe/London", is_active=True)
+    mixed_fp = TargetFanpage(id=2, name="Mixed Brand", timezone="Europe/London", is_active=True)
+    db_session.add_all([phone_fp, mixed_fp])
+    db_session.commit()
+    db_session.add_all([
+        SocialDestination(id=40, content_project_id=phone_fp.id, kind="facebook_profile", name="Active",
+                          is_active=True, daily_target=5),
+        SocialDestination(id=41, content_project_id=phone_fp.id, kind="facebook_page", name="Paused",
+                          is_active=False, daily_target=5),
+        SocialDestination(id=42, content_project_id=mixed_fp.id, kind="facebook_page", name="Mixed",
+                          is_active=True, daily_target=5),
+    ])
+    db_session.add_all([
+        PublishJob(id=641, fanpage_id=phone_fp.id, status=PublishJobStatus.published, is_deleted=False),
+        PublishJob(id=642, fanpage_id=phone_fp.id, status=PublishJobStatus.published, is_deleted=False),
+        PublishJob(id=643, fanpage_id=phone_fp.id, status=PublishJobStatus.published, is_deleted=False),
+        PublishJob(id=644, fanpage_id=phone_fp.id, status=PublishJobStatus.published, is_deleted=False),
+        # The job's own slot is earlier than its delivery, so it wins for the mixed brand
+        PublishJob(id=645, fanpage_id=mixed_fp.id, status=PublishJobStatus.pending_publish,
+                   scheduled_for=datetime(2026, 10, 31, 16, 0, 0), is_deleted=False),
+    ])
+    db_session.commit()
+    db_session.add_all([
+        PublishDelivery(publish_job_id=641, destination_id=40, state="waiting_for_device",
+                        scheduled_for=datetime(2026, 10, 31, 18, 15, 0), intended_method="phone"),
+        PublishDelivery(publish_job_id=642, destination_id=40, state="scheduled",
+                        scheduled_for=datetime(2026, 10, 31, 19, 0, 0), intended_method="phone"),
+        # Ignored: an inactive channel, a delivery that already went out, and a slot in the past
+        PublishDelivery(publish_job_id=643, destination_id=41, state="scheduled",
+                        scheduled_for=datetime(2026, 10, 31, 16, 0, 0), intended_method="phone"),
+        PublishDelivery(publish_job_id=644, destination_id=40, state="published",
+                        scheduled_for=datetime(2026, 10, 31, 15, 30, 0), intended_method="phone"),
+        PublishDelivery(publish_job_id=643, destination_id=40, state="scheduled",
+                        scheduled_for=datetime(2026, 10, 31, 14, 0, 0), intended_method="phone"),
+        PublishDelivery(publish_job_id=645, destination_id=42, state="repliz_scheduled",
+                        scheduled_for=datetime(2026, 10, 31, 17, 0, 0), intended_method="repliz"),
+    ])
+    db_session.commit()
+
+    brands = {b["fanpage_id"]: b for b in client.get("/dashboard/stats").json()["brands_today"]}
+    assert brands[phone_fp.id]["next_post"].startswith("2026-10-31T18:15")
+    assert brands[mixed_fp.id]["next_post"].startswith("2026-10-31T16:00")

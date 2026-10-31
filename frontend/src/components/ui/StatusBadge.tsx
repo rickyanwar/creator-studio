@@ -64,6 +64,13 @@ export const STATUS_MAP: Record<string, StatusConfig> = {
     fg: "var(--pri-fg)",
     className: "bg-pri text-pri-fg",
   },
+  on_track: {
+    label: "On track",
+    tone: "pri",
+    bg: "var(--pri)",
+    fg: "var(--pri-fg)",
+    className: "bg-pri text-pri-fg",
+  },
   failed: {
     label: "Failed",
     tone: "bad",

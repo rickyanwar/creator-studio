@@ -6,7 +6,7 @@ import zoneinfo
 from datetime import datetime, timedelta, timezone
 
 import pytz
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 from fastapi import APIRouter
 
@@ -16,6 +16,8 @@ from app.config import get_settings
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 settings = get_settings()
 WIB = pytz.timezone("Asia/Jakarta")
+# Delivery states that still have a slot coming up (feeds the brand's "Next post")
+_UPCOMING_DELIVERY_STATES = ("scheduled", "waiting_for_slot", "waiting_for_device", "repliz_scheduled")
 
 
 def _utcnow() -> datetime:
@@ -47,6 +49,67 @@ def _to_naive_utc(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+def _failure_times_by_fanpage(db, cutoff: datetime) -> dict[int, list[datetime]]:
+    """When each failed job really failed, per fanpage, keeping only instants at or after `cutoff` (naive UTC).
+
+    PublishJob.updated_at is not a failure time: the nightly cleanup_old_videos task rewrites it on old
+    video jobs, so jobs that failed days earlier showed up as "failed today". For a job that reached the
+    delivery ledger the instant is its latest "failed" DeliveryEvent, else the newest updated_at of its
+    failed deliveries (deliveries are not touched by the cleanup). A job without any delivery (a pipeline
+    failure such as a design error) keeps PublishJob.updated_at.
+    """
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+    from app.models.social_publishing import DeliveryEvent, PublishDelivery
+
+    job_updated = func.coalesce(PublishJob.updated_at, PublishJob.created_at)
+    # Every path that marks a job failed bumps updated_at and the cleanup only moves it forward, so this
+    # bound keeps the candidate set small without dropping a recent failure.
+    jobs = (
+        db.query(PublishJob.id, PublishJob.fanpage_id, job_updated)
+        .filter(
+            PublishJob.status == PublishJobStatus.failed,
+            PublishJob.is_deleted == False,
+            job_updated >= cutoff,
+        )
+        .all()
+    )
+    if not jobs:
+        return {}
+    job_ids = [row[0] for row in jobs]
+
+    failed_event_at = dict(
+        db.query(PublishDelivery.publish_job_id, func.max(DeliveryEvent.created_at))
+        .join(DeliveryEvent, DeliveryEvent.delivery_id == PublishDelivery.id)
+        .filter(PublishDelivery.publish_job_id.in_(job_ids), DeliveryEvent.event_type == "failed")
+        .group_by(PublishDelivery.publish_job_id)
+        .all()
+    )
+    # One row per job that has any delivery; the value is the newest failed delivery's updated_at (or None).
+    failed_delivery_at = dict(
+        db.query(
+            PublishDelivery.publish_job_id,
+            func.max(case((PublishDelivery.state == "failed", PublishDelivery.updated_at))),
+        )
+        .filter(PublishDelivery.publish_job_id.in_(job_ids))
+        .group_by(PublishDelivery.publish_job_id)
+        .all()
+    )
+
+    times_by_fp: dict[int, list[datetime]] = {}
+    for job_id, fanpage_id, updated_at in jobs:
+        if job_id in failed_event_at:
+            failed_at = failed_event_at[job_id]
+        elif job_id in failed_delivery_at:
+            failed_at = failed_delivery_at[job_id]
+        else:
+            failed_at = updated_at
+        failed_at = _to_naive_utc(failed_at)
+        if failed_at is None or failed_at < cutoff:
+            continue
+        times_by_fp.setdefault(fanpage_id, []).append(failed_at)
+    return times_by_fp
 
 
 def _extract_first_url(val) -> str | None:
@@ -87,7 +150,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
     from app.models.posts import Post
     from app.models.ai_copy_events import AICopyEvent
     from app.models.gallery_fetch_events import GalleryFetchEvent
-    from app.models.social_publishing import SocialDestination
+    from app.models.social_publishing import PublishDelivery, SocialDestination
 
     now_utc = _utcnow()
     now_naive = _to_naive_utc(now_utc) or datetime.utcnow()
@@ -100,11 +163,11 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         .count()
     )
 
-    # Failed today
-    failed_today = (
-        db.query(PublishJob)
-        .filter(PublishJob.updated_at >= today_start, PublishJob.status == PublishJobStatus.failed)
-        .count()
+    # Failed today: by the real failure instant (last 48 h), shared with the per-brand counts below
+    failure_times_by_fp = _failure_times_by_fanpage(db, now_naive - timedelta(hours=48))
+    today_start_naive = _to_naive_utc(today_start)
+    failed_today = sum(
+        1 for times in failure_times_by_fp.values() for failed_at in times if failed_at >= today_start_naive
     )
 
     # Pending review
@@ -198,10 +261,12 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         )
         channels_by_fp = {row[0]: (int(row[1]), int(row[2])) for row in chan_rows}
 
-        # Grouped query 2: waiting_review (pending_review + pending_design + pending_publish)
+        # Grouped query 2: waiting_review (pending_review + pending_design + pending_publish) is the queue;
+        # needs_review counts only pending_review, the jobs that really wait for a person
         waiting_rows = (
             db.query(
                 PublishJob.fanpage_id,
+                PublishJob.status,
                 func.count(PublishJob.id),
             )
             .filter(
@@ -213,12 +278,18 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
                 ]),
                 PublishJob.is_deleted == False,
             )
-            .group_by(PublishJob.fanpage_id)
+            .group_by(PublishJob.fanpage_id, PublishJob.status)
             .all()
         )
-        waiting_by_fp = {row[0]: int(row[1]) for row in waiting_rows}
+        waiting_by_fp: dict[int, int] = {}
+        needs_review_by_fp: dict[int, int] = {}
+        for row_fpid, row_status, row_count in waiting_rows:
+            waiting_by_fp[row_fpid] = waiting_by_fp.get(row_fpid, 0) + int(row_count)
+            if row_status == PublishJobStatus.pending_review:
+                needs_review_by_fp[row_fpid] = int(row_count)
 
-        # Grouped query 3: earliest future scheduled post
+        # Grouped query 3: earliest future scheduled post, from the job or its delivery ledger
+        # (phone and Repliz posts carry their slot on PublishDelivery.scheduled_for)
         next_rows = (
             db.query(
                 PublishJob.fanpage_id,
@@ -234,8 +305,28 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
             .all()
         )
         next_by_fp = {row[0]: row[1] for row in next_rows}
+        next_delivery_rows = (
+            db.query(
+                SocialDestination.content_project_id,
+                func.min(PublishDelivery.scheduled_for),
+            )
+            .join(SocialDestination, SocialDestination.id == PublishDelivery.destination_id)
+            .filter(
+                SocialDestination.content_project_id.in_(fp_ids),
+                SocialDestination.is_active == True,
+                PublishDelivery.scheduled_for > now_naive,
+                PublishDelivery.state.in_(_UPCOMING_DELIVERY_STATES),
+            )
+            .group_by(SocialDestination.content_project_id)
+            .all()
+        )
+        for row_fpid, delivery_next in next_delivery_rows:
+            job_next = next_by_fp.get(row_fpid)
+            if delivery_next is not None and (job_next is None or delivery_next < job_next):
+                next_by_fp[row_fpid] = delivery_next
 
-        # Query 4: published & failed jobs across all active brands in recent window (last 48h)
+        # Query 4: published jobs across all active brands in recent window (last 48h);
+        # failures come from failure_times_by_fp above
         min_cutoff = now_naive - timedelta(hours=48)
         recent_published = (
             db.query(PublishJob.fanpage_id, PublishJob.published_at)
@@ -247,19 +338,6 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
             )
             .all()
         )
-        recent_failed = (
-            db.query(
-                PublishJob.fanpage_id,
-                func.coalesce(PublishJob.updated_at, PublishJob.created_at),
-            )
-            .filter(
-                PublishJob.fanpage_id.in_(fp_ids),
-                PublishJob.status == PublishJobStatus.failed,
-                PublishJob.is_deleted == False,
-                func.coalesce(PublishJob.updated_at, PublishJob.created_at) >= min_cutoff,
-            )
-            .all()
-        )
 
         for fp in active_fps:
             midnight_utc = _get_local_midnight_utc(fp.timezone, now_utc)
@@ -268,10 +346,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
                 1 for row_fpid, pub_dt in recent_published
                 if row_fpid == fp.id and _to_naive_utc(pub_dt) is not None and _to_naive_utc(pub_dt) >= midnight_utc
             )
-            fail_count = sum(
-                1 for row_fpid, fail_dt in recent_failed
-                if row_fpid == fp.id and _to_naive_utc(fail_dt) is not None and _to_naive_utc(fail_dt) >= midnight_utc
-            )
+            fail_count = sum(1 for failed_at in failure_times_by_fp.get(fp.id, []) if failed_at >= midnight_utc)
 
             active_chans, dest_target = channels_by_fp.get(fp.id, (0, 0))
             daily_target = dest_target if active_chans > 0 else int(fp.publish_daily_limit or 0)
@@ -306,6 +381,7 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
                 "timezone": fp.timezone or "Europe/London",
                 "published_today": pub_count,
                 "waiting_review": waiting,
+                "needs_review": needs_review_by_fp.get(fp.id, 0),
                 "failed_today": fail_count,
                 "active_channels": active_chans,
                 "daily_target": daily_target,
@@ -329,7 +405,6 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
 
     # When each post really goes live: the latest delivery slot (a Repliz/phone schedule), else the job's own.
     from sqlalchemy import func as _func
-    from app.models.social_publishing import PublishDelivery
     go_live_by_job = dict(
         db.query(PublishDelivery.publish_job_id, _func.max(PublishDelivery.scheduled_for))
         .filter(PublishDelivery.publish_job_id.in_([j.id for j in latest_jobs] or [0]))

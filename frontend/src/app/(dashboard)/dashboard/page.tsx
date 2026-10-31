@@ -786,9 +786,9 @@ export default function DashboardPage() {
                   const statusKey =
                     brand.failed_today > 0
                       ? "failed"
-                      : brand.waiting_review > 0
+                      : (brand.needs_review ?? 0) > 0
                       ? "pending_review"
-                      : "published";
+                      : "on_track";
 
                   return (
                     <tr key={brand.fanpage_id} className="hover:bg-surface2/50 transition-colors">
