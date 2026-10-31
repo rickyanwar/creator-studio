@@ -844,3 +844,72 @@ def test_repair_prompt_forbids_facebook_and_posting():
     prompt = build_hermes_repair_prompt(TEST_SERIAL, "portal_unready")
     assert TEST_SERIAL in prompt and "content://com.mobilerun.portal/ping" in prompt
     assert "do NOT open, tap, type in or change Facebook" in prompt and "never post" in prompt
+
+
+def test_vision_transient_codes_accepted_by_is_valid_reason_code():
+    assert is_valid_reason_code("vision_unavailable") is True
+    assert is_valid_reason_code("time_budget_exceeded") is True
+
+
+def test_vision_transient_codes_rejected_values_unchanged():
+    # Malformed and unrelated values must still be rejected.
+    still_invalid = [
+        "",
+        "vision unavailable",      # space — fails REASON_REGEX
+        "time-budget exceeded",    # space — fails REASON_REGEX
+        "VISION_UNAVAILABLE",      # wrong case (not in set)
+        "vision_unavailable ",     # trailing space
+        " time_budget_exceeded",   # leading space
+        "arbitrary_code",
+        "rm -rf /",
+    ]
+    for v in still_invalid:
+        assert is_valid_reason_code(v) is False, f"Expected False for {v!r}"
+
+
+def test_execute_recovery_vision_unavailable_does_not_return_invalid_reason():
+    """vision_unavailable must pass the reason-code gate and reach deterministic recovery."""
+    def fake_runner(cmd, **kwargs):
+        cmd_str = " ".join(cmd)
+        if "get-state" in cmd_str:
+            return mock.Mock(returncode=0, stdout="device\n", stderr="")
+        if "dumpsys power" in cmd_str:
+            return mock.Mock(returncode=0, stdout="mWakefulness=Awake\n", stderr="")
+        if "content query" in cmd_str:
+            return mock.Mock(returncode=0, stdout="Row: 0 result=pong\n", stderr="")
+        if "settings get secure enabled_accessibility_services" in cmd_str:
+            return mock.Mock(returncode=0, stdout="com.mobilerun.portal/.AccessibilityService\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    res = execute_recovery(
+        serial=TEST_SERIAL,
+        recovery_class="routine",
+        reason="vision_unavailable",
+        subprocess_runner=fake_runner,
+    )
+    assert res.get("error") != "invalid_reason", "vision_unavailable must not hit invalid_reason gate"
+    assert res["status"] == "resolved"
+
+
+def test_execute_recovery_time_budget_exceeded_does_not_return_invalid_reason():
+    """time_budget_exceeded must pass the reason-code gate and reach deterministic recovery."""
+    def fake_runner(cmd, **kwargs):
+        cmd_str = " ".join(cmd)
+        if "get-state" in cmd_str:
+            return mock.Mock(returncode=0, stdout="device\n", stderr="")
+        if "dumpsys power" in cmd_str:
+            return mock.Mock(returncode=0, stdout="mWakefulness=Awake\n", stderr="")
+        if "content query" in cmd_str:
+            return mock.Mock(returncode=0, stdout="Row: 0 result=pong\n", stderr="")
+        if "settings get secure enabled_accessibility_services" in cmd_str:
+            return mock.Mock(returncode=0, stdout="com.mobilerun.portal/.AccessibilityService\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    res = execute_recovery(
+        serial=TEST_SERIAL,
+        recovery_class="routine",
+        reason="time_budget_exceeded",
+        subprocess_runner=fake_runner,
+    )
+    assert res.get("error") != "invalid_reason", "time_budget_exceeded must not hit invalid_reason gate"
+    assert res["status"] == "resolved"

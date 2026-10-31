@@ -33,6 +33,8 @@ VALID_REASON_CODES = {
     "connectivity_lost",
     "stale_lease",
     "unknown_failure",
+    "vision_unavailable",
+    "time_budget_exceeded",
 }
 
 SERIAL_REGEX = re.compile(r"^[a-zA-Z0-9.:_-]{1,64}$")

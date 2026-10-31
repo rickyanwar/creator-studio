@@ -1,6 +1,9 @@
+import base64
 import io
 import json
+import shutil
 import subprocess
+import urllib.error
 from unittest import mock
 import pytest
 
@@ -11,6 +14,13 @@ from phone_runner.vision_verify import (
     PROMPT_POST_SETTINGS,
     PROMPT_POSTED,
     PROMPT_REEL_SETTINGS,
+    VISION_GATE_BUDGET_SECONDS,
+    VISION_MAX_IMAGE_BYTES,
+    VISION_MODEL_TIMEOUT_SECONDS,
+    VISION_REFERENCE_MAX_SIDE,
+    VISION_SCREENSHOT_MAX_SIDE,
+    VISION_SHRINK_TIMEOUT_SECONDS,
+    _shrink_for_vision,
     ask_vision,
     capture_screenshot_png,
     check_composer,
@@ -123,7 +133,13 @@ def test_ask_vision_fallback_on_error(monkeypatch):
             ans, model, detail = ask_vision(FAKE_PNG, "prompt", reference_jpeg=b"fake_jpeg")
             assert ans == {"screen": "composer"}
             assert model == "ag/gemini-second"
-            assert detail == "ok"
+            # detail encodes winner with success outcome and elapsed, plus prior failure
+            assert detail.startswith("ok;winner=ag/gemini-second")
+            assert ":success:" in detail
+            assert "s" in detail  # elapsed seconds present
+            assert "prior_failures" in detail
+            assert "ag/gemini-first" in detail
+            assert "HTTP 500" not in detail
 
 
 def test_check_composer_cases():
@@ -271,7 +287,7 @@ def test_ask_vision_budget_exhausted_skips_second_model(monkeypatch):
         ans, model, detail = ask_vision(FAKE_PNG, "prompt", total_budget=40.0)
         assert ans is None
         assert model == ""
-        assert detail == "vision budget exhausted"
+        assert detail.startswith("vision budget exhausted")
         # Second model was never called
         assert call_count[0] == 1
 
@@ -491,3 +507,419 @@ def test_after_typing_rejects_text_not_in_caption():
     assert ok is False
     short = {"screen": "composer", "author_name": "Agung", "caption_starts_with": "#F1"}
     assert check_composer(short, "Agung", expected + " #F1", require_caption=True, require_photo=False)[0] is False
+
+
+# ---------------------------------------------------------------------------
+# New focused tests for timeout / trace / safety requirements
+# ---------------------------------------------------------------------------
+
+def _make_success_resp(payload: dict):
+    """Build a mock urlopen context-manager response that returns payload."""
+    resp = mock.MagicMock()
+    resp.read.return_value = json.dumps(payload).encode("utf-8")
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    return resp
+
+
+def test_http_error_then_success_on_next_candidate():
+    """HTTP error on first candidate → fallback succeeds on second."""
+    http_err = urllib.error.HTTPError(
+        url="http://x", code=503, msg="Service Unavailable", hdrs=None, fp=None
+    )
+    success_resp = _make_success_resp({
+        "choices": [{"message": {"content": '{"screen": "post_settings", "share_button_visible": true}'}}]
+    })
+
+    with (
+        mock.patch("phone_runner.vision_verify.get_vision_models",
+                   return_value=["ag/gemini-first", "ag/gemini-second"]),
+        mock.patch("urllib.request.urlopen", side_effect=[http_err, success_resp]),
+    ):
+        ans, model, detail = ask_vision(FAKE_PNG, "prompt")
+
+    assert ans == {"screen": "post_settings", "share_button_visible": True}
+    assert model == "ag/gemini-second"
+    assert detail.startswith("ok;winner=ag/gemini-second")
+    # Winner must appear with success outcome and elapsed seconds
+    assert ":success:" in detail
+    assert "s" in detail
+    assert "http_error:503" in detail
+    # No sensitive content in detail
+    assert "Service Unavailable" not in detail
+    assert "http://x" not in detail
+
+
+def test_timeout_then_fallback_success():
+    """TimeoutError on first candidate → fallback succeeds on second."""
+    success_resp = _make_success_resp({
+        "choices": [{"message": {"content": '{"screen": "composer"}'}}]
+    })
+
+    with (
+        mock.patch("phone_runner.vision_verify.get_vision_models",
+                   return_value=["ag/gemini-slow", "ag/gemini-fast"]),
+        mock.patch("urllib.request.urlopen", side_effect=[TimeoutError("timed out"), success_resp]),
+    ):
+        ans, model, detail = ask_vision(FAKE_PNG, "prompt")
+
+    assert ans == {"screen": "composer"}
+    assert model == "ag/gemini-fast"
+    assert "timeout" in detail
+    assert "prior_failures" in detail
+    # Exception message must not leak
+    assert "timed out" not in detail
+
+
+def test_exhaustion_all_candidates_no_false_success():
+    """All candidates fail → returns None with trace of all attempts."""
+    http_err_1 = urllib.error.HTTPError(url="http://x", code=500, msg="err", hdrs=None, fp=None)
+    http_err_2 = urllib.error.HTTPError(url="http://x", code=429, msg="err", hdrs=None, fp=None)
+    http_err_3 = urllib.error.HTTPError(url="http://x", code=503, msg="err", hdrs=None, fp=None)
+
+    models = ["ag/gemini-a", "ag/gemini-b", "ag/gemini-c"]
+    with (
+        mock.patch("phone_runner.vision_verify.get_vision_models", return_value=models),
+        mock.patch("urllib.request.urlopen", side_effect=[http_err_1, http_err_2, http_err_3]),
+    ):
+        ans, model, detail = ask_vision(FAKE_PNG, "prompt")
+
+    assert ans is None
+    assert model == ""
+    assert "all vision models failed" in detail
+    # All three candidates must appear in trace
+    assert "ag/gemini-a" in detail
+    assert "ag/gemini-b" in detail
+    assert "ag/gemini-c" in detail
+    assert "http_error:500" in detail
+    assert "http_error:429" in detail
+    assert "http_error:503" in detail
+
+
+def test_trace_includes_model_duration_and_http_status():
+    """Trace entries must contain model name, elapsed time, and numeric HTTP status."""
+    http_err = urllib.error.HTTPError(url="http://x", code=502, msg="Bad Gateway", hdrs=None, fp=None)
+    success_resp = _make_success_resp({
+        "choices": [{"message": {"content": '{"screen": "other"}'}}]
+    })
+
+    with (
+        mock.patch("phone_runner.vision_verify.get_vision_models",
+                   return_value=["ag/gemini-a", "ag/gemini-b"]),
+        mock.patch("urllib.request.urlopen", side_effect=[http_err, success_resp]),
+    ):
+        ans, model, detail = ask_vision(FAKE_PNG, "prompt")
+
+    assert ans is not None
+    # detail must reference the failed model ID and its HTTP status code
+    assert "ag/gemini-a" in detail
+    assert "502" in detail
+    # elapsed time in seconds present (format: <float>s)
+    assert "s" in detail
+
+
+def test_trace_does_not_include_sensitive_data():
+    """Trace must not contain exception messages, response bodies, or secret-like strings."""
+    secret = "super-secret-token-xyz"
+    exc_msg = "Connection refused to backend"
+
+    class LeakyError(Exception):
+        pass
+
+    def urlopen_raises(req, timeout=None):
+        raise LeakyError(exc_msg)
+
+    with (
+        mock.patch("phone_runner.vision_verify.get_vision_models",
+                   return_value=["ag/gemini-only"]),
+        mock.patch("urllib.request.urlopen", side_effect=urlopen_raises),
+        mock.patch.dict("os.environ", {"OPENAI_API_KEY": secret}),
+    ):
+        ans, model, detail = ask_vision(FAKE_PNG, "prompt")
+
+    assert ans is None
+    assert exc_msg not in detail
+    assert secret not in detail
+    # Exception class name is allowed, message is not
+    assert "LeakyError" in detail
+
+
+def test_per_candidate_timeout_is_25s_and_budget_is_110s():
+    """Confirm constant values for timeout and budget."""
+    assert VISION_MODEL_TIMEOUT_SECONDS == 25.0
+    assert VISION_GATE_BUDGET_SECONDS == 110.0
+
+
+def test_fallback_through_four_candidates_with_25s_timeout():
+    """Mocks four candidates, three HTTP errors then valid JSON, asserting 25.0s per model."""
+    four_candidates = [
+        "FlashFast",
+        "ag/gemini-3.8-flash-medium",
+        "ag/gemini-3.8-flash-low",
+        "ag/gemini-3.8-flash-high",
+    ]
+    captured_timeouts: list[float | None] = []
+
+    def mock_urlopen(req, timeout=None):
+        captured_timeouts.append(timeout)
+        if len(captured_timeouts) <= 3:
+            raise urllib.error.HTTPError(
+                url="http://x", code=500 + len(captured_timeouts), msg="err", hdrs=None, fp=None
+            )
+        return _make_success_resp({
+            "choices": [{"message": {"content": '{"screen": "composer", "author_name": "Agung"}'}}]
+        })
+
+    with (
+        mock.patch("phone_runner.vision_verify.get_vision_models", return_value=four_candidates),
+        mock.patch("urllib.request.urlopen", side_effect=mock_urlopen) as patched_urlopen,
+    ):
+        ans, model, detail = ask_vision(FAKE_PNG, "prompt")
+
+    assert len(captured_timeouts) == 4
+    assert captured_timeouts == [25.0, 25.0, 25.0, 25.0]
+    assert [call.kwargs.get("timeout") for call in patched_urlopen.call_args_list] == [25.0, 25.0, 25.0, 25.0]
+    assert model == "ag/gemini-3.8-flash-high"
+    assert ans == {"screen": "composer", "author_name": "Agung"}
+    assert "ok;winner=ag/gemini-3.8-flash-high" in detail
+    assert "prior_failures" in detail
+
+
+def test_trace_includes_success_outcome_and_elapsed_first_model():
+    """When first model succeeds, detail includes its success outcome and elapsed seconds."""
+    success_resp = _make_success_resp({
+        "choices": [{"message": {"content": '{"screen": "composer"}'}}]
+    })
+
+    with (
+        mock.patch("phone_runner.vision_verify.get_vision_models",
+                   return_value=["ag/gemini-only"]),
+        mock.patch("urllib.request.urlopen", return_value=success_resp),
+    ):
+        ans, model, detail = ask_vision(FAKE_PNG, "prompt")
+
+    assert ans == {"screen": "composer"}
+    assert model == "ag/gemini-only"
+    # Winner's success outcome and elapsed must be in detail
+    assert "ok;winner=ag/gemini-only" in detail
+    assert ":success:" in detail
+    assert detail.endswith("s") or "s" in detail  # elapsed seconds present
+    # No prior_failures section when first model wins
+    assert "prior_failures" not in detail
+
+
+# ---------------------------------------------------------------------------
+# Image shrinking before vision requests (9Router HTTP 413 above ~4-5 MB, 2026-10-31)
+# ---------------------------------------------------------------------------
+
+def _image_urls_from_request(req) -> list[str]:
+    body = json.loads(req.data.decode("utf-8"))
+    parts = body["messages"][0]["content"]
+    return [p["image_url"]["url"] for p in parts if p.get("type") == "image_url"]
+
+
+def _composer_success_resp():
+    return _make_success_resp({"choices": [{"message": {"content": '{"screen": "composer"}'}}]})
+
+
+def test_shrink_constants():
+    assert VISION_SCREENSHOT_MAX_SIDE == 2000
+    assert VISION_REFERENCE_MAX_SIDE == 1280
+    assert VISION_MAX_IMAGE_BYTES == 3_000_000
+    assert VISION_SHRINK_TIMEOUT_SECONDS == 20.0
+
+
+def test_shrink_for_vision_runs_ffmpeg_with_scale_filter():
+    fake_jpeg = b"\xff\xd8small-jpeg"
+    with (
+        mock.patch("phone_runner.vision_verify.shutil.which", return_value="/usr/bin/ffmpeg"),
+        mock.patch(
+            "phone_runner.vision_verify.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout=fake_jpeg, stderr=b""),
+        ) as mock_run,
+    ):
+        result = _shrink_for_vision(FAKE_PNG, 2000)
+
+    assert result == (fake_jpeg, "image/jpeg")
+    args, kwargs = mock_run.call_args
+    cmd = args[0]
+    assert cmd[0] == "/usr/bin/ffmpeg"
+    assert cmd[cmd.index("-i") + 1] == "pipe:0"
+    assert cmd[-1] == "pipe:1"
+    assert cmd[cmd.index("-frames:v") + 1] == "1"
+    assert cmd[cmd.index("-c:v") + 1] == "mjpeg"
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "min(iw,2000)" in vf and "min(ih,2000)" in vf
+    assert kwargs["input"] == FAKE_PNG
+    assert kwargs["capture_output"] is True
+    assert kwargs["timeout"] == VISION_SHRINK_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize(
+    "which, run_result",
+    [
+        (None, None),
+        ("/usr/bin/ffmpeg", subprocess.CompletedProcess(args=[], returncode=1, stdout=b"", stderr=b"bad")),
+        ("/usr/bin/ffmpeg", subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")),
+        ("/usr/bin/ffmpeg", subprocess.TimeoutExpired(cmd="ffmpeg", timeout=20.0)),
+    ],
+)
+def test_shrink_for_vision_returns_none_on_failure(which, run_result):
+    side_effect = run_result if isinstance(run_result, Exception) else None
+    with (
+        mock.patch("phone_runner.vision_verify.shutil.which", return_value=which),
+        mock.patch(
+            "phone_runner.vision_verify.subprocess.run",
+            return_value=run_result,
+            side_effect=side_effect,
+        ) as mock_run,
+    ):
+        assert _shrink_for_vision(FAKE_PNG, 2000) is None
+    if which is None:
+        mock_run.assert_not_called()
+
+
+def test_ask_vision_sends_shrunk_jpegs_with_right_max_sides():
+    calls: list[int] = []
+
+    def fake_shrink(data, max_side):
+        calls.append(max_side)
+        return b"small-" + data[:4], "image/jpeg"
+
+    with (
+        mock.patch("phone_runner.vision_verify._shrink_for_vision", side_effect=fake_shrink),
+        mock.patch("phone_runner.vision_verify.get_vision_models", return_value=["ag/gemini-only"]),
+        mock.patch("urllib.request.urlopen", return_value=_composer_success_resp()) as mock_open,
+    ):
+        ans, _model, _detail = ask_vision(FAKE_PNG, "prompt", reference_jpeg=b"\xff\xd8reference")
+
+    assert ans == {"screen": "composer"}
+    assert calls == [VISION_SCREENSHOT_MAX_SIDE, VISION_REFERENCE_MAX_SIDE]
+    urls = _image_urls_from_request(mock_open.call_args[0][0])
+    assert len(urls) == 2
+    assert all(u.startswith("data:image/jpeg;base64,") for u in urls)
+    assert base64.b64decode(urls[0].split(",", 1)[1]) == b"small-" + FAKE_PNG[:4]
+    assert base64.b64decode(urls[1].split(",", 1)[1]) == b"small-\xff\xd8re"
+
+
+def test_ask_vision_runs_real_shrink_through_mocked_ffmpeg():
+    with (
+        mock.patch("phone_runner.vision_verify.shutil.which", return_value="/usr/bin/ffmpeg"),
+        mock.patch(
+            "phone_runner.vision_verify.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout=b"\xff\xd8jpeg", stderr=b""),
+        ) as mock_run,
+        mock.patch("phone_runner.vision_verify.get_vision_models", return_value=["ag/gemini-only"]),
+        mock.patch("urllib.request.urlopen", return_value=_composer_success_resp()) as mock_open,
+    ):
+        ans, _model, _detail = ask_vision(FAKE_PNG, "prompt", reference_jpeg=b"\xff\xd8reference")
+
+    assert ans == {"screen": "composer"}
+    filters = [c.args[0][c.args[0].index("-vf") + 1] for c in mock_run.call_args_list]
+    assert len(filters) == 2
+    assert "min(iw,2000)" in filters[0]
+    assert "min(iw,1280)" in filters[1]
+    urls = _image_urls_from_request(mock_open.call_args[0][0])
+    assert [u.split(",", 1)[0] for u in urls] == ["data:image/jpeg;base64", "data:image/jpeg;base64"]
+
+
+def test_ask_vision_sends_originals_when_shrink_unavailable():
+    reference = b"\xff\xd8reference"
+    with (
+        mock.patch("phone_runner.vision_verify.shutil.which", return_value=None),
+        mock.patch("phone_runner.vision_verify.get_vision_models", return_value=["ag/gemini-only"]),
+        mock.patch("urllib.request.urlopen", return_value=_composer_success_resp()) as mock_open,
+    ):
+        ans, _model, _detail = ask_vision(FAKE_PNG, "prompt", reference_jpeg=reference)
+
+    assert ans == {"screen": "composer"}
+    urls = _image_urls_from_request(mock_open.call_args[0][0])
+    assert urls == [
+        "data:image/png;base64," + base64.b64encode(FAKE_PNG).decode("ascii"),
+        "data:image/jpeg;base64," + base64.b64encode(reference).decode("ascii"),
+    ]
+
+
+def test_ask_vision_shrinks_again_with_half_sides_when_still_too_big():
+    calls: list[int] = []
+
+    def fake_shrink(data, max_side):
+        calls.append(max_side)
+        if len(calls) <= 2:
+            return b"x" * (VISION_MAX_IMAGE_BYTES // 2 + 1), "image/jpeg"
+        return b"y" * 10, "image/jpeg"
+
+    with (
+        mock.patch("phone_runner.vision_verify._shrink_for_vision", side_effect=fake_shrink),
+        mock.patch("phone_runner.vision_verify.get_vision_models", return_value=["ag/gemini-only"]),
+        mock.patch("urllib.request.urlopen", return_value=_composer_success_resp()) as mock_open,
+    ):
+        ans, _model, _detail = ask_vision(FAKE_PNG, "prompt", reference_jpeg=b"\xff\xd8reference")
+
+    assert ans == {"screen": "composer"}
+    assert calls == [
+        VISION_SCREENSHOT_MAX_SIDE,
+        VISION_REFERENCE_MAX_SIDE,
+        VISION_SCREENSHOT_MAX_SIDE // 2,
+        VISION_REFERENCE_MAX_SIDE // 2,
+    ]
+    urls = _image_urls_from_request(mock_open.call_args[0][0])
+    assert all(base64.b64decode(u.split(",", 1)[1]) == b"y" * 10 for u in urls)
+
+
+def test_ask_vision_no_second_shrink_when_within_limit():
+    calls: list[int] = []
+
+    def fake_shrink(data, max_side):
+        calls.append(max_side)
+        return b"z" * 100, "image/jpeg"
+
+    with (
+        mock.patch("phone_runner.vision_verify._shrink_for_vision", side_effect=fake_shrink),
+        mock.patch("phone_runner.vision_verify.get_vision_models", return_value=["ag/gemini-only"]),
+        mock.patch("urllib.request.urlopen", return_value=_composer_success_resp()),
+    ):
+        ask_vision(FAKE_PNG, "prompt")
+
+    # No reference photo → only the screenshot is shrunk, and only once
+    assert calls == [VISION_SCREENSHOT_MAX_SIDE]
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_shrink_for_vision_real_ffmpeg_round_trip():
+    gen = subprocess.run(
+        [
+            shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=red:s=3000x1500",
+            # Noise so the PNG is large like a real screenshot; a flat red PNG is only ~16 KB.
+            "-vf", "noise=alls=30:allf=u",
+            "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    assert gen.returncode == 0 and gen.stdout.startswith(b"\x89PNG")
+    source = gen.stdout
+
+    result = _shrink_for_vision(source, 2000)
+
+    assert result is not None
+    jpeg, mime = result
+    assert mime == "image/jpeg"
+    assert jpeg.startswith(b"\xff\xd8")
+    assert len(jpeg) < len(source)
+
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        return
+    probe = subprocess.run(
+        [
+            ffprobe, "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", "-i", "pipe:0",
+        ],
+        input=jpeg,
+        capture_output=True,
+        timeout=30,
+    )
+    assert probe.returncode == 0
+    assert probe.stdout.decode().strip() == "2000x1000"

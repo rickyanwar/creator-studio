@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 import subprocess
 import time
 from typing import Any
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -16,9 +18,16 @@ from phone_runner.config import (
     is_serial_valid_format,
 )
 
-# One hung model must not eat the whole gate (a real run lost its 40 s budget to one stuck call).
+# Bound each model attempt so a stalled candidate cannot consume the full fallback gate.
+# Four candidates × 25 seconds = 100 seconds, leaving 10 seconds of overhead inside the 110 s gate.
 VISION_MODEL_TIMEOUT_SECONDS = 25.0
-VISION_GATE_BUDGET_SECONDS = 90.0
+VISION_GATE_BUDGET_SECONDS = 110.0
+
+# 9Router rejects request bodies above ~4-5 MB with HTTP 413 (2026-10-31), so images are shrunk to JPEG first.
+VISION_SCREENSHOT_MAX_SIDE = 2000
+VISION_REFERENCE_MAX_SIDE = 1280
+VISION_MAX_IMAGE_BYTES = 3_000_000   # both images together, before base64
+VISION_SHRINK_TIMEOUT_SECONDS = 20.0
 
 # Owner rule 2026-10-17 (FINAL): vision uses ONLY the FlashFast combo (= gemini-3.8-flash
 # medium/low/high) and those three ids. Never My-Combo (it can route to Claude, which ignores images).
@@ -147,6 +156,39 @@ def strip_json_fences(text: str) -> str:
     return s
 
 
+def _shrink_for_vision(data: bytes, max_side: int) -> tuple[bytes, str] | None:
+    """Re-encode an image as one JPEG whose longest side is at most max_side (never enlarged).
+    Returns None when ffmpeg is missing, fails, times out or returns nothing."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    m = int(max_side)
+    scale = f"scale='if(gte(iw,ih),min(iw,{m}),-2)':'if(gte(iw,ih),-2,min(ih,{m}))'"
+    cmd = [
+        ffmpeg, "-hide_banner", "-loglevel", "error",
+        "-i", "pipe:0",
+        "-vf", scale,
+        "-frames:v", "1", "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3",
+        "pipe:1",
+    ]
+    try:
+        proc = subprocess.run(cmd, input=data, capture_output=True, timeout=VISION_SHRINK_TIMEOUT_SECONDS)
+    except Exception:
+        return None
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    return proc.stdout, "image/jpeg"
+
+
+def _prepare_vision_image(data: bytes, original_mime: str, max_side: int) -> tuple[bytes, str]:
+    """Shrunk JPEG when possible, otherwise the original bytes with their own MIME type."""
+    return _shrink_for_vision(data, max_side) or (data, original_mime)
+
+
+def _data_url(data: bytes, mime: str) -> str:
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
 def ask_vision(
     png: bytes,
     prompt: str,
@@ -158,28 +200,41 @@ def ask_vision(
     if not models:
         return None, "", "no vision models available"
 
-    b64_png = base64.b64encode(png).decode("ascii")
+    screen_img = _prepare_vision_image(png, "image/png", VISION_SCREENSHOT_MAX_SIDE)
+    ref_img = (
+        _prepare_vision_image(reference_jpeg, "image/jpeg", VISION_REFERENCE_MAX_SIDE)
+        if reference_jpeg else None
+    )
+    if len(screen_img[0]) + (len(ref_img[0]) if ref_img else 0) > VISION_MAX_IMAGE_BYTES:
+        # Still too big for 9Router: shrink the originals again with half the max sides.
+        screen_img = _shrink_for_vision(png, VISION_SCREENSHOT_MAX_SIDE // 2) or screen_img
+        if ref_img and reference_jpeg:
+            ref_img = _shrink_for_vision(reference_jpeg, VISION_REFERENCE_MAX_SIDE // 2) or ref_img
+
     content_parts: list[dict[str, Any]] = [
         {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_png}"}},
+        {"type": "image_url", "image_url": {"url": _data_url(*screen_img)}},
     ]
-    if reference_jpeg:
-        b64_ref = base64.b64encode(reference_jpeg).decode("ascii")
-        content_parts.append(
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_ref}"}}
-        )
+    if ref_img:
+        content_parts.append({"type": "image_url", "image_url": {"url": _data_url(*ref_img)}})
 
     gateway = get_mobilerun_gateway_url().rstrip("/")
     url = f"{gateway}/chat/completions"
     api_key = os.environ.get("OPENAI_API_KEY", "")
 
+    # Bounded attempt trace: one entry per candidate reached.
+    # Each entry: {"model": str, "elapsed_s": float, "outcome": str}
+    # outcome is one of: "success", "timeout", "http_error:<status>", "<ExcClassName>"
+    # No exception messages, response bodies, URLs, payloads, or tokens ever appear here.
+    trace: list[dict] = []
+
     started = time.monotonic()
-    last_detail = "no models attempted"
     for model in models:
         elapsed = time.monotonic() - started
         remaining_budget = total_budget - elapsed
         if remaining_budget <= 0:
-            return None, "", "vision budget exhausted"
+            detail = _format_trace_exhausted(trace, "vision budget exhausted")
+            return None, "", detail
 
         per_model_timeout = min(timeout, remaining_budget)
         payload = {
@@ -204,31 +259,67 @@ def ask_vision(
             },
             method="POST",
         )
+        t0 = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=per_model_timeout) as resp:
                 raw_bytes = resp.read()
                 resp_json = json.loads(raw_bytes.decode("utf-8"))
                 choices = resp_json.get("choices")
+                candidate_elapsed = round(time.monotonic() - t0, 2)
                 if not choices or not isinstance(choices, list):
-                    last_detail = f"model {model} returned no choices"
+                    trace.append({"model": model, "elapsed_s": candidate_elapsed, "outcome": "parse_error:no_choices"})
                     continue
                 content = choices[0].get("message", {}).get("content", "")
                 if not content or not isinstance(content, str):
-                    last_detail = f"model {model} returned empty content"
+                    trace.append({"model": model, "elapsed_s": candidate_elapsed, "outcome": "parse_error:empty_content"})
                     continue
                 cleaned = strip_json_fences(content)
                 parsed = json.loads(cleaned)
                 if isinstance(parsed, dict):
-                    return parsed, model, "ok"
-                last_detail = f"model {model} returned non-dict JSON"
+                    trace.append({"model": model, "elapsed_s": candidate_elapsed, "outcome": "success"})
+                    detail = _format_trace_success(model, trace)
+                    return parsed, model, detail
+                trace.append({"model": model, "elapsed_s": candidate_elapsed, "outcome": "parse_error:non_dict_json"})
+        except urllib.error.HTTPError as exc:
+            candidate_elapsed = round(time.monotonic() - t0, 2)
+            trace.append({"model": model, "elapsed_s": candidate_elapsed, "outcome": f"http_error:{exc.code}"})
+        except TimeoutError:
+            candidate_elapsed = round(time.monotonic() - t0, 2)
+            trace.append({"model": model, "elapsed_s": candidate_elapsed, "outcome": "timeout"})
         except Exception as exc:
-            last_detail = f"model {model} error: {type(exc).__name__}"
-            continue
+            candidate_elapsed = round(time.monotonic() - t0, 2)
+            # Only the exception class name — no message, no URL, no body.
+            trace.append({"model": model, "elapsed_s": candidate_elapsed, "outcome": type(exc).__name__})
 
     if time.monotonic() - started >= total_budget:
-        return None, "", "vision budget exhausted"
+        detail = _format_trace_exhausted(trace, "vision budget exhausted")
+        return None, "", detail
 
-    return None, "", f"all vision models failed; last detail: {last_detail}"
+    detail = _format_trace_exhausted(trace, "all vision models failed")
+    return None, "", detail
+
+
+def _format_trace_success(winning_model: str, trace: list[dict]) -> str:
+    """Return a safe detail string for a successful vision call."""
+    prior = [e for e in trace if e.get("outcome") != "success"]
+    winner_entry = next((e for e in trace if e.get("outcome") == "success"), None)
+    winner_elapsed = winner_entry["elapsed_s"] if winner_entry else 0.0
+    if not prior:
+        return f"ok;winner={winning_model}:success:{winner_elapsed}s"
+    prior_str = ";".join(
+        f"{e['model']}:{e['outcome']}:{e['elapsed_s']}s" for e in prior
+    )
+    return f"ok;winner={winning_model}:success:{winner_elapsed}s;prior_failures={prior_str}"
+
+
+def _format_trace_exhausted(trace: list[dict], reason: str) -> str:
+    """Return a safe detail string when no candidate succeeded."""
+    if not trace:
+        return reason
+    attempts_str = ";".join(
+        f"{e['model']}:{e['outcome']}:{e['elapsed_s']}s" for e in trace
+    )
+    return f"{reason};attempts={attempts_str}"
 
 
 def _normalize_vision_text(t: str | None) -> str:
