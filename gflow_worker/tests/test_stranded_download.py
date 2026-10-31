@@ -204,3 +204,39 @@ def test_stranded_candidates_unit_filters_and_sorts(runner, monkeypatch):
     ])
     res = runner.gflow.stranded_candidates(profile="prof", project="p1", submit_time=submit_time)
     assert [c["media_id"] for c in res] == ["naive-created"]
+
+
+def test_billed_clip_with_redirected_download_link_is_recovered_not_failed(cfg, studio, runner, monkeypatch):
+    """Flow made (and billed) the clip but its signed link answered 302: recover it with
+    `data download` instead of failing the job and paying for the clip again."""
+    runner._sleep = lambda s: None
+    i2v_calls = []
+
+    def mock_i2v(*args, **kwargs):
+        i2v_calls.append((args, kwargs))
+        return GflowResult(
+            ok=False,
+            payload={"error": {"media_id": "billed-302"}},
+            exit_code=6,
+            error_class="MediaDownloadError",
+            retryable=False,
+            message="migrated host: signed media URL returned HTTP 302",
+        )
+
+    monkeypatch.setattr(runner.gflow, "i2v", mock_i2v)
+    downloaded = []
+    orig_download = runner.gflow.download_media
+
+    def mock_download(media_id, profile, out):
+        downloaded.append(media_id)
+        return orig_download(media_id, profile=profile, out=out)
+
+    monkeypatch.setattr(runner.gflow, "download_media", mock_download)
+
+    runner.run_job(payload(2))
+
+    assert not studio.events("/fail")
+    assert len(i2v_calls) == 1
+    assert downloaded == ["billed-302"]
+    clip_done_events = [e for e in studio.events("/progress") if e["event"] == "clip_done"]
+    assert clip_done_events[1]["media_id"] == "billed-302"

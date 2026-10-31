@@ -13,7 +13,9 @@ from .state import JobState
 log = logging.getLogger(__name__)
 
 SUBMIT_NO_REPLY = "of clicking submit"
-SUBMITTED_ERRORS = ("clicking submit", "no signed media URL")   # Flow got the prompt; the clip may still appear
+# Flow got the prompt; the clip may still appear. "signed media URL returned HTTP" = the clip is done and billed,
+# only its download link answered a redirect (e.g. 302); `data download` fetches a fresh link for free.
+SUBMITTED_ERRORS = ("clicking submit", "no signed media URL", "signed media URL returned HTTP")
 STRANDED_WAIT_S = 240        # how long to wait for a stranded clip to finish
 STRANDED_POLL_S = 30         # interval in seconds between checks for a stranded clip
 PRE_SUBMIT_RETRY_DELAY_S = (45, 120)   # random pause before the one in-process retry (anti-bot jitter)
