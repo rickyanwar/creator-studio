@@ -57,7 +57,7 @@ VideoIdea (status: proposed / pilot / approved)
 | :--- | :--- | :--- | :--- | :--- |
 | `owner` | `POST /ai-video/ideas` | `approved` | Clips must be in template options; immediate approval; no score required | `ai_video_ideas.py:71` |
 | `hermes` | `POST /hermes/video-ideas` | `proposed` | Requires `score` (0-100) and `rationale`; max 30 proposed per page; 30d topic dedup | `ai_video_ideas.py:60` |
-| `ai` (in-app) | `top_up_ai_video_ideas` | `proposed` | Off when `ai_video_researcher == 'muse'`, except for pages with an empty bank and no Muse idea for `MUSE_DRY_HOURS` (6 h); batch <= 4; 30d topic avoidance | `ai_video_plan.py:134` |
+| `ai` (in-app) | `top_up_ai_video_ideas` (gallery queue; ChatGPT gpt-cli `/v1/text` first, 9Router Gemini Flash fallback) | `proposed` | Off when `ai_video_researcher == 'muse'`, except for pages with an empty bank and no Muse idea for `MUSE_DRY_HOURS` (6 h); batch <= 4; 30d topic avoidance | `ai_video_plan.py:134` |
 | `muse` | `POST /research/packs` | `pilot` or `approved` | Multi-channel pack; pilot mode holds as `pilot`; live mode auto-approves if score >= min | `research_desk.py:347` |
 
 ### 2.2 VideoIdea State Machine
@@ -204,6 +204,7 @@ Implemented in `gflow_worker/proxy_guard.py`:
 - `is_proxy_reachable(proxy_url, timeout=2.0)` tests TCP connect to host and SOCKS5 port (1080) (`proxy_guard.py:12`).
 - Auto-heal routine (`revive_phone_proxy`, line 28): Runs `adb connect 100.64.96.50:5555`, sleeps 1s, runs `adb shell am start-foreground-service -a hev.socks5.START hev.socks5/.Socks5Service`.
 - Fail-Closed Gate (`ensure_proxy_ready`, line 51): If proxy unreachable, attempts auto-heal once. If still unreachable, raises `RuntimeError` (`proxy_guard.py:76`). Prevents launching gflow or probes, shielding residential accounts from datacenter IP exposure.
+- The CLI env carries the proxy as `GFLOW_PROXY` / `GFLOW_SOCKS5_PROXY` / `ALL_PROXY` / `HTTP(S)_PROXY` (read by the hand-patched gflow-cli 0.86.0 at `/home/gflow/gflow-cli-0832`) and `GFLOW_CLI_BROWSER_PROXY` (read natively by gflow-cli >= 0.88; v0.92.1 is installed side by side at `/home/gflow/gflow-cli-0921`, no patches needed) (`gflow_worker/gflow.py` `run`, `list_videos`, `recover_from_project`).
 
 ### 5.4 Playwright UI Credit Probe
 Implemented in `gflow_worker/probe_credits.py`:

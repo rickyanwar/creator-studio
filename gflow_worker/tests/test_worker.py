@@ -503,6 +503,7 @@ def test_gflow_runner_passes_proxy_env(cfg, monkeypatch):
     assert res.ok
     assert passed_env.get("GFLOW_PROXY") == "socks5://100.64.96.50:1080"
     assert passed_env.get("ALL_PROXY") == "socks5://100.64.96.50:1080"
+    assert passed_env.get("GFLOW_CLI_BROWSER_PROXY") == "socks5://100.64.96.50:1080"
 
 
 def test_gflow_runner_fails_closed_when_proxy_unreachable(cfg, monkeypatch):

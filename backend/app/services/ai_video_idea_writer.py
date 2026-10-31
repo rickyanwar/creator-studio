@@ -1,4 +1,5 @@
-"""In-app writer that tops up the Mode 8 video idea queue via 9Router."""
+"""In-app writer that tops up the Mode 8 video idea queue via ChatGPT (gpt-cli) first, 9Router as fallback."""
+import hashlib
 import json
 import logging
 import re
@@ -7,9 +8,20 @@ from datetime import datetime, timedelta, timezone
 from app.models.ai_video import VideoIdea
 from app.services import news_copywriter
 from app.services.ai_video_ideas import ConflictError, LimitExceededError, create_idea
+from app.services.gptcli_client import generate_text, get_gptcli_config, gptcli_unavailable_until
 from app.services.video_templates import allowed_video_templates, clip_choices, fanpage_niche, get_template, list_templates
 
 logger = logging.getLogger(__name__)
+
+# ChatGPT (gpt-cli /v1/text) writes the ideas first; 9Router Gemini Flash is the fallback (owner 2026-10-31).
+CHATGPT_IDEA_MAX_WAIT_S = 300
+CHATGPT_IDEA_PREFIX = (
+    "Think hard before you answer.\n"
+    "Accuracy comes first: only build an idea on facts you are certain are true. If you are not sure a fact, "
+    "number, record, date or quote is true, pick a different topic instead of guessing. Never invent statistics, "
+    "records, quotes or dates.\n"
+    "Reply with the JSON only, exactly in the format asked below.\n\n"
+)
 
 IDEA_SOURCE = "ai"
 MAX_IDEAS_PER_RUN = 4
@@ -156,6 +168,37 @@ def parse_ideas(raw: str, allowed_clips: dict[str, list[int]], count: int) -> li
     return kept
 
 
+def _ideas_via_chatgpt(db, prompt: str, allowed: dict[str, list[int]], count: int) -> list[dict] | None:
+    try:
+        cfg = get_gptcli_config(db)
+    except Exception as exc:
+        logger.warning("Mode 8 idea writer: failed to get gptcli config (%s)", exc)
+        return None
+
+    if cfg is None or not cfg.token or not cfg.base_url:
+        logger.debug("Mode 8 idea writer: ChatGPT not configured, skipping")
+        return None
+
+    resting_until = gptcli_unavailable_until()
+    if resting_until is not None:
+        logger.info("ChatGPT resting until %s", resting_until)
+        return None
+
+    try:
+        request_id = "ideas-" + hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:16]
+        resp = generate_text(
+            cfg,
+            CHATGPT_IDEA_PREFIX + prompt,
+            request_id=request_id,
+            max_wait_s=CHATGPT_IDEA_MAX_WAIT_S,
+        )
+        ideas = parse_ideas(resp.text, allowed, count)
+        return ideas
+    except Exception as exc:
+        logger.warning("Mode 8 idea writer: ChatGPT failed (%s); falling back to 9Router", exc)
+        return None
+
+
 def write_ideas(db, fanpage, count: int) -> int:
     count = min(count, MAX_IDEAS_PER_RUN)
     if count <= 0:
@@ -167,12 +210,16 @@ def write_ideas(db, fanpage, count: int) -> int:
     avoid = recent_topics(db)
     prompt = build_idea_prompt(fanpage, templates, avoid, count)
     allowed = {t.key: clip_choices(fanpage, t) for t in templates}
-    ideas, _provider = news_copywriter._generate_with_fallback(
-        prompt,
-        lambda raw: parse_ideas(raw, allowed, count),
-        context="ai_video_idea_writer",
-        fanpage_id=fanpage.id,
-    )
+    ideas = _ideas_via_chatgpt(db, prompt, allowed, count)
+    provider = "chatgpt"
+    if ideas is None:
+        ideas, provider = news_copywriter._generate_with_fallback(
+            prompt,
+            lambda raw: parse_ideas(raw, allowed, count),
+            context="ai_video_idea_writer",
+            fanpage_id=fanpage.id,
+        )
+    logger.info("Mode 8 idea writer: fanpage %s got %s idea(s) from %s", fanpage.id, len(ideas), provider)
     created = 0
     for idea in ideas:
         try:

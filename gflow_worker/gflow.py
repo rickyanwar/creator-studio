@@ -92,6 +92,7 @@ class GflowRunner:
         env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
         if self.cfg.proxy:
             env["GFLOW_PROXY"] = self.cfg.proxy
+            env["GFLOW_CLI_BROWSER_PROXY"] = self.cfg.proxy  # gflow-cli >= 0.88 reads this one
             env["GFLOW_SOCKS5_PROXY"] = self.cfg.proxy
             env["ALL_PROXY"] = self.cfg.proxy
             env["HTTP_PROXY"] = self.cfg.proxy
@@ -158,6 +159,7 @@ class GflowRunner:
         env = {k: v for k, v in os.environ.items() if k != "GFLOW_WORKER_TOKEN"}
         if self.cfg.proxy:
             env["GFLOW_PROXY"] = self.cfg.proxy
+            env["GFLOW_CLI_BROWSER_PROXY"] = self.cfg.proxy  # gflow-cli >= 0.88 reads this one
             env["GFLOW_SOCKS5_PROXY"] = self.cfg.proxy
             env["ALL_PROXY"] = self.cfg.proxy
             env["HTTP_PROXY"] = self.cfg.proxy
@@ -254,6 +256,7 @@ class GflowRunner:
         env["GFLOW_CLI_PROFILE"] = profile
         if self.cfg.proxy:
             env["GFLOW_PROXY"] = self.cfg.proxy
+            env["GFLOW_CLI_BROWSER_PROXY"] = self.cfg.proxy  # gflow-cli >= 0.88 reads this one
             env["GFLOW_SOCKS5_PROXY"] = self.cfg.proxy
             env["ALL_PROXY"] = self.cfg.proxy
             env["HTTP_PROXY"] = self.cfg.proxy

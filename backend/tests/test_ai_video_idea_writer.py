@@ -1,17 +1,57 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine as _create_engine, text as _text, DefaultClause as _DefaultClause
+from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler as _SQLiteTypeCompiler
+from sqlalchemy.pool import StaticPool as _StaticPool
+from sqlalchemy.orm import sessionmaker as _sessionmaker
 
 from app.database import Base, SessionLocal, engine
 from app.models.ai_video import VideoIdea
 from app.models.target_fanpages import TargetFanpage
 
+sqlite3.register_adapter(list, json.dumps)
+sqlite3.register_adapter(dict, json.dumps)
+_SQLiteTypeCompiler.visit_ARRAY = lambda self, type_, **kw: "TEXT"
+
+try:
+    with engine.connect():
+        pass
+    _USE_SQLITE = False
+except Exception:
+    _USE_SQLITE = True
+
+if _USE_SQLITE:
+    from app.models.social_publishing import SocialDestination
+    from app.models.settings import Settings
+
+    for _col_name in ["mode2_gallery_keywords", "mode2_gallery_niches", "radar_niches", "caption_must_include", "caption_must_avoid"]:
+        _col = TargetFanpage.__table__.columns.get(_col_name)
+        if _col is not None:
+            _col.server_default = _DefaultClause(_text("''"))
+
+    _col = SocialDestination.__table__.columns.get("supported_media")
+    if _col is not None:
+        _col.server_default = None
+
+    _test_engine = _create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=_StaticPool,
+    )
+    for _tbl in [TargetFanpage.__table__, VideoIdea.__table__, Settings.__table__, SocialDestination.__table__]:
+        _tbl.create(bind=_test_engine)
+
+    SessionLocal = _sessionmaker(bind=_test_engine)
+
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_db():
-    Base.metadata.create_all(bind=engine)
+    if not _USE_SQLITE:
+        Base.metadata.create_all(bind=engine)
 
 
 @pytest.fixture
@@ -387,3 +427,205 @@ def test_create_idea_ai_source_requires_score_and_rationale(db_session, fanpage)
     }
     with pytest.raises(ValueError, match="Hermes and AI ideas require score and rationale"):
         create_idea(db_session, fanpage.id, data_no_rationale, source="ai")
+
+
+def test_write_ideas_uses_chatgpt_first(db_session, fanpage, monkeypatch):
+    from app.services import ai_video_idea_writer
+
+    cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
+    monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+
+    gen_calls = []
+    fake_reply = json.dumps({
+        "ideas": [
+            {
+                "template_key": "motorsport_tech_explainer",
+                "topic": "Active suspension roll control",
+                "angle": "How hydraulic actuators level the chassis in corners",
+                "score": 88,
+                "rationale": "Strong visual physics concept",
+            },
+            {
+                "template_key": "motorsport_tech_explainer",
+                "topic": "Blown diffuser aerodynamics",
+                "angle": "Exhaust gases energising floor downforce",
+                "score": 92,
+                "rationale": "Classic motorsport aero innovation",
+            },
+        ]
+    })
+
+    def fake_generate_text(c, p, *, request_id=None, max_wait_s=None):
+        gen_calls.append({"cfg": c, "prompt": p, "request_id": request_id, "max_wait_s": max_wait_s})
+        return SimpleNamespace(text=fake_reply, account="acc1", seconds=12.5)
+
+    monkeypatch.setattr(ai_video_idea_writer, "generate_text", fake_generate_text)
+
+    fallback_called = []
+
+    def fake_fallback(prompt, parse_fn, context=None, fanpage_id=None):
+        fallback_called.append(True)
+        return [], "fallback"
+
+    monkeypatch.setattr(ai_video_idea_writer.news_copywriter, "_generate_with_fallback", fake_fallback)
+
+    created_count = ai_video_idea_writer.write_ideas(db_session, fanpage, 2)
+    assert created_count == 2
+    assert len(fallback_called) == 0
+    assert len(gen_calls) == 1
+    assert gen_calls[0]["prompt"].startswith(ai_video_idea_writer.CHATGPT_IDEA_PREFIX)
+    assert gen_calls[0]["max_wait_s"] == 300
+
+    ideas = (
+        db_session.query(VideoIdea)
+        .filter(VideoIdea.fanpage_id == fanpage.id)
+        .order_by(VideoIdea.created_at.asc())
+        .all()
+    )
+    assert len(ideas) == 2
+    assert {i.topic for i in ideas} == {"Active suspension roll control", "Blown diffuser aerodynamics"}
+
+    db_session.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+    db_session.commit()
+
+
+def test_write_ideas_falls_back_when_chatgpt_errors(db_session, fanpage, monkeypatch):
+    from app.services import ai_video_idea_writer
+    from app.services.prompt_polish import PolishUnavailable
+
+    cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
+    monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+
+    def broken_generate(*a, **kw):
+        raise PolishUnavailable("upstream", "server 500")
+
+    monkeypatch.setattr(ai_video_idea_writer, "generate_text", broken_generate)
+
+    fallback_calls = []
+
+    def fake_fallback(prompt, parse_fn, context=None, fanpage_id=None):
+        fallback_calls.append(True)
+        return [
+            {
+                "template_key": "motorsport_tech_explainer",
+                "topic": "Fallback Topic From 9Router",
+                "angle": "Fallback Angle",
+                "score": 85,
+                "rationale": "Fallback Rationale",
+            }
+        ], "nine_router"
+
+    monkeypatch.setattr(ai_video_idea_writer.news_copywriter, "_generate_with_fallback", fake_fallback)
+
+    created_count = ai_video_idea_writer.write_ideas(db_session, fanpage, 1)
+    assert created_count == 1
+    assert len(fallback_calls) == 1
+
+    ideas = (
+        db_session.query(VideoIdea)
+        .filter(VideoIdea.fanpage_id == fanpage.id)
+        .all()
+    )
+    assert any(i.topic == "Fallback Topic From 9Router" for i in ideas)
+
+    db_session.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+    db_session.commit()
+
+
+def test_write_ideas_falls_back_on_unparsable_chatgpt_reply(db_session, fanpage, monkeypatch):
+    from app.services import ai_video_idea_writer
+
+    cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
+    monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+    monkeypatch.setattr(
+        ai_video_idea_writer,
+        "generate_text",
+        lambda *a, **kw: SimpleNamespace(text="sorry, I can't", account="acc1", seconds=1.0),
+    )
+
+    fallback_calls = []
+
+    def fake_fallback(prompt, parse_fn, context=None, fanpage_id=None):
+        fallback_calls.append(True)
+        return [
+            {
+                "template_key": "motorsport_tech_explainer",
+                "topic": "Unparsable Fallback Topic",
+                "angle": "Angle",
+                "score": 87,
+                "rationale": "Rationale",
+            }
+        ], "nine_router"
+
+    monkeypatch.setattr(ai_video_idea_writer.news_copywriter, "_generate_with_fallback", fake_fallback)
+
+    created_count = ai_video_idea_writer.write_ideas(db_session, fanpage, 1)
+    assert created_count == 1
+    assert len(fallback_calls) == 1
+
+    ideas = db_session.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).all()
+    assert any(i.topic == "Unparsable Fallback Topic" for i in ideas)
+
+    db_session.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+    db_session.commit()
+
+
+def test_write_ideas_skips_chatgpt_when_resting_or_unconfigured(db_session, fanpage, monkeypatch):
+    from app.services import ai_video_idea_writer
+
+    # (a) resting
+    cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
+    monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
+    resting_time = datetime.now(timezone.utc) + timedelta(minutes=30)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: resting_time)
+
+    gen_calls = []
+    monkeypatch.setattr(ai_video_idea_writer, "generate_text", lambda *a, **kw: gen_calls.append(True))
+
+    fallback_calls = []
+
+    def fake_fallback(prompt, parse_fn, context=None, fanpage_id=None):
+        fallback_calls.append(True)
+        return [
+            {
+                "template_key": "motorsport_tech_explainer",
+                "topic": "Resting Fallback Topic",
+                "angle": "Angle",
+                "score": 80,
+                "rationale": "Rationale",
+            }
+        ], "nine_router"
+
+    monkeypatch.setattr(ai_video_idea_writer.news_copywriter, "_generate_with_fallback", fake_fallback)
+
+    created_count = ai_video_idea_writer.write_ideas(db_session, fanpage, 1)
+    assert created_count == 1
+    assert len(gen_calls) == 0
+    assert len(fallback_calls) == 1
+
+    db_session.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+    db_session.commit()
+
+    # (b) config token empty
+    cfg_empty = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="")
+    monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg_empty)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+    fallback_calls.clear()
+
+    created_count = ai_video_idea_writer.write_ideas(db_session, fanpage, 1)
+    assert created_count == 1
+    assert len(gen_calls) == 0
+    assert len(fallback_calls) == 1
+
+    db_session.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id).delete()
+    db_session.commit()
+
+
+def test_top_up_task_routed_off_default_queue():
+    from app.tasks.celery_app import celery_app
+
+    assert celery_app.conf.task_routes.get("app.tasks.ai_video_plan.top_up_ai_video_ideas") == {"queue": "gallery"}
+
