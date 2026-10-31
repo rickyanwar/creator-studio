@@ -146,9 +146,9 @@ def test_running_job(cfg, studio):
     assert studio.events("/session") == []
 
 
-def test_renewed(cfg, studio, monkeypatch):
+def test_authenticated(cfg, studio, monkeypatch):
     now = datetime(2026, 10, 31, 3, 0, 0, tzinfo=timezone.utc)
-    monkeypatch.setenv("FAKE_GF_AUTH_P1", "renewed")
+    monkeypatch.setenv("FAKE_GF_AUTH_P1", "authenticated")
     monkeypatch.setenv("FAKE_GF_CREDITS_P1", "ok")
     monkeypatch.setenv("FAKE_GF_CREDITS_VAL_P1", "550")
     monkeypatch.setenv("FAKE_GF_CREDITS_EMAIL_P1", "destri@example.test")
@@ -177,7 +177,7 @@ def test_renewed(cfg, studio, monkeypatch):
     s = sessions[0]
     assert s["worker_id"] == cfg.worker_id
     assert s["profile"] == "p1"
-    assert s["result"] == "renewed"
+    assert s["result"] == "authenticated"
     assert s["credits"] == 550
     assert s["authenticated"] is True
     assert s["email"] == "destri@example.test"
@@ -249,7 +249,7 @@ def test_launch_error(cfg, studio, monkeypatch):
 
 def test_schedule_persists(cfg, studio, monkeypatch):
     now = datetime(2026, 10, 31, 3, 0, 0, tzinfo=timezone.utc)
-    monkeypatch.setenv("FAKE_GF_AUTH_P1", "renewed")
+    monkeypatch.setenv("FAKE_GF_AUTH_P1", "authenticated")
 
     worker1 = Worker(cfg, api=studio.api, clock=lambda: now)
     worker1.next_full_refresh = 999999999.0
@@ -271,5 +271,71 @@ def test_schedule_persists(cfg, studio, monkeypatch):
     # New worker instance in the same work_dir
     worker2 = Worker(cfg, api=studio.api, clock=lambda: now)
     assert worker2._keepalive_file_existed is True
-    assert worker2._keepalive_state["profiles"]["p1"]["last_result"] == "renewed"
+    assert worker2._keepalive_state["profiles"]["p1"]["last_result"] == "authenticated"
     assert worker2._keepalive_state["profiles"]["p1"]["next_at"] == saved_next_at
+
+
+def _run_due_keepalive(cfg, studio, now, account):
+    worker = Worker(cfg, api=studio.api, clock=lambda: now)
+    worker.next_full_refresh = 999999999.0
+    worker.accounts = [account]
+    worker._keepalive_state = {
+        "profiles": {
+            "p1": {"next_at": (now - timedelta(minutes=5)).isoformat(), "last_at": None, "last_result": None}
+        },
+        "next_any_at": None,
+    }
+    worker._keepalive_file_existed = True
+    worker.tick()
+    assert worker._keepalive_thread is not None
+    worker._keepalive_thread.join(timeout=2)
+    return worker
+
+
+def test_legacy_renewed_counts_as_success(cfg, studio, monkeypatch):
+    now = datetime(2026, 10, 31, 3, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setenv("FAKE_GF_AUTH_P1", "renewed")
+    monkeypatch.setenv("FAKE_GF_CREDITS_VAL_P1", "300")
+
+    worker = _run_due_keepalive(cfg, studio, now, {"profile": "p1", "authenticated": False, "credits": None})
+
+    sessions = studio.events("/session")
+    assert len(sessions) == 1
+    assert sessions[0]["result"] == "renewed"
+    assert sessions[0]["authenticated"] is True
+    assert sessions[0]["credits"] == 300
+    assert worker.accounts[0]["authenticated"] is True
+    assert worker.accounts[0]["credits"] == 300
+
+
+@pytest.mark.parametrize("result", ["verification_error", "labs_stale", "weird_new_value"])
+def test_transient_result_does_not_flag(cfg, studio, monkeypatch, result):
+    now = datetime(2026, 10, 31, 3, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setenv("FAKE_GF_AUTH_P1", result)
+    account = {"profile": "p1", "authenticated": True, "credits": 200, "email": "a@example.test"}
+
+    worker = _run_due_keepalive(cfg, studio, now, dict(account))
+
+    assert studio.events("/session") == []
+    assert [c for c in calls(cfg) if c[:2] == ["credits", "user"]] == []
+    assert worker.accounts[0] == account
+    p1_entry = worker._keepalive_state["profiles"]["p1"]
+    assert p1_entry["last_result"] == result
+    next_dt = datetime.fromisoformat(p1_entry["next_at"])
+    assert now + timedelta(minutes=30) <= next_dt <= now + timedelta(minutes=90)
+
+
+def test_no_session_flags_needs_login(cfg, studio, monkeypatch):
+    now = datetime(2026, 10, 31, 3, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setenv("FAKE_GF_AUTH_P1", "no_session")
+
+    worker = _run_due_keepalive(cfg, studio, now, {"profile": "p1", "authenticated": True, "credits": 200})
+
+    sessions = studio.events("/session")
+    assert len(sessions) == 1
+    assert sessions[0]["result"] == "no_session"
+    assert sessions[0]["authenticated"] is False
+    assert sessions[0]["credits"] is None
+    assert worker.accounts[0]["authenticated"] is False
+    next_dt = datetime.fromisoformat(worker._keepalive_state["profiles"]["p1"]["next_at"])
+    assert next_dt >= now + timedelta(hours=cfg.keepalive_hours_min)

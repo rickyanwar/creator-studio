@@ -66,7 +66,7 @@ elif args[:2] == ["image", "t2i"]:
     payload = {"status": "ok", "local_path": str(out), "failure_reasons": [], "error_message": None}
 elif args[:2] == ["auth", "renew"]:
     profile = flag("--profile")
-    res_env = os.getenv(f"FAKE_GF_AUTH_{profile.upper()}", os.getenv("FAKE_GF_AUTH_RENEW", "renewed"))
+    res_env = os.getenv(f"FAKE_GF_AUTH_{profile.upper()}", os.getenv("FAKE_GF_AUTH_RENEW", "authenticated"))
     if res_env == "invalid":
         print("not JSON")
         sys.exit(1)
@@ -76,7 +76,8 @@ elif args[:2] == ["auth", "renew"]:
     email = os.getenv(f"FAKE_GF_AUTH_EMAIL_{profile.upper()}", os.getenv("FAKE_GF_AUTH_EMAIL"))
     row = {"profile": profile, "result": res_env, "email": email, "hint": None}
     print(json.dumps([row]))
-    sys.exit(0 if res_env == "renewed" else 1)
+    # The real CLI exits 0 only for authenticated and in_use.
+    sys.exit(0 if res_env in ("authenticated", "in_use") else 1)
 elif args[:2] == ["credits", "user"]:
     profile = flag("--profile")
     cu_mode = os.getenv(f"FAKE_GF_CREDITS_{profile.upper()}", os.getenv("FAKE_GF_CREDITS_USER", "ok"))

@@ -40,6 +40,12 @@ AGENT_ONLY_COOLDOWN_HOURS = (2, 3)   # Agent-only composer error; rest the accou
 MIN_CLAIM_GAP_MINUTES = 10
 ACCOUNT_REST_MINUTES = (8, 20)
 WORKER_GAP_SECONDS = (60, 240)
+# `gflow auth renew` results reported to /session (gflow-cli 0.92). Keep in sync with
+# gflow_worker/main.py. Any other value (labs_stale, verification_error, in_use, unknown)
+# is transient: no status change, no alert.
+_SESSION_RENEW_OK = frozenset({"authenticated", "renewed"})  # "renewed" kept for older CLIs
+_SESSION_NEEDS_CONFIRM = frozenset({"public_landing"})
+_SESSION_NEEDS_LOGIN = frozenset({"no_session", "google_session_only", "profile_marker_missing", "cookie_store_unreadable"})
 WORKER_ONLINE_SECONDS = 180
 ORPHAN_GRACE_SECONDS = 180
 STOCK_PRIORITY_DAYS = 2  # a page with >= 2 days of unposted AI videos waits behind pages with less (owner 2026-10-26)
@@ -1220,7 +1226,7 @@ def record_session_check(
     if not account:
         return "unknown"
 
-    if result == "renewed":
+    if result in _SESSION_RENEW_OK:
         if account.status in ("needs_confirm", "needs_login", "auth_error"):
             account.status = "ok"
             account.authenticated = True
@@ -1231,7 +1237,7 @@ def record_session_check(
             account.credits_checked_at = now_naive
         if email:
             account.email = email
-    elif result == "public_landing":
+    elif result in _SESSION_NEEDS_CONFIRM:
         _flag_account_session(
             db,
             account,
@@ -1239,9 +1245,7 @@ def record_session_check(
             "Google asks to confirm the account (Flow /about page)",
             now,
         )
-    elif result in ("launch_error", "skipped", "in_use", "busy"):
-        pass
-    else:
+    elif result in _SESSION_NEEDS_LOGIN:
         _flag_account_session(
             db,
             account,
@@ -1249,6 +1253,9 @@ def record_session_check(
             f"Session check: {result}",
             now,
         )
+    else:
+        # Transient or unknown result: retry later, never alert the owner.
+        pass
 
     db.commit()
     _dispatch_queued_alerts(db)

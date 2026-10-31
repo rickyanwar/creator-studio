@@ -199,6 +199,12 @@ The keep-alive scheduler:
 - Runs only when idle (no jobs running, no other refresh/keepalive thread active, and sufficient memory). It runs even while the backend has the worker paused (pause only stops claiming new jobs). Job claims are blocked while a keep-alive run is active.
 - Reports each renewal result to the studio via `POST /worker/gflow/session` (`worker_id`, `profile`, `result`, `email`, `credits`, `authenticated`).
 
+How `gflow auth renew` results are handled (gflow-cli 0.92; the same sets live in `gflow_worker/main.py` and `backend/app/services/ai_video_dispatch.py`):
+- **Success**: `authenticated` (legacy `renewed` also accepted). Reads credits, reports `authenticated=true`, clears `needs_confirm` / `needs_login`. Next renewal in 8–16 hours.
+- **Needs confirm**: `public_landing`. Google "Confirm it's you" is pending; the account is flagged `needs_confirm` and the owner gets an alert.
+- **Needs login**: `no_session`, `google_session_only`, `profile_marker_missing`, `cookie_store_unreadable`. The account is flagged `needs_login` and the owner gets an alert.
+- **Transient**: everything else (`labs_stale`, `labs_unverified`, `verification_error`, `in_use`, `engine_downgrade`, `launch_error`, `skipped`, `busy`, and any unknown value). Nothing is posted to `/session`, the account is not touched, no alert is sent, and the profile is retried in 30–90 minutes.
+
 Configurable environment settings:
 
 | Variable | Default | Purpose |

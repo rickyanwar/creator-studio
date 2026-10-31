@@ -210,7 +210,7 @@ def test_heartbeat_does_not_reset_needs_confirm_or_login(db_session):
     assert acc2.authenticated is False
 
 
-# 4. renewed with credits=900 -> status ok, authenticated True, credits 900, credits_checked_at set
+# 4. legacy renewed with credits=900 -> status ok, authenticated True, credits 900, credits_checked_at set
 def test_session_check_renewed_clears_flagged_status(db_session):
     now = datetime(2026, 10, 31, 12, 0, 0)
     acc = GflowAccount(
@@ -237,7 +237,7 @@ def test_session_check_renewed_clears_flagged_status(db_session):
     assert acc.email == "p1@flow.test"
 
 
-# 5. labs_stale -> needs_login + alert. launch_error -> unchanged, no alert
+# 5. labs_stale and launch_error are transient -> unchanged, no alert
 def test_session_check_other_results(db_session, mock_alert):
     now = datetime(2026, 10, 31, 12, 0, 0, tzinfo=timezone.utc)
     acc1 = GflowAccount(worker_id="w1", profile="p_stale", authenticated=True, status="ok")
@@ -245,19 +245,16 @@ def test_session_check_other_results(db_session, mock_alert):
     db_session.add_all([acc1, acc2])
     db_session.commit()
 
-    # labs_stale -> needs_login
+    # labs_stale -> no change, no alert (gflow-cli says "retry later")
     req1 = {"worker_id": "w1", "profile": "p_stale", "result": "labs_stale"}
     st1 = ai_video_dispatch.record_session_check(db_session, "w1", req1, now=now)
     db_session.refresh(acc1)
-    assert st1 == "needs_login"
-    assert acc1.status == "needs_login"
-    assert acc1.authenticated is False
-    assert mock_alert.call_count == 1
-    args, _ = mock_alert.call_args
-    assert "is signed out" in args[0]
-    assert "Session check: labs_stale" in args[0]
+    assert st1 == "ok"
+    assert acc1.status == "ok"
+    assert acc1.authenticated is True
+    assert acc1.session_flagged_at is None
+    assert mock_alert.call_count == 0
 
-    mock_alert.reset_mock()
     # launch_error -> no change, no alert
     req2 = {"worker_id": "w1", "profile": "p_launch", "result": "launch_error"}
     st2 = ai_video_dispatch.record_session_check(db_session, "w1", req2, now=now)
@@ -265,6 +262,90 @@ def test_session_check_other_results(db_session, mock_alert):
     assert st2 == "ok"
     assert acc2.status == "ok"
     assert acc2.authenticated is True
+    assert mock_alert.call_count == 0
+
+
+# 5b. authenticated (gflow-cli 0.92 success) clears needs_login and stores credits
+def test_session_check_authenticated_clears_needs_login(db_session, mock_alert):
+    now = datetime(2026, 10, 31, 12, 0, 0)
+    acc = GflowAccount(
+        worker_id="w1",
+        profile="p_auth",
+        authenticated=False,
+        status="needs_login",
+        last_error="Session check: no_session",
+        session_flagged_at=now - timedelta(hours=2),
+    )
+    db_session.add(acc)
+    db_session.commit()
+
+    req = {"worker_id": "w1", "profile": "p_auth", "result": "authenticated", "credits": 450}
+    status = ai_video_dispatch.record_session_check(db_session, "w1", req, now=now)
+
+    db_session.refresh(acc)
+    assert status == "ok"
+    assert acc.status == "ok"
+    assert acc.authenticated is True
+    assert acc.last_error is None
+    assert acc.credits == 450
+    assert acc.credits_checked_at == now
+    assert mock_alert.call_count == 0
+
+
+# 5c. verification_error is transient -> status stays ok, no alert
+def test_session_check_verification_error_is_transient(db_session, mock_alert):
+    now = datetime(2026, 10, 31, 12, 0, 0, tzinfo=timezone.utc)
+    acc = GflowAccount(worker_id="w1", profile="p_verify", authenticated=True, status="ok")
+    db_session.add(acc)
+    db_session.commit()
+
+    req = {"worker_id": "w1", "profile": "p_verify", "result": "verification_error"}
+    status = ai_video_dispatch.record_session_check(db_session, "w1", req, now=now)
+
+    db_session.refresh(acc)
+    assert status == "ok"
+    assert acc.status == "ok"
+    assert acc.authenticated is True
+    assert acc.session_flagged_at is None
+    assert mock_alert.call_count == 0
+
+
+# 5d. no_session -> needs_login + alert
+def test_session_check_no_session_flags_needs_login(db_session, mock_alert):
+    now = datetime(2026, 10, 31, 12, 0, 0, tzinfo=timezone.utc)
+    acc = GflowAccount(worker_id="w1", profile="p_gone", authenticated=True, status="ok")
+    db_session.add(acc)
+    db_session.commit()
+
+    req = {"worker_id": "w1", "profile": "p_gone", "result": "no_session"}
+    status = ai_video_dispatch.record_session_check(db_session, "w1", req, now=now)
+
+    db_session.refresh(acc)
+    assert status == "needs_login"
+    assert acc.status == "needs_login"
+    assert acc.authenticated is False
+    assert acc.session_flagged_at is not None
+    assert mock_alert.call_count == 1
+    args, _ = mock_alert.call_args
+    assert "is signed out" in args[0]
+    assert "Session check: no_session" in args[0]
+
+
+# 5e. an unknown result value never changes the account or alerts the owner
+def test_session_check_unknown_result_is_ignored(db_session, mock_alert):
+    now = datetime(2026, 10, 31, 12, 0, 0, tzinfo=timezone.utc)
+    acc = GflowAccount(worker_id="w1", profile="p_new", authenticated=True, status="ok")
+    db_session.add(acc)
+    db_session.commit()
+
+    req = {"worker_id": "w1", "profile": "p_new", "result": "weird_new_value"}
+    status = ai_video_dispatch.record_session_check(db_session, "w1", req, now=now)
+
+    db_session.refresh(acc)
+    assert status == "ok"
+    assert acc.status == "ok"
+    assert acc.authenticated is True
+    assert acc.session_flagged_at is None
     assert mock_alert.call_count == 0
 
 
@@ -284,7 +365,7 @@ def test_pause_rule_three_accounts_within_one_hour(db_session, mock_alert):
     assert worker.paused_until is None
 
     # Flag 2
-    ai_video_dispatch.record_session_check(db_session, "w1", {"worker_id": "w1", "profile": "a2", "result": "labs_stale"}, now=now + timedelta(minutes=10))
+    ai_video_dispatch.record_session_check(db_session, "w1", {"worker_id": "w1", "profile": "a2", "result": "no_session"}, now=now + timedelta(minutes=10))
     db_session.refresh(worker)
     assert worker.paused_until is None
 

@@ -179,10 +179,10 @@ Implemented in `ai_video_dispatch.py:307-550`:
 Implemented in `ai_video_dispatch.py:1115-1215` and `api/gflow_worker.py:router.post("/session")`:
 - **New Account Statuses**:
   - `needs_confirm` — Google asks to confirm identity (Flow `/about` page). Set by session check (`public_landing`) or job fail (`identity_check`).
-  - `needs_login` — Saved session is signed out or expired. Set by session check (`labs_stale`, `labs_unverified`, or other non-renewed result).
+  - `needs_login` — Saved session is signed out or expired. Set by session check (`no_session`, `google_session_only`, `profile_marker_missing`, `cookie_store_unreadable`). Other non-success results (`labs_stale`, `labs_unverified`, `verification_error`, `launch_error`, `in_use`, unknown) are transient: no status change, no alert, retried in 30–90 min.
 - **Heartbeat Protection (`record_heartbeat`)**:
   - Accounts in `needs_terms`, `needs_confirm`, and `needs_login` are protected: worker heartbeats never reset their status to `ok` and never set `authenticated=True`.
-  - Only a session check returning `renewed` resets `needs_confirm`, `needs_login`, or `auth_error` back to `status="ok"` and `authenticated=True`.
+  - Only a session check returning `authenticated` (gflow-cli 0.92 success; legacy `renewed` also accepted) resets `needs_confirm`, `needs_login`, or `auth_error` back to `status="ok"` and `authenticated=True`.
 - **3-in-1-Hour Worker Auto-Pause**:
   - If >= 3 accounts on the same worker have `status in ("needs_confirm", "needs_login")` with `session_flagged_at >= now - 1h`, `worker.paused_until = max(paused_until or now, now + 6h)`.
   - Queues an owner alert via Celery task `app.tasks.ai_video_alerts.send_gflow_alert` with dedupe key `gflow_session_pause:{worker_id}:{now:%Y%m%d}` (at most once per day).

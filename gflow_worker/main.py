@@ -26,6 +26,20 @@ from .state import cleanup
 
 log = logging.getLogger(__name__)
 
+# `gflow auth renew --json` result values (gflow-cli 0.92). "renewed" is kept for older CLIs.
+RENEW_OK = frozenset({"authenticated", "renewed"})
+# Google "Confirm it's you" is pending; a human must confirm on the account.
+RENEW_NEEDS_CONFIRM = frozenset({"public_landing"})
+# The session is gone or unreadable; a human must log in again.
+RENEW_NEEDS_LOGIN = frozenset({"no_session", "google_session_only", "profile_marker_missing", "cookie_store_unreadable"})
+
+
+def _renew_is_transient(result):
+    """Any result that is not a clear success or a clear human-action case (labs_stale,
+    verification_error, in_use, launch_error, skipped, busy, unknown values) is retried
+    later without flagging the account or alerting the owner."""
+    return result not in RENEW_OK and result not in RENEW_NEEDS_CONFIRM and result not in RENEW_NEEDS_LOGIN
+
 
 def is_in_keepalive_window(dt: datetime, window_str: str, tz_str: str) -> bool:
     try:
@@ -221,7 +235,9 @@ class Worker:
             with flow_lock(self.cfg.lock_file, self.cfg.lock_timeout_seconds, profile=p):
                 row = self.gflow.auth_renew(p)
                 result = row.get("result", "launch_error")
-                if result == "renewed":
+                is_ok = result in RENEW_OK
+                is_transient = _renew_is_transient(result)
+                if is_ok:
                     cu = self.gflow.credits_user(p)
                     raw_credits = cu.get("credits")
                     credits = raw_credits if isinstance(raw_credits, int) and not isinstance(raw_credits, bool) else None
@@ -231,38 +247,35 @@ class Worker:
                 else:
                     credits = None
                     email = row.get("email")
-                    if result in ("launch_error", "skipped", "in_use", "busy"):
-                        authenticated = None
-                        should_post = False
-                    else:
-                        authenticated = False
-                        should_post = True
+                    authenticated = None if is_transient else False
+                    should_post = not is_transient
 
                 if should_post:
                     self.api.session(self.cfg.worker_id, p, result, email=email, credits=credits, authenticated=authenticated)
 
-                with self._accounts_lock:
-                    for account in self.accounts:
-                        if account.get("profile") == p:
-                            if result == "renewed":
-                                account["authenticated"] = True
-                                if credits is not None:
-                                    # /session already stored this balance; a credits heartbeat would
-                                    # stamp every cached balance as freshly checked.
-                                    account["credits"] = credits
-                                if email:
-                                    account["email"] = email
-                                account["error"] = None
-                                account["error_class"] = None
-                            elif result not in ("launch_error", "skipped", "in_use", "busy"):
-                                account["authenticated"] = False
-                                if email:
-                                    account["email"] = email
-                            break
+                if not is_transient:
+                    with self._accounts_lock:
+                        for account in self.accounts:
+                            if account.get("profile") == p:
+                                if is_ok:
+                                    account["authenticated"] = True
+                                    if credits is not None:
+                                        # /session already stored this balance; a credits heartbeat would
+                                        # stamp every cached balance as freshly checked.
+                                        account["credits"] = credits
+                                    if email:
+                                        account["email"] = email
+                                    account["error"] = None
+                                    account["error_class"] = None
+                                else:
+                                    account["authenticated"] = False
+                                    if email:
+                                        account["email"] = email
+                                break
 
                 now = self._now()
                 with self._keepalive_lock:
-                    if result in ("launch_error", "skipped", "in_use", "busy"):
+                    if is_transient:
                         next_dt = now + timedelta(seconds=self._uniform(30 * 60, 90 * 60))
                     else:
                         next_dt = now + timedelta(seconds=self._uniform(self.cfg.keepalive_hours_min * 3600, self.cfg.keepalive_hours_max * 3600))
@@ -275,7 +288,10 @@ class Worker:
                     self._keepalive_state["next_any_at"] = next_any_dt.isoformat()
                     self._save_keepalive_state()
 
-                log.info("Keep-alive: profile %s -> %s (credits %s)", p, result, credits)
+                if is_transient:
+                    log.info("Keep-alive: profile %s -> %s (transient, retry later)", p, result)
+                else:
+                    log.info("Keep-alive: profile %s -> %s (credits %s)", p, result, credits)
         except Exception as exc:
             log.warning("Keep-alive run failed for profile %s: %s", p, exc)
 
