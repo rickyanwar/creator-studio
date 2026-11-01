@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 LEASE_MINUTES = 20
 MAX_CLIP_ATTEMPTS = 3
 BACKOFF_MINUTES = (2, 5, 10)
+# A job that already has finished clips keeps them: the failing clip gets more, longer retries on the same
+# account before a restart throws the paid clips away (job 378, 2026-11-01).
+MAX_CLIP_ATTEMPTS_WITH_CHECKPOINT = 5
+BACKOFF_MINUTES_WITH_CHECKPOINT = (2, 5, 10, 20, 30)
 PIN_MAX_HOURS = 12
 MAX_RESTARTS = 2
 UNUSUAL_BACKOFF_MINUTES = (30, 60, 120)          # job waits before the next account; 3 accounts max per job
@@ -776,6 +780,17 @@ def record_failure(
         else:
             job.status = "queued"
 
+    def _retry_clip():
+        job.clip_attempts += 1
+        limit, backoffs = (
+            (MAX_CLIP_ATTEMPTS_WITH_CHECKPOINT, BACKOFF_MINUTES_WITH_CHECKPOINT)
+            if job.clips_done else (MAX_CLIP_ATTEMPTS, BACKOFF_MINUTES)
+        )
+        if job.clip_attempts <= limit:
+            _requeue(not_before_dt=now + timedelta(minutes=backoffs[job.clip_attempts - 1]))
+        else:
+            _restart()
+
     agent_only_msg = COMPOSER_AGENT_ONLY in (message or "") or "agent-only composer" in (message or "").lower()
     is_unusual = reason == "unusual_activity" or "UNUSUAL_ACTIVITY" in (message or "").upper()
     no_submit_reply = reason in ("transient", "other") and SUBMIT_NO_REPLY in (message or "")
@@ -858,20 +873,10 @@ def record_failure(
         _restart()
 
     elif reason in ("transient", "other"):
-        job.clip_attempts += 1
-        if job.clip_attempts <= MAX_CLIP_ATTEMPTS:
-            backoff_min = BACKOFF_MINUTES[job.clip_attempts - 1]
-            _requeue(not_before_dt=now + timedelta(minutes=backoff_min))
-        else:
-            _restart()
+        _retry_clip()
     else:
         # Default fallback to other
-        job.clip_attempts += 1
-        if job.clip_attempts <= MAX_CLIP_ATTEMPTS:
-            backoff_min = BACKOFF_MINUTES[job.clip_attempts - 1]
-            _requeue(not_before_dt=now + timedelta(minutes=backoff_min))
-        else:
-            _restart()
+        _retry_clip()
 
     _apply_worker_pause(db, worker_id, now)
     db.commit()

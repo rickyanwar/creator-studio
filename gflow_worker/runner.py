@@ -13,10 +13,13 @@ from .state import JobState
 log = logging.getLogger(__name__)
 
 SUBMIT_NO_REPLY = "of clicking submit"
+# gflow-cli gave up polling but Flow has the prompt; the clip is billed and usually finishes a few minutes later.
+POLL_TIMEOUT_ERRORS = ("was not terminal within the poll timeout", "it may still finish")
 # Flow got the prompt; the clip may still appear. "signed media URL returned HTTP" = the clip is done and billed,
 # only its download link answered a redirect (e.g. 302); `data download` fetches a fresh link for free.
-SUBMITTED_ERRORS = ("clicking submit", "no signed media URL", "signed media URL returned HTTP")
+SUBMITTED_ERRORS = ("clicking submit", "no signed media URL", "signed media URL returned HTTP", *POLL_TIMEOUT_ERRORS)
 STRANDED_WAIT_S = 240        # how long to wait for a stranded clip to finish
+STRANDED_WAIT_AFTER_POLL_TIMEOUT_S = 600   # a clip that outlived the CLI's poll gets a longer wait
 STRANDED_POLL_S = 30         # interval in seconds between checks for a stranded clip
 PRE_SUBMIT_RETRY_DELAY_S = (45, 120)   # random pause before the one in-process retry (anti-bot jitter)
 PRE_SUBMIT_EXIT_CODES = (9, 23)        # transport timeout, UI selector drift
@@ -89,10 +92,11 @@ class JobRunner:
             log.warning("Recovery failed for job %s clip %s (media_id=%s): %s", jid, index, media_id, rec.message or "file missing")
 
         if hasattr(self.gflow, "stranded_candidates"):
+            wait_s = STRANDED_WAIT_AFTER_POLL_TIMEOUT_S if any(err in msg for err in POLL_TIMEOUT_ERRORS) else STRANDED_WAIT_S
             elapsed = 0
             tried = set()
             attempt = 1
-            while elapsed <= STRANDED_WAIT_S:
+            while elapsed <= wait_s:
                 if self.cancelled(jid):
                     return None
                 for row in self.gflow.stranded_candidates(profile=profile, project=project, submit_time=submit_time):
@@ -112,7 +116,7 @@ class JobRunner:
                         rec.payload.setdefault("media_id", mid)
                         return rec
                     tried.add(mid)
-                if elapsed + STRANDED_POLL_S > STRANDED_WAIT_S:
+                if elapsed + STRANDED_POLL_S > wait_s:
                     break
                 self._sleep(STRANDED_POLL_S)
                 elapsed += STRANDED_POLL_S
@@ -176,7 +180,7 @@ class JobRunner:
                         return rec
             log.warning(
                 "No stranded clip could be downloaded for job %s clip %s within %ss (candidates tried: %d)",
-                jid, index, STRANDED_WAIT_S, len(tried),
+                jid, index, wait_s, len(tried),
             )
             return None
 

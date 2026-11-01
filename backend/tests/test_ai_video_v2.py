@@ -1,4 +1,6 @@
 import os
+if not os.environ.get("DATABASE_URL") or "db:5432" in os.environ.get("DATABASE_URL", ""):
+    os.environ["DATABASE_URL"] = "postgresql://postgres:admin@localhost:5432/test_ai_video"
 import json
 import pytest
 from datetime import datetime, timezone, timedelta
@@ -633,6 +635,56 @@ def test_fail_reasons_and_restarts(db_session, test_fanpage):
     ai_video_dispatch.record_failure(db_session, job_trans, "w1", 2, "transient", "Network blip 5")
     assert job_trans.status == "failed"
     assert job_trans.restarts == 3
+
+
+def test_transient_failure_with_finished_clips_retries_five_times_before_restart(db_session, test_fanpage):
+    acc = GflowAccount(worker_id="w1", profile="p1", authenticated=True, status="ok", credits=100)
+    db_session.add(acc)
+    db_session.commit()
+
+    initial_clips_done = [
+        {"index": 1, "media_id": "m1", "at": "x"},
+        {"index": 2, "media_id": "m2", "at": "x"},
+    ]
+    job = VideoJob(
+        fanpage_id=test_fanpage.id,
+        template_key="motorsport_tech_explainer",
+        title="Job With Checkpoints",
+        caption="Cap",
+        model="omni-flash",
+        aspect="9:16",
+        clip_seconds=10,
+        clips=[{"index": 1}, {"index": 2}, {"index": 3}],
+        clips_done=list(initial_clips_done),
+        credits_per_clip=15,
+        credits_estimate=45,
+        status="claimed",
+        account_id=acc.id,
+        worker_id="w1",
+        generation=1,
+        clip_attempts=0,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    err_msg = "migrated host: generation g was not terminal within the poll timeout"
+
+    for _ in range(5):
+        job.status = "claimed"
+        job.worker_id = "w1"
+        ai_video_dispatch.record_failure(db_session, job, "w1", 1, "transient", err_msg)
+        assert job.status == "queued"
+        assert len(job.clips_done) == 2
+        assert job.account_id == acc.id
+        assert job.generation == 1
+
+    # The 6th call: generation is +1 and clips_done == []
+    job.status = "claimed"
+    job.worker_id = "w1"
+    ai_video_dispatch.record_failure(db_session, job, "w1", 1, "transient", err_msg)
+    assert job.status == "queued"
+    assert job.generation == 2
+    assert job.clips_done == []
 
 
 def test_sweep_lease_and_pin_expiry(db_session, test_fanpage):

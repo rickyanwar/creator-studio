@@ -240,3 +240,94 @@ def test_billed_clip_with_redirected_download_link_is_recovered_not_failed(cfg, 
     assert downloaded == ["billed-302"]
     clip_done_events = [e for e in studio.events("/progress") if e["event"] == "clip_done"]
     assert clip_done_events[1]["media_id"] == "billed-302"
+
+
+def test_i2v_poll_timeout_recovers_the_late_clip_without_a_second_submit(cfg, studio, runner, monkeypatch):
+    runner._sleep = lambda s: None
+    i2v_calls = []
+
+    def mock_i2v(*args, **kwargs):
+        i2v_calls.append((args, kwargs))
+        return GflowResult(
+            ok=False,
+            payload={},
+            exit_code=9,
+            error_class="TransportError",
+            retryable=True,
+            message="migrated host: generation e3cbf7f9-4731-43a9-aa59-e0ea29ffcbdb was not terminal within the poll timeout",
+        )
+
+    monkeypatch.setattr(runner.gflow, "i2v", mock_i2v)
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(
+        runner.gflow,
+        "stranded_candidates",
+        lambda profile, project, submit_time: [
+            {
+                "media_id": "late-1",
+                "project_id": project,
+                "created_at": now.isoformat(),
+                "status": "pending",
+            }
+        ],
+    )
+
+    uuid_dl_calls = 0
+    orig_download = runner.gflow.download_media
+
+    def mock_download(media_id, profile, out):
+        nonlocal uuid_dl_calls
+        if media_id == "e3cbf7f9-4731-43a9-aa59-e0ea29ffcbdb":
+            uuid_dl_calls += 1
+            return GflowResult(ok=False, payload={}, exit_code=7, message="not found")
+        return orig_download(media_id, profile=profile, out=out)
+
+    monkeypatch.setattr(runner.gflow, "download_media", mock_download)
+
+    runner.run_job(payload(2))
+
+    assert not studio.events("/fail")
+    assert len(studio.uploads) == 1
+    assert len(i2v_calls) == 1
+    assert uuid_dl_calls <= 1
+    clip_done_events = [e for e in studio.events("/progress") if e["event"] == "clip_done"]
+    assert len(clip_done_events) == 2
+    assert clip_done_events[1]["media_id"] == "late-1"
+
+
+def test_poll_timeout_waits_longer_than_a_normal_stranded_clip(cfg, studio, runner, monkeypatch):
+    sleeps = []
+    runner._sleep = lambda s: sleeps.append(s)
+
+    def mock_i2v(*args, **kwargs):
+        return GflowResult(
+            ok=False,
+            payload={},
+            exit_code=9,
+            error_class="TransportError",
+            retryable=True,
+            message="migrated host: generation e3cbf7f9-4731-43a9-aa59-e0ea29ffcbdb was not terminal within the poll timeout",
+        )
+
+    monkeypatch.setattr(runner.gflow, "i2v", mock_i2v)
+
+    orig_download = runner.gflow.download_media
+    monkeypatch.setattr(
+        runner.gflow,
+        "download_media",
+        lambda media_id, profile, out: GflowResult(ok=False, payload={}, exit_code=7, message="not found")
+        if media_id == "e3cbf7f9-4731-43a9-aa59-e0ea29ffcbdb"
+        else orig_download(media_id, profile=profile, out=out),
+    )
+
+    monkeypatch.setattr(runner.gflow, "stranded_candidates", lambda *a, **kw: [])
+    if hasattr(runner.gflow, "recover_from_project"):
+        monkeypatch.setattr(runner.gflow, "recover_from_project", lambda *a, **kw: None)
+
+    runner.run_job(payload(2))
+
+    assert sum(sleeps) >= 540
+    fail_events = studio.events("/fail")
+    assert len(fail_events) == 1
+
