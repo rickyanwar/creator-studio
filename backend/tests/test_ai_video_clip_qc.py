@@ -170,6 +170,10 @@ def test_logic_prompt_names_frame_times_and_treats_shot_changes_as_cuts():
     assert "Frame times: frame 1 = 0.5 s, frame 2 = 1.8 s, frame 3 = 3.1 s." in prompt
     assert "Judge direction of travel, shape and parts only between frames of the SAME shot." in prompt
     assert "camera angle has not vanished" in prompt
+    # Owner 2026-11-01: job 371 lost three good clips to its own exploded view and a camera angle.
+    assert "Effects the prompt asks for are intended and never errors." in prompt
+    assert "The camera's position, angle, distance and framing are never errors" in prompt
+    assert prompt.index("Effects the prompt asks for") < prompt.index("Report only clear, visible logic errors")
 
 
 def test_logic_prompt_without_frame_times_has_no_times_line():

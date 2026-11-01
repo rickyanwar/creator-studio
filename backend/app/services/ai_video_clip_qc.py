@@ -57,7 +57,14 @@ times to see which frames belong to which shot. Between two shots the camera set
 other end of the vehicle, a close-up of a part, or a different framing is a cut, never a reversal, a turn, a shape
 change or a vanished part. Judge direction of travel, shape and parts only between frames of the SAME shot. Across a
 cut, check only that it is the same vehicle with the same livery. A part that is outside the frame or hidden by the
-camera angle has not vanished."""
+camera angle has not vanished.
+
+Effects the prompt asks for are intended and never errors. When the prompt describes an X-ray, semi-transparent,
+cutaway or exploded view, the parts it names may turn see-through and solid again, be hidden behind other parts,
+separate, float apart, rotate, slide out beside the vehicle and come back together. As the see-through effect switches
+on or off, inner parts such as gears, shafts and windings appear or disappear and the bodywork around them fades out or
+back in; that is the effect, not a part vanishing or changing design.
+The camera's position, angle, distance and framing are never errors either, even when they differ from the prompt."""
 
 
 def build_logic_prompt(clip_prompt: str, *, has_previous_frame: bool, frame_times: list[float] | None = None) -> str:
