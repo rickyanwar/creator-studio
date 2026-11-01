@@ -45,7 +45,9 @@ class HeartbeatRequest(BaseModel):
     mem_available_mb: Optional[int] = None
     running_job_ids: List[int] = Field(default_factory=list)
     accounts: List[AccountHeartbeat] = Field(default_factory=list)
-    phase: Optional[str] = None
+    # The worker sends {"kind": "checking_credits", "done": n, "total": m} while it checks credits;
+    # a str-only type answered 422 and crash-looped gflow-worker (2026-11-01).
+    phase: Optional[Dict[str, Any] | str] = None
 
 
 class SessionCheckRequest(BaseModel):

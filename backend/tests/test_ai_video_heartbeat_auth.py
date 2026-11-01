@@ -67,3 +67,12 @@ def test_other_auth_error_still_marks_auth_error(db_session):
 
     assert acc.authenticated is False
     assert acc.status == "auth_error"
+
+
+@pytest.mark.parametrize("phase", [None, "idle", {"kind": "checking_credits", "done": 1, "total": 26}])
+def test_heartbeat_request_accepts_the_phases_the_worker_sends(phase):
+    """2026-11-01: a str-only phase answered 422 to the credit-check phase and crash-looped gflow-worker."""
+    from app.api.gflow_worker import HeartbeatRequest
+
+    request = HeartbeatRequest(worker_id="w1", running_job_ids=[], accounts=[], phase=phase)
+    assert request.model_dump()["phase"] == phase
