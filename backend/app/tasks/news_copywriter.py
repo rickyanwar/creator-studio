@@ -112,6 +112,18 @@ def copywrite_article(self, article_id: int):
                         article_id, fp.id, exc,
                     )
 
+            from app.services.news_dedup import find_duplicate_job
+            try:
+                duplicate = find_duplicate_job(db, fp, article)
+            except Exception as exc:
+                # A flaky AI call must not block news; same policy as the editorial gate.
+                logger.warning("Copywriter: same-story check failed for article %d fanpage %d — letting it through: %s",
+                               article_id, fp.id, exc)
+                duplicate = None
+            if duplicate is not None:
+                logger.info("Copywriter: article %d fanpage %d skipped — same story as job %d", article_id, fp.id, duplicate.id)
+                continue
+
             try:
                 copy = generate_news_copy(fp, article)
             except GroqRateLimitError:
