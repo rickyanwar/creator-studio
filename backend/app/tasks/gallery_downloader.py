@@ -186,6 +186,11 @@ _PROMINENCE_MINOR_MULTIPLIER = 2
 # Extending the window's close by a day absorbs that slop as a safety net,
 # independent of whether the precise time was ever found.
 _EVENT_WINDOW_DAYS_AFTER = 1
+# The day after a race is still a hot news day (owner 2026-11-02), so its doubled
+# daily target must survive. refresh_keyword_event_dates therefore leaves a
+# just-passed event date alone until the after-race window has closed in every
+# destination timezone; US destinations run up to a day behind WIB, hence +1.
+_EVENT_REFRESH_HOLD_DAYS_AFTER = _EVENT_WINDOW_DAYS_AFTER + 1
 
 
 def _in_event_window(kw, today) -> bool:
@@ -594,8 +599,8 @@ def refresh_keyword_event_dates():
 
         keywords = db.query(GalleryKeyword).filter(GalleryKeyword.is_active == True).all()
         for kw in keywords:
-            if kw.next_event_date and kw.next_event_date >= today:
-                continue  # already know about an upcoming event — nothing to refresh yet
+            if kw.next_event_date and kw.next_event_date + timedelta(days=_EVENT_REFRESH_HOLD_DAYS_AFTER) >= today:
+                continue  # upcoming event, or the day-after window is still open — keep the date
             passed_recently = kw.next_event_date is not None and today - timedelta(days=_EVENT_PASSED_FAST_RECHECK_DAYS) <= kw.next_event_date < today
             interval = timedelta(hours=_EVENT_PASSED_LOOKUP_INTERVAL_HOURS) if passed_recently else timedelta(days=_EVENT_LOOKUP_INTERVAL_DAYS)
             if kw.event_date_checked_at and kw.event_date_checked_at >= now - interval:

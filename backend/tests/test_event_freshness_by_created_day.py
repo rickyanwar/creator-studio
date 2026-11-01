@@ -593,3 +593,32 @@ def test_dispatch_freshness_uses_created_day(db_session: Session, monkeypatch):
     # The day passed to news_fresh_hours should be yesterday (job creation day in dest tz)
     assert len(recorded_days) >= 1
     assert recorded_days[-1] == yesterday
+
+
+@pytest.mark.parametrize("days_since_race, rechecked", [(1, False), (2, False), (3, True)])
+def test_refresh_keeps_the_race_date_through_the_day_after(db_session: Session, monkeypatch, days_since_race, rechecked):
+    """The day after a race keeps its doubled target, so the race date is not replaced
+    by the next race until the after-race window has closed in every timezone."""
+    now = _real_now_naive()
+    today = _real_today_wib()
+    race_day = today - timedelta(days=days_since_race)
+
+    db_session.add(GalleryKeyword(
+        keyword=f"pecco bagnaia {days_since_race}",
+        niche="MotoGP",
+        is_active=True,
+        next_event_date=race_day,
+        event_date_checked_at=now - timedelta(hours=21),
+    ))
+    db_session.commit()
+
+    mock_detect = MagicMock(return_value=today + timedelta(days=6))
+    monkeypatch.setattr("app.services.event_calendar.detect_next_event_date", mock_detect)
+    monkeypatch.setattr("app.tasks.gallery_downloader.SessionLocal", lambda: db_session)
+
+    from app.tasks.gallery_downloader import refresh_keyword_event_dates
+    refresh_keyword_event_dates()
+
+    assert mock_detect.called is rechecked
+    stored = db_session.query(GalleryKeyword).filter_by(keyword=f"pecco bagnaia {days_since_race}").one()
+    assert (stored.next_event_date == race_day) is not rechecked
