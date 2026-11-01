@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import get_settings
-from app.services.ai_video_qc import contact_sheet
+from app.services.ai_video_qc import _duration, contact_sheet, contact_sheet_times
 from app.services.vision_retry import run_vision_check
 
 logger = logging.getLogger(__name__)
@@ -44,14 +44,31 @@ def last_frame_jpeg(path: str) -> bytes:
         return Path(output.name).read_bytes()
 
 
-def build_logic_prompt(clip_prompt: str, *, has_previous_frame: bool) -> str:
+def _frame_times_line(frame_times: list[float] | None) -> str:
+    if not frame_times:
+        return ""
+    times = ", ".join(f"frame {index} = {seconds:.1f} s" for index, seconds in enumerate(frame_times, start=1))
+    return f"\nFrame times: {times}."
+
+
+# Owner 2026-11-01: hard cuts between the prompt's shots were reported as reversals and vanished parts.
+SHOT_RULES = """The prompt's [00:00-00:03]-style time marks split the clip into separate shots joined by hard cuts. Use the frame
+times to see which frames belong to which shot. Between two shots the camera set-up changes on purpose: a new angle, the
+other end of the vehicle, a close-up of a part, or a different framing is a cut, never a reversal, a turn, a shape
+change or a vanished part. Judge direction of travel, shape and parts only between frames of the SAME shot. Across a
+cut, check only that it is the same vehicle with the same livery. A part that is outside the frame or hidden by the
+camera angle has not vanished."""
+
+
+def build_logic_prompt(clip_prompt: str, *, has_previous_frame: bool, frame_times: list[float] | None = None) -> str:
     previous = " The last image is the last frame of the previous clip; this clip continues from it." if has_previous_frame else ""
     previous_livery = " or from the previous clip's last frame" if has_previous_frame else ""
-    return f'''You check ONE 10-second clip of an AI-generated vertical video for LOGIC errors only. The image grid shows frames of the clip in time order, left to right, top row then bottom row.{previous}
+    return f'''You check ONE 10-second clip of an AI-generated vertical video for LOGIC errors only. The image grid shows frames of the clip in time order, left to right, top row then bottom row.{previous}{_frame_times_line(frame_times)}
 The clip was generated from this prompt:
 <<<
 {clip_prompt}
 >>>
+{SHOT_RULES}
 Report only clear, visible logic errors of these kinds:
 1. A vehicle drives backwards, slides sideways, or reverses its direction of travel between frames.
 2. A vehicle, rider, person or object changes shape or size, gains or loses wheels or parts, or merges with another object.
@@ -99,7 +116,9 @@ def logic_check(clip_path: str, clip_prompt: str, previous_clip_path: str | None
     from app.services.design_images import _vision_chat, _vision_datauri
 
     sheet = contact_sheet(clip_path, n=8)
-    content = [{"type": "text", "text": build_logic_prompt(clip_prompt, has_previous_frame=bool(previous_clip_path))},
+    frame_times = contact_sheet_times(_duration(clip_path), n=8)
+    prompt = build_logic_prompt(clip_prompt, has_previous_frame=bool(previous_clip_path), frame_times=frame_times)
+    content = [{"type": "text", "text": prompt},
                {"type": "image_url", "image_url": {"url": _vision_datauri(sheet, max_dim=1024)}}]
     if previous_clip_path:
         content.append({"type": "image_url", "image_url": {"url": _vision_datauri(last_frame_jpeg(previous_clip_path), max_dim=1024)}})

@@ -78,9 +78,13 @@ def technical_check(path: str, clips: int, clip_seconds: int, aspect: str) -> di
     return result
 
 
+def contact_sheet_times(duration: float, n: int = 8) -> list[float]:
+    """The seconds at which contact_sheet samples its frames, in grid order."""
+    return [0.5] if duration <= 1 else [0.5 + i * (duration - 1) / max(n - 1, 1) for i in range(n)]
+
+
 def contact_sheet(path: str, n: int = 8) -> bytes:
-    duration = _duration(path)
-    timestamps = [0.5] if duration <= 1 else [0.5 + i * (duration - 1) / max(n - 1, 1) for i in range(n)]
+    timestamps = contact_sheet_times(_duration(path), n)
     frames = []
     for timestamp in timestamps:
         raw = subprocess.run(

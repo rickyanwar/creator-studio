@@ -151,3 +151,45 @@ def test_upload_route_imports_task_check_clip():
     source = route_module.upload_clip_qc.__globals__
     assert "upload_clip_qc" in source
     assert route_module.upload_clip_qc.__name__ == "upload_clip_qc"
+
+
+def test_contact_sheet_times_match_the_sampled_frames():
+    from app.services.ai_video_qc import contact_sheet_times
+
+    times = contact_sheet_times(10.0, 8)
+    assert len(times) == 8
+    assert times[0] == pytest.approx(0.5)
+    assert times[-1] == pytest.approx(9.5)
+    assert contact_sheet_times(0.8, 8) == [0.5]
+
+
+def test_logic_prompt_names_frame_times_and_treats_shot_changes_as_cuts():
+    """Owner 2026-11-01: a camera change between the prompt's shots is a cut, not a reversal or a vanished part."""
+    prompt = build_logic_prompt("[00:00-00:03] Rear tracking shot. [00:03-00:06] Head-on shot.",
+                                has_previous_frame=False, frame_times=[0.5, 1.79, 3.07])
+    assert "Frame times: frame 1 = 0.5 s, frame 2 = 1.8 s, frame 3 = 3.1 s." in prompt
+    assert "Judge direction of travel, shape and parts only between frames of the SAME shot." in prompt
+    assert "camera angle has not vanished" in prompt
+
+
+def test_logic_prompt_without_frame_times_has_no_times_line():
+    prompt = build_logic_prompt("A red car drives forward.", has_previous_frame=False)
+    assert "Frame times:" not in prompt
+    assert "SAME shot" in prompt
+
+
+def test_logic_check_sends_the_frame_times(monkeypatch):
+    from app.services import ai_video_clip_qc as qc
+
+    sent = {}
+    monkeypatch.setattr(qc, "contact_sheet", lambda path, n=8: b"sheet")
+    monkeypatch.setattr(qc, "_duration", lambda path: 10.0)
+    monkeypatch.setattr("app.services.design_images._vision_datauri", lambda data, max_dim=1024: "data:x")
+
+    def fake_chat(content, max_tokens, context):
+        sent["text"] = content[0]["text"]
+        return '{"issues": []}'
+
+    monkeypatch.setattr("app.services.design_images._vision_chat", fake_chat)
+    assert qc.logic_check("clip.mp4", "A red car drives forward.", None) == []
+    assert "frame 8 = 9.5 s" in sent["text"]
