@@ -42,6 +42,44 @@ def _fanpage_stagger(slot: int, breaking: bool = False) -> int:
 logger = logging.getLogger(__name__)
 
 
+def _redis():
+    import redis
+    from app.config import get_settings
+
+    return redis.from_url(get_settings().redis_url, decode_responses=True)
+
+
+_ARTICLE_LOCK_TTL = 1800  # longer than one article's copywriting run
+
+
+def _article_lock_key(article_id: int) -> str:
+    return f"news_copywriter:article:{article_id}"
+
+
+def _acquire_article_lock(article_id: int) -> bool:
+    """SET NX EX. True when acquired or when Redis is unreachable (never block news on Redis)."""
+    key = _article_lock_key(article_id)
+    try:
+        r = _redis()
+        acquired = r.set(key, "1", nx=True, ex=_ARTICLE_LOCK_TTL)
+        return bool(acquired)
+    except Exception as exc:
+        logger.warning("Redis unreachable while acquiring article lock for %s: %s", article_id, exc)
+        return True
+
+
+def _release_article_lock(article_id: int) -> None:
+    """DELETE the key; log and ignore Redis errors."""
+    if not article_id:
+        return
+    key = _article_lock_key(article_id)
+    try:
+        r = _redis()
+        r.delete(key)
+    except Exception as exc:
+        logger.warning("Redis unreachable while releasing article lock for %s: %s", article_id, exc)
+
+
 def _subscribed_fanpages(db, news_source_id: int):
     from app.models.target_fanpages import TargetFanpage
     from app.models.fanpage_news_sources import FanpageNewsSource
@@ -63,6 +101,10 @@ def _subscribed_fanpages(db, news_source_id: int):
 
 @celery_app.task(name="app.tasks.news_copywriter.copywrite_article", bind=True, max_retries=3)
 def copywrite_article(self, article_id: int):
+    if not _acquire_article_lock(article_id):
+        logger.info("Copywriter: article %d is already being processed — skipping this dispatch", article_id)
+        return
+
     db = SessionLocal()
     try:
         from app.models.scraped_articles import ScrapedArticle, ArticleStatus
@@ -209,6 +251,7 @@ def copywrite_article(self, article_id: int):
         raise self.retry(exc=exc, countdown=300)
     finally:
         db.close()
+        _release_article_lock(article_id)
 
 
 @celery_app.task(name="app.tasks.news_copywriter.copywrite_pending_articles")
