@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 
 from app.api.deps import DB, CurrentUser, get_current_user
-from app.models.ai_video import VideoIdea, VideoJob, GflowAccount, GflowWorker
+from app.models.ai_video import VideoIdea, VideoJob, GflowAccount, GflowWorker, VideoClipQc
 from app.models.target_fanpages import TargetFanpage
 from app.services import ai_video_dispatch
 from app.services.ai_video_dispatch import ConflictError
@@ -68,7 +68,7 @@ def overlay_preview(fanpage_id: int, body: OverlayPreviewRequest, db: DB, user: 
     return FileResponse(out, media_type="image/png", filename="ai-video-overlay-preview.png")
 
 
-def _serialize_job(job: VideoJob, fanpage_name: Optional[str], account: Optional[GflowAccount]) -> dict:
+def _serialize_job(job: VideoJob, fanpage_name: Optional[str], account: Optional[GflowAccount], clip_qc_summary: Optional[dict] = None) -> dict:
     clips_total = len(job.clips) if job.clips else 0
     clips_done_count = len(job.clips_done) if job.clips_done else 0
     account_dict = None
@@ -102,6 +102,7 @@ def _serialize_job(job: VideoJob, fanpage_name: Optional[str], account: Optional
         "created_at": job.created_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
+        "clip_qc_summary": clip_qc_summary,
     }
 
 
@@ -172,7 +173,27 @@ def list_jobs(
     fanpages = {fp.id: fp.name for fp in db.query(TargetFanpage).filter(TargetFanpage.id.in_(fp_ids)).all()} if fp_ids else {}
     accounts = {acc.id: acc for acc in db.query(GflowAccount).filter(GflowAccount.id.in_(acc_ids)).all()} if acc_ids else {}
 
-    return [_serialize_job(j, fanpages.get(j.fanpage_id), accounts.get(j.account_id)) for j in jobs]
+    job_ids = [j.id for j in jobs]
+    qc_rows = db.query(VideoClipQc).filter(VideoClipQc.video_job_id.in_(job_ids)).all() if job_ids else []
+
+    job_gen_map = {j.id: j.generation for j in jobs}
+    qc_by_job: dict[int, list[VideoClipQc]] = {}
+    for r in qc_rows:
+        if r.generation == job_gen_map.get(r.video_job_id):
+            qc_by_job.setdefault(r.video_job_id, []).append(r)
+
+    summaries: dict[int, dict] = {}
+    for jid, rows in qc_by_job.items():
+        distinct_clips = len({r.clip_index for r in rows})
+        retries = sum(1 for r in rows if r.attempt > 1)
+        kept_best = sum(1 for r in rows if r.verdict == "use_attempt")
+        summaries[jid] = {
+            "clips_checked": distinct_clips,
+            "retries": retries,
+            "kept_best": kept_best,
+        }
+
+    return [_serialize_job(j, fanpages.get(j.fanpage_id), accounts.get(j.account_id), summaries.get(j.id)) for j in jobs]
 
 
 @router.post("/jobs/{id}/retry")
@@ -205,6 +226,15 @@ def cancel_job_endpoint(id: int, db: DB, user: CurrentUser):
     fp = db.query(TargetFanpage).filter(TargetFanpage.id == job.fanpage_id).first()
     acc = db.query(GflowAccount).filter(GflowAccount.id == job.account_id).first() if job.account_id else None
     return _serialize_job(job, fp.name if fp else None, acc)
+
+
+@router.get("/jobs/{id}/clip-qc")
+def get_job_clip_qc(id: int, db: DB, user: CurrentUser):
+    job = db.query(VideoJob).filter(VideoJob.id == id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video job not found")
+    from app.services.ai_video_clip_qc import clip_qc_history
+    return clip_qc_history(db, job)
 
 
 @router.get("/accounts")

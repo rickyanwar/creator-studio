@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { PromptPolishHealth, PromptPolishIdea, PromptPolishJob, ScraperHealth } from "./types";
+import type { ClipQcHistory, PromptPolishHealth, PromptPolishIdea, PromptPolishJob, ScraperHealth } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -473,6 +473,7 @@ export const getAiVideoCounts = (params?: { fanpage_id?: number }) =>
   api.get<import("./types").AiVideoCounts>("/ai-video/counts", { params });
 export const retryAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/retry`);
 export const cancelAiVideoJob = (id: number) => api.post(`/ai-video/jobs/${id}/cancel`);
+export const getAiVideoClipQc = (id: number) => api.get<ClipQcHistory>(`/ai-video/jobs/${id}/clip-qc`);
 export const listGflowAccounts = () => api.get("/ai-video/accounts");
 export const updateGflowAccount = (id: number, data: { enabled?: boolean; label?: string; terms_accepted?: boolean }) =>
   api.patch(`/ai-video/accounts/${id}`, data);

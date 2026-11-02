@@ -182,7 +182,7 @@ def test_logic_prompt_without_frame_times_has_no_times_line():
     assert "SAME shot" in prompt
 
 
-def test_logic_check_sends_the_frame_times(monkeypatch):
+def test_logic_check_sends_the_frame_times(monkeypatch, tmp_path):
     from app.services import ai_video_clip_qc as qc
 
     sent = {}
@@ -195,5 +195,5 @@ def test_logic_check_sends_the_frame_times(monkeypatch):
         return '{"issues": []}'
 
     monkeypatch.setattr("app.services.design_images._vision_chat", fake_chat)
-    assert qc.logic_check("clip.mp4", "A red car drives forward.", None) == []
+    assert qc.logic_check(str(tmp_path / "clip.mp4"), "A red car drives forward.", None) == []
     assert "frame 8 = 9.5 s" in sent["text"]

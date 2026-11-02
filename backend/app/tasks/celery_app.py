@@ -269,6 +269,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.cleanup.cleanup_old_ai_videos",
         "schedule": crontab(hour=21, minute=0),
     },
+    # QC attempt clips + contact sheets: daily 04:15 WIB (21:15 UTC)
+    "cleanup-old-clip-qc-files": {
+        "task": "app.tasks.cleanup.cleanup_old_clip_qc_files",
+        "schedule": crontab(hour=21, minute=15),
+    },
     # Mode 7 clip MP4 retention: daily 03:30 WIB (20:30 UTC) — see
     # yt_clip_render.cleanup_old_videos
     "cleanup-old-videos": {

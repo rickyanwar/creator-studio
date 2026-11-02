@@ -30,6 +30,7 @@ _PUBLISHED_DESIGN_RETENTION_DAYS = 7
 _AI_VIDEO_RETENTION_DAYS = 14
 _PUBLISHED_AI_VIDEO_RETENTION_DAYS = 7
 _THUMB_RETENTION_DAYS = 30
+CLIP_QC_RETENTION_DAYS = 14
 
 # Repliz and the phone fetch post images at go-live, not at scheduling time.
 _KEEP_AFTER_GO_LIVE = timedelta(hours=6)
@@ -449,3 +450,76 @@ def cleanup_old_thumbs() -> int:
         logger.error("Thumbnail cleanup task error: %s", exc, exc_info=True)
 
     return cleaned
+
+
+@celery_app.task(name="app.tasks.cleanup.cleanup_old_clip_qc_files")
+def cleanup_old_clip_qc_files():
+    """Delete QC attempt clips and contact sheets older than CLIP_QC_RETENTION_DAYS, except those of a video still being made or still waiting for review."""
+    import re
+    from app.services.ai_video_clip_qc import clip_qc_dir
+    from app.models.ai_video import VideoJob
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+    db = SessionLocal()
+    deleted = 0
+    kept = 0
+    try:
+        now = datetime.now(timezone.utc)
+        cutoff_ts = (now - timedelta(days=CLIP_QC_RETENTION_DAYS)).timestamp()
+
+        candidate_files: list[tuple[Path, int]] = []
+        for file in clip_qc_dir().glob("job*_*"):
+            if not file.is_file():
+                continue
+            try:
+                if file.stat().st_mtime >= cutoff_ts:
+                    continue
+            except OSError:
+                continue
+            m = re.match(r"^job(\d+)_", file.name)
+            if not m:
+                continue
+            candidate_files.append((file, int(m.group(1))))
+
+        job_ids = list({jid for _, jid in candidate_files})
+        jobs = db.query(VideoJob).filter(VideoJob.id.in_(job_ids)).all() if job_ids else []
+        job_map = {j.id: j for j in jobs}
+
+        publish_job_ids = list({j.publish_job_id for j in jobs if j.publish_job_id})
+        pending_review_pj_ids = set()
+        if publish_job_ids:
+            pjs = (
+                db.query(PublishJob.id)
+                .filter(
+                    PublishJob.id.in_(publish_job_ids),
+                    PublishJob.status == PublishJobStatus.pending_review,
+                )
+                .all()
+            )
+            pending_review_pj_ids = {p[0] for p in pjs}
+
+        for file, job_id in candidate_files:
+            job = job_map.get(job_id)
+            if job and (
+                job.status in ("queued", "claimed", "generating", "uploaded")
+                or (job.publish_job_id and job.publish_job_id in pending_review_pj_ids)
+            ):
+                kept += 1
+                continue
+
+            try:
+                file.unlink(missing_ok=True)
+                deleted += 1
+            except OSError:
+                logger.warning("Failed to delete clip QC file: %s", file, exc_info=True)
+
+        logger.info(
+            "Clip QC cleanup: deleted %d files, kept %d of videos in progress or review",
+            deleted,
+            kept,
+        )
+    except Exception as exc:
+        logger.error("Clip QC cleanup task error: %s", exc, exc_info=True)
+    finally:
+        db.close()
+

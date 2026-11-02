@@ -35,6 +35,7 @@ import type {
 import ClipPlayer from "@/components/ClipPlayer";
 import { ResearchIdeaDetails } from "@/components/ai-video/ResearchIdeaDetails";
 import { PromptPolishView } from "@/components/ai-video/PromptPolishView";
+import ClipQcHistorySection from "@/components/ai-video/ClipQcHistory";
 import { useFanpages } from "@/lib/useFanpages";
 
 const statusOptions = [
@@ -996,7 +997,18 @@ export default function AiVideoPage() {
                     </p>
                   )}
 
+                  {job.clip_qc_summary && (
+                    <p
+                      className={`text-[11px] ${
+                        job.clip_qc_summary.kept_best > 0 ? "text-warn" : "text-text2"
+                      }`}
+                    >
+                      Clip QC: {job.clip_qc_summary.clips_checked} clip(s) checked · {job.clip_qc_summary.retries} retr{job.clip_qc_summary.retries === 1 ? "y" : "ies"}{job.clip_qc_summary.kept_best > 0 ? ` · ${job.clip_qc_summary.kept_best} kept best (held for review)` : ""}
+                    </p>
+                  )}
+
                   <JobPolishSection jobId={job.id} />
+                  <ClipQcHistorySection jobId={job.id} />
 
                   {actionError?.id === job.id && (
                     <p className="text-[11px] text-bad bg-bad-soft p-1.5 rounded border border-bad/20">

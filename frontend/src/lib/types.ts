@@ -709,12 +709,51 @@ export interface AiVideoJob {
   restarts: number;
   error: string | null;
   qc: { passed?: boolean; reasons?: string[]; technical?: { passed?: boolean }; vision?: { passed?: boolean; issues?: string[] } | null } | null;
+  clip_qc_summary?: { clips_checked: number; retries: number; kept_best: number } | null;
   video_url: string | null;
   thumbnail_url: string | null;
   publish_job_id: number | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface ClipQcIssue {
+  problem: string;
+  severity: "major" | "minor";
+}
+
+export interface ClipQcAttempt {
+  id: number;
+  attempt: number;
+  status: string;
+  verdict: "retry" | "pass" | "use_attempt" | "failed" | null;
+  major_count: number | null;
+  minor_count: number | null;
+  issues: ClipQcIssue[];
+  prompt: string;
+  next_prompt: string | null;
+  waiting_reason: string | null;
+  clip_url: string | null;
+  sheet_url: string | null;
+  used_in_video: boolean;
+  created_at: string;
+}
+
+export interface ClipQcClip {
+  generation: number;
+  clip_index: number;
+  current_generation: boolean;
+  outcome: "passed" | "kept_best" | "failed" | "pending" | "discarded";
+  used_attempt: number | null;
+  attempts: ClipQcAttempt[];
+}
+
+export interface ClipQcHistory {
+  job_id: number;
+  generation: number;
+  max_attempts: number;
+  clips: ClipQcClip[];
 }
 
 export interface GflowAccount {

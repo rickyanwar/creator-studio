@@ -37,6 +37,12 @@ def clip_qc_path(job_id: int, generation: int, clip_index: int, attempt: int) ->
     return clip_qc_dir() / f"job{job_id}_g{generation}_c{clip_index}_a{attempt}.mp4"
 
 
+def clip_qc_sheet_path(clip_path) -> Path:
+    """The contact sheet QC looked at, saved next to the attempt clip."""
+    path = Path(clip_path)
+    return path.with_name(f"{path.stem}_sheet.jpg")
+
+
 def last_frame_jpeg(path: str) -> bytes:
     with tempfile.NamedTemporaryFile(suffix=".jpg") as output:
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-sseof", "-0.1", "-i", path,
@@ -123,6 +129,10 @@ def logic_check(clip_path: str, clip_prompt: str, previous_clip_path: str | None
     from app.services.design_images import _vision_chat, _vision_datauri
 
     sheet = contact_sheet(clip_path, n=8)
+    try:
+        clip_qc_sheet_path(clip_path).write_bytes(sheet)
+    except OSError:
+        logger.warning("Could not save the QC contact sheet for %s", clip_path, exc_info=True)
     frame_times = contact_sheet_times(_duration(clip_path), n=8)
     prompt = build_logic_prompt(clip_prompt, has_previous_frame=bool(previous_clip_path), frame_times=frame_times)
     content = [{"type": "text", "text": prompt},
@@ -150,3 +160,87 @@ def accept_attempt(db, job, row, *, accepted_best: bool):
         clips.append(value)
     job.clips = clips
     flag_modified(job, "clips")
+
+
+def clip_qc_history(db, job) -> dict:
+    from app.models.ai_video import VideoClipQc
+
+    rows = (
+        db.query(VideoClipQc)
+        .filter(VideoClipQc.video_job_id == job.id)
+        .order_by(
+            VideoClipQc.generation.desc(),
+            VideoClipQc.clip_index.asc(),
+            VideoClipQc.attempt.asc(),
+        )
+        .all()
+    )
+
+    base = (get_settings().storage_base_url or "http://localhost/media").rstrip("/")
+    grouped: dict[tuple[int, int], list[VideoClipQc]] = {}
+    for row in rows:
+        grouped.setdefault((row.generation, row.clip_index), []).append(row)
+
+    clips = []
+    for (gen, c_idx), attempts in grouped.items():
+        current_gen = (gen == job.generation)
+
+        pass_row = next((r for r in attempts if r.verdict == "pass"), None)
+        if pass_row is not None:
+            used_attempt = pass_row.attempt
+        else:
+            use_attempt_row = next((r for r in attempts if r.verdict == "use_attempt"), None)
+            used_attempt = use_attempt_row.use_attempt if use_attempt_row is not None else None
+
+        if not current_gen:
+            outcome = "discarded"
+        elif any(r.verdict == "pass" for r in attempts):
+            outcome = "passed"
+        elif any(r.verdict == "use_attempt" for r in attempts):
+            outcome = "kept_best"
+        elif any(r.verdict == "failed" for r in attempts):
+            outcome = "failed"
+        else:
+            outcome = "pending"
+
+        serialized_attempts = []
+        for row in attempts:
+            clip_p = Path(row.clip_path) if row.clip_path else None
+            clip_url = f"{base}/ai_videos/clip_qc/{clip_p.name}" if clip_p and clip_p.exists() else None
+
+            sheet_p = clip_qc_sheet_path(row.clip_path) if row.clip_path else None
+            sheet_url = f"{base}/ai_videos/clip_qc/{sheet_p.name}" if sheet_p and sheet_p.exists() else None
+
+            serialized_attempts.append({
+                "id": row.id,
+                "attempt": row.attempt,
+                "status": row.status,
+                "verdict": row.verdict,
+                "major_count": row.major_count,
+                "minor_count": row.minor_count,
+                "issues": row.issues or [],
+                "prompt": row.prompt,
+                "next_prompt": row.next_prompt,
+                "waiting_reason": row.waiting_reason,
+                "clip_url": clip_url,
+                "sheet_url": sheet_url,
+                "used_in_video": bool(current_gen and used_attempt is not None and row.attempt == used_attempt),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            })
+
+        clips.append({
+            "generation": gen,
+            "clip_index": c_idx,
+            "current_generation": current_gen,
+            "outcome": outcome,
+            "used_attempt": used_attempt,
+            "attempts": serialized_attempts,
+        })
+
+    return {
+        "job_id": job.id,
+        "generation": job.generation,
+        "max_attempts": max_attempts_for_job(job),
+        "clips": clips,
+    }
+
