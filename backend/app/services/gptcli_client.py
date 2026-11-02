@@ -50,6 +50,8 @@ RUN_LIMIT_S = 600
 UNAVAILABLE_STREAK_KEY = "gptcli:unavailable_streak"
 UNAVAILABLE_STREAK_THRESHOLD = 3
 UNAVAILABLE_STREAK_EXPIRE_S = 900
+# Owner 2026-11-02: ChatGPT text answers always use the High thinking effort.
+TEXT_THINKING = "high"
 
 
 @dataclass(frozen=True)
@@ -513,6 +515,7 @@ def generate_text(
     payload = {
         "prompt": prompt,
         "thread": "polish",
+        "thinking": TEXT_THINKING,
     }
     headers = {
         "Authorization": f"Bearer {cfg.token}",

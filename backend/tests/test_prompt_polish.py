@@ -832,6 +832,11 @@ class TestCaseChatGPTFallback:
         def _post(url, headers=None, json=None, timeout=None):
             if "/v1/text" in url:
                 call_count["chatgpt"] += 1
+                if call_count["chatgpt"] == 1:
+                    return SimpleNamespace(
+                        status_code=503,
+                        json=lambda: {"error": {"type": "unavailable", "message": "busy"}},
+                    )
                 return SimpleNamespace(
                     status_code=200,
                     json=lambda: {
@@ -855,7 +860,7 @@ class TestCaseChatGPTFallback:
         assert result.ok is True
         assert result.attempts == 2
         assert result.account == "chatgpt:utama"
-        assert call_count["chatgpt"] == 1
+        assert call_count["chatgpt"] == 2
 
     def test_chatgpt_answer_fails_check_polished_not_accepted(self):
         """ChatGPT answer that fails check_polished is NOT accepted (problems reported; same as Argon)."""
@@ -903,7 +908,7 @@ class TestCaseChatGPTFallback:
             polish_clips(KNEE_CLIPS, template=KNEE_TEMPLATE, niche="health",
                          config=CFG, http_post=_post)
         assert exc_info.value.kind == "no_account_ready"
-        assert "chatgpt:" not in exc_info.value.detail
+        assert "chatgpt: not available" in exc_info.value.detail
         assert not any("/v1/text" in u for u in called_urls)
 
     def test_gptcli_unavailable_until_set_chatgpt_not_called(self, monkeypatch):

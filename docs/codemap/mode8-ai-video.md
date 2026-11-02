@@ -117,9 +117,8 @@ In `ai_video_plan.py:62-77`, the planner prevents template fatigue on a fanpage:
   - `livery`: `pick_livery(db, fanpage_id, template)` inspects past 50 jobs, picks unused livery or least recently used.
   - `channel_name`: `sanitize_channel_name(fanpage.name)` uppercased, alphanumeric/spaces only, truncated to 24 chars.
 
-### 3.5 Prompt Polish & ChatGPT Fallback
-- **Argon Prompt Polish** (`prompt_polish.py`, `ai_video_prepare.py`): Early prompt rewriting for Mode 8 clips via `gemini-web-serve`.
-- **ChatGPT Fallback**: When Argon raises `PolishUnavailable` (502, `no_account_ready`, etc.), prompt polish automatically falls back to ChatGPT (`POST /v1/text` on `gpt serve`, thread `polish`, account label `chatgpt:<profile>`).
+### 3.5 Prompt Polish Engine Order (owner 2026-11-02)
+- **Engine Order** (`prompt_polish.py`, `ai_video_prepare.py`): ChatGPT first (`POST /v1/text` on `gpt serve` with thinking `high`) -> 9Router Codex (`cx/gpt-6.1-sol`, `cx/gpt-6-sol`, skipped while the Codex budget rests) -> Argon (`gemini-web-serve`) last.
 - **Kill Switch**: Set `GPT_SERVE_TEXT_DAILY_CAP=0` in `/etc/gpt-serve.env` on the VPS to disable the ChatGPT text endpoint.
 
 ---
@@ -251,7 +250,7 @@ Implemented in `gflow_worker/probe_credits.py`:
   - Upload endpoint `POST /worker/gflow/jobs/{id}/clips/{index}/qc` validates `1 <= attempt <= max_attempts_for_job(job)` (422 if out of range).
   - Rows in `video_clip_qc` (one per job/generation/clip/attempt). Celery `app.tasks.ai_video_clip_qc.check_clip` on the `gallery` queue: claims the row (`processing_until`, 40 min), runs `logic_check` (8-frame contact sheet + previous accepted clip's last frame, FlashFast vision, logic errors only; a clip passes when no issue is "major"); one vision call per attempt. The prompt lists each frame's time (`contact_sheet_times`) and `SHOT_RULES`: a camera change between the prompt's `[mm:ss]` shots is a cut, so direction/shape/parts are judged only within one shot (owner 2026-11-01).
   - On pass: accepts immediately (verdict `pass`), marking clip as accepted.
-  - On failed logic check: if `clip_attempt < max_attempts`, re-polishes only that clip (`prompt_polish.repolish_clip`, Argon -> ChatGPT, quotes/i2v prefix/2,600 chars validated), never holds a DB transaction during slow calls, re-checks job status/generation after each slow call, and sets verdict `retry`. When `clip_attempt >= max_attempts`, selects the best attempt (`best_attempt`), marks `accepted_best=True`, and sets verdict `use_attempt`.
+  - On failed logic check: if `clip_attempt < max_attempts`, re-polishes only that clip (`prompt_polish.repolish_clip`, ChatGPT -> Codex -> Argon, quotes/i2v prefix/2,600 chars validated), never holds a DB transaction during slow calls, re-checks job status/generation after each slow call, and sets verdict `retry`. When `clip_attempt >= max_attempts`, selects the best attempt (`best_attempt`), marks `accepted_best=True`, and sets verdict `use_attempt`.
   - Vision or re-polish unavailable -> re-queue every 120 s, verdict `failed` after 6 h. `qc-status` re-queues a lost task after 15 min.
 - Credits & manual review: Attempt >= 2 is charged at upload ((N-1) * credits_per_clip). If any clip was accepted via `accepted_best` (failed all attempts up to limit), `finalize_ai_video` sets `publish_status = PublishJobStatus.pending_review` with reason `kept the best of {attempts} attempts ({first_problem})`. QC clip copies (`job{id}_g{gen}_c{clip}_a{attempt}.mp4`) and the 8-frame contact sheet QC looked at (`..._sheet.jpg`, saved by `logic_check`) live in `media/ai_videos/clip_qc/`. They are kept for the QC history (`GET /ai-video/jobs/{id}/clip-qc`, "Show QC history" on the AI Video job card; the job list carries `clip_qc_summary`) and deleted after 14 days by `cleanup.cleanup_old_clip_qc_files` (daily 04:15 WIB), except while the video is still in progress or its post waits for review (owner 2026-11-02).
 

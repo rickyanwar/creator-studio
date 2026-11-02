@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -14,6 +16,7 @@ from app.models.settings import Settings
 from app.services.encryption import decrypt
 from app.services.gptcli_client import (
     GptcliConfig,
+    GptcliTextResponse,
     generate_text,
     get_gptcli_config,
     gptcli_unavailable_until,
@@ -22,6 +25,8 @@ from app.services.gptcli_client import (
 logger = logging.getLogger(__name__)
 
 GENERATE_TIMEOUT_S = 900
+# Owner 2026-11-02: Codex is allowed for prompt polish only, as the 2nd engine.
+CODEX_POLISH_MODELS = ("cx/gpt-6.1-sol", "cx/gpt-6-sol")
 
 PROTECTED_PHRASES = (
     "no text",
@@ -94,7 +99,7 @@ _I2V_PREFIX = "Continue seamlessly from this exact frame"
 
 
 class PolishUnavailable(Exception):
-    """gemini-web-serve could not run Argon now (no account ready, proxy down, unreachable, auth, 5xx)."""
+    """No polish engine could answer now (ChatGPT, Codex and Argon were all unavailable)."""
 
     def __init__(self, kind: str, detail: str = "", retry_after_s: int | None = None):
         super().__init__(detail or kind)
@@ -397,19 +402,86 @@ def _post_generate_chatgpt(gcfg: GptcliConfig, prompt: str, http_post=None):
     return generate_text(gcfg, prompt, request_id=req_id, http_post=http_post)
 
 
+def _post_generate_codex(prompt: str, http_post=None):
+    from app.services.nine_router import get_nine_router_config
+    cfg = get_nine_router_config()
+    if not cfg.base_url or not cfg.api_key:
+        raise PolishUnavailable("codex_unavailable", "9Router is not configured")
+
+    from app.database import SessionLocal
+    from app.services.codex_budget import codex_resting
+    try:
+        db = SessionLocal()
+        try:
+            resting = codex_resting(db, datetime.now(timezone.utc))
+        except Exception as exc:
+            logger.warning("prompt_polish: codex_resting check failed: %s", exc)
+            resting = False
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("prompt_polish: db session failed for codex_resting: %s", exc)
+        resting = False
+
+    if resting:
+        raise PolishUnavailable("codex_resting", "Codex budget is resting")
+
+    post_fn = http_post or httpx.post
+    url = f"{cfg.base_url.rstrip('/')}/chat/completions"
+    remembered: list[str] = []
+
+    for model in CODEX_POLISH_MODELS:
+        started = time.monotonic()
+        try:
+            resp = post_fn(
+                url,
+                headers={"Authorization": f"Bearer {cfg.api_key}"},
+                json={"model": model, "messages": [{"role": "user", "content": prompt}], "stream": False},
+                timeout=GENERATE_TIMEOUT_S,
+            )
+        except (httpx.TransportError, OSError):
+            remembered.append(f"{model}: unreachable")
+            continue
+        if resp.status_code != 200:
+            remembered.append(f"{model}: HTTP {resp.status_code}")
+            continue
+        try:
+            text = resp.json()["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError, ValueError):
+            remembered.append(f"{model}: bad answer")
+            continue
+        if not text or not text.strip():
+            remembered.append(f"{model}: empty answer")
+            continue
+        return GptcliTextResponse(text=text, account=f"codex:{model}", seconds=round(time.monotonic() - started, 1))
+
+    raise PolishUnavailable("codex_unavailable", "; ".join(remembered))
+
+
 def _ask(config: PolishConfig, prompt: str, http_post=None, attempt: int = 1):
+    tried: list[str] = []
+    if config.chatgpt and gptcli_unavailable_until() is None:
+        try:
+            resp = _post_generate_chatgpt(config.chatgpt, prompt, http_post=http_post)
+            logger.info("prompt_polish attempt %d: answered by ChatGPT", attempt)
+            return resp
+        except PolishUnavailable as exc:
+            tried.append(f"chatgpt: {exc.kind}")
+            logger.info("prompt_polish attempt %d: ChatGPT unavailable (%s); asking Codex", attempt, exc.kind)
+    else:
+        tried.append("chatgpt: not available")
+    try:
+        resp = _post_generate_codex(prompt, http_post=http_post)
+        logger.info("prompt_polish attempt %d: answered by %s", attempt, resp.account)
+        return resp
+    except PolishUnavailable as exc:
+        tried.append(f"codex: {exc.kind}")
+        logger.info("prompt_polish attempt %d: Codex unavailable (%s); asking Argon", attempt, exc.kind)
     try:
         return _post_generate(config, prompt, http_post=http_post)
     except PolishUnavailable as exc:
-        if config.chatgpt and gptcli_unavailable_until() is None:
-            logger.info("prompt_polish attempt %d: Argon unavailable (%s); asking ChatGPT", attempt, exc.kind)
-            try:
-                return _post_generate_chatgpt(config.chatgpt, prompt, http_post=http_post)
-            except PolishUnavailable as chatgpt_exc:
-                detail_base = exc.detail or exc.kind
-                new_detail = f"{detail_base} | chatgpt: {chatgpt_exc.kind}"
-                raise PolishUnavailable(exc.kind, new_detail, exc.retry_after_s) from chatgpt_exc
-        raise
+        detail = f"{exc.detail or exc.kind} | " + "; ".join(tried)
+        raise PolishUnavailable(exc.kind, detail, exc.retry_after_s) from exc
 
 
 def parse_clip_answer(text: str) -> dict:
@@ -487,7 +559,7 @@ PROMPT:
 
 def polish_clips(clips: list[dict], *, template, niche: str | None, config: PolishConfig,
                  max_attempts: int = 3, resume: dict | None = None, http_post=None) -> PolishResult:
-    """Rewrite clip prompts via Argon. Raises PolishUnavailable on infra errors."""
+    """Rewrite clip prompts (ChatGPT first, then Codex, then Argon). Raises PolishUnavailable on infra errors."""
     if not config or not config.token:
         raise PolishUnavailable("not_configured", "no token")
     names_allowed = bool(template.raw.get("real_names_allowed"))
