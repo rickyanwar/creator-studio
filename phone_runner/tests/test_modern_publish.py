@@ -799,6 +799,53 @@ def test_modern_share_intent_happy_path_published(monkeypatch):
     assert all(g["ok"] is True for g in vision_gates)
 
 
+def test_modern_after_typing_receives_author_verified_before(monkeypatch):
+    proof = _make_valid_modern_proof(empty_state_certainty=True)
+    monkeypatch.setattr("phone_runner.publish.probe_device", lambda s, wake=False: FAKE_PROBE_READY)
+    monkeypatch.setattr("phone_runner.publish.collect_own_url_proof_chain", lambda **kw: proof)
+    monkeypatch.setattr("phone_runner.publish.time.sleep", lambda s: None)
+    monkeypatch.setattr("phone_runner.publish.human_pause", lambda *a, **k: 0.0)
+    monkeypatch.setattr("phone_runner.publish.human_tap", lambda *a, **kw: None)
+    monkeypatch.setattr("phone_runner.publish.run_adb", lambda args, serial=None: AdbResult(0, "OK", ""))
+    ui_iter = iter([
+        AdbResult(0, MODERN_FEED_DUMP, ""),
+        AdbResult(0, EMPTY_PROOF_COMPOSER_XML, ""),
+        AdbResult(0, TYPED_SHARE_COMPOSER_XML, ""),
+        AdbResult(0, POST_SETTINGS_SCREEN_XML, ""),
+    ])
+    monkeypatch.setattr("phone_runner.publish.query_ui_hierarchy", lambda s: next(ui_iter, AdbResult(0, "", "")))
+    monkeypatch.setattr("phone_runner.publish.query_activity_state", lambda s: AdbResult(0, "", ""))
+    mock_stage = mock.MagicMock()
+    mock_stage.__enter__.return_value = [{"remote_path": "/sdcard/Pictures/staging/stage_1.jpg", "local_path": "/tmp/test.jpg"}]
+    monkeypatch.setattr("phone_runner.publish.stage_media_files", lambda urls, serial=None: mock_stage)
+    monkeypatch.setattr("phone_runner.publish.get_media_content_uri", lambda s, p: "content://media/external/images/media/101")
+    monkeypatch.setattr("phone_runner.publish.open_share_intent_composer", lambda s, u, a, **kw: (True, "opened", SHARE_INTENT_COMPOSER_XML))
+    monkeypatch.setattr("phone_runner.publish.type_text", lambda serial, text, clear=False, **kw: MobilerunResult(0, "OK", ""))
+
+    gate_calls = []
+
+    def mock_verify_gate(serial, gate, **kw):
+        gate_calls.append((gate, kw))
+        return True, {"gate": gate, "model": "gemini-flash", "ok": True, "detail": "gate passed", "answer": {}}
+
+    monkeypatch.setattr("phone_runner.publish.verify_gate", mock_verify_gate)
+    monkeypatch.setattr(
+        "phone_runner.publish.resolve_latest_post_link",
+        lambda s, c, **kw: ("post_123", "https://facebook.com/posts/post_123", "resolved"),
+    )
+    res = execute_publish(
+        serial=TEST_SERIAL,
+        main_profile={"id": TEST_ROOT_ID, "name": TEST_ROOT_NAME},
+        destination={"id": TEST_DEST_ID, "name": TEST_DEST_NAME, "kind": "facebook_profile"},
+        caption="Hello with modern share intent",
+        media_urls=["https://cdn.example.com/p.jpg"],
+    )
+    assert res["status"] == "published"
+    after_kwargs = [kw for gate, kw in gate_calls if gate == "composer_after_typing"]
+    assert len(after_kwargs) == 1
+    assert after_kwargs[0]["author_verified_before"] is True
+
+
 def test_modern_share_intent_composer_before_typing_gate_fails(monkeypatch):
     # (2) composer_before_typing gate fails -> failed, nothing typed, no SHARE
     proof = _make_valid_modern_proof(empty_state_certainty=True)

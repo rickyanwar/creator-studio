@@ -367,6 +367,7 @@ def check_composer(
     require_caption: bool = False,
     require_photo: bool = True,
     require_same_reference: bool = True,
+    author_verified_before: bool = False,
 ) -> tuple[bool, str]:
     if not ans or not isinstance(ans, dict):
         return False, "invalid or empty vision response"
@@ -376,8 +377,10 @@ def check_composer(
         return False, f"screen is not composer (got '{screen}')"
 
     author = (ans.get("author_name") or "").strip()
-    if author != expected_author.strip():
-        return False, f"author mismatch: expected '{expected_author.strip()}', got '{author}'"
+    expected = expected_author.strip()
+    author_scrolled_off = author == "" and author_verified_before
+    if author != expected and not author_scrolled_off:
+        return False, f"author mismatch: expected '{expected}', got '{author}'"
 
     if require_photo:
         if ans.get("has_attached_photo") is not True:
@@ -394,6 +397,8 @@ def check_composer(
         if cap_ans.strip() != "":
             return False, f"expected empty caption, got '{cap_ans}'"
 
+    if author_scrolled_off:
+        return True, "composer verified (author header scrolled off after typing; author verified before typing)"
     return True, "composer verified"
 
 
@@ -466,6 +471,7 @@ def verify_gate(
     timeout: float = VISION_MODEL_TIMEOUT_SECONDS,
     total_budget: float = VISION_GATE_BUDGET_SECONDS,
     require_same_reference: bool = True,
+    author_verified_before: bool = False,
     **kwargs: Any,
 ) -> tuple[bool, dict[str, Any]]:
     png = capture_screenshot_png(serial)
@@ -531,6 +537,7 @@ def verify_gate(
             require_caption=True,
             require_photo=False,
             require_same_reference=require_same_reference,
+            author_verified_before=author_verified_before,
         )
     elif gate == "post_settings":
         ok, chk_detail = check_post_settings(ans)

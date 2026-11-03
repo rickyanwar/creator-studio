@@ -202,6 +202,72 @@ def test_check_composer_cases():
     assert ok is False
 
 
+def test_check_composer_empty_author_verified_before():
+    ans = {"screen": "composer", "author_name": "", "caption_starts_with": "Hello world! This is my post"}
+    ok, detail = check_composer(
+        ans, "Agung", "Hello world! This is my post",
+        require_caption=True, require_photo=False, author_verified_before=True,
+    )
+    assert ok is True
+    assert "scrolled off" in detail
+
+
+def test_check_composer_empty_author_without_prior_verification():
+    ans = {"screen": "composer", "author_name": "", "caption_starts_with": "Hello world! This is my post"}
+    ok, detail = check_composer(
+        ans, "Agung", "Hello world! This is my post",
+        require_caption=True, require_photo=False, author_verified_before=False,
+    )
+    assert ok is False
+    assert detail == "author mismatch: expected 'Agung', got ''"
+
+
+def test_check_composer_wrong_author_with_prior_verification():
+    ans = {"screen": "composer", "author_name": "Someone Else", "caption_starts_with": "Hello world! This is my post"}
+    ok, detail = check_composer(
+        ans, "Agung", "Hello world! This is my post",
+        require_caption=True, require_photo=False, author_verified_before=True,
+    )
+    assert ok is False
+    assert detail == "author mismatch: expected 'Agung', got 'Someone Else'"
+
+
+def test_check_composer_exact_author_without_prior_verification():
+    ans = {"screen": "composer", "author_name": "Agung", "caption_starts_with": "Hello world! This is my post"}
+    ok, detail = check_composer(
+        ans, "Agung", "Hello world! This is my post",
+        require_caption=True, require_photo=False, author_verified_before=False,
+    )
+    assert ok is True
+    assert detail == "composer verified"
+
+
+def test_verify_gate_before_typing_rejects_empty_author_with_prior_verification(monkeypatch):
+    ans = {
+        "screen": "composer", "author_name": "", "caption_starts_with": "",
+        "has_attached_photo": True, "same_photo_as_reference": True,
+    }
+    monkeypatch.setattr("phone_runner.vision_verify.capture_screenshot_png", lambda serial: b"png")
+    monkeypatch.setattr("phone_runner.vision_verify.ask_vision", lambda *a, **kw: (ans, "m", ""))
+    ok, ev = verify_gate(
+        FAKE_SERIAL, "composer_before_typing", expected_author="Agung", author_verified_before=True,
+    )
+    assert ok is False
+    assert ev["detail"] == "author mismatch: expected 'Agung', got ''"
+
+
+def test_verify_gate_after_typing_accepts_empty_author_with_prior_verification(monkeypatch):
+    ans = {"screen": "composer", "author_name": "", "caption_starts_with": "Hello world! This is my post"}
+    monkeypatch.setattr("phone_runner.vision_verify.capture_screenshot_png", lambda serial: b"png")
+    monkeypatch.setattr("phone_runner.vision_verify.ask_vision", lambda *a, **kw: (ans, "m", ""))
+    ok, ev = verify_gate(
+        FAKE_SERIAL, "composer_after_typing", expected_author="Agung",
+        expected_caption="Hello world! This is my post", author_verified_before=True,
+    )
+    assert ok is True
+    assert "scrolled off" in ev["detail"]
+
+
 def test_check_post_settings():
     ok, _ = check_post_settings({"screen": "post_settings", "share_button_visible": True, "audience": "Public"})
     assert ok is True

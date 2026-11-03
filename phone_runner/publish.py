@@ -1638,12 +1638,14 @@ def _execute_publish_core(
                 }
 
             # Step g: vision gate composer_after_typing
+            before_author_ok = any(g.get("gate") == "composer_before_typing" and g.get("ok") is True for g in evidence["vision_gates"])
             v_ok, v_ev = verify_gate(
                 serial,
                 "composer_after_typing",
                 expected_author=dest_name,
                 expected_caption=caption_str,
                 require_caption=True,
+                author_verified_before=before_author_ok,
             )
             evidence["vision_gates"].append(v_ev)
             if not v_ok:
