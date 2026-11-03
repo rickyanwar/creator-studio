@@ -674,16 +674,37 @@ def _get_sface_model():
     return _sface_state["model"]
 
 
+# A reference photo can show more than one person (a team member walking beside
+# the driver), and the subject is not always the largest face: a cap shades it, or
+# the other person stands closer. Every sizable reference face is compared and the
+# best match wins. Small background faces (crowd) are ignored.
+REF_FACE_MIN_AREA_RATIO = 0.5
+
+
+def _reference_faces(ref_bytes: bytes) -> list[dict]:
+    faces = _detect_faces(ref_bytes)
+    if not faces:
+        return []
+    largest = max(face["box"][2] * face["box"][3] for face in faces)
+    return [face for face in faces if face["box"][2] * face["box"][3] >= largest * REF_FACE_MIN_AREA_RATIO]
+
+
 def identity_score(ref_bytes: bytes, out_bytes: bytes) -> float:
     model = _get_sface_model()
-    ref = face_info(ref_bytes)
-    if model is None or not ref:
+    if model is None:
+        return 0.0
+    ref_faces = _reference_faces(ref_bytes)
+    if not ref_faces:
         return 0.0
     try:
-        import cv2
         ref_image, out_image = _decode(ref_bytes), _decode(out_bytes)
-        ref_feature = _face_feature(model, ref_image, ref)
-        return max((_face_feature_score(model, ref_feature, out_image, face) for face in _detect_faces(out_bytes)), default=0.0)
+        out_faces = _detect_faces(out_bytes)
+        best = 0.0
+        for ref in ref_faces:
+            ref_feature = _face_feature(model, ref_image, ref)
+            for face in out_faces:
+                best = max(best, _face_feature_score(model, ref_feature, out_image, face))
+        return best
     except Exception as exc:
         logger.warning("identity score calculation failed: %s", exc)
         return 0.0

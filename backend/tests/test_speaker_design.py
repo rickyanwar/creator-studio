@@ -744,6 +744,51 @@ def test_identity_score_matches_best_output_face(monkeypatch):
     assert speaker_design.identity_score(b"ref", b"out") == 1.0
 
 
+def _identity_fixture(monkeypatch, ref_faces, out_faces, scores):
+    """scores maps (ref face tag, out face tag) -> cosine score; faces carry their tag in 'raw'."""
+    class Model:
+        def alignCrop(self, image, face): return face
+        def feature(self, crop): return crop
+        def match(self, ref, out, kind): return scores[(ref, out)]
+
+    monkeypatch.setattr(speaker_design, "_get_sface_model", lambda: Model())
+    monkeypatch.setattr(speaker_design, "_detect_faces", lambda data: ref_faces if data == b"ref" else out_faces)
+    monkeypatch.setattr(speaker_design, "_decode", lambda _: object())
+    monkeypatch.setattr(speaker_design, "_face_feature", lambda model, image, face: face["tag"])
+
+
+def _face(tag, w, h):
+    return {"tag": tag, "box": (0, 0, w, h), "landmarks": [(1, 1)] * 5}
+
+
+def test_identity_score_uses_the_subject_even_when_another_face_is_larger(monkeypatch):
+    # Job 16479 (2026-11-03): a team member (179x248) stood beside Hamilton (186x208,
+    # shaded by his cap); only the largest face was compared -> 0.15, a false reject.
+    _identity_fixture(
+        monkeypatch,
+        ref_faces=[_face("bystander", 179, 248), _face("hero", 186, 208)],
+        out_faces=[_face("edited", 400, 500)],
+        scores={("bystander", "edited"): 0.15, ("hero", "edited"): 0.81},
+    )
+    assert speaker_design.identity_score(b"ref", b"out") == 0.81
+
+
+def test_identity_score_ignores_small_background_faces(monkeypatch):
+    # A crowd face under half the largest face's area must not rescue a changed face.
+    _identity_fixture(
+        monkeypatch,
+        ref_faces=[_face("hero", 200, 200), _face("crowd", 100, 150)],
+        out_faces=[_face("edited", 400, 500)],
+        scores={("hero", "edited"): 0.05, ("crowd", "edited"): 0.9},
+    )
+    assert speaker_design.identity_score(b"ref", b"out") == 0.05
+
+
+def test_identity_score_is_zero_without_a_reference_face(monkeypatch):
+    _identity_fixture(monkeypatch, ref_faces=[], out_faces=[_face("edited", 400, 500)], scores={})
+    assert speaker_design.identity_score(b"ref", b"out") == 0.0
+
+
 def test_identity_failure_returns_none_and_generate_once(monkeypatch):
     source = image_bytes()
     monkeypatch.setattr(speaker_design, "pick_speaker_photos", lambda *args, **kwargs: [SimpleNamespace(local_path="speaker")])
