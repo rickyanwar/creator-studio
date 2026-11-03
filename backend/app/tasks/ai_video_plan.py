@@ -9,7 +9,8 @@ from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_cover_build import apply_prepared_cover, prepare_cover
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
-from app.services.ai_video_prepare import polish_enabled, valid_prepared
+from app.services.ai_video_narration import engine_for, resolve_narration
+from app.services.ai_video_prepare import _is_matching_prepared, polish_enabled, valid_prepared
 from app.services.social_project_eligibility import project_can_generate
 from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import allowed_video_templates, credits_estimate, fit_clips_to_credits, get_template, pick_clips
@@ -67,7 +68,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover):
+def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration):
     job = VideoJob(
         fanpage_id=fanpage.id,
         idea_id=idea.id,
@@ -82,6 +83,7 @@ def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title,
         credits_estimate=credits_estimate(template, clips),
         status="queued",
     )
+    job.narration = narration
     idea.variables, idea.status, idea.error = variables, "queued", None
     db.add(job)
     if isinstance(cover, dict):
@@ -162,7 +164,7 @@ def plan_ai_videos():
                 continue
 
             if polish_enabled(fanpage):
-                valid_ideas = [i for i in valid_ideas if valid_prepared(i) is not None]
+                valid_ideas = [i for i in valid_ideas if _is_matching_prepared(i, fanpage)]
                 if not valid_ideas:
                     logger.info("Mode 8: fanpage %s waits for Argon prompt polish", fanpage.id)
                     continue
@@ -204,8 +206,9 @@ def plan_ai_videos():
                 logger.info("Mode 8: fanpage %s reached its daily credit cap; idea %s waits", fanpage.id, idea.id)
                 continue
             clips = fitted
+            engine = engine_for(fanpage, template, clips)
             if polish_enabled(fanpage):
-                prepared = valid_prepared(idea)
+                prepared = valid_prepared(idea, engine=engine)
                 if not prepared:
                     continue
                 if prepared.get("clips_count") != clips:
@@ -217,7 +220,8 @@ def plan_ai_videos():
                 rendered = prepared["clips"]
                 cover = prepared.get("cover")
                 try:
-                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover)
+                    narration = resolve_narration(fanpage, template, clips, variables)
+                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration)
                 except ValueError as exc:
                     db.rollback()
                     idea.status, idea.error = "failed", str(exc)[:2000]
@@ -232,7 +236,8 @@ def plan_ai_videos():
                     filler = fill_from_research if research_ready(idea, template, clips) else fill_idea
                     variables, title, caption, rendered, _provider = filler(db, idea, fanpage, clips)
                     cover = None
-                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover)
+                    narration = resolve_narration(fanpage, template, clips, variables)
+                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration)
                 except ValueError as exc:
                     db.rollback()
                     idea.status, idea.error = "failed", str(exc)[:2000]
@@ -298,4 +303,3 @@ def top_up_ai_video_ideas():
             logger.info("Mode 8 idea writer: fanpage %s wrote %s idea(s)%s", fanpage.id, created, " (Muse dry)" if muse_mode else "")
     finally:
         db.close()
-

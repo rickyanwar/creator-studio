@@ -19,6 +19,140 @@ def _sibling_url(original_url: str | None, original_path: str | None, new_path: 
     return f"{base_url.rstrip('/')}/ai_videos/{new_path.name}"
 
 
+def _apply_tts_narration(job, idea, reasons) -> str:
+    """Narrate a TTS-mode video. Returns "ok", "review" (narrated, but a speech check asks for review) or
+    "failed" (no narration; the original video is kept)."""
+    from app.config import get_settings
+    from app.services.ai_video_tts import TtsError, narrate_video
+    from app.services.fanpage_language import fanpage_language
+    from app.services.speech_words import transcribe_words
+    from app.tasks.ai_video_speech_check import SPEECH_MIN_WORDS
+    from app.models.target_fanpages import TargetFanpage
+    from sqlalchemy.orm import object_session
+
+    workdir = None
+    try:
+        speech_review = False
+        if not any(isinstance(clip.get("qc"), dict) and clip["qc"].get("attempt") for clip in job.clips or []):
+            try:
+                db = object_session(job)
+                fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+                words = transcribe_words(job.video_path, fanpage_language(fanpage))
+            except Exception:
+                words = None
+            if words is None:
+                reasons.append("speech check unavailable")
+                speech_review = True
+            elif len(words) >= SPEECH_MIN_WORDS:
+                reasons.append("human speech found in the Flow audio")
+                speech_review = True
+        raw = Path(job.video_path)
+        workdir = raw.parent / f"tts_{job.id}_{uuid.uuid4().hex[:8]}"
+        variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
+        texts = [variables.get(f"narration_{i}", "") for i in range(1, len(job.clips or []) + 1)]
+        if not texts or any(not isinstance(text, str) or not text.strip() for text in texts):
+            raise TtsError("missing narration sentence")
+        result = narrate_video(job, texts, str(workdir))
+        url = _sibling_url(job.video_url, job.video_path, Path(result["video_path"]), get_settings().storage_base_url)
+        narration = {**job.narration, "model": result["model"], "segments": result["segments"],
+                     "audio_path": result["audio_path"]}
+        raw.unlink(missing_ok=True)
+        job.video_path, job.video_url = result["video_path"], url
+        job.narration = narration
+        return "review" if speech_review else "ok"
+    except Exception as exc:
+        reasons.append(f"tts narration failed: {exc}"[:300])
+        job.narration = {**job.narration, "error": str(exc)[:500]}
+        return "failed"
+    finally:
+        if workdir is not None:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _apply_asmr(job, idea, reasons) -> str:
+    """Normalize the speech-free bed and save the on-screen narration windows."""
+    from app.config import get_settings
+    from app.models.target_fanpages import TargetFanpage
+    from app.services.ai_video_tts import LEAD_IN_S, TAIL_GAP_S, clip_windows, normalize_bed
+    from app.services.fanpage_language import fanpage_language
+    from app.services.speech_words import transcribe_words
+    from app.tasks.ai_video_speech_check import SPEECH_MIN_WORDS
+    from sqlalchemy.orm import object_session
+
+    try:
+        speech_review = False
+        if not any(isinstance(clip.get("qc"), dict) and clip["qc"].get("attempt") for clip in job.clips or []):
+            try:
+                db = object_session(job)
+                fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
+                words = transcribe_words(job.video_path, fanpage_language(fanpage))
+            except Exception:
+                words = None
+            if words is None:
+                reasons.append("speech check unavailable")
+                speech_review = True
+            elif len(words) >= SPEECH_MIN_WORDS:
+                reasons.append("human speech found in the Flow audio")
+                speech_review = True
+        variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
+        texts = [variables.get(f"narration_{i}", "") for i in range(1, len(job.clips or []) + 1)]
+        if not texts or any(not isinstance(text, str) or not text.strip() for text in texts):
+            raise ValueError("missing narration sentence")
+        windows = clip_windows(job.video_path, len(job.clips), job.clip_seconds or 10)
+        segments = [{"index": i, "text": text, "start": s + LEAD_IN_S,
+                     "duration": (e - s) - LEAD_IN_S - TAIL_GAP_S}
+                    for i, (text, (s, e)) in enumerate(zip(texts, windows), start=1)]
+        if len(segments) != len(texts) or any(segment["duration"] <= 0 for segment in segments):
+            raise ValueError("invalid ASMR caption windows")
+        raw = Path(job.video_path)
+        normalized = raw.with_name(f"{raw.stem}_asmr_{uuid.uuid4().hex[:8]}.mp4")
+        normalize_bed(str(raw), str(normalized))
+        url = _sibling_url(job.video_url, job.video_path, normalized, get_settings().storage_base_url)
+        raw.unlink(missing_ok=True)
+        job.video_path, job.video_url = str(normalized), url
+        job.narration = {**job.narration, "segments": segments}
+        return "review" if speech_review else "ok"
+    except Exception as exc:
+        reasons.append(f"asmr normalization failed: {exc}"[:300])
+        job.narration = {**job.narration, "error": str(exc)[:500]}
+        return "failed"
+
+
+class _CaptionsEnabled:
+    """Use the page's caption style without changing its saved caption switch."""
+
+    ai_video_captions_enabled = True
+
+    def __init__(self, fanpage):
+        self._fanpage = fanpage
+
+    def __getattr__(self, name):
+        return getattr(self._fanpage, name)
+
+
+def _asmr_caption_words(job):
+    from app.services.ai_video_overlay import estimate_words
+
+    segments = job.narration.get("segments") or []
+    return estimate_words([segment["text"] for segment in segments],
+                          [(s["start"], s["start"] + s["duration"]) for s in segments])
+
+
+def _tts_caption_words(job, language_code):
+    """Time final segment text against the clean narrator, or its fitted windows."""
+    from app.services.ai_video_overlay import estimate_words
+    from app.services.speech_words import caption_words
+
+    narration = job.narration
+    segments = narration.get("segments") or []
+    texts = [segment["text"] for segment in segments]
+    audio = narration.get("audio_path")
+    words = caption_words(audio, language_code, texts) if audio and Path(audio).is_file() else None
+    if words is None:
+        words = estimate_words(texts, [(s["start"], s["start"] + s["duration"]) for s in segments])
+    return words
+
+
 @celery_app.task(name="app.tasks.ai_video_finalize.finalize_ai_video", queue="video", soft_time_limit=600)
 def finalize_ai_video(video_job_id: int):
     from app.models.ai_video import VideoIdea, VideoJob
@@ -83,28 +217,50 @@ def finalize_ai_video(video_job_id: int):
                 first_problem = issues[0].get("problem") if issues and isinstance(issues[0], dict) else "logic issues"
                 attempts = max_attempts_for_job(job)
                 reasons.append(f"clip {clip['index']}: kept the best of {attempts} attempts ({first_problem})")
+        tts_failed = False
+        is_asmr = (job.narration or {}).get("engine") == "asmr"
+        if (job.narration or {}).get("engine") == "tts":
+            tts_result = _apply_tts_narration(job, idea, reasons)
+            if tts_result != "ok":
+                publish_status = PublishJobStatus.pending_review
+                passed = False
+            tts_failed = tts_result == "failed"
+        elif is_asmr:
+            asmr_result = _apply_asmr(job, idea, reasons)
+            if asmr_result != "ok":
+                publish_status = PublishJobStatus.pending_review
+                passed = False
+            tts_failed = asmr_result == "failed"
         publish_video_path, publish_video_url = job.video_path, job.video_url
         publish_thumbnail_path, publish_thumbnail_url = job.thumbnail_path, job.thumbnail_url
-        overlays_enabled = bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))
+        overlays_enabled = is_asmr or bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))
         overlay_info = {"logo": bool(fanpage and fanpage.ai_video_logo_enabled),
-                        "captions": bool(fanpage and fanpage.ai_video_captions_enabled), "words": 0}
-        if overlays_enabled:
+                         "captions": is_asmr or bool(fanpage and fanpage.ai_video_captions_enabled), "words": 0}
+        if overlays_enabled and not tts_failed:
             from app.services.ai_video_overlay import estimate_words, render_branded, speech_windows
             from app.services.fanpage_language import fanpage_language
             from app.services.speech_words import caption_words
             raw_path = Path(job.video_path)
             workdir = raw_path.parent / f"overlay_{job.id}_{uuid.uuid4().hex[:8]}"
             try:
-                variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
-                texts = [variables.get(f"narration_{i}", "") for i in range(1, len(job.clips or []) + 1)]
-                words = caption_words(str(raw_path), fanpage_language(fanpage) if fanpage else None, texts)
-                overlay_info["timing"] = "voice" if words else "estimate"
-                if not words:
-                    windows = speech_windows(str(raw_path), job.clip_seconds, len(texts))
-                    words = estimate_words(texts, windows)
+                if is_asmr:
+                    words = _asmr_caption_words(job)
+                    overlay_info["timing"] = "asmr"
+                elif (job.narration or {}).get("engine") == "tts":
+                    words = _tts_caption_words(job, fanpage_language(fanpage) if fanpage else None)
+                    overlay_info["timing"] = "tts"
+                else:
+                    variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
+                    texts = [variables.get(f"narration_{i}", "") for i in range(1, len(job.clips or []) + 1)]
+                    words = caption_words(str(raw_path), fanpage_language(fanpage) if fanpage else None, texts)
+                    overlay_info["timing"] = "voice" if words else "estimate"
+                    if not words:
+                        windows = speech_windows(str(raw_path), job.clip_seconds, len(texts))
+                        words = estimate_words(texts, windows)
                 overlay_info["words"] = len(words)
                 branded = raw_path.with_name(f"{raw_path.stem}_branded_{uuid.uuid4().hex[:8]}{raw_path.suffix}")
-                render_branded(str(raw_path), str(branded), fanpage, words, workdir)
+                overlay_page = _CaptionsEnabled(fanpage) if is_asmr and not fanpage.ai_video_captions_enabled else fanpage
+                render_branded(str(raw_path), str(branded), overlay_page, words, workdir)
                 thumbnail = None
                 if fanpage and getattr(fanpage, "ai_video_cover_enabled", True):
                     from app.services.ai_video_cover_build import apply_cover
@@ -150,7 +306,7 @@ def finalize_ai_video(video_job_id: int):
                     idea.status = "done"
                 db.commit()
                 return
-        else:
+        elif not tts_failed:
             raw_path = Path(job.video_path)
             workdir = raw_path.parent / f"cover_{job.id}_{uuid.uuid4().hex[:8]}"
             if fanpage and getattr(fanpage, "ai_video_cover_enabled", True):
@@ -259,10 +415,11 @@ def rerender_ai_video_overlay(publish_job_id: int):
             db.commit()
             return
 
-        overlays_enabled = bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))
+        is_asmr = bool(video_job and (video_job.narration or {}).get("engine") == "asmr")
+        overlays_enabled = is_asmr or bool(fanpage and (fanpage.ai_video_logo_enabled or fanpage.ai_video_captions_enabled))
         overlay_info = {
             "logo": bool(fanpage and fanpage.ai_video_logo_enabled),
-            "captions": bool(fanpage and fanpage.ai_video_captions_enabled),
+            "captions": is_asmr or bool(fanpage and fanpage.ai_video_captions_enabled),
             "words": 0,
         }
 
@@ -276,18 +433,26 @@ def rerender_ai_video_overlay(publish_job_id: int):
 
             workdir = raw_path.parent / f"overlay_{publish_job.id}_{uuid.uuid4().hex[:8]}"
             try:
-                variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
-                n_clips = len((video_job.clips if video_job else []) or [])
-                texts = [variables.get(f"narration_{i}", "") for i in range(1, n_clips + 1)] if n_clips else []
-                words = caption_words(str(raw_path), fanpage_language(fanpage) if fanpage else None, texts)
-                overlay_info["timing"] = "voice" if words else "estimate"
-                if not words and n_clips:
-                    clip_seconds = video_job.clip_seconds if video_job and video_job.clip_seconds else 4
-                    windows = speech_windows(str(raw_path), clip_seconds, len(texts))
-                    words = estimate_words(texts, windows)
+                if is_asmr:
+                    words = _asmr_caption_words(video_job)
+                    overlay_info["timing"] = "asmr"
+                elif video_job and (video_job.narration or {}).get("engine") == "tts":
+                    words = _tts_caption_words(video_job, fanpage_language(fanpage) if fanpage else None)
+                    overlay_info["timing"] = "tts"
+                else:
+                    variables = idea.variables if idea and isinstance(idea.variables, dict) else {}
+                    n_clips = len((video_job.clips if video_job else []) or [])
+                    texts = [variables.get(f"narration_{i}", "") for i in range(1, n_clips + 1)] if n_clips else []
+                    words = caption_words(str(raw_path), fanpage_language(fanpage) if fanpage else None, texts)
+                    overlay_info["timing"] = "voice" if words else "estimate"
+                    if not words and n_clips:
+                        clip_seconds = video_job.clip_seconds if video_job and video_job.clip_seconds else 4
+                        windows = speech_windows(str(raw_path), clip_seconds, len(texts))
+                        words = estimate_words(texts, windows)
                 overlay_info["words"] = len(words) if words else 0
                 branded = raw_path.with_name(f"{raw_path.stem}_branded_{uuid.uuid4().hex[:8]}{raw_path.suffix}")
-                render_branded(str(raw_path), str(branded), fanpage, words or [], workdir)
+                overlay_page = _CaptionsEnabled(fanpage) if is_asmr and not fanpage.ai_video_captions_enabled else fanpage
+                render_branded(str(raw_path), str(branded), overlay_page, words or [], workdir)
                 thumbnail = None
                 if fanpage and getattr(fanpage, "ai_video_cover_enabled", True) and video_job:
                     from app.services.ai_video_cover_build import apply_cover

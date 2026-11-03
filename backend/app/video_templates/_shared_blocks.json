@@ -1,6 +1,9 @@
 {
   "style": "Photorealistic 3D CGI, premium motorsport engineering documentary style, one continuous camera move with no cuts.",
+  "tts_style": "an engaging documentary narrator, confident, clear and warm, with natural energy and a lively, flowing pace",
   "audio": "Audio: steady engine and wind ambience at a low, even level, always quieter than the voice-over, no music.",
+  "audio_tts": "Audio: natural sound effects that match the action on screen, steady engine and wind ambience, and a soft instrumental music bed, no voices, no voice-over, no narration, no dialogue, no singing, no intelligible words.",
+  "audio_asmr": "Audio: crisp, close-miked ASMR sound of the mechanism: soft clicks, smooth whirring, metallic taps and a low, steady engine hum that follow every movement on screen, no music, no voices, no voice-over, no narration, no dialogue, no singing, no intelligible words.",
   "narrator_en": "Voice-over: a 40-year-old British male documentary narrator recorded close to the microphone in a dry studio, with a deep, warm, clear baritone voice and a steady, even pace, says in English:",
   "narrator_en_followup": "Voice-over: a 40-year-old British male documentary narrator recorded close to the microphone in a dry studio, with a deep, warm, clear baritone voice and a steady, even pace, says in English:",
   "liveries": {

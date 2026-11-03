@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { FanpageDetail, AiVideoTemplate } from "@/lib/types";
-import { previewAiVideoOverlay } from "@/lib/api";
+import useSWRImmutable from "swr/immutable";
+import type { FanpageDetail, AiVideoTemplate, TtsVoice } from "@/lib/types";
+import { listTtsVoices, previewAiVideoOverlay } from "@/lib/api";
 
 type Props = {
   form: Partial<FanpageDetail>;
@@ -12,6 +13,9 @@ type Props = {
 };
 
 export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Props) {
+  const { data: voices = [] } = useSWRImmutable("ai-video-tts-voices", () =>
+    listTtsVoices().then((r) => r.data as TtsVoice[])
+  );
   const enabled = !!form.ai_video_enabled;
   const selectedTemplates: string[] = form.ai_video_templates ?? (form.ai_video_template ? [form.ai_video_template] : []);
   const firstKey = selectedTemplates[0] ?? form.ai_video_template;
@@ -26,6 +30,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
   const unionOptions = Array.from(
     new Set(selectedTemplateObjs.flatMap((t) => t.clip_options ?? []))
   ).sort((a, b) => a - b);
+  const narrationTemplates = selectedTemplateObjs.filter((t) => Math.max(...t.clip_options) >= 2);
   const clipOptions = unionOptions.length > 0 ? unionOptions : (template?.clip_options ?? [2, 3]);
   const maxClips = clips;
   const minClips = form.ai_video_clips_min ?? maxClips;
@@ -214,6 +219,59 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                 })}
               </div>
             </div>
+            {narrationTemplates.length > 0 && (
+              <div className="sm:col-span-2 space-y-2">
+                <h3 className="label">Narrator per template</h3>
+                <div className="space-y-3 p-3 rounded-lg border border-hairline bg-surface-raised">
+                  {narrationTemplates.map((item) => {
+                    const narration = form.ai_video_narration?.[item.key];
+                    return (
+                      <fieldset key={item.key} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <legend className="text-xs font-medium text-text-primary mb-2">{item.name}</legend>
+                        <div>
+                          <label htmlFor={`narrator-${item.key}`} className="label">Narrator</label>
+                          <select
+                            id={`narrator-${item.key}`}
+                            className="input w-full"
+                            value={narration?.engine ?? "flow"}
+                            onChange={(e) => set("ai_video_narration", {
+                              ...form.ai_video_narration,
+                              [item.key]: { engine: e.target.value, voice: null },
+                            })}
+                          >
+                            <option value="flow">Flow voice (default)</option>
+                            <option value="tts">Google TTS</option>
+                            <option value="asmr">ASMR + on-screen text</option>
+                          </select>
+                        </div>
+                        {narration?.engine === "tts" && (
+                          <div>
+                            <label htmlFor={`tts-voice-${item.key}`} className="label">Voice</label>
+                            <select
+                              id={`tts-voice-${item.key}`}
+                              className="input w-full"
+                              value={narration.voice ?? ""}
+                              onChange={(e) => set("ai_video_narration", {
+                                ...form.ai_video_narration,
+                                [item.key]: { engine: "tts", voice: e.target.value || null },
+                              })}
+                            >
+                              <option value="">Auto (matches the template narrator)</option>
+                              {voices.map((voice) => (
+                                <option key={voice.name} value={voice.name}>{voice.name} — {voice.gender}, {voice.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </fieldset>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-text-secondary">
+                  Google TTS: Flow makes only sound effects and music; the narrator is added after the video is made. ASMR + on-screen text: Flow makes only crisp mechanism sounds (no music, no voices) and the narration is shown as text. Both only for videos longer than 10 seconds.
+                </p>
+              </div>
+            )}
             <div>
               <label className="label">Shortest video (seconds)</label>
               <input

@@ -94,6 +94,7 @@ class VideoJob(Base):
     aspect = Column(String(8), nullable=False)
     clip_seconds = Column(Integer, nullable=False)
     clips = Column(JSON, nullable=False)
+    narration = Column(JSON, nullable=True)  # TTS narration: {engine, voice, style, language, model, segments, audio_path}
     credits_per_clip = Column(Integer, nullable=False)
     credits_estimate = Column(Integer, nullable=False)
     status = Column(String(16), nullable=False, default="queued", server_default="queued", index=True)
@@ -143,6 +144,7 @@ class VideoClipQc(Base):
     clip_path = Column(Text, nullable=False)
     status = Column(String(20), nullable=False, default="pending", server_default="pending")
     issues = Column(JSON, nullable=True)
+    speech = Column(JSON, nullable=True)  # {"words": int, "text": str} or {"unavailable": true}
     major_count = Column(Integer, nullable=True)
     minor_count = Column(Integer, nullable=True)
     verdict = Column(String(20), nullable=True)

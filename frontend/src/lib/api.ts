@@ -457,6 +457,7 @@ export const revokeApiToken = (id: number) => api.delete(`/strategy/tokens/${id}
 
 // ── AI video (Mode 8) ────────────────────────────────────────────────────────
 export const listAiVideoTemplates = () => api.get("/ai-video/templates");
+export const listTtsVoices = () => api.get("/ai-video/tts-voices");
 export const listAiVideoIdeas = (params?: { status?: string; fanpage_id?: number; limit?: number }) =>
   api.get("/ai-video/ideas", { params });
 export const createAiVideoIdea = (data: Record<string, unknown>) => api.post("/ai-video/ideas", data);

@@ -7,6 +7,7 @@ import re
 
 from app.models.ai_video import VideoIdea, VideoJob
 from app.services import news_copywriter
+from app.services.ai_video_narration import engine_for
 from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language, language_name
 from app.services.video_templates import (
@@ -84,7 +85,8 @@ def build_fill_prompt(t, idea, fanpage, clips) -> str:
     lang = cs.language
     lang_display = language_name(lang)
     example = t.raw.get("example", {}).get("variables", {})
-    budgets = {f"narration_{i + 1}": get_narration_budget(c, lang) for i, c in enumerate(clip_templates_for(t, clips))}
+    engine = engine_for(fanpage, t, clips)
+    budgets = {f"narration_{i + 1}": get_narration_budget(c, lang, engine) for i, c in enumerate(clip_templates_for(t, clips))}
     plan_text = t.raw.get("narration_by_clips", {}).get(str(clips))
     plan_line = f"\nNarration plan for {clips} clips: {plan_text}" if plan_text else ""
     title_max = getattr(fanpage, "ai_video_title_max_chars", None) or 100
@@ -256,6 +258,7 @@ def research_ready(idea, template, clips) -> bool:
 def fill_from_research(db, idea, fanpage, clips):
     """Use the slots, title and caption the research desk wrote, with the studio's look; no LLM call."""
     template = get_template(idea.template_key)
+    engine = engine_for(fanpage, template, clips)
     raw = dict(idea.variables or {})
     base = dict(raw)
     template_slots = set(required_variables(template, clips))
@@ -266,12 +269,13 @@ def fill_from_research(db, idea, fanpage, clips):
         if not val or not str(val).strip():
             base[slot] = GENERIC_LOCK[slot]
     variables = apply_system_look(db, fanpage, template, base)
-    rendered = render_clips(template, variables, clips, lang_code=fanpage_language(fanpage))
+    rendered = render_clips(template, variables, clips, lang_code=fanpage_language(fanpage), narration_engine=engine)
     return variables, idea.title, idea.caption, rendered, "research_desk"
 
 
 def fill_idea(db, idea, fanpage, clips):
     template = get_template(idea.template_key)
+    engine = engine_for(fanpage, template, clips)
     prompt = build_fill_prompt(template, idea, fanpage, clips)
 
     def apply_look(variables):
@@ -287,7 +291,7 @@ def fill_idea(db, idea, fanpage, clips):
         if isinstance(idea.variables, dict):
             merged_vars.update(idea.variables)
         variables = apply_look(merged_vars)
-        render_clips(template, variables, clips, lang_code=lang)
+        render_clips(template, variables, clips, lang_code=lang, narration_engine=engine)
         result["variables"] = variables
         return result
 
@@ -298,5 +302,5 @@ def fill_idea(db, idea, fanpage, clips):
     if isinstance(idea.variables, dict):
         merged_vars.update(idea.variables)
     result["variables"] = apply_look(merged_vars)
-    rendered = render_clips(template, result["variables"], clips, lang_code=lang)
+    rendered = render_clips(template, result["variables"], clips, lang_code=lang, narration_engine=engine)
     return result["variables"], result["title"], result["caption"], rendered, provider

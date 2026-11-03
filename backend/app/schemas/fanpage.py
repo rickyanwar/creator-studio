@@ -130,6 +130,7 @@ class FanpageBase(BaseModel):
     ai_video_max_credits_per_video: Optional[int] = Field(None, ge=0, le=1000000)
     ai_video_max_credits_per_day: Optional[int] = Field(None, ge=0, le=1000000)
     ai_video_narrator: Optional[str] = None
+    ai_video_narration: dict[str, dict] | None = None
     ai_video_title_max_chars: int = Field(100, ge=20, le=5000)
     ai_video_description_max_chars: int = Field(600, ge=20, le=5000)
     # ── Mode 8 overlay (logo + captions) ──
@@ -197,6 +198,34 @@ class FanpageBase(BaseModel):
             if value not in narrator_presets(get_template("motorsport_tech_explainer")):
                 raise ValueError(f"unknown ai_video_narrator {value}")
         return value
+    @field_validator("ai_video_narration", mode="before")
+    @classmethod
+    def validate_ai_video_narration(cls, value):
+        if value is None:
+            return value
+        from app.services.tts_voices import TTS_VOICES, tts_allowed
+        from app.services.video_templates import list_templates
+
+        if not isinstance(value, dict):
+            raise ValueError("ai_video_narration must be a dict")
+        templates = {t.key: t for t in list_templates()}
+        normalized = {}
+        for key, choice in value.items():
+            if key not in templates:
+                raise ValueError(f"unknown template key: {key}")
+            if not isinstance(choice, dict):
+                raise ValueError(f"narration choice for {key} must be a dict")
+            engine = choice.get("engine")
+            if engine not in ("flow", "tts", "asmr"):
+                raise ValueError(f"narration engine must be flow, tts or asmr for {key}")
+            voice = None if engine == "asmr" else choice.get("voice")
+            if voice is not None and (not isinstance(voice, str) or voice not in TTS_VOICES):
+                raise ValueError(f"unknown TTS voice: {voice}")
+            if engine in ("tts", "asmr") and not tts_allowed(templates[key]):
+                raise ValueError(f"TTS and ASMR narration require a template supporting at least 2 clips: {key}")
+            normalized[key] = {"engine": engine, "voice": voice or None}
+        return normalized
+
     # ── Viral Radar ───────────────────────────────────────────────────────────
     radar_enabled: bool = False
     radar_niches: list[str] = []

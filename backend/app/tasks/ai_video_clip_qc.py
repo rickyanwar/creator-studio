@@ -7,6 +7,7 @@ from sqlalchemy import or_
 
 from app.database import SessionLocal
 from app.tasks.celery_app import celery_app
+from app.tasks.ai_video_speech_check import SPEECH_MIN_WORDS, check_clip_speech
 from app.services.ai_video_dispatch import _utcnow
 from app.services.ai_video_clip_qc import (
     CLIP_QC_WAIT_LIMIT_S, CLIP_QC_WAIT_RETRY_S,
@@ -92,10 +93,16 @@ def check_clip(qc_id: int):
         clips_total = len(job.clips or [])
         job_id = job.id
         max_attempts = max_attempts_for_job(job)
+        no_voice = (job.narration or {}).get("engine") in ("tts", "asmr")
         generation = row.generation
         db.commit()
 
         if clip_status in ("pending", "unavailable"):
+            if no_voice and row.speech is None:
+                row.processing_until = None
+                db.commit()
+                check_clip_speech.delay(row.id)
+                return
             try:
                 issues = logic_check(clip_path, clip_prompt, previous_path)
             except Exception as exc:
@@ -105,6 +112,9 @@ def check_clip(qc_id: int):
                 row.processing_until = None
                 db.commit()
                 return
+            if no_voice and (row.speech or {}).get("words", 0) >= SPEECH_MIN_WORDS:
+                issues.append({"severity": "major", "problem": "human speech in the Flow audio; this clip must have no voices",
+                               "evidence": row.speech.get("text", "")})
             row.issues = issues
             row.major_count = sum(1 for issue in issues if issue.get("severity") == "major")
             row.minor_count = sum(1 for issue in issues if issue.get("severity") == "minor")
@@ -125,7 +135,8 @@ def check_clip(qc_id: int):
             db.commit()
             return
 
-        if clip_attempt < max_attempts:
+        has_speech = no_voice and (row.speech or {}).get("words", 0) >= SPEECH_MIN_WORDS
+        if clip_attempt < max_attempts and not (has_speech and clip_attempt >= 2):
             config = get_polish_config(db)
             db.commit()
             next_prompt = clip_prompt
@@ -133,7 +144,8 @@ def check_clip(qc_id: int):
                 try:
                     next_prompt = repolish_clip(clip_prompt, mode=mode, clip_index=clip_index,
                                                 clips_total=clips_total, issues=clip_issues,
-                                                template=template, niche=niche, config=config)
+                                                template=template, niche=niche, config=config,
+                                                narration_engine=((job.narration or {}).get("engine") or "flow"))
                 except PolishUnavailable as exc:
                     _wait(db, row, f"re-polish unavailable: {exc.kind}")
                     return

@@ -40,6 +40,7 @@ celery_app = Celery(
         "app.tasks.ai_video_prepare",
         "app.tasks.ai_video_dispatch",
         "app.tasks.ai_video_clip_qc",
+        "app.tasks.ai_video_speech_check",
         "app.tasks.radar",
         "app.tasks.radar_crawl",
         "app.tasks.radar_dispatch",
@@ -83,6 +84,7 @@ celery_app.conf.update(
         "app.tasks.ai_video_prepare.prepare_ai_video_ideas": {"queue": "gallery"},
         "app.tasks.ai_video_plan.top_up_ai_video_ideas": {"queue": "gallery"},
         "app.tasks.ai_video_clip_qc.*": {"queue": "gallery"},
+        "app.tasks.ai_video_speech_check.*": {"queue": "video"},
         # Phone posting holds a slot for 5-10 min (one real post) and phone recovery up to ~5 min
         # (one-shot Hermes repair). On the 2-slot default queue they starved renders and, worse,
         # two slow renders stopped every phone post (2026-10-17 test). Own single-slot worker.

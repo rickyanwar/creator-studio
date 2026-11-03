@@ -23,8 +23,11 @@
   },
   "language": "the fan page's caption language",
   "blocks": {
+    "tts_style": "a clear, warm and friendly health educator with natural energy and a calm, flowing pace",
     "style": "Soft photorealistic 3D medical animation like a premium health-education video: glossy anatomical cross-sections, macro tissue close-ups and clean product shots, smooth soft studio lighting, pastel pink and salmon tissue tones, cream bone, clean white objects, gentle depth of field, slow smooth camera moves. No text, letters, numbers, labels, logos or watermarks anywhere in the image. No gore.",
     "audio": "Audio: a soft, calm ambient music bed very quietly under the voice-over, no sound effects.",
+    "audio_tts": "Audio: a soft, calm ambient music bed with gentle, subtle sound effects that match the action on screen, no voices, no voice-over, no narration, no dialogue, no singing, no intelligible words.",
+    "audio_asmr": "Audio: soft, close-miked ASMR sounds of the body process on screen: gentle flowing, soft pulses and quiet organic textures that follow every movement, no music, no voices, no voice-over, no narration, no dialogue, no singing, no intelligible words.",
     "narrator_en": "Voice-over: a 35-year-old male health educator recorded close to the microphone in a dry studio, with a warm, clear tenor voice, a calm, educational tone, a steady measured pace and the same pitch throughout, says in English:",
     "narrator_en_followup": "Voice-over: a 35-year-old male health educator recorded close to the microphone in a dry studio, with a warm, clear tenor voice, a calm, educational tone, a steady measured pace and the same pitch throughout, says in English:",
     "narrator_presets": {},

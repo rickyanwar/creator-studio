@@ -245,6 +245,7 @@ class TargetFanpage(Base):
     ai_video_max_credits_per_video = Column(Integer, nullable=True)
     ai_video_max_credits_per_day = Column(Integer, nullable=True)
     ai_video_narrator = Column(String(32), nullable=True)
+    ai_video_narration = Column(JSON, nullable=True)  # {template_key: {"engine": "flow"|"tts", "voice": str|None}}
     ai_video_title_max_chars = Column(Integer, default=100, nullable=False, server_default="100")
     ai_video_description_max_chars = Column(Integer, default=600, nullable=False, server_default="600")
     # ── Mode 8 overlay (logo + captions) ──────────────────────────────────────

@@ -37,6 +37,8 @@ PROTECTED_PHRASES = (
     "no sound effects",
     "no cuts",
 )
+PROTECTED_PHRASES_TTS = ("no voices", "no voice-over", "no narration", "no intelligible words")
+PROTECTED_PHRASES_ASMR = (*PROTECTED_PHRASES_TTS, "no music")
 
 # Motorsport motion rules (owner 2026-10-23, after a NSR500 video "turned" upright and sideways in a corner).
 # Argon must put the sentence for the niche, word for word, in every clip; check_polished enforces it.
@@ -171,7 +173,7 @@ def get_polish_config(db) -> PolishConfig | None:
     return PolishConfig(base_url=base_url, token=token, model=model, chatgpt=chatgpt_cfg)
 
 
-def build_instruction(clips: list[dict], *, template, niche: str | None) -> str:
+def build_instruction(clips: list[dict], *, template, niche: str | None, narration_engine: str = "flow") -> str:
     """Build the Argon instruction prompt from clips and template."""
     n = len(clips)
     clip_seconds = template.clip_seconds
@@ -181,7 +183,7 @@ def build_instruction(clips: list[dict], *, template, niche: str | None) -> str:
     for c in clips:
         parts.append(f"===== CLIP {c['index']} — mode {c['mode']} =====\n{c['prompt']}")
     clips_block = "\n\n".join(parts) + "\n"
-    return (
+    instruction = (
         f'You are a senior prompt engineer for Google Flow (Veo 3). Below are {n} clip prompts ({clip_seconds} s each, vertical 9:16) for ONE short video made from template "{template_name}" (niche: {niche_str}). Each clip is generated separately and the clips are joined in order. A clip with mode t2v is text-to-video. A clip with mode i2v is image-to-video: it starts from the LAST FRAME of the previous clip, so it must begin by continuing that exact frame.\n'
         "\n"
         "Rewrite every clip prompt so the final video is realistic, physically and historically logical, and feels like ONE continuous video:\n"
@@ -203,6 +205,34 @@ def build_instruction(clips: list[dict], *, template, niche: str | None) -> str:
         "\n"
         f"{clips_block}"
     )
+    if narration_engine in ("tts", "asmr"):
+        lines = instruction.splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.startswith("3. Audio continuity:"):
+                lines[index] = (
+                    "3. Audio continuity: write ONE ambience_sentence with sound effects that match the action "
+                    "on screen and a soft instrumental music bed, and put it word for word in every clip. "
+                    "There is NO narrator and NO voice-over. Never add spoken words, dialogue, singing "
+                    "or text to be read aloud. Keep this exactly: no voices, no voice-over, no narration, "
+                    "no dialogue, no singing, no intelligible words. The JSON voice_sentence must be an empty string.\n"
+                )
+            elif line.startswith("- Keep every text that is inside double quotes"):
+                lines[index] = (
+                    "- Keep every text inside double quotes EXACTLY as written (it is lettering shown on screen, "
+                    "never spoken). Do not add new double-quoted text.\n"
+                )
+            elif line.startswith("- Order inside every clip:"):
+                lines[index] = line.replace("(5) the narrator voice sentence and its voice-over line, (6)", "(5)")
+            elif line.startswith("   Engine sound:"):
+                lines[index] = line.replace("but always lower than the voice, ", "at a low level, ").replace(
+                    " The narrator voice sentence keeps the same person (gender, age, accent) in every clip.", ""
+                )
+        instruction = "".join(lines)
+        if narration_engine == "asmr":
+            instruction = instruction.replace(
+                "on screen and a soft instrumental music bed,", "on screen as close-miked ASMR, no music,"
+            )
+    return instruction
 
 
 def parse_answer(text: str) -> dict:
@@ -276,7 +306,8 @@ def _engine_type(original: list[dict]) -> str | None:
 
 
 def check_polished(original: list[dict], polished: list[dict], voice: str, ambience: str,
-                   *, names_allowed: bool = False, motion: str | None = None) -> list[str]:
+                   *, names_allowed: bool = False, motion: str | None = None,
+                   narration_engine: str = "flow") -> list[str]:
     """Run guards. Returns [] if all pass, else list of problem strings."""
     problems = _motion_problems(polished, motion) if motion else []
     engine = _engine_type(original) if motion else None
@@ -294,10 +325,14 @@ def check_polished(original: list[dict], polished: list[dict], voice: str, ambie
     pol_by_idx = {c["index"]: c for c in polished}
 
     # 3. voice and ambience length
-    if len(voice) < 40:
+    if narration_engine in ("tts", "asmr") and voice:
+        problems.append(f"voice_sentence must be empty in {narration_engine} mode")
+    if narration_engine not in ("tts", "asmr") and len(voice) < 40:
         problems.append("voice_sentence is shorter than 40 characters")
     if len(ambience) < 40:
         problems.append("ambience_sentence is shorter than 40 characters")
+    if narration_engine == "asmr" and "no music" not in ambience.lower():
+        problems.append("ambience_sentence must keep no music")
 
     for idx in orig_indexes:
         orig_clip = orig_by_idx[idx]
@@ -325,7 +360,7 @@ def check_polished(original: list[dict], polished: list[dict], voice: str, ambie
             problems.append(f"clip {idx}: extra quoted text added: {extra}")
 
         # 3 cont. voice and ambience in every clip
-        if voice and len(voice) >= 40 and voice not in pol_prompt:
+        if narration_engine not in ("tts", "asmr") and voice and len(voice) >= 40 and voice not in pol_prompt:
             problems.append(f"clip {idx}: voice_sentence missing")
         if ambience and len(ambience) >= 40 and ambience not in pol_prompt:
             problems.append(f"clip {idx}: ambience_sentence missing")
@@ -338,6 +373,11 @@ def check_polished(original: list[dict], polished: list[dict], voice: str, ambie
         for phrase in PROTECTED_PHRASES:
             if phrase.lower() in orig_prompt.lower() and phrase.lower() not in pol_prompt.lower():
                 problems.append(f"clip {idx}: protected phrase missing: {phrase}")
+        if narration_engine in ("tts", "asmr"):
+            phrases = PROTECTED_PHRASES_ASMR if narration_engine == "asmr" else PROTECTED_PHRASES_TTS
+            for phrase in phrases:
+                if phrase not in pol_prompt.lower():
+                    problems.append(f"clip {idx}: protected phrase missing: {phrase}")
 
         # 6. i2v prefix
         if orig_clip["mode"] == "i2v" and not pol_prompt.startswith(_I2V_PREFIX):
@@ -516,7 +556,8 @@ def parse_clip_answer(text: str) -> dict:
 
 
 def repolish_clip(prompt: str, *, mode: str, clip_index: int, clips_total: int, issues: list[dict],
-                  template, niche: str | None, config: PolishConfig, http_post=None) -> str:
+                  template, niche: str | None, config: PolishConfig, http_post=None,
+                  narration_engine: str = "flow") -> str:
     i2v = (' It is image-to-video: it starts from the last frame of the previous clip and must begin with "Continue seamlessly from this exact frame".'
            if mode != "t2v" else "")
     issue_lines = "\n".join(f"- [{item['severity']}] {item['problem']}" for item in issues)
@@ -537,6 +578,26 @@ Return ONLY JSON, no markdown: {{"prompt":"...","changes":["one short reason per
 
 PROMPT:
 {prompt}'''
+    ambience = ""
+    phrases = PROTECTED_PHRASES_ASMR if narration_engine == "asmr" else PROTECTED_PHRASES_TTS
+    if narration_engine in ("tts", "asmr"):
+        # The renderer and polish instruction both keep audio as one sentence.
+        ambience = next((sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", prompt)
+                         if all(phrase in sentence.lower() for phrase in phrases)), "")
+        if len(ambience) < 40:
+            raise ValueError(f"{narration_engine} ambience sentence missing")
+        instruction = instruction.replace(
+            "- Keep every text inside double quotes EXACTLY as written, in the same order. Do not add new double-quoted text.",
+            "- Keep every text inside double quotes EXACTLY as written, in the same order "
+            "(it is lettering shown on screen, never spoken). Do not add new double-quoted text. "
+            "Never add spoken words, dialogue, singing or text to be read aloud."
+        ).replace(
+            "- Keep the narrator voice sentence and the background sound sentence exactly as they are, so the narrator stays the very same single voice as in the other clips.",
+            f"- There is NO narrator and NO voice-over. Keep this ambience sentence exactly: {ambience}"
+        ).replace(
+            "- Every number, year, name and claim in the voice-over stays exactly as written; show only real parts in their real place.",
+            "- Keep every number, year, name and claim exactly as written; show only real parts in their real place."
+        )
     original_quotes = _QUOTE_RE.findall(prompt)
     for attempt in (1, 2):
         try:
@@ -547,7 +608,13 @@ PROMPT:
                 raise ValueError("repolish answer invalid") from exc
             answer = parse_clip_answer(response_json.get("text", ""))
             rewritten = answer["prompt"]
-            if (_QUOTE_RE.findall(rewritten) != original_quotes or len(rewritten) > 2600
+            invalid_voice = _QUOTE_RE.findall(rewritten) != original_quotes or (
+                narration_engine in ("tts", "asmr") and (
+                    ambience not in rewritten
+                    or any(phrase not in rewritten.lower() for phrase in phrases)
+                )
+            )
+            if (invalid_voice or len(rewritten) > 2600
                     or (mode != "t2v" and not rewritten.startswith(_I2V_PREFIX))):
                 raise ValueError("repolish answer invalid")
             return rewritten
@@ -558,7 +625,8 @@ PROMPT:
 
 
 def polish_clips(clips: list[dict], *, template, niche: str | None, config: PolishConfig,
-                 max_attempts: int = 3, resume: dict | None = None, http_post=None) -> PolishResult:
+                 max_attempts: int = 3, resume: dict | None = None, http_post=None,
+                 narration_engine: str = "flow") -> PolishResult:
     """Rewrite clip prompts (ChatGPT first, then Codex, then Argon). Raises PolishUnavailable on infra errors."""
     if not config or not config.token:
         raise PolishUnavailable("not_configured", "no token")
@@ -589,7 +657,7 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
         start_attempt = attempts_used + 1
 
     for attempt in range(start_attempt, max_attempts + 1):
-        prompt = build_instruction(clips, template=template, niche=niche)
+        prompt = build_instruction(clips, template=template, niche=niche, narration_engine=narration_engine)
         if attempt >= 2 and prev_answer_text is not None:
             feedback_lines = ["Your previous answer failed these automatic checks:"]
             for p in last_problems:
@@ -670,7 +738,7 @@ def polish_clips(clips: list[dict], *, template, niche: str | None, config: Poli
         ambience = parsed["ambience_sentence"]
         changes = parsed["changes"]
         problems = check_polished(clips, polished_clips, voice, ambience, names_allowed=names_allowed,
-                                  motion=motion_sentence_for(niche))
+                                  motion=motion_sentence_for(niche), narration_engine=narration_engine)
         if problems:
             summary = (" | ".join(problems))[:600]
             logger.info("prompt_polish attempt %d account=%s seconds=%.1f problems=%d: %s", attempt, acct, secs, len(problems), summary)

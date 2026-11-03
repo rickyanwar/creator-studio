@@ -17,28 +17,35 @@ LANGUAGE_WORD_FACTORS: dict[str, float] = {
     "nl": 0.85,
     "id": 0.85,
 }
+NO_VOICE_WORD_FACTOR = 0.8
 
 
-def get_narration_budget(clip_template: dict, lang_code: str | None = "en") -> str:
+def get_narration_budget(clip_template: dict, lang_code: str | None = "en",
+                         narration_engine: str = "flow") -> str:
     """Return narration word budget (e.g. '22-24' or '18-20') for a language code.
     If language entry in narration_words exists, use it. Otherwise derive from 'en'
-    using factor and round to integer range.
+    using factor and round to integer range. TTS and ASMR use a shorter budget.
     """
     code = (lang_code or "en").split("-")[0].lower()
     words_dict = clip_template.get("narration_words") or {}
     if code in words_dict:
-        return str(words_dict[code])
-
-    en_budget = words_dict.get("en", "22-24")
-    factor = LANGUAGE_WORD_FACTORS.get(code, 1.0)
-    lo, hi = map(int, en_budget.split("-"))
-    lo_derived = round(lo * factor)
-    hi_derived = round(hi * factor)
-    return f"{lo_derived}-{hi_derived}"
+        budget = str(words_dict[code])
+    else:
+        en_budget = words_dict.get("en", "22-24")
+        factor = LANGUAGE_WORD_FACTORS.get(code, 1.0)
+        lo, hi = map(int, en_budget.split("-"))
+        budget = f"{round(lo * factor)}-{round(hi * factor)}"
+    if narration_engine in ("tts", "asmr"):
+        lo, hi = map(int, budget.split("-"))
+        lo = round(lo * NO_VOICE_WORD_FACTOR)
+        hi = max(round(hi * NO_VOICE_WORD_FACTOR), lo + 2)
+        return f"{lo}-{hi}"
+    return budget
 
 
 BLOCK_VARS = {"style", "audio", "narrator", "narrator_followup", "vehicle", "vehicle_short"}
 _PLACEHOLDER = re.compile(r"\{([a-z_0-9]+)\}")
+_VOICE_PART = re.compile(r'\s*\{narrator(?:_followup)?\}\s*"\{narration_\d+\}"')
 _CHANNEL_ALLOWED = re.compile(r"[^A-Z0-9 &' .-]")
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "video_templates"
 
@@ -216,7 +223,21 @@ def sanitize_channel_name(name: str) -> str | None:
     return truncated or value[:24]
 
 
-def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str | None = None) -> list[dict]:
+def _check_tts_prompt(prompt: str, variables: dict) -> None:
+    normalized = " ".join(prompt.lower().split())
+    if "Voice-over" in prompt or re.search(r"\bsays\b", prompt, re.I):
+        raise ValueError("tts prompt must not contain a narrator block")
+    for name, value in variables.items():
+        if re.fullmatch(r"narration_\d+", name) and isinstance(value, str):
+            narration = " ".join(value.lower().split())
+            if narration and (narration in normalized or narration[:40] in normalized):
+                raise ValueError("tts prompt must not contain narration text")
+
+
+def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str | None = None,
+                 narration_engine: str = "flow") -> list[dict]:
+    if narration_engine not in ("flow", "tts", "asmr"):
+        raise ValueError("narration_engine must be flow, tts or asmr")
     if clips not in t.clip_options:
         raise ValueError(f"clips must be one of {t.clip_options}")
     for name in required_variables(t, clips):
@@ -230,7 +251,7 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
             if name.startswith("narration_") and '"' in value:
                 raise ValueError(f"{name} must not contain a double quote")
     if not uses_vehicle(t):
-        return _render_plain(t, variables, clips, lang_code)
+        return _render_plain(t, variables, clips, lang_code, narration_engine)
     preset = variables["vehicle_preset"]
     if preset not in vehicle_presets(t):
         raise ValueError(f"unknown vehicle_preset {preset}")
@@ -302,7 +323,7 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
     # Template text blocks (e.g. bike_rules) always win over same-named variables, so a fill can never rewrite the rules.
     substitutions.update({k: v for k, v in blocks.items() if isinstance(v, str)})
     substitutions.update(
-        style=blocks["style"], audio=blocks["audio"], narrator=narrator,
+        style=blocks["style"], audio=blocks[f"audio_{narration_engine}"] if narration_engine in ("tts", "asmr") else blocks["audio"], narrator=narrator,
         narrator_followup=narrator_followup,
         vehicle=_PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), preset_text_vehicle),
         vehicle_short=_PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), preset_short_vehicle),
@@ -310,11 +331,14 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
     rendered = []
     for index, clip in enumerate(clip_templates_for(t, clips), start=1):
         narration = f"narration_{index}"
-        budget_str = get_narration_budget(clip, lang)
+        budget_str = get_narration_budget(clip, lang, narration_engine)
         lo, hi = map(int, budget_str.split("-"))
         if not lo - 6 <= len(variables[narration].split()) <= hi:
             raise ValueError(f"{narration} must contain {lo - 6}–{hi} words")
-        prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), clip["prompt"])
+        template_prompt = _VOICE_PART.sub("", clip["prompt"]) if narration_engine in ("tts", "asmr") else clip["prompt"]
+        prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), template_prompt)
+        if narration_engine in ("tts", "asmr"):
+            _check_tts_prompt(prompt, variables)
         if "{" in prompt or "}" in prompt:
             raise ValueError("a placeholder is left over")
         if "motogp" in preset:
@@ -330,8 +354,11 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
     return rendered
 
 
-def _render_plain(t: VideoTemplate, variables: dict, clips: int, lang_code: str | None) -> list[dict]:
+def _render_plain(t: VideoTemplate, variables: dict, clips: int, lang_code: str | None,
+                  narration_engine: str = "flow") -> list[dict]:
     """Templates without a vehicle (e.g. health explainers): style, audio, one identical narrator, the slots."""
+    if narration_engine not in ("flow", "tts", "asmr"):
+        raise ValueError("narration_engine must be flow, tts or asmr")
     blocks = t.raw["blocks"]
     lang = lang_code or variables.get("language") or "en"
     lang_display = language_name(lang)
@@ -340,14 +367,18 @@ def _render_plain(t: VideoTemplate, variables: dict, clips: int, lang_code: str 
         narrator = narrator.replace("says in English:", f"speaking natural, native-sounding {lang_display}, says in {lang_display}:")
     substitutions = dict(variables)
     substitutions.update({k: v for k, v in blocks.items() if isinstance(v, str)})
-    substitutions.update(style=blocks["style"], audio=blocks["audio"], narrator=narrator, narrator_followup=narrator)
+    substitutions.update(style=blocks["style"], audio=blocks[f"audio_{narration_engine}"] if narration_engine in ("tts", "asmr") else blocks["audio"],
+                         narrator=narrator, narrator_followup=narrator)
     rendered = []
     for index, clip in enumerate(clip_templates_for(t, clips), start=1):
         narration = f"narration_{index}"
-        lo, hi = map(int, get_narration_budget(clip, lang).split("-"))
+        lo, hi = map(int, get_narration_budget(clip, lang, narration_engine).split("-"))
         if not lo - 6 <= len(variables[narration].split()) <= hi:
             raise ValueError(f"{narration} must contain {lo - 6}–{hi} words")
-        prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), clip["prompt"])
+        template_prompt = _VOICE_PART.sub("", clip["prompt"]) if narration_engine in ("tts", "asmr") else clip["prompt"]
+        prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), template_prompt)
+        if narration_engine in ("tts", "asmr"):
+            _check_tts_prompt(prompt, variables)
         if "{" in prompt or "}" in prompt:
             raise ValueError("a placeholder is left over")
         prompt = re.sub(r"\s{2,}", " ", prompt).strip()

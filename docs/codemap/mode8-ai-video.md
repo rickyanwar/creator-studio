@@ -1,6 +1,6 @@
 # Deep Dive D3: Mode 8 AI Video Generation Subsystem
 
-> Generated 2026-10-16 at main 25edf38 from a full read of the listed files. The "Verified claims" list at the bottom was checked line by line against the code. Other details are a careful map but not each re-checked. Read the real code before changing behaviour, and update this file when the code changes.
+> Generated 2026-10-16 at main 25edf38 from a full read of the listed files. Updated 2026-11-03 for TTS narration. The TTS verified claims in §9 were checked against the current code; the older "Verified claims" list retains its original verification date. Other details are a careful map but not each re-checked. Read the real code before changing behaviour, and update this file when the code changes.
 
 
 Comprehensive architectural and implementation reference for Mode 8 (Google Flow AI Video generation via `gflow-cli`, Celery planning/dispatch/finalization, and publication to Facebook Reels).
@@ -40,6 +40,7 @@ VideoIdea (status: proposed / pilot / approved)
                  ▼ [app.tasks.ai_video_finalize.finalize_ai_video]
                  ├─► Technical QC (ffprobe, duration, aspect 9:16, black_s <= 2s, frozen_s <= 3s)
                  ├─► Vision QC (optional): 8-frame contact sheet -> LLM vision inspection
+                 ├─► TTS mode: per-clip narrator -> fit windows -> duck/mix Flow audio; failure -> pending_review (§9)
                  ├─► Overlays: faster-whisper CPU ASR (or fallback silencedetect) -> ASS/PIL burning
                  ├─► Create PublishJob (ContentType.ai_video)
                  │      ├─► Passed QC & Auto: publish_job.delay(publish_job.id)
@@ -328,7 +329,7 @@ Implemented in `backend/app/services/ai_video_overlay.py`:
 ### 8.3 Publish Job Hand-Off
 `backend/app/tasks/ai_video_finalize.py:134-150`:
 - Cover (thumbnail): Copy generated at job creation (`prepare_cover`), worker Flow t2i background (`cover_prompt` → `cover_bg`), renderer `/render-html`, cover overlaid on the first `COVER_HOLD_SECONDS` (1.0 s) + `COVER_FADE_SECONDS` (0.4 s) fade (`apply_cover`), thumbnail = cover jpg, with fallbacks to ss=3 frame on error, governed by `ai_video_cover_enabled`. Motorcycle covers (template `motorcycle_commercial` or niche `motogp`) use the idea's own `bike_look` (or `livery`) as the scene via `cover_bike_description`, so the cover shows the same bike as the video on paddock stands in front of its team garage, with the real livery, sponsor logos and lettering kept (`MOTORCYCLE_TEXT_RULES`; only series logos are forbidden). Race bikes always carry their real race number in `bike_look`, the clips and the cover; never plain number boards (owner 2026-11-01).
-- Final video written to `<storage_base_path>/ai_videos/job_{id}_{uid8}_branded.mp4`.
+- Final branded video written to `<storage_base_path>/ai_videos/job_{id}_{uid8}_branded_{uuid8}.mp4`; cover application appends `_c{uuid6}` before `.mp4`. TTS inserts `_tts_{uuid8}` into the raw stem before branding. Without overlays, the cover suffix is applied directly to the current video stem (`ai_video_finalize.py:161`, `ai_video_cover_build.py:250`).
 - Thumbnail extracted at `ss=3` to match branded overlay (or set to cover jpg when cover is enabled).
 - Inserts `PublishJob`:
   - `content_type = ContentType.ai_video`
@@ -344,6 +345,44 @@ Implemented in `backend/app/services/ai_video_overlay.py`:
 - `VIDEO_STOCK_RELEASE_HOURS = 36`: `publish_job` holds `ContentType.ai_video` in `pending_publish` if its earliest destination slot is > 36h away (`video_slot_soon(...) is False`).
 - Why: `cleanup.py` (`cleanup_old_ai_videos`) deletes source video files 7 days after Repliz handoff (`published_at`). Videos scheduled further out would lose files before go-live, so they are only released to Repliz shortly before their slot.
 - `recover_stuck_auto_publishes` sweeps held stock periodically, dispatching oldest stock first (`order_by(PublishJob.created_at.asc())`).
+
+---
+
+## 9. TTS narration (Google Gemini TTS via 9Router, 2026-11-03)
+
+- **Three engines / UI:** Per fan page per template, choose `flow` (default Flow voice), `tts` (Flow effects + instrumental music, narrator added later), or `asmr` (Flow sounds + on-screen narration, no voice or music). Controls require a selected template with a 2+ clip option; `engine_for` also requires at least two actual clips, otherwise it returns `flow`. The voice selector appears only for TTS.
+- **Automatic voices / documentary style:** Auto uses Iapetus by default, Algenib for `motorsport_legend_innovation` and `motorcycle_commercial`, and Kore for `EN-JOURNO-F` (preset takes priority over template). A catalog voice overrides Auto. `tts_style` reads the merged template block: shared style is an engaging, confident, clear, warm documentary narrator with natural energy and a lively, flowing pace; health overrides it with a calm health educator. Language follows the fan page except `motorsport_tech_explainer`, which stays English.
+- **Data / result metadata:** `ai_video_narration` is `{template_key: {engine: "flow" | "tts" | "asmr", voice: string | null}}`. `resolve_narration` returns null for Flow, `engine` + `language` for ASMR, and `engine`, `voice`, `style`, `language` for TTS. Finalization adds `segments` (TTS includes fitted `tempo`), TTS `model` + clean `audio_path`, or `error`. `build_narration` returns `requests` and `mode`; `narrate_video` currently does not propagate those two fields to the job.
+- **Word budget / narrator-free prompts:** `NO_VOICE_WORD_FACTOR = 0.8` scales language-specific narration budgets for both `tts` and `asmr` (rounded, upper bound at least lower bound + 2). Both renderer paths select `audio_tts` / `audio_asmr`, remove narrator + quoted narration placeholders, and reject narrator blocks or narration text. Quoted on-screen lettering remains allowed. Polish requires empty `voice_sentence` and preserves `no voices`, `no voice-over`, `no narration`, `no intelligible words`; ASMR additionally requires `no music`, including in ambience and re-polish.
+- **Single-request TTS / per-clip fallback:** `build_narration` first synthesizes the whole script in ONE TTS synthesis call per video, then `split_by_pauses` splits at the longest internal pauses and validates sentence shares. Result `mode` is `single` on a usable split, otherwise `per_clip`; failed splitting adds per-clip synthesis calls. `requests` counts synthesis calls, not HTTP retries/model fallbacks; shortening can add calls even in `single` mode. Model fallback is 3.1 Flash preview, 2.5 Flash preview, then 2.5 Pro preview. Fitting allows 0.25 s lead-in, 0.5 s tail gap, tempo ≤ 1.12, and two shortening rounds, accounting for intermediate 100 ms trims and actual final duration.
+- **Timing-based ducking / loudness:** `duck_expression` uses fitted speech windows: `DUCK_GAIN = 0.25`, 0.2 s down, 0.15 s hold after speech, 0.4 s up; overlapping envelopes take the lowest gain. `mix_narration` normalizes bed and voice separately to -16 LUFS, applies the envelope at 20 ms frame resolution, then measured linear final normalization to -14 LUFS + `alimiter` (0.95). Non-finite measurements fall back to ordinary `loudnorm`; legacy calls without segments retain sidechain compression. Video is stream-copied.
+- **ASMR / always-burned captions:** `audio_asmr` requests close-miked action sounds, no music or voices. `_apply_asmr` calls `normalize_bed` (-14 LUFS + limiter, copied video) and stores clip-based caption windows without synthesizing speech. Finalize and re-render force captions through `_CaptionsEnabled`, preserving the page's saved switch and styling. TTS captions instead align final segment text against the clean narrator WAV, falling back to fitted windows; the WAV is retained as `narration_job_{id}_{uuid8}.wav`.
+- **Speech checks / failure handling:** Clip QC sets `no_voice` for both TTS and ASMR, requests speech transcription, and treats speech at the configured word threshold as a major issue. It allows one speech-triggered regeneration within the attempt cap, then best-attempt selection for review. Without clip QC, finalize holds speech or unavailable transcription for review. TTS/ASMR processing failures record `narration.error`, preserve the original video, skip overlays/cover, and route to `pending_review`.
+- **VPS ASMR evidence:** The real VPS ASMR test on 2026-11-03 had no speech in Flow audio (recorded test evidence; not a fresh VPS check).
+- **9Router request gotchas:** `POST /v1/audio/speech` needs voice in the model id, `gemini/<model>/<Voice>`, and style in the `input` prefix ending with `": "`. JSON `voice` and `instructions` are ignored. Research verified that 9Router 0.5.112 does not route 3.8 TTS and TTS ids are absent from `/v1/models`; these are recorded observations, not a fresh live check. Request-format evidence: `.notes/research-mode8-tts-2026-11-03.md:13-17`.
+
+### 9.1 Verified TTS claims
+
+backend/app/services/ai_video_narration.py:7-11,25-38 - TTS/ASMR require two actual clips and a template with a 2+ option; resolution snapshots engine/language, plus voice/style for TTS.
+backend/app/services/tts_voices.py:36-47 - Auto prefers Kore for EN-JOURNO-F, then Algenib for legend/motorcycle templates, then Iapetus.
+backend/app/services/ai_video_narration.py:14-22 - Style reads the template tts_style block; language follows the page except the English tech explainer.
+backend/app/video_templates/_shared_blocks.json:3,6 - Shared blocks define documentary tts_style and narrator-free, music-free audio_asmr.
+backend/app/video_templates/health_3d_explainer.json:26,30 - Health overrides tts_style with a health educator and audio_asmr with organic process sounds.
+backend/app/services/video_templates.py:20-42 - TTS/ASMR word budgets use NO_VOICE_WORD_FACTOR 0.8, rounding and a minimum two-word range.
+backend/app/services/video_templates.py:226-234,325-341,370-381 - Both renderers select engine audio blocks and strip narrator placeholders; the prompt guard rejects narrator blocks/text while allowing lettering.
+backend/app/services/prompt_polish.py:208-234,328-335,376-380,581-619 - TTS/ASMR polish requires no voice; ASMR adds no music, with protected ambience retained during re-polish.
+backend/app/services/ai_video_tts.py:68-81 - Synthesis prefixes style/language in input and embeds voice in gemini/<model>/<voice>.
+backend/app/services/ai_video_tts.py:28-39 - Ordered TTS models, fitting limits, LUFS targets and duck ramp constants are defined together.
+backend/app/services/ai_video_tts.py:132-180 - split_by_pauses selects longest internal pauses, trims silence and rejects implausible sentence shares.
+backend/app/services/ai_video_tts.py:224-262 - build_narration tries one full-script synthesis before per-clip fallback and returns synthesis-call requests plus single/per_clip mode.
+backend/app/services/ai_video_tts.py:265-276 - duck_expression builds timing-based ramps and takes the lowest overlapping gain.
+backend/app/services/ai_video_tts.py:279-288 - normalize_bed normalizes ASMR to -14 LUFS with a limiter while copying video.
+backend/app/services/ai_video_tts.py:291-335 - mix_narration normalizes bed/voice to -16 LUFS, applies timed ducking, then measured linear -14 LUFS normalization and alimiter; video is copied.
+backend/app/services/ai_video_tts.py:359-376 - narrate_video passes fitted segments into mixing and retains the clean WAV, but omits requests/mode from its result.
+backend/app/tasks/ai_video_finalize.py:72-118 - _apply_asmr checks speech when needed, normalizes the bed, stores caption windows and records failures.
+backend/app/tasks/ai_video_finalize.py:121-153,236-263,418-455 - The captions proxy forces ASMR captions in finalize/re-render; TTS captions use clean audio or fitted windows.
+backend/app/tasks/ai_video_clip_qc.py:96-105,115-117,138-148 - no_voice covers TTS/ASMR, schedules speech checks and limits speech-triggered regeneration to one within the attempt cap.
+frontend/src/components/fanpages/AiVideoSection.tsx:33,222-271 - Eligible templates offer flow/tts/asmr; only TTS exposes the voice selector.
 
 ---
 

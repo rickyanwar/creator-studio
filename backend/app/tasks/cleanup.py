@@ -407,7 +407,7 @@ def cleanup_old_ai_videos():
                             eligible = age is not None and age <= cutoff
                     if not eligible and publish_job.id not in skipped_publish_ids:
                         kept_not_live += 1
-            if not eligible or not delete_paths((job.video_path, job.thumbnail_path)):
+            if not eligible or not delete_paths((job.video_path, job.thumbnail_path, (job.narration or {}).get("audio_path"))):
                 continue
             job.video_path = job.video_url = None
             job.thumbnail_path = job.thumbnail_url = None
@@ -522,4 +522,3 @@ def cleanup_old_clip_qc_files():
         logger.error("Clip QC cleanup task error: %s", exc, exc_info=True)
     finally:
         db.close()
-

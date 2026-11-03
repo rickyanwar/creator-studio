@@ -10,6 +10,7 @@ import logging
 from sqlalchemy import and_, or_
 
 from app.models.ai_video import VideoIdea, VideoJob
+from app.services.ai_video_narration import engine_for
 from app.services.ai_video_fill import (
     fanpage_niche,
     fill_from_research,
@@ -70,10 +71,12 @@ def planned_clip_count(idea, fanpage, template) -> int | None:
     return clips
 
 
-def valid_prepared(idea) -> dict | None:
+def valid_prepared(idea, engine=None) -> dict | None:
     """Return prepared payload dict if valid and matching fingerprint, else None."""
     prep = getattr(idea, "prepared", None)
     if not isinstance(prep, dict):
+        return None
+    if engine is not None and prep.get("narration_engine", "flow") != engine:
         return None
     if prep.get("version") != PREPARED_VERSION:
         return None
@@ -89,10 +92,12 @@ def valid_prepared(idea) -> dict | None:
     return prep
 
 
-def _resume_draft(idea, clips: int) -> dict | None:
+def _resume_draft(idea, clips: int, engine=None) -> dict | None:
     """Return idea.prepared if it is a valid, unexpired polish draft, else None."""
     prep = getattr(idea, "prepared", None)
     if not isinstance(prep, dict):
+        return None
+    if engine is not None and prep.get("narration_engine", "flow") != engine:
         return None
     if prep.get("draft") is not True:
         return None
@@ -124,11 +129,13 @@ def _resume_draft(idea, clips: int) -> dict | None:
 
 
 def _is_matching_prepared(idea, fanpage) -> bool:
-    prep = valid_prepared(idea)
-    if prep is None:
-        return False
     template = get_template(idea.template_key)
     planned = planned_clip_count(idea, fanpage, template)
+    if planned is None:
+        return False
+    prep = valid_prepared(idea, engine=engine_for(fanpage, template, planned))
+    if prep is None:
+        return False
     return prep.get("clips_count") == planned
 
 
@@ -191,7 +198,8 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
     if clips is None:
         return "skipped"
 
-    draft = _resume_draft(idea, clips)
+    engine = engine_for(fanpage, template, clips)
+    draft = _resume_draft(idea, clips, engine=engine)
     if draft is not None:
         variables = draft["variables"]
         title = draft["title"]
@@ -233,6 +241,7 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
                 niche=niche,
                 config=config,
                 resume=resume,
+                narration_engine=engine,
             )
         else:
             result = polish_clips(
@@ -240,10 +249,12 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
                 template=template,
                 niche=niche,
                 config=config,
+                narration_engine=engine,
             )
     except PolishInterrupted as exc:
         now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         idea.prepared = {
+            "narration_engine": engine,
             "draft": True,
             "version": PREPARED_VERSION,
             "fingerprint": idea_fingerprint(idea),
@@ -282,6 +293,7 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
             polished_clips.append({**pol_clip, "prompt_original": orig_prompt})
 
         prep = {
+            "narration_engine": engine,
             "version": PREPARED_VERSION,
             "fingerprint": idea_fingerprint(idea),
             "template_key": idea.template_key,
@@ -322,6 +334,7 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
             for clip in rendered
         ]
         prep = {
+            "narration_engine": engine,
             "version": PREPARED_VERSION,
             "fingerprint": idea_fingerprint(idea),
             "template_key": idea.template_key,
@@ -399,7 +412,7 @@ def _fanpage_need_key(db, fanpage) -> tuple[int, int]:
         )
         .all()
     )
-    has_valid_prep = any(valid_prepared(i) is not None for i in prep_ideas)
+    has_valid_prep = any(_is_matching_prepared(i, fanpage) for i in prep_ideas)
 
     if can_make_today and not has_valid_prep:
         rank = 0

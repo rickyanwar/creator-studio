@@ -10,7 +10,7 @@ File/function names are entry points to read first, not a complete list. When th
 | Photos, crops, vision gates | [codemap/design-images.md](codemap/design-images.md) | `services/design_images.py`: sourcing cascade, face/crop math, split/inset, fail-open vs fail-closed |
 | Card rendering + AI recreate | [codemap/rendering-and-recreate.md](codemap/rendering-and-recreate.md) | `design_renderer`, `ig_recreate`, `redesign_pipeline`, `visual_engine`, `speaker_design`, `renderer/` payload |
 | Publishing + delivery | [codemap/publishing.md](codemap/publishing.md) | ledger vs legacy, delivery states, locks/leases, slot math, phone fallback, reconciliation, idempotency |
-| Mode 8 AI video | [codemap/mode8-ai-video.md](codemap/mode8-ai-video.md) | ideas, planner, credits, claim/lease, `gflow_worker`, QC, captions |
+| Mode 8 AI video | [codemap/mode8-ai-video.md](codemap/mode8-ai-video.md) | ideas, planner, credits, claim/lease, `gflow_worker`, QC, captions, TTS narration (`tts_voices`, `ai_video_narration`, `ai_video_tts`; §9) |
 | Content sources + AI copy | [codemap/content-sources.md](codemap/content-sources.md) | Modes 1, 2, 4–7 sourcing, queues, prompts, model fallbacks, gallery |
 | Frontend | [codemap/frontend.md](codemap/frontend.md) | pages → components → `api.ts` → backend routes, fanpage tabs |
 | Tests + dev workflow | [codemap/tests-and-devflow.md](codemap/tests-and-devflow.md) | how to run each suite, SQLite vs Postgres tests, fakes, deploy rules |
