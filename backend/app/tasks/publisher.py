@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
+from app.services.job_status_sync import apply_job_status
 
 logger = logging.getLogger(__name__)
 
@@ -333,37 +334,13 @@ def publish_job(self, job_id: int):
                 .filter_by(publish_job_id=job.id)
                 .all()
             )
-            all_accepted = bool(all_delivs) and all(
-                d.state in ("repliz_scheduled", "published") for d in all_delivs
-            )
-
-            now = datetime.now(timezone.utc)
-            if all_accepted:
-                job.status = PublishJobStatus.published
-                job.published_at = now
-                repliz_delivs = [d for d in all_delivs if d.actual_method == "repliz"]
-                if len(all_delivs) == 1 and len(repliz_delivs) == 1:
-                    rd = repliz_delivs[0]
-                    job.repliz_schedule_id = rd.repliz_schedule_id
-                    job.scheduled_for = rd.scheduled_for
-
-                if job.source_article_id:
-                    from app.models.scraped_articles import ScrapedArticle, ArticleStatus
-                    article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
-                    if article:
-                        article.status = ArticleStatus.published
-
-                if job.post_id:
-                    post = db.query(Post).filter_by(id=job.post_id).first()
-                    if post:
-                        _maybe_mark_post_done(db, post)
-            else:
-                if all_delivs and all(d.state == "skipped" and (d.last_error or "").startswith("stale:") for d in all_delivs):
-                    job.status = PublishJobStatus.skipped
-                    job.last_error = all_delivs[0].last_error
-                else:
-                    # Release back to pending_publish for recovery sweep without duplicating deliveries
-                    job.status = PublishJobStatus.pending_publish
+            naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
+            apply_job_status(job, all_delivs, naive_now)
+            if job.status == PublishJobStatus.published:
+                _mark_job_sources_published(db, job)
+            elif job.status == PublishJobStatus.publishing:
+                # Release back to pending_publish for recovery sweep without duplicating deliveries
+                job.status = PublishJobStatus.pending_publish
 
             db.commit()
             return
@@ -644,6 +621,74 @@ def _maybe_mark_post_done(db, post):
     if non_terminal == 0:
         post.status = PostStatus.done
         db.commit()
+
+
+def _mark_job_sources_published(db, job):
+    """Update source records after a ledger job succeeds."""
+    if job.source_article_id:
+        from app.models.scraped_articles import ScrapedArticle, ArticleStatus
+        article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
+        if article:
+            article.status = ArticleStatus.published
+    if job.post_id:
+        from app.models.posts import Post
+        post = db.query(Post).filter_by(id=job.post_id).first()
+        if post:
+            _maybe_mark_post_done(db, post)
+
+
+@celery_app.task(name="app.tasks.publisher.sync_finished_publish_jobs")
+def sync_finished_publish_jobs(limit: int = 500) -> int:
+    """Close pending jobs whose delivery ledger has finished."""
+    db = SessionLocal()
+    n = 0
+    try:
+        from sqlalchemy import exists
+        from app.models.publish_jobs import PublishJob, PublishJobStatus
+        from app.models.social_publishing import PublishDelivery
+
+        has_delivery = exists().where(PublishDelivery.publish_job_id == PublishJob.id)
+        has_unfinished = exists().where(
+            PublishDelivery.publish_job_id == PublishJob.id,
+            PublishDelivery.state.notin_(("published", "repliz_scheduled", "failed", "skipped")),
+        )
+        job_ids = (
+            db.query(PublishJob.id)
+            .filter(
+                PublishJob.status == PublishJobStatus.pending_publish,
+                PublishJob.is_deleted.is_(False),
+                has_delivery,
+                ~has_unfinished,
+            )
+            .order_by(PublishJob.id)
+            .limit(limit)
+            .all()
+        )
+        naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for (job_id,) in job_ids:
+            job = (
+                db.query(PublishJob)
+                .filter_by(id=job_id)
+                .with_for_update(skip_locked=True)
+                .first()
+            )
+            if job is None or job.status != PublishJobStatus.pending_publish:
+                continue
+            deliveries = db.query(PublishDelivery).filter_by(publish_job_id=job_id).all()
+            changed = apply_job_status(job, deliveries, naive_now)
+            if changed and job.status == PublishJobStatus.published:
+                _mark_job_sources_published(db, job)
+            db.commit()
+            if changed:
+                n += 1
+        if n > 0:
+            logger.info("Job status sync: %d job(s) updated from finished deliveries", n)
+    except Exception:
+        db.rollback()
+        logger.error("Job status sync failed", exc_info=True)
+    finally:
+        db.close()
+    return n
 
 
 @celery_app.task(name="app.tasks.publisher.recover_stuck_auto_publishes")

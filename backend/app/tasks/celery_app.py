@@ -231,6 +231,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.publisher.recover_stuck_auto_publishes",
         "schedule": 1800,  # every 30 minutes
     },
+    # Jobs whose deliveries all finished (failed/skipped/published through any path)
+    # leave pending_publish here instead of waiting forever.
+    "sync-finished-publish-jobs": {
+        "task": "app.tasks.publisher.sync_finished_publish_jobs",
+        "schedule": 900,
+        "options": {"expires": 850},
+    },
     # Recovery: reset jobs orphaned in 'rendering' (a worker process killed
     # mid-task — e.g. a deploy recreating the worker container — leaves no
     # code running to release the claim the way a caught exception would)

@@ -36,6 +36,7 @@ from app.models.social_publishing import (
 )
 from app.models.target_fanpages import TargetFanpage
 from app.services.event_days import news_fresh_hours
+from app.services.job_status_sync import apply_job_status
 from app.services.repliz_client import (
     format_schedule_at,
     get_repliz_client_from_db,
@@ -2311,32 +2312,8 @@ def dispatch_due_deliveries(
         if not job:
             continue
 
-        all_accepted = all(
-            d.state in ("repliz_scheduled", "published") for d in all_deliveries
-        )
-
-        if all_accepted:
-            job.status = PublishJobStatus.published
-            job.published_at = naive_now
-            go_lives = [d.scheduled_for.replace(tzinfo=None) for d in all_deliveries if d.scheduled_for]
-            # Repliz fetches the media at go-live: keep it until the last go-live + 6 h.
-            job.cleanup_at = max([naive_now, *go_lives]) + timedelta(hours=6)
-            # Copy compatibility schedule fields if exactly one Page Repliz destination
-            repliz_delivs = [d for d in all_deliveries if d.actual_method == "repliz"]
-            if len(all_deliveries) == 1 and len(repliz_delivs) == 1:
-                rd = repliz_delivs[0]
-                job.repliz_schedule_id = rd.repliz_schedule_id
-                job.scheduled_for = rd.scheduled_for
-        elif all(
-            d.state == "skipped" and (d.last_error or "").startswith("stale:")
-            for d in all_deliveries
-        ):
-            job.status = PublishJobStatus.skipped
-            job.last_error = next(
-                (d.last_error for d in all_deliveries if d.last_error),
-                "stale: news too old to post at dispatch",
-            )
-        elif job.status == PublishJobStatus.publishing:
+        changed = apply_job_status(job, all_deliveries, naive_now)
+        if not changed and job.status == PublishJobStatus.publishing:
             # Release back to pending_publish for the recovery sweep
             job.status = PublishJobStatus.pending_publish
 

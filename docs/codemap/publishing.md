@@ -23,13 +23,13 @@ PublishJob (status: pending_publish)
    │      │      ├─► ensure_deliveries(db, job) (social_delivery_planner.py:231)
    │      │      ├─► dispatch_due_deliveries(db, job_id=job.id) (social_delivery_dispatch.py:1754)
    │      │      ├─► Query all PublishDelivery rows for job.id:
-   │      │      │      ├─► If all in ('repliz_scheduled', 'published'):
-   │      │      │      │      ├─► job.status = 'published', job.published_at = utcnow
+   │      │      │      ├─► services/job_status_sync.py: all accepted, or all terminal with any success:
+   │      │      │      │      ├─► job.status = 'published', published_at = newest delivery timestamp (or now)
    │      │      │      │      ├─► If single Repliz dest: sync job.repliz_schedule_id, job.scheduled_for
    │      │      │      │      ├─► ScrapedArticle.status = 'published' (if source_article_id present)
    │      │      │      │      └─► _maybe_mark_post_done(db, post) (if post_id present)
-   │      │      │      └─► Else:
-   │      │      │             └─► job.status = 'pending_publish' (releases lock for Celery recovery sweep)
+   │      │      │      ├─► All terminal without success: failed if any failed, otherwise skipped (lowest-id error)
+   │      │      │      └─► Unfinished/uncertain: release publishing to pending_publish for recovery
    │      │      └─► db.commit()
    │      │
    │      └─► has_destinations == 0 ──► [LEGACY REPLIZ PATH] (publisher.py:324-415)
@@ -42,6 +42,10 @@ PublishJob (status: pending_publish)
    │             ├─► Sets job.status = 'published', job.cleanup_at = now + 6h (or 48h for video)
    │             └─► _maybe_mark_post_done(db, post)
 ```
+
+`services/job_status_sync.py` preserves stale-only skip errors and never downgrades published jobs.
+`sync-finished-publish-jobs` runs every 15 min to close pending jobs finished through any path,
+updating source article/post records on success. Repliz schedules mixed with failed/skipped stay pending.
 
 Hermes always runs via `systemd-run` (transient unit outside the phone-runner sandbox, `HERMES_OUTSIDE_SANDBOX=1`) because it must write `/root/.hermes` while the runner keeps `ProtectHome=read-only` (2026-10-17, 432cbd0).
 
@@ -474,7 +478,7 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
 ## Verified claims
 
 backend/app/tasks/publisher.py:274 - Branch between legacy Repliz publishing and S1b delivery ledger path is decided by checking if SocialDestination has count > 0 with content_project_id == job.fanpage_id and is_active == True.
-backend/app/tasks/publisher.py:319 - When delivery ledger path has not all deliveries accepted, parent PublishJob.status is released back to pending_publish so Celery recovery sweep can re-dispatch without duplicating deliveries.
+backend/app/tasks/publisher.py:publish_job - services/job_status_sync.py closes accepted or terminal delivery sets; only unfinished publishing jobs return to pending_publish. The sync-finished-publish-jobs beat task checks finished pending jobs every 15 min without duplicating deliveries.
 backend/app/services/social_delivery_dispatch.py:133 - Lock ordering strictly acquires SocialDestination row lock before PublishDelivery row lock and applies populate_existing to prevent stale session data and deadlocks.
 backend/app/services/social_delivery_dispatch.py:184 - Immediate phone or live dispatch claims are blocked if another immediate delivery on the same destination is currently in the publishing state, regardless of minimum gap.
 backend/app/services/social_delivery_dispatch.py:330 - Stale publishing claims expire after exactly 45 minutes (stale_ttl_minutes = 45) and transition to uncertain to prevent automatic duplicate posting.

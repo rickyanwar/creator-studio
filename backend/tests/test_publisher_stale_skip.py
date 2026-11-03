@@ -125,7 +125,7 @@ def test_publisher_all_deliveries_stale_skipped(db_engine, db_session):
 
 
 def test_publisher_one_delivery_skipped_for_other_reason(db_engine, db_session):
-    """When one delivery is skipped for non-stale reason, job stays pending_publish."""
+    """All skipped deliveries close the job even with a non-stale reason."""
     SessionMaker = sessionmaker(bind=db_engine)
 
     fp = TargetFanpage(name="Test FP 2", repliz_account_id="rep_2", is_active=True)
@@ -181,4 +181,5 @@ def test_publisher_one_delivery_skipped_for_other_reason(db_engine, db_session):
 
     db_session.expire_all()
     updated_job = db_session.query(PublishJob).filter_by(id=job.id).one()
-    assert updated_job.status == PublishJobStatus.pending_publish
+    assert updated_job.status == PublishJobStatus.skipped
+    assert updated_job.last_error == f"delivery {d1.id} skipped: {d1.last_error}"
