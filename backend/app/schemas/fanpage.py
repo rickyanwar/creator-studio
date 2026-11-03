@@ -322,6 +322,17 @@ class FanpageSourceRecreateUpdate(BaseModel):
     ig_recreate_enabled: Optional[bool] = None  # null = inherit the fanpage's setting
     visual_engine_override: Optional[str] = None
     format: Optional[str] = None
+    chatgpt_edit_prompt: str | None = None
+
+    @field_validator("chatgpt_edit_prompt")
+    @classmethod
+    def validate_chatgpt_edit_prompt(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if len(v) > 2000:
+            raise ValueError("ChatGPT edit prompt must be at most 2000 characters")
+        return v or None
 
     @field_validator("format")
     @classmethod
@@ -379,6 +390,7 @@ class IGSourceRef(BaseModel):
     ig_recreate_enabled: Optional[bool] = None
     visual_engine_override: Optional[str] = None
     format: str = "follow"
+    chatgpt_edit_prompt: str | None = None
     trigger: str = "every_post"
     # Per-source caption criteria (global; managed from the fanpage page)
     caption_tone: Optional[str] = None

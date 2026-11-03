@@ -49,6 +49,7 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
     source_ids = [l.ig_source_id for l in links]
     recreate_by_source = {l.ig_source_id: l.ig_recreate_enabled for l in links}
     override_by_source = {l.ig_source_id: l.visual_engine_override for l in links}
+    edit_prompt_by_source = {l.ig_source_id: l.chatgpt_edit_prompt for l in links}
     trigger_by_source = {l.ig_source_id: l.trigger for l in links}
     sources = db.query(IGSource).filter(IGSource.id.in_(source_ids)).all() if source_ids else []
 
@@ -62,6 +63,7 @@ def get_fanpage(fanpage_id: int, db: DB, _: CurrentUser):
             album_image_indices=s.album_image_indices or [1],
             ig_recreate_enabled=recreate_by_source.get(s.id),
             visual_engine_override=override_by_source.get(s.id),
+            chatgpt_edit_prompt=edit_prompt_by_source.get(s.id),
             format=format_from_source(recreate_by_source.get(s.id), override_by_source.get(s.id)),
             trigger=trigger_by_source.get(s.id, "every_post"),
             caption_tone=s.caption_tone,
@@ -249,12 +251,15 @@ def set_source_recreate_override(fanpage_id: int, ig_source_id: int, body: Fanpa
             raise HTTPException(status_code=422, detail=str(err))
         link.ig_recreate_enabled = recreate_enabled
         link.visual_engine_override = engine_override
-    else:
+    elif body.model_fields_set & {"ig_recreate_enabled", "visual_engine_override", "format"}:
         link.ig_recreate_enabled = body.ig_recreate_enabled
         if body.visual_engine_override is not None:
             link.visual_engine_override = body.visual_engine_override
         elif body.ig_recreate_enabled is False or body.ig_recreate_enabled is None:
             link.visual_engine_override = None
+
+    if "chatgpt_edit_prompt" in body.model_fields_set:
+        link.chatgpt_edit_prompt = body.chatgpt_edit_prompt
 
     db.commit()
     fmt = format_from_source(link.ig_recreate_enabled, link.visual_engine_override)
@@ -263,6 +268,7 @@ def set_source_recreate_override(fanpage_id: int, ig_source_id: int, body: Fanpa
         "ig_recreate_enabled": link.ig_recreate_enabled,
         "visual_engine_override": link.visual_engine_override,
         "format": fmt,
+        "chatgpt_edit_prompt": link.chatgpt_edit_prompt,
     }
 
 

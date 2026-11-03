@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -18,6 +18,7 @@ class FanpageSource(Base):
     ig_recreate_enabled = Column(Boolean, nullable=True)
     # Per-source override of recreate engine: 'template' | 'chatgpt' | NULL
     visual_engine_override = Column(String(16), nullable=True)
+    chatgpt_edit_prompt = Column(Text, nullable=True)  # owner prompt: ChatGPT edits the original IG photo (format chatgpt)
     trigger = Column(String(16), default="every_post", nullable=False, server_default="every_post")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 

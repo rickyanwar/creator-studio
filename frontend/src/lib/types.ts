@@ -190,6 +190,7 @@ export interface IGSourceRef {
   ig_username: string;
   album_image_indices: number[];
   ig_recreate_enabled: boolean | null;
+  chatgpt_edit_prompt?: string | null;
   caption_tone: string | null;
   caption_language: string | null;
   caption_max_length: number | null;

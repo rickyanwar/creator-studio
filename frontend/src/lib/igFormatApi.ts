@@ -7,6 +7,7 @@ export interface IGFormatUpdateResponse {
   ig_recreate_enabled: boolean | null;
   visual_engine_override: string | null;
   format: IGFormat;
+  chatgpt_edit_prompt: string | null;
 }
 
 export const setSourceFormat = (
@@ -17,4 +18,14 @@ export const setSourceFormat = (
   api.put<IGFormatUpdateResponse>(
     `/fanpages/${fanpageId}/sources/${igSourceId}/recreate`,
     { format }
+  );
+
+export const setSourceEditPrompt = (
+  fanpageId: number,
+  igSourceId: number,
+  prompt: string | null
+) =>
+  api.put<IGFormatUpdateResponse>(
+    `/fanpages/${fanpageId}/sources/${igSourceId}/recreate`,
+    { chatgpt_edit_prompt: prompt }
   );

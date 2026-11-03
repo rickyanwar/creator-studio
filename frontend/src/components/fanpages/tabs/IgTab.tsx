@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Icon } from "@iconify/react";
 import { updateIGSource, setSourceTrigger } from "@/lib/api";
-import { setSourceFormat, type IGFormat } from "@/lib/igFormatApi";
+import { setSourceFormat, setSourceEditPrompt, type IGFormat } from "@/lib/igFormatApi";
 import type { FanpageDetail, IGSourceRef } from "@/lib/types";
 
 const MAX_ALBUM = 10;
@@ -36,6 +36,34 @@ export function IGSourceCard({
   const [triggerSaving, setTriggerSaving] = useState(false);
   const [localTrigger, setLocalTrigger] = useState(source.trigger ?? "every_post");
   const [localFormat, setLocalFormat] = useState<IGFormat>(() => getSourceFormat(source));
+  const [editPrompt, setEditPrompt] = useState(source.chatgpt_edit_prompt ?? "");
+  const [promptSaving, setPromptSaving] = useState(false);
+  const promptDraft = useRef(editPrompt);
+  const savedPrompt = useRef(editPrompt.trim());
+  const promptInFlight = useRef(false);
+
+  const saveEditPrompt = useCallback(async function savePrompt() {
+    const value = promptDraft.current.trim();
+    if (promptInFlight.current || value === savedPrompt.current) return;
+    promptInFlight.current = true;
+    setPromptSaving(true);
+    try {
+      const response = await setSourceEditPrompt(fanpageId, source.id, value);
+      savedPrompt.current = response.data.chatgpt_edit_prompt ?? "";
+      onAlbumSaved();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Failed to save ChatGPT edit prompt");
+    } finally {
+      promptInFlight.current = false;
+      setPromptSaving(false);
+      if (promptDraft.current.trim() !== value) void savePrompt();
+    }
+  }, [fanpageId, source.id, onAlbumSaved]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => void saveEditPrompt(), 1200);
+    return () => clearTimeout(timer);
+  }, [editPrompt, saveEditPrompt]);
 
   useEffect(() => {
     setLocalFormat(getSourceFormat(source));
@@ -149,8 +177,36 @@ export function IGSourceCard({
           <option value="chatgpt">Recreate with ChatGPT edit</option>
         </select>
         <p className="text-[10px] text-text2">
-          Repost = original image + new caption. Template = re-render onto template. ChatGPT = AI image redesign.
+          Repost = original image + new caption. Template = re-render onto template. ChatGPT = AI redesign, or edit the original photo with your prompt.
         </p>
+        {localFormat === "chatgpt" && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <label htmlFor={`edit-prompt-${fanpageId}-${source.id}`} className="text-[11px] font-medium text-text2">
+                ChatGPT edit prompt
+              </label>
+              {promptSaving && <Icon icon="svg-spinners:ring-resize" width={11} className="text-pri" aria-label="Saving prompt" role="status" />}
+            </div>
+            <textarea
+              id={`edit-prompt-${fanpageId}-${source.id}`}
+              rows={4}
+              maxLength={2000}
+              value={editPrompt}
+              onChange={(e) => {
+                promptDraft.current = e.target.value;
+                setEditPrompt(e.target.value);
+              }}
+              onBlur={() => void saveEditPrompt()}
+              aria-describedby={`edit-prompt-help-${fanpageId}-${source.id}`}
+              placeholder="Optional. ChatGPT edits the original Instagram photo with this prompt, e.g. remove the watermark, make the background a night circuit, cinematic colour. Leave empty to keep the ChatGPT redesign with your template."
+              className="w-full text-xs rounded-md bg-surface border border-line text-text px-2.5 py-1.5 focus:outline-none focus:border-pri"
+            />
+            <p className="text-[10px] text-text2 text-right">{editPrompt.length}/2000</p>
+            <p id={`edit-prompt-help-${fanpageId}-${source.id}`} className="text-[10px] text-text2">
+              With a prompt: the edited photo is posted as is (no template text). If the edit fails, the original photo is posted.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Trigger */}

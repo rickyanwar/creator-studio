@@ -449,6 +449,73 @@ def run_preview_redesign(self, decision_id: int):
     finally:
         db.close()
 
+def _try_ig_edit(db, job, post, fanpage) -> bool:
+    """Owner prompt on this IG source + ChatGPT engine: edit the original photo, post it as is (no template, no title).
+    Returns True when the edit path handled the job. Uses one_or_none() (pair is unique) so the template path's query order is unchanged."""
+    if not (fanpage and post and post.ig_source_id):
+        return False
+    from app.models.fanpage_sources import FanpageSource
+    from app.services.ig_mode import resolve_effective_engine
+    link = db.query(FanpageSource).filter_by(fanpage_id=fanpage.id, ig_source_id=post.ig_source_id).one_or_none()
+    prompt = getattr(link, "chatgpt_edit_prompt", None)
+    if not (isinstance(prompt, str) and prompt.strip()) or resolve_effective_engine(fanpage, link) != "chatgpt":
+        return False
+    _render_ig_edit(db, job, post, fanpage, link)
+    return True
+
+
+def _render_ig_edit(db, job, post, fanpage, link):
+    from app.models.publish_jobs import PublishJobStatus
+    from app.models.target_fanpages import PublishMode
+    from app.models.radar import RadarStoryDecision
+    from app.services.ig_photo_edit import edit_ig_photo, clean_jpeg
+    from app.services.qa_toggles import qa_enabled
+    from app.services.visual_engine import VisualEngineDeferred
+
+    if not post.image_local_paths:
+        job.status = PublishJobStatus.pending_design
+        job.last_error = "post has no image"
+        db.commit()
+        return
+    photo = post.image_local_paths[0]
+    analysis = job.design_analysis_json or {}
+    try:
+        res = edit_ig_photo(
+            db, photo_path=photo, owner_prompt=link.chatgpt_edit_prompt,
+            fanpage_id=fanpage.id,
+            subject=analysis.get("main_subject") or analysis.get("speaker"),
+            qa_enabled=qa_enabled(fanpage, "ig"),
+        )
+    except VisualEngineDeferred as exc:
+        from app.tasks.design_renderer import _defer_job
+        _defer_job(db, job, exc)
+        return
+
+    if res["ok"] and res["image_path"]:
+        path = res["image_path"]
+        job.design_engine = res["engine"]
+        job.design_engine_note = "ChatGPT edit of the original photo (custom prompt)"
+    else:
+        designs = Path(settings.storage_base_path) / "designs"
+        designs.mkdir(parents=True, exist_ok=True)
+        path = clean_jpeg(photo, str(designs / f"job_{job.id}_original_{uuid.uuid4().hex[:8]}.jpg"))
+        job.design_engine = "original"
+        reason = res["reason"] or "empty output"
+        job.design_engine_note = f"ChatGPT edit failed ({reason[:120]}) -> original photo"
+    job.design_image_path = path
+    job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{Path(path).name}"
+    job.status = PublishJobStatus.pending_publish
+    job.last_error = None
+    decision = db.query(RadarStoryDecision).filter_by(publish_job_id=job.id).first()
+    if decision:
+        decision.preview_status = "done"
+        decision.preview_error = None
+    db.commit()
+    if fanpage.publish_mode == PublishMode.auto:
+        from app.tasks.publisher import publish_job
+        publish_job.delay(job.id)
+
+
 @celery_app.task(name="app.tasks.ig_recreate.render_ig_recreate", bind=True, max_retries=2, soft_time_limit=1260, time_limit=1320)
 def render_ig_recreate(self, job_id: int):
     db = SessionLocal()
@@ -478,6 +545,8 @@ def render_ig_recreate(self, job_id: int):
 
         fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first()
         post = db.query(Post).filter_by(id=job.post_id).first()
+        if _try_ig_edit(db, job, post, fanpage):
+            return
         template = (
             db.query(DesignTemplate).filter_by(id=job.design_template_id).first()
             if job.design_template_id else None
