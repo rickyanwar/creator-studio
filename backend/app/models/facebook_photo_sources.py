@@ -23,6 +23,9 @@ class FacebookPhotoSource(Base):
     page_url = Column(Text, nullable=False)  # profile URL or bare username
     label = Column(String(256), nullable=True)  # admin's own note
     is_active = Column(Boolean, default=True, nullable=False, server_default="true")
+    format = Column(String(16), nullable=True)  # NULL inherits the fanpage's Mode 6 behaviour.
+    chatgpt_edit_prompt = Column(Text, nullable=True)
+    last_fetched_at = Column(DateTime, nullable=True)
 
     times_used = Column(Integer, default=0, nullable=False, server_default="0")
     last_used_at = Column(DateTime, nullable=True, index=True)

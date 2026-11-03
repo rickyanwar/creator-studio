@@ -279,7 +279,7 @@ export const addFacebookPhotoSource = (
 export const updateFacebookPhotoSource = (
   fanpageId: number,
   sourceId: number,
-  data: { page_url?: string; label?: string | null; is_active?: boolean }
+  data: { page_url?: string; label?: string | null; is_active?: boolean; format?: "follow" | "repost" | "template" | "chatgpt"; chatgpt_edit_prompt?: string | null }
 ) => api.put(`/fanpages/${fanpageId}/facebook-photo-sources/${sourceId}`, data);
 export const deleteFacebookPhotoSource = (fanpageId: number, sourceId: number) =>
   api.delete(`/fanpages/${fanpageId}/facebook-photo-sources/${sourceId}`);

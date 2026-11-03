@@ -220,6 +220,39 @@ def cleanup_old_media():
         db.close()
 
 
+def _cleanup_facebook_photos(db, now) -> int:
+    """Keep originals until every matching job is published and live for seven days."""
+    from app.models.facebook_photo_ideas import FacebookPhotoIdea
+    from app.models.publish_jobs import PublishJob, PublishJobStatus
+
+    cutoff = _to_naive_utc(now) - timedelta(days=7)
+    ideas = db.query(FacebookPhotoIdea).filter(
+        FacebookPhotoIdea.status == "used",
+        FacebookPhotoIdea.image_local_path.isnot(None),
+    ).all()
+    cleaned = 0
+    for idea in ideas:
+        jobs = db.query(PublishJob).filter(
+            PublishJob.fanpage_id == idea.fanpage_id,
+            PublishJob.source_gallery_image_id == idea.gallery_image_id,
+        ).all()
+        if not jobs or any(job.status != PublishJobStatus.published for job in jobs):
+            continue
+        if _job_go_live_pending(db, [job.id for job in jobs], now):
+            continue
+        go_live_times = [_job_go_live_time(job) for job in jobs]
+        if any(stamp is None or stamp >= cutoff for stamp in go_live_times):
+            continue
+        try:
+            Path(idea.image_local_path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.error("Failed to delete Facebook photo %s: %s", idea.image_local_path, exc)
+            continue
+        idea.image_local_path = None
+        cleaned += 1
+    return cleaned
+
+
 @celery_app.task(name="app.tasks.cleanup.cleanup_old_designs")
 def cleanup_old_designs():
     """Delete design_image_path files (Mode 2/3/4/5 rendered PNGs) for
@@ -282,7 +315,10 @@ def cleanup_old_designs():
             job.design_image_url = None
             cleaned += 1
 
+        facebook_cleaned = _cleanup_facebook_photos(db, now)
         db.commit()
+        if facebook_cleaned:
+            logger.info("Facebook photo cleanup: removed %d original(s)", facebook_cleaned)
         if cleaned:
             logger.info("Design cleanup: removed %d file(s) (published > %d day, other > %d days)", cleaned, _PUBLISHED_DESIGN_RETENTION_DAYS, _DESIGN_RETENTION_DAYS)
         logger.info("Design cleanup: kept %d file(s) not live yet", kept_not_live)

@@ -2,10 +2,9 @@
 page's public `/photos` grid into staged FacebookPhotoIdea rows, consumed
 FIFO by app/tasks/facebook_photo.py on the fanpage's own pacing.
 
-Each photo is only READ: vision extracts its text and decides the card type
-(news/quote/discussion). The photo is deleted right after and never reaches
-a design — every card is recreated around a clean photo of the subject (see
-design_renderer.render_facebook_photo).
+Vision extracts each photo's text and decides the card type
+(news/quote/discussion). Accepted originals are retained for source-card
+rendering; rejected downloads are deleted.
 
 Facebook blocks like-counts/timestamps/captions for anyone not logged in
 (tested live, see memory feature-facebook-trending-source) — the ONLY route
@@ -21,7 +20,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from PIL import Image
@@ -47,6 +46,8 @@ _PHOTO_ENTRY_RE = re.compile(
     re.IGNORECASE,
 )
 _FBID_RE = re.compile(r"[?&]fbid=(\d+)")
+_PHOTO_GRID_RE = re.compile(r"\]\(https?://[^)]*(?:/photos_by|[?&]sk=photos_by)\)")
+_PAGE_IMAGE_RE = re.compile(r"ctp=s820x360|cstp=mx820x360|s320x320|fb50")
 
 # The `/photos` grid embeds each photo at thumbnail size (`ctp=s206x206` —
 # ~206px, well below any usable design floor) even though the SAME CDN path
@@ -124,12 +125,24 @@ def _photos_url(page_url_or_username: str) -> str:
     raw = (page_url_or_username or "").strip()
     if not raw:
         raise ValueError("empty Facebook page reference")
-    if raw.startswith("http://") or raw.startswith("https://"):
+    if raw.startswith(("http://", "https://")):
         parsed = urlparse(raw)
-        username = parsed.path.strip("/").split("/")[0]
+        if parsed.hostname not in {"facebook.com", "www.facebook.com", "m.facebook.com", "web.facebook.com"}:
+            raise ValueError("not a Facebook page URL")
+        parts = parsed.path.strip("/").split("/")
+        if parts[0] == "profile.php":
+            page_id = parse_qs(parsed.query).get("id", [""])[0]
+            if not re.fullmatch(r"[0-9]+", page_id):
+                raise ValueError("invalid Facebook profile id")
+            return f"https://www.facebook.com/profile.php?id={page_id}&sk=photos"
+        if parts[0] == "people":
+            if len(parts) < 3 or not parts[1] or not re.fullmatch(r"[0-9]+", parts[2]):
+                raise ValueError("invalid Facebook people URL")
+            return f"https://www.facebook.com/people/{parts[1]}/{parts[2]}/?sk=photos"
+        username = parts[0]
     else:
-        username = raw.strip("/").split("/")[0]
-    if not username:
+        username = raw
+    if not re.fullmatch(r"[A-Za-z0-9.]+", username) or username in {"profile.php", "people"}:
         raise ValueError(f"could not extract a page username from {page_url_or_username!r}")
     return f"https://www.facebook.com/{username}/photos"
 
@@ -148,7 +161,7 @@ def fbid_to_url(fbid: str | None) -> str | None:
     return f"https://www.facebook.com/photo/?fbid={fbid}"
 
 
-def _seen_fbids(db) -> set[str]:
+def _seen_fbids(db, fanpage_id: int) -> set[str]:
     """fbids already evaluated (accepted or rejected). Keyed on the fbid —
     parsed from each grid entry's permalink — NOT the image URL: Facebook
     serves the same photo from a different CDN host depending on where the
@@ -158,7 +171,16 @@ def _seen_fbids(db) -> set[str]:
     from app.models.gallery import GalleryImage
 
     rows = db.query(GalleryImage.keyword).filter(GalleryImage.source_engine == "facebook_photo").all()
-    return {k[len(_MARKER_PREFIX):] for (k,) in rows if k and k.startswith(_MARKER_PREFIX)}
+    seen = set()
+    for (keyword,) in rows:
+        if not keyword or not keyword.startswith(_MARKER_PREFIX):
+            continue
+        marker = keyword[len(_MARKER_PREFIX):]
+        if ":" not in marker:
+            seen.add(marker)  # Legacy global history still blocks every fanpage.
+        elif marker.startswith(f"{fanpage_id}:"):
+            seen.add(marker.split(":", 1)[1])
+    return seen
 
 
 _FETCH_ATTEMPTS = 3
@@ -176,7 +198,8 @@ def _fetch_grid_markdown(page_url: str) -> str:
     base = _photos_url(page_url)
     text = ""
     for attempt in range(1, _FETCH_ATTEMPTS + 1):
-        text = _9router_fetch_markdown(f"{base}?_cb={uuid.uuid4().hex[:10]}", context="facebook_photo_source")
+        separator = "&" if "?" in base else "?"
+        text = _9router_fetch_markdown(f"{base}{separator}_cb={uuid.uuid4().hex[:10]}", context="facebook_photo_source")
         if _PHOTO_ENTRY_RE.search(text):
             return text
         logger.info("Facebook photo: %s attempt %d had no grid entries (%d chars)", base, attempt, len(text))
@@ -194,11 +217,16 @@ def fetch_photo_candidates(
     would hide every newer-to-us photo further down the grid forever."""
     skip_fbids = skip_fbids or set()
     text = _fetch_grid_markdown(page_url)
+    grid_marker = _PHOTO_GRID_RE.search(text)
+    if grid_marker:
+        text = text[grid_marker.end():]
 
     seen_fbids: set[str] = set()
     out: list[FacebookPhotoCandidate] = []
     for match in _PHOTO_ENTRY_RE.finditer(text):
         alt_text, image_url, permalink = match.group(1) or "", match.group(2), match.group(3)
+        if not grid_marker and _PAGE_IMAGE_RE.search(image_url):
+            continue
         fbid_match = _FBID_RE.search(permalink)
         if not fbid_match:
             continue
@@ -322,7 +350,7 @@ def _localize_title(category: str, text: str, fanpage) -> str:
     return _clean_line(out) or text
 
 
-def _record_seen(db, candidate: FacebookPhotoCandidate, item: "_DownloadedPhoto"):
+def _record_seen(db, fanpage_id: int, candidate: FacebookPhotoCandidate, item: "_DownloadedPhoto"):
     """Persist the dedup marker for an evaluated photo — accepted OR rejected
     — so no later tick downloads and re-classifies it (a rejected "other"
     photo used to be re-evaluated, with a paid vision call, on every tick).
@@ -338,8 +366,8 @@ def _record_seen(db, candidate: FacebookPhotoCandidate, item: "_DownloadedPhoto"
 
     s = get_settings()
     gi = GalleryImage(
-        keyword=f"facebook_photo:{candidate.fbid}",
-        source_image_url=item.source_url,
+        keyword=f"facebook_photo:{fanpage_id}:{candidate.fbid}",
+        source_image_url=f"{item.source_url}#facebook_photo:{fanpage_id}:{candidate.fbid}",
         local_path=item.local_path,
         public_url=f"{s.storage_base_url.rstrip('/')}/gallery/facebook_photo/{item.filename}",
         width=item.width,
@@ -388,23 +416,20 @@ def is_incomplete_quote(text: str) -> bool:
     return last_word in connectors
 
 
-def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
+def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate, source_id: int):
     """Download one candidate photo, classify its text via vision, rewrite
     that text into the fanpage's language, and stage a pending
-    FacebookPhotoIdea. The photo itself never reaches a design — it's
-    deleted right after being read (render_facebook_photo recreates every
-    card around a clean photo of the subject). Returns None on any
+    FacebookPhotoIdea, retaining the original for source-card rendering.
+    Returns None on any
     rejection; every rejection except a failed download/classify/rewrite
     call (all transient) is still recorded as seen."""
     from app.config import get_settings
-    from app.models.facebook_photo_ideas import FacebookPhotoIdea
-    from app.services.facebook_content_classifier import classify_facebook_photo
 
     s = get_settings()
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     dest_dir = Path(s.storage_base_path) / "gallery" / "facebook_photo"
 
-    if candidate.fbid in _seen_fbids(db):
+    if candidate.fbid in _seen_fbids(db, fanpage.id):
         return None
 
     # No photo-quality gate: only the photo's TEXT is used, and a slightly
@@ -412,8 +437,20 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
     item = _download_photo(candidate.image_url, dest_dir, _MIN_SIZE)
     if not item:
         return None
+    try:
+        if int(item.width) > 1.6 * int(item.height) or int(item.height) > 1.6 * int(item.width):
+            _record_seen(db, fanpage.id, candidate, item)
+            return None
+        return _build_downloaded_idea(db, fanpage, candidate, source_id, item, niche, s)
+    finally:
+        Path(item.local_path).unlink(missing_ok=True)
+
+
+def _build_downloaded_idea(db, fanpage, candidate, source_id, item, niche, settings):
+    from app.models.facebook_photo_ideas import FacebookPhotoIdea
+    from app.services.facebook_content_classifier import classify_facebook_photo
+
     image_bytes = Path(item.local_path).read_bytes()
-    Path(item.local_path).unlink(missing_ok=True)
 
     try:
         cls = classify_facebook_photo(image_bytes, niche=niche, topic_filter=fanpage.facebook_photo_topic_filter)
@@ -428,7 +465,7 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
     if fields and ctype == "quote":
         raw_quote = cls["quote"]
         if is_incomplete_quote(raw_quote):
-            gi = _record_seen(db, candidate, item)
+            gi = _record_seen(db, fanpage.id, candidate, item)
             if gi is not None:
                 logger.info("Facebook photo: quote incomplete, skipped (raw)")
             return None
@@ -437,7 +474,7 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
         try:
             localized_title = _localize_title(ctype, fields["design_title"], fanpage)
             if ctype == "quote" and is_incomplete_quote(localized_title):
-                gi = _record_seen(db, candidate, item)
+                gi = _record_seen(db, fanpage.id, candidate, item)
                 if gi is not None:
                     logger.info("Facebook photo: quote incomplete, skipped (localized)")
                 return None
@@ -449,7 +486,7 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
             )
             return None
 
-    gi = _record_seen(db, candidate, item)
+    gi = _record_seen(db, fanpage.id, candidate, item)
     if gi is None:
         return None
     if not fields:
@@ -459,8 +496,13 @@ def build_idea_from_candidate(db, fanpage, candidate: FacebookPhotoCandidate):
         )
         return None
 
+    retained_path = Path(settings.storage_base_path) / "facebook_photos" / str(fanpage.id) / f"{candidate.fbid}.jpg"
+    retained_path.parent.mkdir(parents=True, exist_ok=True)
+    Path(item.local_path).replace(retained_path)
     idea = FacebookPhotoIdea(
         fanpage_id=fanpage.id,
+        source_id=source_id,
+        image_local_path=str(retained_path),
         gallery_image_id=gi.id,
         category=ctype,
         status="pending",

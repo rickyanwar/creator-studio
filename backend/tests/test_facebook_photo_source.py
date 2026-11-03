@@ -81,7 +81,7 @@ class TestBuildIdeaSkips:
                     "on_topic": True
                 }
                 
-                idea = build_idea_from_candidate(mock_db, mock_fanpage, candidate)
+                idea = build_idea_from_candidate(mock_db, mock_fanpage, candidate, source_id=1)
                 
                 # Should skip unconditionally when raw quote is incomplete
                 assert idea is None

@@ -28,10 +28,11 @@ def build_edit_prompt(owner_prompt: str, *, subject: str | None) -> str:
     return f"Edit this exact photo. Owner instructions: {owner_prompt}\n\n{EDIT_RULES}"
 
 
-def clean_jpeg(src_path: str, out_path: str) -> str:
+def clean_jpeg(src_path: str, out_path: str, size=OUTPUT_SIZE) -> str:
     with Image.open(src_path) as src:
         image = ImageOps.exif_transpose(src).convert("RGB")
-        image = ImageOps.fit(image, OUTPUT_SIZE, method=Image.Resampling.LANCZOS)
+        if size is not None:
+            image = ImageOps.fit(image, size, method=Image.Resampling.LANCZOS)
         image.info.clear()
         image.save(out_path, "JPEG", quality=95, optimize=True)
     return out_path

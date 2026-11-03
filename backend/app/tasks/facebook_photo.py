@@ -41,6 +41,7 @@ _WINDOW_END_HOUR = 22
 # webfetch/vision spend spreads across ticks instead of bursting.
 _MIN_QUEUE_SIZE = 5
 _TOPUP_BATCH = 6
+MAX_SOURCES_PER_TICK = 3
 
 # Same bounded catch-up loop as pinterest.py's _MAX_CATCHUP_PER_TICK — fixes
 # the burstiness half of a daily-quota gap (a tick whose topup nets 0
@@ -71,7 +72,7 @@ def _target_by_now(quota: int, now_wib_hour: float) -> int:
 
 
 def _topup_queue(db, fanpage) -> int:
-    """Fetch a small batch of new candidates from one curated source (LRU)
+    """Fetch small batches from the least recently fetched curated sources
     and turn each that survives classification into a pending idea. Returns
     how many were added."""
     from sqlalchemy import func
@@ -89,34 +90,41 @@ def _topup_queue(db, fanpage) -> int:
     if pending_count >= _MIN_QUEUE_SIZE:
         return 0
 
-    source = (
+    sources = (
         db.query(FacebookPhotoSource)
         .filter_by(fanpage_id=fanpage.id, is_active=True)
-        .order_by(FacebookPhotoSource.last_used_at.asc().nullsfirst(), FacebookPhotoSource.id.asc())
-        .first()
+        .order_by(FacebookPhotoSource.last_fetched_at.asc().nullsfirst(), FacebookPhotoSource.id.asc())
+        .limit(MAX_SOURCES_PER_TICK)
+        .all()
     )
-    if not source:
-        return 0
-
-    try:
-        candidates = fetch_photo_candidates(
-            source.page_url, limit=_TOPUP_BATCH, skip_fbids=_seen_fbids(db),
-        )
-    except Exception as exc:
-        logger.error("Facebook photo: candidate fetch failed for source %d (%s): %s", source.id, source.page_url, exc)
-        return 0
-
-    source.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    source.times_used = (source.times_used or 0) + 1
-    db.commit()
 
     created = 0
-    for candidate in candidates:
+    for source in sources:
+        if pending_count >= _MIN_QUEUE_SIZE:
+            break
         try:
-            if build_idea_from_candidate(db, fanpage, candidate):
-                created += 1
+            candidates = fetch_photo_candidates(
+                source.page_url, limit=_TOPUP_BATCH, skip_fbids=_seen_fbids(db, fanpage.id),
+            )
         except Exception as exc:
-            logger.error("Facebook photo: idea build failed for fanpage %d: %s", fanpage.id, exc)
+            logger.error("Facebook photo: candidate fetch failed for source %d (%s): %s", source.id, source.page_url, exc)
+            candidates = None
+        source.last_fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        if candidates is not None:
+            source.last_used_at = source.last_fetched_at
+            source.times_used = (source.times_used or 0) + 1
+        db.commit()
+
+        for candidate in candidates or []:
+            if pending_count >= _MIN_QUEUE_SIZE:
+                break
+            try:
+                if build_idea_from_candidate(db, fanpage, candidate, source_id=source.id):
+                    created += 1
+                    pending_count += 1
+            except Exception as exc:
+                db.rollback()
+                logger.error("Facebook photo: idea build failed for fanpage %d: %s", fanpage.id, exc)
     return created
 
 

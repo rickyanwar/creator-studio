@@ -35,6 +35,12 @@ class FacebookPhotoIdea(Base):
         nullable=False,
         index=True,
     )
+    # Preserve staged ideas when their source card is removed.
+    source_id = Column(
+        Integer, ForeignKey("facebook_photo_sources.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    image_local_path = Column(Text, nullable=True)
     # "news" | "quote" | "discussion" — doubles as the
     # design_images.resolve_template category param at consume time.
     category = Column(String(16), nullable=False)

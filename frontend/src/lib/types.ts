@@ -245,6 +245,9 @@ export interface FacebookPhotoSourceRef {
   is_active: boolean;
   times_used: number;
   last_used_at: string | null;
+  format: "follow" | "repost" | "template" | "chatgpt";
+  chatgpt_edit_prompt: string | null;
+  last_fetched_at: string | null;
 }
 
 export interface FacebookPhotoIdeaRef {

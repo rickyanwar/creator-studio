@@ -1,6 +1,7 @@
 "use client";
 
 import { Icon } from "@iconify/react";
+import { FacebookSourceCard } from "@/components/fanpages/FacebookSourceCard";
 import type { FacebookPhotoSourceRef, FacebookPhotoIdeaRef, FanpageDetail } from "@/lib/types";
 
 export interface FacebookTabProps {
@@ -34,6 +35,7 @@ export interface FacebookTabProps {
 }
 
 export function FacebookTab({
+  fanpageId,
   form,
   set,
   newFbPhotoUrl,
@@ -170,35 +172,20 @@ export function FacebookTab({
                 </p>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 {((form.facebook_photo_sources as FacebookPhotoSourceRef[] | undefined) ?? []).length === 0 ? (
                   <p className="text-[11px] text-text2 italic">No source pages yet.</p>
                 ) : (
                   ((form.facebook_photo_sources as FacebookPhotoSourceRef[] | undefined) ?? []).map((s) => (
-                    <div key={s.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-line">
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4 rounded accent-pri shrink-0"
-                        checked={s.is_active}
-                        onChange={() => handleToggleFbPhotoSource(s)}
-                        title={s.is_active ? "Active — click to pause" : "Paused — click to activate"}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className={`text-sm leading-tight truncate ${s.is_active ? "text-text" : "text-text2 line-through"}`}>
-                          {s.label || s.page_url}
-                        </p>
-                        <p className="text-[11px] text-text2 truncate">
-                          {s.label ? `${s.page_url} · ` : ""}used {s.times_used}×
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteFbPhotoSource(s.id)}
-                        className="text-text2 hover:text-bad transition-colors shrink-0"
-                        title="Delete source"
-                      >
-                        <Icon icon="solar:trash-bin-trash-bold-duotone" width={18} />
-                      </button>
-                    </div>
+                    <FacebookSourceCard
+                      key={s.id}
+                      source={s}
+                      fanpageId={fanpageId}
+                      onToggle={() => handleToggleFbPhotoSource(s)}
+                      onRemove={() => handleDeleteFbPhotoSource(s.id)}
+                      onSaved={(updated) => set("facebook_photo_sources",
+                        (form.facebook_photo_sources ?? []).map((source) => source.id === updated.id ? updated : source))}
+                    />
                   ))
                 )}
               </div>

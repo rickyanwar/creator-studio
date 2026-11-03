@@ -503,6 +503,15 @@ class FacebookPhotoSourceRef(BaseModel):
     is_active: bool = True
     times_used: int = 0
     last_used_at: Optional[datetime] = None
+    format: str = "follow"
+    chatgpt_edit_prompt: str | None = None
+    last_fetched_at: datetime | None = None
+
+    @field_validator("format", mode="before")
+    @classmethod
+    def resolve_format(cls, v):
+        from app.services.fb_source_format import FB_FORMATS
+        return v if v in FB_FORMATS else "follow"
 
     model_config = {"from_attributes": True}
 
@@ -510,12 +519,39 @@ class FacebookPhotoSourceRef(BaseModel):
 class FacebookPhotoSourceAdd(BaseModel):
     page_url: str
     label: Optional[str] = None
+    format: str | None = None
+
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v):
+        from app.services.fb_source_format import normalize_format
+        normalize_format(v)
+        return v
 
 
 class FacebookPhotoSourceUpdate(BaseModel):
     page_url: Optional[str] = None
     label: Optional[str] = None
     is_active: Optional[bool] = None
+    format: str | None = None
+    chatgpt_edit_prompt: str | None = None
+
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v):
+        from app.services.fb_source_format import normalize_format
+        normalize_format(v)
+        return v
+
+    @field_validator("chatgpt_edit_prompt")
+    @classmethod
+    def validate_chatgpt_edit_prompt(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if len(v) > 2000:
+            raise ValueError("ChatGPT edit prompt must be at most 2000 characters")
+        return v or None
 
 
 class FacebookPhotoIdeaRef(BaseModel):

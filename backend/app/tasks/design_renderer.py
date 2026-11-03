@@ -1342,14 +1342,54 @@ def _pick_fitting_facebook_photo(db, job, template, category: str, niche: str):
     return None, None, None
 
 
+def _render_facebook_direct(db, job, fanpage, idea, prompt=None):
+    from app.models.publish_jobs import PublishJobStatus
+    from app.models.target_fanpages import PublishMode
+    from app.services.ig_photo_edit import clean_jpeg, edit_ig_photo
+    from app.services.qa_toggles import qa_enabled
+    from app.services.visual_engine import VisualEngineDeferred
+
+    result = None
+    if prompt:
+        try:
+            result = edit_ig_photo(
+                db, photo_path=idea.image_local_path, owner_prompt=prompt,
+                fanpage_id=fanpage.id, subject=_name_badge(idea.design_subtitle),
+                qa_enabled=qa_enabled(fanpage, "facebook"),
+            )
+        except VisualEngineDeferred as exc:
+            _defer_job(db, job, exc)
+            return
+    if result and result["ok"] and result["image_path"]:
+        path = result["image_path"]
+        job.design_engine = result["engine"]
+        job.design_engine_note = "ChatGPT edit of the original Facebook photo (custom prompt)"
+    else:
+        designs = Path(settings.storage_base_path) / "designs"
+        designs.mkdir(parents=True, exist_ok=True)
+        path = clean_jpeg(
+            idea.image_local_path,
+            str(designs / f"job_{job.id}_fb_original_{uuid.uuid4().hex[:8]}.jpg"), size=None,
+        )
+        job.design_engine = "original"
+        reason = (result["reason"] or "empty output") if result else None
+        job.design_engine_note = (
+            f"ChatGPT edit failed ({reason[:120]}) -> original photo"
+            if result else "Repost of the original Facebook photo"
+        )
+    job.design_image_path = path
+    job.design_image_url = f"{settings.storage_base_url.rstrip('/')}/designs/{Path(path).name}"
+    job.status = PublishJobStatus.pending_publish
+    job.last_error = None
+    db.commit()
+    if fanpage.facebook_photo_publish_mode == PublishMode.auto:
+        from app.tasks.publisher import publish_job
+        publish_job.delay(job.id)
+
+
 @celery_app.task(name="app.tasks.design_renderer.render_facebook_photo", bind=True, max_retries=2)
 def render_facebook_photo(self, job_id: int):
-    """Render a Mode 6 card, recreated like IG recreate: the text _consume_one
-    already rewrote (news headline / quote + speaker / discussion question +
-    label) on the fanpage's own news/quote/discussion template, around a
-    clean photo of the subject. The source page's photo was only read for
-    its text and is never used here — no photo found means the job waits
-    for a manual image rather than falling back to it."""
+    """Render Mode 6 using the source's direct-photo or template format."""
     db = SessionLocal()
     try:
         from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
@@ -1377,8 +1417,34 @@ def render_facebook_photo(self, job_id: int):
             db.commit()
             return
 
+        from app.models.facebook_photo_ideas import FacebookPhotoIdea
+        from app.models.facebook_photo_sources import FacebookPhotoSource
+        from app.services.fb_source_format import format_of
+
+        idea = None
+        if job.source_gallery_image_id is not None:
+            idea = (
+                db.query(FacebookPhotoIdea)
+                .filter_by(gallery_image_id=job.source_gallery_image_id, fanpage_id=job.fanpage_id)
+                .order_by(FacebookPhotoIdea.created_at.desc(), FacebookPhotoIdea.id.desc())
+                .first()
+            )
+        source = db.query(FacebookPhotoSource).filter_by(id=idea.source_id).first() if idea and idea.source_id else None
+        fmt = format_of(source)
+        prompt = (source.chatgpt_edit_prompt or "").strip() if source else ""
+        direct = fmt == "repost" or (fmt == "chatgpt" and prompt)
+        original_missing = False
+        if direct:
+            if idea and idea.image_local_path and Path(idea.image_local_path).is_file():
+                _render_facebook_direct(db, job, fanpage, idea, prompt=source.chatgpt_edit_prompt if fmt == "chatgpt" else None)
+                return
+            original_missing = True
+            job.design_engine_note = "original photo missing"
+        speaker_enabled = fmt != "template" and (
+            fanpage.fb_visual_engine == "chatgpt" or (fmt == "chatgpt" and not prompt)
+        )
         article = None
-        if fanpage.fb_visual_engine == "chatgpt" and job.source_article_id:
+        if speaker_enabled and job.source_article_id:
             from app.models.scraped_articles import ScrapedArticle
             article = db.query(ScrapedArticle).filter_by(id=job.source_article_id).first()
 
@@ -1405,7 +1471,16 @@ def render_facebook_photo(self, job_id: int):
         speaker_gallery_images = []
         from app.services.visual_engine import VisualEngineDeferred
         try:
-            speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="facebook")
+            speaker_design = None
+            if fmt != "template":
+                speaker_fanpage = fanpage
+                if fmt == "chatgpt" and not prompt:
+                    from types import SimpleNamespace
+                    speaker_fanpage = SimpleNamespace(**{
+                        column.key: getattr(fanpage, column.key) for column in fanpage.__table__.columns
+                    })
+                    speaker_fanpage.fb_visual_engine = "chatgpt"
+                speaker_design = _maybe_compose_speaker_design(db, speaker_fanpage, job, article, mode="facebook")
         except VisualEngineDeferred as exc:
             _defer_job(db, job, exc)
             return
@@ -1516,9 +1591,11 @@ def render_facebook_photo(self, job_id: int):
             job.design_engine = "template"
             job.design_engine_note = (
                 "AI image failed → template"
-                if getattr(fanpage, "fb_visual_engine", None) == "chatgpt"
+                if speaker_enabled
                 else None
             )
+        if original_missing:
+            job.design_engine_note = "; ".join(filter(None, [job.design_engine_note, "original photo missing"]))[:200]
         job.status = PublishJobStatus.pending_publish
         job.last_error = None
         if gallery_image:

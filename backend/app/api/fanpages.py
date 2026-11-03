@@ -836,6 +836,7 @@ def delete_watermark_image(fanpage_id: int, db: DB, _: CurrentUser):
 def add_facebook_photo_source(fanpage_id: int, body: FacebookPhotoSourceAdd, db: DB, _: CurrentUser):
     from app.models.target_fanpages import TargetFanpage
     from app.models.facebook_photo_sources import FacebookPhotoSource
+    from app.services.fb_source_format import normalize_format
 
     fp = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
     if not fp:
@@ -848,6 +849,7 @@ def add_facebook_photo_source(fanpage_id: int, body: FacebookPhotoSourceAdd, db:
         fanpage_id=fanpage_id,
         page_url=url,
         label=(body.label or "").strip() or None,
+        format=normalize_format(body.format),
     )
     db.add(source)
     db.commit()
@@ -859,12 +861,15 @@ def add_facebook_photo_source(fanpage_id: int, body: FacebookPhotoSourceAdd, db:
 @router.put("/{fanpage_id}/facebook-photo-sources/{source_id}")
 def update_facebook_photo_source(fanpage_id: int, source_id: int, body: FacebookPhotoSourceUpdate, db: DB, _: CurrentUser):
     from app.models.facebook_photo_sources import FacebookPhotoSource
+    from app.services.fb_source_format import normalize_format
 
     source = db.query(FacebookPhotoSource).filter_by(id=source_id, fanpage_id=fanpage_id).first()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
     data = body.model_dump(exclude_unset=True)
+    if "format" in data:
+        data["format"] = normalize_format(data["format"])
     if "page_url" in data and data["page_url"] is not None:
         data["page_url"] = data["page_url"].strip()
     if "label" in data:
