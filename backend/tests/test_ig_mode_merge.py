@@ -169,6 +169,7 @@ def test_update_fanpage_api_with_ig_mode():
         ai_video_publish_mode="manual_review",
         ai_video_daily_count=1,
         ai_video_clips=2,
+        ai_video_clip_qc_max_attempts=4,
         ai_video_title_max_chars=100,
         ai_video_description_max_chars=600,
         ai_video_logo_enabled=True,

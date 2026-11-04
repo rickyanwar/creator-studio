@@ -8,11 +8,11 @@ File/function names are entry points to read first, not a complete list. When th
 | Area | File | Covers |
 |---|---|---|
 | Photos, crops, vision gates | [codemap/design-images.md](codemap/design-images.md) | `services/design_images.py`: sourcing cascade, face/crop math, split/inset, fail-open vs fail-closed |
-| Card rendering + AI recreate | [codemap/rendering-and-recreate.md](codemap/rendering-and-recreate.md) | `design_renderer`, `ig_recreate`, `redesign_pipeline`, `visual_engine`, `speaker_design`, `renderer/` payload |
+| Card rendering + AI recreate | [codemap/rendering-and-recreate.md](codemap/rendering-and-recreate.md) | `design_renderer`, `ig_recreate`, `redesign_pipeline`, `visual_engine`, `speaker_design`, `renderer/` payload; §5c IG/FB original-photo edits + fallback |
 | Publishing + delivery | [codemap/publishing.md](codemap/publishing.md) | ledger vs legacy, delivery states, locks/leases, slot math, phone fallback, reconciliation, idempotency |
 | Mode 8 AI video | [codemap/mode8-ai-video.md](codemap/mode8-ai-video.md) | ideas, planner, credits, claim/lease, `gflow_worker`, QC, captions, TTS narration (`tts_voices`, `ai_video_narration`, `ai_video_tts`; §9) |
-| Content sources + AI copy | [codemap/content-sources.md](codemap/content-sources.md) | Modes 1, 2, 4–7 sourcing, queues, prompts, model fallbacks, gallery |
-| Frontend | [codemap/frontend.md](codemap/frontend.md) | pages → components → `api.ts` → backend routes, fanpage tabs |
+| Content sources + AI copy | [codemap/content-sources.md](codemap/content-sources.md) | Modes 1, 2, 4–7 sourcing, queues, prompts, model fallbacks, gallery; §6.3 FB per-source formats, provenance + retained-photo cleanup |
+| Frontend | [codemap/frontend.md](codemap/frontend.md) | pages → components → `api.ts` → backend routes, fanpage tabs; §4.1 IG/FB source cards + edit-prompt autosave |
 | Tests + dev workflow | [codemap/tests-and-devflow.md](codemap/tests-and-devflow.md) | how to run each suite, SQLite vs Postgres tests, fakes, deploy rules |
 
 Size: backend/app ~48k lines, backend/tests ~38k (146 files), alembic 7k (138 migrations, single head), frontend/src ~21k, gflow_worker + phone_runner + renderer ~21k.
@@ -51,10 +51,10 @@ Per-fanpage toggles live on `target_fanpages`.
 |---|---|---|---|---|---|
 | 1 IG repost | `ig_repost` | `crawler.crawl_all_sources` → `ig_viewer_scraper` (GramSnap → AnonyIG → IGStoryViewer, patchright) → `image_saver` → `fan_out.fanout_link` | `ai_generator.generate_caption_for_job` → `ai_caption.generate_caption`; an empty source caption is grounded first (§2a) | original media | 60 s crawl |
 | 2 News-to-image | `news_content` | `news_scraper` (RSS/HTML) → `scraped_articles` | `news_copywriter.copywrite_article` → `services/news_copywriter.generate_news_copy` | `design_renderer.render_design`: Pro poster first when on (§2a), else speaker design, else photos via `design_images` (gallery → live Getty → web) | scrape 60 s, copy 5 m, render 2 m |
-| 3 IG recreate | `ig_recreate` | same IG crawl, `fanpage_sources.ig_recreate_enabled` | `ig_recreate.recreate_post_for_fanpage` (classify quote/news, rewrite) | `visual_engine` (`cx/gpt-image-*` via 9Router) on `visual` queue, or Fabric template fallback | — |
+| 3 IG recreate | `ig_recreate` | same IG crawl, `fanpage_sources.ig_recreate_enabled` | `ig_recreate.recreate_post_for_fanpage` (classify quote/news, rewrite) | effective ChatGPT + source `chatgpt_edit_prompt`: original-photo edit; otherwise AI redesign or Fabric template fallback (rendering deep dive §5c) | — |
 | 4 Discussion | `discussion` | `discussion._topup_queue` → `discussion_content_ideas` (news / seeds / manual) | `generate_discussion_copy` | `render_discussion` | 30 m |
 | 5 Pinterest | `pinterest_content` | `pinterest_source.collect_new_candidates` → `pinterest_content_ideas` | — | `render_pinterest` | 30 m |
-| 6 FB photo recreate | `facebook_recreate` | `facebook_photo_source` (competitor /photos, dedup by fbid) → `facebook_photo_ideas` | OCR + rewrite | `render_facebook_photo` | 30 m |
+| 6 FB photo recreate | `facebook_recreate` | `facebook_photo_source` (competitor /photos, fbid markers per fanpage, accepted originals retained) → `facebook_photo_ideas` | OCR + rewrite | `render_facebook_photo`: per-source follow/repost/template/chatgpt; prompt selects original-photo edit, blank ChatGPT selects AI design | 30 m |
 | 7 YouTube clips | `youtube_clip` | `yt_clip.yt_clip_cycle` (RSS) → `analyze_video` (transcript → highlights) → `yt_clip_ideas` | `yt_clip_title` | `yt_clip_render` (yt-dlp, ASS karaoke subs, 9:16 reframe, ffmpeg) | 30 m |
 | 8 AI video | `ai_video` | `ai_video_plan.top_up_ai_video_ideas` / Hermes / Muse research desk → `video_ideas` → `plan_ai_videos` → `video_jobs` | idea writer + fill | gflow worker → upload → `ai_video_finalize` (tech + vision QC, logo, whisper captions) | plan 10 m, sweep 2 m |
 | Viral Radar | `ig_recreate` | `radar_crawl_tick` → `radar.evaluate_radar` (cluster + velocity) → `radar_story_decisions` → `radar_dispatch_tick` | — | `redesign_pipeline.redesign_card` on `visual` | 60 s / 2 m |
@@ -132,8 +132,9 @@ Frontend: `frontend/src/app/(dashboard)/*` pages. Main nav (`components/layout/S
 - Mode 8: `gflow_accounts`, `gflow_workers`, `video_jobs`, research tables.
 - Metrics & strategy: `post_metric_snapshots`, `strategy_memories`, `strategy_recommendations`.
 - `settings`: singleton, Fernet-encrypted secrets. `api_tokens`.
+- Source-card migrations (2026-11-04): `c80000000052` adds `fanpage_sources.chatgpt_edit_prompt`; `c80000000053` adds FB source format/prompt/last fetch and idea source/photo provenance; `c80000000054` preserves legacy FB AI choices as explicit source `chatgpt` formats. `fb_visual_engine` no longer drives rendering/routing. Details: [content-sources.md §6.3](codemap/content-sources.md#63-per-source-formats--retained-originals-2026-11-04).
 - `social_destinations` (2026-10-19, c80000000036): `mode_shares` (JSON, null = split off), `borrow_hours_before_sleep` (3), `news_stale_hours` (24). `settings.pro_poster_enabled` / `pro_poster_fanpage_ids` (c80000000035).
-- Alembic: head **c80000000036** (`destination_mode_shares`). Since c28: c29 `log_handled` + `auth_events` tables, c30 publish job design draft, c31 fanpage source visual engine, c32 fanpage hour weights, c33 social destination platforms, c34 operational notification states, c35 Pro poster switch, c36 destination mode shares. Earlier: c80000000028 (`move_projects_to_styles`; c80000000026 brand look columns, c80000000027 9 style templates / 15 legacy hidden / backup `design_templates_bak_c27`, c80000000028 moved projects to styles / queued jobs remapped / backup `brand_move_bak_c28_*`). Never use autogenerate.
+- Alembic: historical checkpoint **c80000000036** (`destination_mode_shares`); later source-card revisions are listed above. Since c28: c29 `log_handled` + `auth_events` tables, c30 publish job design draft, c31 fanpage source visual engine, c32 fanpage hour weights, c33 social destination platforms, c34 operational notification states, c35 Pro poster switch, c36 destination mode shares. Earlier: c80000000028 (`move_projects_to_styles`; c80000000026 brand look columns, c80000000027 9 style templates / 15 legacy hidden / backup `design_templates_bak_c27`, c80000000028 moved projects to styles / queued jobs remapped / backup `brand_move_bak_c28_*`). Never use autogenerate.
 
 ## 7. Known issues found 2026-10-16
 
