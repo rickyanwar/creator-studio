@@ -218,8 +218,11 @@ def _consume_one(db, fanpage) -> bool:
     if fanpage.facebook_photo_publish_mode == PublishMode.auto:
         from app.tasks.design_renderer import render_facebook_photo
         from app.services.engine_router import render_queue_for
+        from app.models.facebook_photo_sources import FacebookPhotoSource
+        from app.services.fb_source_format import format_of, queue_override
+        source = db.query(FacebookPhotoSource).filter_by(id=idea.source_id).first() if idea.source_id else None
         countdown = random.randint(5, 90)
-        q = render_queue_for(db, fanpage, "facebook")
+        q = render_queue_for(db, fanpage, "facebook", visual_engine_override=queue_override(format_of(source), source))
         if q:
             render_facebook_photo.apply_async(args=[job.id], countdown=countdown, queue=q)
         else:

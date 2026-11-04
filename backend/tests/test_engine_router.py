@@ -590,7 +590,8 @@ def test_14_render_queue_for(mock_db):
          patch("app.services.engine_router.gptcli_applies", return_value=True):
         assert render_queue_for(mock_db, fanpage_news_on, "news") == "visual"
         assert render_queue_for(mock_db, fanpage_news_off, "news") is None
-        assert render_queue_for(mock_db, fanpage_fb_on, "facebook") == "visual"
+        assert render_queue_for(mock_db, fanpage_fb_on, "facebook") is None
+        assert render_queue_for(mock_db, fanpage_fb_on, "facebook", visual_engine_override="chatgpt") == "visual"
         assert render_queue_for(mock_db, fanpage_ig_on, "instagram") == "visual"
         assert render_queue_for(mock_db, fanpage_news_on, "other") is None
 

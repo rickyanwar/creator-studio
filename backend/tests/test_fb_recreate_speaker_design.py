@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, patch
 
 from app.config import get_settings
 from app.models.design_templates import DesignTemplate
+from app.models.facebook_photo_ideas import FacebookPhotoIdea
+from app.models.facebook_photo_sources import FacebookPhotoSource
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.scraped_articles import ScrapedArticle
 from app.models.target_fanpages import PublishMode, TargetFanpage
@@ -28,7 +30,10 @@ def _make_job(**kwargs):
     return PublishJob(**defaults)
 
 
-def _setup_render_mock(db, job, fanpage, template=None):
+def _setup_render_mock(db, job, fanpage, template=None, source_format=None):
+    if source_format:
+        job.source_gallery_image_id = 10
+
     def mock_query(model):
         m = MagicMock()
         if model == PublishJob:
@@ -40,6 +45,10 @@ def _setup_render_mock(db, job, fanpage, template=None):
             m.filter_by.return_value.first.return_value = None
         elif model == DesignTemplate:
             m.filter_by.return_value.first.return_value = template
+        elif model == FacebookPhotoIdea:
+            m.filter_by.return_value.order_by.return_value.first.return_value = FacebookPhotoIdea(source_id=2)
+        elif model == FacebookPhotoSource:
+            m.filter_by.return_value.first.return_value = FacebookPhotoSource(format=source_format)
         else:
             m.filter_by.return_value.first.return_value = None
         return m
@@ -72,7 +81,7 @@ def test_quote_reaches_compose_speaker_design_and_sets_engine(tmp_path, monkeypa
         canvas_height=1080,
         category="quote",
     )
-    _setup_render_mock(db, job, fanpage, template=template)
+    _setup_render_mock(db, job, fanpage, template=template, source_format="chatgpt")
 
     speaker_res = SpeakerDesignResult(b"png-composite", engine="chatgpt", engine_note="")
     mock_resp = MagicMock(status_code=200, content=b"final-rendered-png")
@@ -123,7 +132,7 @@ def test_speaker_design_none_falls_back_to_template_with_note(tmp_path, monkeypa
         canvas_height=1080,
         category="quote",
     )
-    _setup_render_mock(db, job, fanpage, template=template)
+    _setup_render_mock(db, job, fanpage, template=template, source_format="chatgpt")
 
     mock_resp = MagicMock(status_code=200, content=b"final-rendered-png")
     mock_resp.raise_for_status = MagicMock()
@@ -212,7 +221,7 @@ def test_discussion_job_without_person_does_not_call_compose():
     )
     with patch("app.services.design_images.extract_two_subjects", return_value=(None, None)), \
          patch("app.services.speaker_design.compose_speaker_design") as mock_compose:
-        res = _maybe_compose_speaker_design(MagicMock(), fanpage, job, None, mode="facebook")
+        res = _maybe_compose_speaker_design(MagicMock(), fanpage, job, None, mode="facebook", force=True)
 
     assert res is None
     mock_compose.assert_not_called()

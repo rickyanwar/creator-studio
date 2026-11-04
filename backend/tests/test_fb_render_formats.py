@@ -147,11 +147,11 @@ def test_edit_deferred_does_not_publish_original(scene):
 def test_empty_prompt_forces_speaker_and_restores_fanpage(scene, prompt):
     scene.source.format = "chatgpt"
     scene.source.chatgpt_edit_prompt = prompt
-    scene.speaker.side_effect = lambda db, fanpage, *a, **kw: (
-        b"speaker" if fanpage.fb_visual_engine == "chatgpt" else None
-    )
+    scene.speaker.side_effect = lambda db, fanpage, *a, **kw: b"speaker" if kw.get("force") else None
     renderer.render_facebook_photo(scene.job.id)
     scene.speaker.assert_called_once()
+    assert scene.speaker.call_args.kwargs == {"mode": "facebook", "force": True}
+    assert scene.speaker.call_args.args[1] is scene.fanpage
     assert scene.job.last_image_marker == "speaker_design"
     assert scene.fanpage.fb_visual_engine == "off"
 
@@ -166,10 +166,11 @@ def test_template_skips_speaker_even_with_fanpage_chatgpt(scene):
 
 
 @pytest.mark.parametrize("fmt", ["follow", None])
-def test_follow_preserves_existing_path(scene, fmt):
+def test_follow_ignores_fanpage_chatgpt(scene, fmt):
     scene.source.format = fmt
+    scene.fanpage.fb_visual_engine = "chatgpt"
     renderer.render_facebook_photo(scene.job.id)
-    scene.speaker.assert_called_once()
+    scene.speaker.assert_not_called()
     scene.render.assert_called_once()
     assert scene.job.design_engine == "template"
 

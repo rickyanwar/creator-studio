@@ -256,7 +256,7 @@ def test_maybe_compose_speaker_design_content_kind():
         db = MagicMock()
 
         # mode = "facebook"
-        res = _maybe_compose_speaker_design(db, fanpage, job, None, mode="facebook")
+        res = _maybe_compose_speaker_design(db, fanpage, job, None, mode="facebook", force=True)
         assert res == b"fake-png-bytes"
         assert mock_compose.call_args.kwargs.get("content_kind") == "facebook"
 

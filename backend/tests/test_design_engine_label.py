@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 from app.api.publish_jobs import _enrich_job
 from app.models.design_templates import DesignTemplate
+from app.models.facebook_photo_ideas import FacebookPhotoIdea
+from app.models.facebook_photo_sources import FacebookPhotoSource
 from app.models.posts import Post
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.scraped_articles import ScrapedArticle
@@ -30,7 +32,7 @@ def _make_job(**kwargs):
     return PublishJob(**defaults)
 
 
-def _setup_render_mock(db, job, fanpage, template=None, article=None, post=None, decision=None):
+def _setup_render_mock(db, job, fanpage, template=None, article=None, post=None, decision=None, idea=None, source=None):
     def mock_query(model):
         m = MagicMock()
         if model == PublishJob:
@@ -38,6 +40,10 @@ def _setup_render_mock(db, job, fanpage, template=None, article=None, post=None,
             m.filter_by.return_value.first.return_value = job
         elif model == TargetFanpage:
             m.filter_by.return_value.first.return_value = fanpage
+        elif model == FacebookPhotoIdea:
+            m.filter_by.return_value.order_by.return_value.first.return_value = idea
+        elif model == FacebookPhotoSource:
+            m.filter_by.return_value.first.return_value = source
         elif model == ScrapedArticle:
             m.filter_by.return_value.first.return_value = article
         elif model == DesignTemplate:
@@ -256,6 +262,7 @@ def test_render_facebook_photo_ai_and_template_cases(tmp_path, monkeypatch):
     job_ai = _make_job(
         id=201,
         fanpage_id=1,
+        source_gallery_image_id=10,
         content_type=ContentType.facebook_recreate,
         design_title="FB Title",
     )
@@ -263,10 +270,12 @@ def test_render_facebook_photo_ai_and_template_cases(tmp_path, monkeypatch):
         id=1,
         name="Test FP",
         mode2_gallery_niches=["MotoGP"],
-        fb_visual_engine="chatgpt",
+        fb_visual_engine="off",
         facebook_photo_publish_mode=PublishMode.manual_review,
     )
-    _setup_render_mock(db, job_ai, fanpage_ai, template=template)
+    source = FacebookPhotoSource(id=2, format="chatgpt", chatgpt_edit_prompt=None)
+    idea = FacebookPhotoIdea(id=3, fanpage_id=1, gallery_image_id=10, source_id=2)
+    _setup_render_mock(db, job_ai, fanpage_ai, template=template, idea=idea, source=source)
 
     speaker = SpeakerDesignResult(b"fake-bytes", engine="codex", engine_note="direct codex")
     mock_resp = MagicMock(status_code=200, content=b"png-output")
@@ -287,10 +296,11 @@ def test_render_facebook_photo_ai_and_template_cases(tmp_path, monkeypatch):
     job_tpl = _make_job(
         id=202,
         fanpage_id=1,
+        source_gallery_image_id=10,
         content_type=ContentType.facebook_recreate,
         design_title="FB Title",
     )
-    _setup_render_mock(db, job_tpl, fanpage_ai, template=template)
+    _setup_render_mock(db, job_tpl, fanpage_ai, template=template, idea=idea, source=source)
 
     with patch("app.tasks.design_renderer.SessionLocal", return_value=db), \
          patch("app.services.design_images.resolve_template", return_value=template), \
@@ -568,4 +578,3 @@ def test_note_truncation_to_200_chars(tmp_path, monkeypatch):
 
     assert job.design_engine_note == "A" * 200
     assert len(job.design_engine_note) == 200
-

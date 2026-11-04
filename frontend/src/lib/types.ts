@@ -828,6 +828,7 @@ export interface TtsVoice {
 
 export interface AiVideoTemplate {
   key: string;
+  tts_auto_voice?: string | null;
   name: string;
   niches: string[];
   clip_options: number[];

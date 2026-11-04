@@ -151,6 +151,17 @@ def test_tts_voices_endpoint(client):
     assert rows == [{"name": name, **TTS_VOICES[name]} for name in sorted(TTS_VOICES)]
 
 
+def test_templates_include_auto_voice(client):
+    response = client.get("/ai-video/templates")
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert all("tts_auto_voice" in row for row in rows)
+    templates = {row["key"]: row for row in rows}
+    assert templates["health_3d_explainer"]["tts_auto_voice"] == "Iapetus"
+    assert templates["motorcycle_commercial"]["tts_auto_voice"] == "Algenib"
+    assert templates["motorsport_tech_dive"]["tts_auto_voice"] is None
+
+
 def test_fanpage_asmr_narration_persists(client, db):
     fanpage = TargetFanpage(name="ASMR settings")
     db.add(fanpage)

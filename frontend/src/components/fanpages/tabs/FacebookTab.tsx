@@ -71,11 +71,10 @@ export function FacebookTab({
           <div>
             <h2 className="text-base font-semibold text-text">FB photo recreate</h2>
             <p className="text-xs text-text2 mt-0.5">
-              Recreate posts from other Facebook pages (competitor/inspiration pages, not this fanpage&apos;s
-              own), like IG Recreate — each new photo is only read for its text (news / quote /
-              discussion; anything else is skipped), rewritten in this fanpage&apos;s language, and rebuilt
-              on this fanpage&apos;s own template with a fresh photo of the subject. The source page&apos;s
-              image is never posted.
+              Use photos from other Facebook pages (competitor or inspiration pages, not this fanpage&apos;s own).
+              Each source card below chooses what happens: repost the original photo with a new caption,
+              rebuild its text on this fanpage&apos;s template, or let ChatGPT design or edit it with your prompt.
+              Captions are written by AI from the text in the photo.
             </p>
           </div>
           <button
@@ -94,28 +93,13 @@ export function FacebookTab({
 
         {form.facebook_photo_enabled && (
           <>
-            <div>
-              <label className="label">Facebook recreate AI design</label>
-              <select
-                className="input w-full mt-1"
-                value={(form.fb_visual_engine as string) ?? "off"}
-                onChange={(e) => set("fb_visual_engine", e.target.value)}
-              >
-                <option value="off">Off</option>
-                <option value="chatgpt">ChatGPT</option>
-              </select>
-              <p className="text-[10px] text-text2 mt-1">
-                1 ChatGPT image per post; falls back to the normal template on failure.
-              </p>
-            </div>
-
             <div className="flex items-center justify-between p-3 rounded-lg border border-line">
               <div>
                 <label htmlFor="qa-facebook" className="text-xs font-medium text-text cursor-pointer">
                   Check AI results
                 </label>
                 <p className="text-[11px] text-text2 mt-0.5">
-                  On: every AI image is checked for the right face and event (series, vehicle, logos) and replaced by the template card when wrong. Off: AI images are used without these checks.
+                  Checks faces in ChatGPT results from sources set to ChatGPT.
                 </p>
               </div>
               <input

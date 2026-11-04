@@ -315,7 +315,7 @@ def render_queue_for(db, fanpage, content_kind: str, visual_engine_override: str
         if content_kind == "news":
             toggle = getattr(fanpage, "news_visual_engine", None)
         elif content_kind == "facebook":
-            toggle = getattr(fanpage, "fb_visual_engine", None)
+            toggle = visual_engine_override
         elif content_kind == "instagram":
             toggle = visual_engine_override if visual_engine_override is not None else getattr(fanpage, "visual_engine", None)
         else:

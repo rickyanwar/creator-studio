@@ -42,13 +42,13 @@ def test_speaker_design_chatgpt_composes_news_with_badge_speaker_and_article_con
     assert kwargs["around"] == datetime(2026, 10, 12, 10, 0)
 
 
-def test_speaker_design_chatgpt_facebook_uses_facebook_toggle_and_falls_back_on_none():
-    fanpage = SimpleNamespace(fb_visual_engine="chatgpt", mode2_gallery_niches=["UFC"], name="Fight page")
+def test_speaker_design_facebook_force_bypasses_legacy_toggle_and_falls_back_on_none():
+    fanpage = SimpleNamespace(fb_visual_engine="off", mode2_gallery_niches=["UFC"], name="Fight page")
     job = SimpleNamespace(design_subtitle="Alex Pereira", design_title="Alex discusses the fight")
 
     with patch("app.services.speaker_design.pick_speaker_photos", return_value=[object()]), \
          patch("app.services.speaker_design.compose_speaker_design", return_value=None) as compose:
-        result = _maybe_compose_speaker_design(MagicMock(), fanpage, job, _article(), mode="facebook")
+        result = _maybe_compose_speaker_design(MagicMock(), fanpage, job, _article(), mode="facebook", force=True)
 
     assert result is None
     assert compose.call_args.kwargs["speaker"] == "Alex Pereira"
@@ -224,7 +224,7 @@ def test_story_photo_none_when_no_article_mode6():
     with patch("app.services.speaker_design.pick_speaker_photos", return_value=[object()]), \
          patch("app.services.story_photo.fetch_story_photo") as mock_fetch, \
          patch("app.services.speaker_design.compose_speaker_design", return_value=b"result") as compose:
-        _maybe_compose_speaker_design(MagicMock(), fanpage, job, None, mode="facebook")
+        _maybe_compose_speaker_design(MagicMock(), fanpage, job, None, mode="facebook", force=True)
 
     mock_fetch.assert_not_called()
     kwargs = compose.call_args.kwargs
@@ -327,4 +327,3 @@ def test_render_design_marks_speaker_gallery_images_used(monkeypatch):
     assert used_img1.last_used_at is not None
     assert used_img2.is_used is True
     assert used_img2.last_used_at is not None
-

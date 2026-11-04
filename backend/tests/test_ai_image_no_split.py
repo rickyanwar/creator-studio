@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, patch
 
 from app.config import get_settings
 from app.models.design_templates import DesignTemplate
+from app.models.facebook_photo_ideas import FacebookPhotoIdea
+from app.models.facebook_photo_sources import FacebookPhotoSource
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.scraped_articles import ScrapedArticle
 from app.models.target_fanpages import PublishMode, TargetFanpage
@@ -31,7 +33,7 @@ def _make_job(**kwargs):
     return PublishJob(**defaults)
 
 
-def _setup_fb_render_mock(db, job, fanpage, template=None):
+def _setup_fb_render_mock(db, job, fanpage, template=None, idea=None, source=None):
     def mock_query(model):
         m = MagicMock()
         if model == PublishJob:
@@ -39,6 +41,10 @@ def _setup_fb_render_mock(db, job, fanpage, template=None):
             m.filter_by.return_value.first.return_value = job
         elif model == TargetFanpage:
             m.filter_by.return_value.first.return_value = fanpage
+        elif model == FacebookPhotoIdea:
+            m.filter_by.return_value.order_by.return_value.first.return_value = idea
+        elif model == FacebookPhotoSource:
+            m.filter_by.return_value.first.return_value = source
         elif model == ScrapedArticle:
             m.filter_by.return_value.first.return_value = None
         elif model == DesignTemplate:
@@ -161,6 +167,7 @@ def test_render_facebook_photo_smart_flag(tmp_path, monkeypatch):
     job = _make_job(
         id=12996,
         fanpage_id=5,
+        source_gallery_image_id=10,
         design_title="Quote Title",
         design_subtitle="Speaker Name",
     )
@@ -168,7 +175,7 @@ def test_render_facebook_photo_smart_flag(tmp_path, monkeypatch):
         id=5,
         name="testpage",
         mode2_gallery_niches=["motorsport"],
-        fb_visual_engine="chatgpt",
+        fb_visual_engine="off",
         facebook_photo_publish_mode=PublishMode.manual_review,
     )
     template = DesignTemplate(
@@ -178,7 +185,9 @@ def test_render_facebook_photo_smart_flag(tmp_path, monkeypatch):
         canvas_height=1080,
         category="quote",
     )
-    _setup_fb_render_mock(db, job, fanpage, template=template)
+    source = FacebookPhotoSource(id=2, format="chatgpt", chatgpt_edit_prompt=None)
+    idea = FacebookPhotoIdea(id=3, fanpage_id=5, gallery_image_id=10, source_id=2)
+    _setup_fb_render_mock(db, job, fanpage, template=template, idea=idea, source=source)
 
     speaker_res = SpeakerDesignResult(b"png-composite", engine="chatgpt", engine_note="")
     mock_resp = MagicMock(status_code=200, content=b"final-rendered-png")

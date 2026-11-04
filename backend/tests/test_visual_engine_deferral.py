@@ -19,6 +19,8 @@ from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
 from app.models.target_fanpages import TargetFanpage, PublishMode
 from app.models.posts import Post
 from app.models.design_templates import DesignTemplate
+from app.models.facebook_photo_ideas import FacebookPhotoIdea
+from app.models.facebook_photo_sources import FacebookPhotoSource
 from app.models.scraped_articles import ScrapedArticle
 from app.models.radar import RadarStoryDecision
 
@@ -85,11 +87,14 @@ def test_render_facebook_photo_deferred_sets_job_pending_and_not_before():
     job = PublishJob(
         id=102,
         fanpage_id=1,
+        source_gallery_image_id=10,
         status=PublishJobStatus.pending_design,
         content_type=ContentType.facebook_recreate,
         design_title="Test FB Photo",
     )
     fp = TargetFanpage(id=1, name="Test FP", mode2_gallery_niches=["MotoGP"])
+    source = FacebookPhotoSource(id=2, format="chatgpt", chatgpt_edit_prompt=None)
+    idea = FacebookPhotoIdea(id=3, fanpage_id=1, gallery_image_id=10, source_id=2)
     template = DesignTemplate(
         id=1,
         template_json={"objects": []},
@@ -105,6 +110,10 @@ def test_render_facebook_photo_deferred_sets_job_pending_and_not_before():
             m.filter_by.return_value.first.return_value = job
         elif model == TargetFanpage:
             m.filter_by.return_value.first.return_value = fp
+        elif model == FacebookPhotoIdea:
+            m.filter_by.return_value.order_by.return_value.first.return_value = idea
+        elif model == FacebookPhotoSource:
+            m.filter_by.return_value.first.return_value = source
         elif model == DesignTemplate:
             m.filter_by.return_value.first.return_value = template
         return m

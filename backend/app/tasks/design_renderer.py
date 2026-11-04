@@ -175,10 +175,9 @@ def _is_likely_speaker_person(db, name: str) -> bool:
     return False
 
 
-def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str) -> bytes | None:
-    """Return a speaker-led image when the per-mode toggle is enabled."""
-    toggle = getattr(fanpage, "news_visual_engine" if mode == "news" else "fb_visual_engine", "off")
-    if toggle != "chatgpt":
+def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str, force: bool = False) -> bytes | None:
+    """Return a speaker-led image when requested by a source or the News toggle."""
+    if not force and (mode != "news" or getattr(fanpage, "news_visual_engine", "off") != "chatgpt"):
         return None
 
     from app.services.design_images import extract_secondary_subject, extract_two_subjects
@@ -1440,9 +1439,7 @@ def render_facebook_photo(self, job_id: int):
                 return
             original_missing = True
             job.design_engine_note = "original photo missing"
-        speaker_enabled = fmt != "template" and (
-            fanpage.fb_visual_engine == "chatgpt" or (fmt == "chatgpt" and not prompt)
-        )
+        speaker_enabled = fmt == "chatgpt" and not prompt
         article = None
         if speaker_enabled and job.source_article_id:
             from app.models.scraped_articles import ScrapedArticle
@@ -1472,15 +1469,8 @@ def render_facebook_photo(self, job_id: int):
         from app.services.visual_engine import VisualEngineDeferred
         try:
             speaker_design = None
-            if fmt != "template":
-                speaker_fanpage = fanpage
-                if fmt == "chatgpt" and not prompt:
-                    from types import SimpleNamespace
-                    speaker_fanpage = SimpleNamespace(**{
-                        column.key: getattr(fanpage, column.key) for column in fanpage.__table__.columns
-                    })
-                    speaker_fanpage.fb_visual_engine = "chatgpt"
-                speaker_design = _maybe_compose_speaker_design(db, speaker_fanpage, job, article, mode="facebook")
+            if speaker_enabled:
+                speaker_design = _maybe_compose_speaker_design(db, fanpage, job, article, mode="facebook", force=True)
         except VisualEngineDeferred as exc:
             _defer_job(db, job, exc)
             return
@@ -1805,7 +1795,10 @@ def render_pending_designs():
                 continue
             job = db.query(PublishJob).filter_by(id=job_id).first()
             fanpage = db.query(TargetFanpage).filter_by(id=job.fanpage_id).first() if job else None
-            q = render_queue_for(db, fanpage, "facebook") if fanpage else None
+            from app.services.fb_source_format import format_for_job, queue_override
+            q = render_queue_for(
+                db, fanpage, "facebook", visual_engine_override=queue_override(format_for_job(db, job), None),
+            ) if fanpage else None
             if q:
                 render_facebook_photo.apply_async(args=[job_id], queue=q, expires=1800)
             else:

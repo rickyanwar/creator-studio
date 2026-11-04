@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Icon } from "@iconify/react";
 import useSWRImmutable from "swr/immutable";
 import type { FanpageDetail, AiVideoTemplate, TtsVoice } from "@/lib/types";
 import { listTtsVoices, previewAiVideoOverlay } from "@/lib/api";
@@ -44,6 +45,42 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const voiceAudio = useRef<HTMLAudioElement | null>(null);
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const [voicePreviewError, setVoicePreviewError] = useState<string | null>(null);
+  const language = (form.caption_language ?? "en").trim().toLowerCase();
+  const voiceLocale = language.startsWith("id") ? "id-ID" : language.startsWith("fr") ? "fr-FR" : "en-US";
+
+  useEffect(() => () => {
+    if (voiceAudio.current) {
+      voiceAudio.current.onended = null;
+      voiceAudio.current.onerror = null;
+      voiceAudio.current.pause();
+    }
+  }, []);
+
+  const previewVoice = (key: string, voice: string) => {
+    const audio = voiceAudio.current ?? (voiceAudio.current = new Audio());
+    audio.pause();
+    audio.currentTime = 0;
+    setVoicePreviewError(null);
+    if (playingVoice === key) {
+      setPlayingVoice(null);
+      return;
+    }
+    const src = `/voice-samples/${voiceLocale}-${encodeURIComponent(voice)}.mp3`;
+    audio.src = src;
+    audio.onended = () => setPlayingVoice(null);
+    const unavailable = () => {
+      setPlayingVoice(null);
+      setVoicePreviewError(key);
+    };
+    audio.onerror = unavailable;
+    setPlayingVoice(key);
+    void audio.play().catch((error) => {
+      if (audio.getAttribute("src") === src && error.name !== "AbortError") unavailable();
+    });
+  };
 
   const preview = async () => {
     if (!form.id) return;
@@ -225,6 +262,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                 <div className="space-y-3 p-3 rounded-lg border border-hairline bg-surface-raised">
                   {narrationTemplates.map((item) => {
                     const narration = form.ai_video_narration?.[item.key];
+                    const sampleVoice = narration?.voice || item.tts_auto_voice;
                     return (
                       <fieldset key={item.key} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <legend className="text-xs font-medium text-text-primary mb-2">{item.name}</legend>
@@ -247,20 +285,35 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                         {narration?.engine === "tts" && (
                           <div>
                             <label htmlFor={`tts-voice-${item.key}`} className="label">Voice</label>
+                            <div className="flex items-center gap-2">
                             <select
                               id={`tts-voice-${item.key}`}
-                              className="input w-full"
+                              className="input w-full min-w-0"
                               value={narration.voice ?? ""}
                               onChange={(e) => set("ai_video_narration", {
                                 ...form.ai_video_narration,
                                 [item.key]: { engine: "tts", voice: e.target.value || null },
                               })}
                             >
-                              <option value="">Auto (matches the template narrator)</option>
+                              <option value="">{item.tts_auto_voice ? `Auto (${item.tts_auto_voice})` : "Auto (matches the template narrator)"}</option>
                               {voices.map((voice) => (
                                 <option key={voice.name} value={voice.name}>{voice.name} — {voice.gender}, {voice.label}</option>
                               ))}
                             </select>
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs inline-flex items-center gap-1 shrink-0"
+                              aria-label={playingVoice === item.key ? "Stop voice preview" : "Preview voice"}
+                              disabled={!sampleVoice}
+                              onClick={() => sampleVoice && previewVoice(item.key, sampleVoice)}
+                            >
+                              {playingVoice === item.key ? "■ Stop" : <><Icon icon="solar:play-bold" aria-hidden="true" /> Preview</>}
+                            </button>
+                            </div>
+                            {voicePreviewError === item.key && <p role="status" className="text-[11px] text-text2 mt-1">Preview not available</p>}
+                            <p className="text-[11px] text-text2 mt-1">
+                              Preview = Google&apos;s sample of this voice (no AI call). Your videos use the same voice with a documentary reading style.
+                            </p>
                           </div>
                         )}
                       </fieldset>
