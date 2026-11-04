@@ -38,6 +38,7 @@ celery_app = Celery(
         "app.tasks.content_memory",
         "app.tasks.ai_video_plan",
         "app.tasks.ai_video_prepare",
+        "app.tasks.ai_video_brand_safe",
         "app.tasks.ai_video_dispatch",
         "app.tasks.ai_video_clip_qc",
         "app.tasks.ai_video_speech_check",
@@ -83,6 +84,7 @@ celery_app.conf.update(
         "app.tasks.ai_video_finalize.finalize_ai_video": {"queue": "video"},
         "app.tasks.ai_video_prepare.prepare_ai_video_ideas": {"queue": "gallery"},
         "app.tasks.ai_video_plan.top_up_ai_video_ideas": {"queue": "gallery"},
+        "app.tasks.ai_video_brand_safe.rewrite_job_brand_safe": {"queue": "gallery"},
         "app.tasks.ai_video_clip_qc.*": {"queue": "gallery"},
         "app.tasks.ai_video_speech_check.*": {"queue": "video"},
         # Phone posting holds a slot for 5-10 min (one real post) and phone recovery up to ~5 min

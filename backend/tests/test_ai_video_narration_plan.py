@@ -53,7 +53,7 @@ def test_health_style_overrides_shared():
     )
 
 
-@pytest.mark.parametrize("engine,expected", [("flow", "22-24"), ("tts", "18-20"), ("asmr", "18-20")])
+@pytest.mark.parametrize("engine,expected", [("flow", "22-24"), ("tts", "22-24"), ("asmr", "18-20")])
 def test_narration_budget_by_engine(engine, expected):
     assert get_narration_budget({"narration_words": {"en": "22-24"}}, "en", engine) == expected
 
@@ -62,10 +62,11 @@ def test_narration_budget_by_engine(engine, expected):
 def test_narration_budget_scales_language_budget(lang, flow, shorter):
     clip = {"narration_words": {"en": "22-24", "fr": "18-20"}}
     assert get_narration_budget(clip, lang) == flow
-    assert get_narration_budget(clip, lang, "tts") == shorter
+    assert get_narration_budget(clip, lang, "tts") == flow
+    assert get_narration_budget(clip, lang, "asmr") == shorter
 
 
-@pytest.mark.parametrize("engine,expected", [("flow", "22-24"), ("tts", "18-20"), ("asmr", "18-20")])
+@pytest.mark.parametrize("engine,expected", [("flow", "22-24"), ("tts", "22-24"), ("asmr", "18-20")])
 def test_fill_prompt_uses_engine_budget(engine, expected):
     fanpage = page(caption_language="en")
     fanpage.ai_video_narration[KEY]["engine"] = engine

@@ -101,15 +101,16 @@ def test_tts_tech_explainer_keeps_channel_lettering():
 
 
 @pytest.mark.parametrize("key", ["health_3d_explainer", "motorsport_tech_explainer"])
-def test_tts_render_enforces_smaller_budget(key):
+def test_asmr_render_enforces_smaller_budget(key):
     template = templates.get_template(key)
     variables = variables_for(template, 2)
     clip = templates.clip_templates_for(template, 2)[0]
     hi = int(templates.get_narration_budget(clip).split("-")[1])
     variables["narration_1"] = " ".join(["word"] * hi)
     assert templates.render_clips(template, variables, 2, narration_engine="flow")
+    assert templates.render_clips(template, variables, 2, narration_engine="tts")
     with pytest.raises(ValueError, match="narration_1 must contain"):
-        templates.render_clips(template, variables, 2, narration_engine="tts")
+        templates.render_clips(template, variables, 2, narration_engine="asmr")
 
 
 def polished_set():

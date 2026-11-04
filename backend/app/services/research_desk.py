@@ -26,6 +26,7 @@ from app.models.research import ResearchCall, ResearchFeedback
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_ideas import _normalized_topic
+from app.services.ai_video_narration import prompt_engine_for
 from app.services.fanpage_caption import caption_settings
 from app.services.fanpage_language import fanpage_language
 from app.services.real_names import find_person_names, find_real_names
@@ -343,20 +344,20 @@ def copy_rules(fanpage) -> dict:
     }
 
 
-def _narration_words(t, lang: str) -> dict:
+def _narration_words(t, lang: str, engine="flow") -> dict:
     out = {}
     for i, clip in enumerate(t.raw["clip_templates"], start=1):
-        lo, hi = map(int, get_narration_budget(clip, lang).split("-"))
+        lo, hi = map(int, get_narration_budget(clip, lang, engine).split("-"))
         out[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{lo - 6}-{hi}"}
     return out
 
 
-def _narration_words_by_clips(t, lang: str) -> dict:
+def _narration_words_by_clips(t, lang: str, engine_for_clips=lambda n: "flow") -> dict:
     out = {}
     for n in t.clip_options:
         by_clip = {}
         for i, clip in enumerate(clip_templates_for(t, n), start=1):
-            lo, hi = map(int, get_narration_budget(clip, lang).split("-"))
+            lo, hi = map(int, get_narration_budget(clip, lang, engine_for_clips(n)).split("-"))
             by_clip[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{lo - 6}-{hi}"}
         out[str(n)] = by_clip
     return out
@@ -530,8 +531,8 @@ def build_brief(db: Session) -> dict:
                 "ideas_needed": need,
                 "templates": {
                     t.key: {"clip_options": clip_choices(fp, t), "vehicle_presets": niche_presets(t, niche),
-                            "narration_words": _narration_words(t, lang),
-                            "narration_words_by_clips": _narration_words_by_clips(t, lang)}
+                            "narration_words": _narration_words(t, lang, prompt_engine_for(fp, t, len(t.raw["clip_templates"]))),
+                            "narration_words_by_clips": _narration_words_by_clips(t, lang, lambda n, fp=fp, t=t: prompt_engine_for(fp, t, n))}
                     for t in templates
                 },
                 "copy_rules": copy_rules(fp),
@@ -888,7 +889,8 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
                 errors.append(f"template {template.key} has no vehicle: leave out vehicle_preset and team_livery")
             elif not missing and not sent_studio_slots:
                 try:
-                    render_clips(template, variables, pack["clips"], lang_code=fanpage_language(fp))
+                    render_clips(template, variables, pack["clips"], lang_code=fanpage_language(fp),
+                                 narration_engine=prompt_engine_for(fp, template, pack["clips"]))
                 except ValueError as exc:
                     errors.append(str(exc))
         else:
@@ -904,7 +906,8 @@ def _check_variant(db, variant, pack, template, row, need_left, accepted, channe
                 if any("{livery" in template.raw["blocks"]["vehicle_presets"].get(p, "") for p in (preset, preset + "_short")):
                     render_vars["livery"] = liveries(template)[0]
                 try:
-                    render_clips(template, render_vars, pack["clips"], lang_code=fanpage_language(fp))
+                    render_clips(template, render_vars, pack["clips"], lang_code=fanpage_language(fp),
+                                 narration_engine=prompt_engine_for(fp, template, pack["clips"]))
                 except ValueError as exc:
                     errors.append(str(exc))
         if "team_livery" in variables and uses_vehicle(template):

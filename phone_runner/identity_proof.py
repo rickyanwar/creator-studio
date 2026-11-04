@@ -24,6 +24,7 @@ from phone_runner.adb import (
     query_window_state,
     read_device_clipboard,
     run_adb,
+    wake_and_unlock,
 )
 from phone_runner.config import (
     get_local_app_card_version,
@@ -44,6 +45,7 @@ from phone_runner.observation import (
 )
 
 logger = logging.getLogger("phone_runner")
+SCREEN_REWAKE_SETTLE_SECONDS = 1.5
 
 
 @dataclass(frozen=True)
@@ -333,7 +335,12 @@ def verify_foreground_facebook(
     """Validates screen power, keyguard lock, rotation, top activity, and Facebook UI XML."""
     pwr_res = query_power_state(serial)
     if parse_screen_state(pwr_res.stdout) != "awake":
-        return False, "Device is not awake", None, ""
+        wake_and_unlock(serial)
+        time.sleep(SCREEN_REWAKE_SETTLE_SECONDS)
+        pwr_res = query_power_state(serial)
+        if parse_screen_state(pwr_res.stdout) != "awake":
+            return False, "Device is not awake", None, ""
+        logger.info("verify_foreground_facebook: screen had gone to sleep; woke it again")
 
     if is_device_secure_locked(serial):
         return False, "Device is secure locked", None, ""

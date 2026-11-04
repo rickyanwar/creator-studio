@@ -17,6 +17,7 @@ from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_clip_qc import CLIP_QC_MAX_ATTEMPTS
+from app.services.ai_video_brand_safe import BRAND_SAFE_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -840,9 +841,16 @@ def record_failure(
         _maybe_trip_breaker(db, worker_id, now, force=refused_cooldown)
 
     elif reason == "policy":
-        job.status = "failed"
-        job.finished_at = now
-        _fail_idea()
+        if (job.template_key in BRAND_SAFE_TEMPLATES
+                and not any(isinstance(c, dict) and c.get("brand_safe") for c in (job.clips or []))):
+            _restart()
+            if job.status == "queued":
+                job.not_before = now + timedelta(hours=2)
+                job.error = f"policy: brand-safe retry pending: {message}"[:2000]
+        else:
+            job.status = "failed"
+            job.finished_at = now
+            _fail_idea()
 
     elif reason == "out_of_credits":
         if account:
@@ -880,6 +888,12 @@ def record_failure(
 
     _apply_worker_pause(db, worker_id, now)
     db.commit()
+    if reason == "policy" and job.status == "queued" and (job.error or "").startswith("policy: brand-safe retry pending"):
+        try:
+            from app.tasks.ai_video_brand_safe import rewrite_job_brand_safe
+            rewrite_job_brand_safe.delay(job.id)
+        except Exception as exc:
+            logger.warning("Could not enqueue brand-safe rewrite for job %s: %s", job.id, exc)
     _dispatch_queued_alerts(db)
     db.refresh(job)
 

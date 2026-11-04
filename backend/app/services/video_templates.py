@@ -24,7 +24,8 @@ def get_narration_budget(clip_template: dict, lang_code: str | None = "en",
                          narration_engine: str = "flow") -> str:
     """Return narration word budget (e.g. '22-24' or '18-20') for a language code.
     If language entry in narration_words exists, use it. Otherwise derive from 'en'
-    using factor and round to integer range. TTS and ASMR use a shorter budget.
+    using factor and round to integer range. ASMR (text only) uses a shorter budget;
+    Flow and TTS voices share the template budget.
     """
     code = (lang_code or "en").split("-")[0].lower()
     words_dict = clip_template.get("narration_words") or {}
@@ -35,7 +36,7 @@ def get_narration_budget(clip_template: dict, lang_code: str | None = "en",
         factor = LANGUAGE_WORD_FACTORS.get(code, 1.0)
         lo, hi = map(int, en_budget.split("-"))
         budget = f"{round(lo * factor)}-{round(hi * factor)}"
-    if narration_engine in ("tts", "asmr"):
+    if narration_engine == "asmr":
         lo, hi = map(int, budget.split("-"))
         lo = round(lo * NO_VOICE_WORD_FACTOR)
         hi = max(round(hi * NO_VOICE_WORD_FACTOR), lo + 2)

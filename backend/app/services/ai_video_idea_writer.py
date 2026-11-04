@@ -5,10 +5,13 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from app.models.ai_video import VideoIdea
+from sqlalchemy import or_
+
+from app.models.ai_video import VideoIdea, VideoJob
 from app.services import news_copywriter
 from app.services.ai_video_ideas import ConflictError, LimitExceededError, create_idea
 from app.services.gptcli_client import generate_text, get_gptcli_config, gptcli_text_unavailable_until
+from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import allowed_video_templates, clip_choices, fanpage_niche, get_template, list_templates
 
 logger = logging.getLogger(__name__)
@@ -26,7 +29,7 @@ CHATGPT_IDEA_PREFIX = (
 IDEA_SOURCE = "ai"
 MAX_IDEAS_PER_RUN = 4
 RECENT_TOPIC_DAYS = 30
-RECENT_TOPIC_LIMIT = 60
+RECENT_TOPIC_LIMIT = 150
 TOPIC_GUIDELINES = {
     "health": "Topics must be evergreen everyday-health explainers a soft 3D medical animation can show (how a body "
               "process, a common condition, a treatment or a device works); never name real brands, companies or "
@@ -63,16 +66,36 @@ def _topic_ideas(t, niche) -> list[str]:
     return []
 
 
-def recent_topics(db) -> list[str]:
+def used_topics(db) -> list[str]:
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=RECENT_TOPIC_DAYS)
-    ideas = (
-        db.query(VideoIdea)
-        .filter(VideoIdea.created_at >= cutoff, VideoIdea.status != "rejected")
-        .order_by(VideoIdea.created_at.desc())
-        .limit(RECENT_TOPIC_LIMIT)
+    jobs = (
+        db.query(VideoJob.created_at, VideoJob.title, VideoIdea.topic)
+        .outerjoin(VideoIdea, VideoJob.idea_id == VideoIdea.id)
+        .filter(VideoJob.created_at >= cutoff, VideoJob.status != "cancelled")
         .all()
     )
-    return [idea.topic for idea in ideas]
+    ideas = (
+        db.query(VideoIdea.created_at, VideoIdea.topic)
+        .filter(VideoIdea.created_at >= cutoff, or_(
+            VideoIdea.status != "rejected", VideoIdea.error.like("duplicate subject%"),
+        ))
+        .all()
+    )
+    entries = [(created_at, topic or title or "") for created_at, title, topic in jobs]
+    entries.extend((created_at, topic or "") for created_at, topic in ideas)
+    seen = set()
+    topics = []
+    for _, topic in sorted(entries, key=lambda entry: entry[0], reverse=True):
+        topic = topic.strip()
+        key = topic.casefold()
+        if topic and key not in seen:
+            seen.add(key)
+            topics.append(topic)
+    return topics
+
+
+def recent_topics(db) -> list[str]:
+    return used_topics(db)[:RECENT_TOPIC_LIMIT]
 
 
 def build_idea_prompt(fanpage, templates, avoid_topics, count) -> str:
@@ -207,8 +230,8 @@ def write_ideas(db, fanpage, count: int) -> int:
     if not templates:
         logger.info("No writer templates found for fanpage %s", getattr(fanpage, "id", None))
         return 0
-    avoid = recent_topics(db)
-    prompt = build_idea_prompt(fanpage, templates, avoid, count)
+    used = used_topics(db)
+    prompt = build_idea_prompt(fanpage, templates, used[:RECENT_TOPIC_LIMIT], count)
     allowed = {t.key: clip_choices(fanpage, t) for t in templates}
     ideas = _ideas_via_chatgpt(db, prompt, allowed, count)
     provider = "chatgpt"
@@ -222,6 +245,9 @@ def write_ideas(db, fanpage, count: int) -> int:
     logger.info("Mode 8 idea writer: fanpage %s got %s idea(s) from %s", fanpage.id, len(ideas), provider)
     created = 0
     for idea in ideas:
+        if any(similar_subjects(idea.get("topic") or "", u) for u in used):
+            logger.info("Mode 8 idea writer dropped duplicate topic '%s'", idea.get("topic"))
+            continue
         try:
             create_idea(db, fanpage.id, idea, source=IDEA_SOURCE)
             created += 1

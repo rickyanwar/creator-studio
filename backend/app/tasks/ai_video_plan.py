@@ -2,6 +2,8 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.settings import Settings
@@ -25,6 +27,8 @@ MAX_FAILED_REPLACEMENTS_PER_DAY = 2
 AI_VIDEO_STOCK_DAYS = 20
 # While Muse researches, the in-app writer still fills a fan page whose idea bank is empty and that got no Muse idea for this many hours.
 MUSE_DRY_HOURS = 6
+DUPLICATE_SUBJECT_ERROR = "duplicate subject"
+WRITER_HARD_CAP_PER_DAILY = 6
 
 
 def video_stock(db, fanpage_id: int) -> int:
@@ -149,7 +153,7 @@ def plan_ai_videos():
                             break
                 if duplicate_fp is not None:
                     app_idea.status = "rejected"
-                    app_idea.error = f"duplicate subject: already used on channel {duplicate_fp}"
+                    app_idea.error = f"{DUPLICATE_SUBJECT_ERROR}: already used on channel {duplicate_fp}"
                     db.commit()
                     continue
                 if allowed and app_idea.template_key not in allowed:
@@ -283,11 +287,19 @@ def top_up_ai_video_ideas():
             target = max(2, daily * bank_days)
             if waiting >= target:
                 continue
-            written_24h = db.query(VideoIdea).filter(
+            recent_ai_ideas = db.query(VideoIdea).filter(
                 VideoIdea.fanpage_id == fanpage.id,
                 VideoIdea.source == "ai",
                 VideoIdea.created_at >= _now() - timedelta(hours=24),
-            ).count()
+            )
+            total_24h = recent_ai_ideas.count()
+            if total_24h >= WRITER_HARD_CAP_PER_DAILY * daily:
+                continue
+            written_24h = recent_ai_ideas.filter(or_(
+                VideoIdea.status != "rejected",
+                VideoIdea.error.is_(None),
+                ~VideoIdea.error.like(DUPLICATE_SUBJECT_ERROR + "%"),
+            )).count()
             if written_24h >= 2 * daily:
                 continue
             need = min(target - waiting, 2 * daily - written_24h, MAX_IDEAS_PER_RUN)

@@ -92,8 +92,8 @@ VISION_INFRA_MARKER = "all vision models failed"   # vision_verify: every model 
 POSTED_VISION_RETRIES = 2                          # extra attempts when the vision service errors
 POSTED_VISION_RETRY_WAIT_S = 20
 
-# Identity proof errors that mean "the screen could not be read", not "a different account was seen".
-IDENTITY_UI_STATE_MARKERS = ("not found", "missing", "window focus", "ime restoration", "timed out", "timeout")
+# Identity proof errors from unreadable/asleep UI or an exhausted navigation deadline, not a different account.
+IDENTITY_UI_STATE_MARKERS = ("not found", "missing", "window focus", "ime restoration", "timed out", "timeout", "not awake", "deadline exceeded")
 # Errors that name a contradicting id, name or version stay terminal even when a UI marker also matches.
 IDENTITY_CONTRADICTION_MARKERS = ("mismatch", "observed", "does not match", "visitor")
 
