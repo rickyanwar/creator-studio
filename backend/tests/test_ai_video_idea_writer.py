@@ -429,12 +429,38 @@ def test_create_idea_ai_source_requires_score_and_rationale(db_session, fanpage)
         create_idea(db_session, fanpage.id, data_no_rationale, source="ai")
 
 
+def test_ideas_via_chatgpt_ignores_image_unavailability(monkeypatch):
+    from app.services import ai_video_idea_writer, gptcli_client
+
+    cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
+    monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_text_unavailable_until", lambda: None)
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    monkeypatch.setattr(gptcli_client, "gptcli_unavailable_until", lambda: until)
+    idea = {
+        "template_key": "motorsport_tech_explainer",
+        "topic": "Active suspension roll control",
+        "score": 88,
+        "rationale": "Strong visual physics concept",
+    }
+    gen_calls = []
+
+    def fake_generate_text(c, p, **kwargs):
+        gen_calls.append((c, p))
+        return SimpleNamespace(text=json.dumps({"ideas": [idea]}))
+
+    monkeypatch.setattr(ai_video_idea_writer, "generate_text", fake_generate_text)
+    ideas = ai_video_idea_writer._ideas_via_chatgpt(None, "p", {"motorsport_tech_explainer": [2, 3]}, 1)
+    assert len(gen_calls) == 1
+    assert ideas[0]["topic"] == idea["topic"]
+
+
 def test_write_ideas_uses_chatgpt_first(db_session, fanpage, monkeypatch):
     from app.services import ai_video_idea_writer
 
     cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
     monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
-    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_text_unavailable_until", lambda: None)
 
     gen_calls = []
     fake_reply = json.dumps({
@@ -496,7 +522,7 @@ def test_write_ideas_falls_back_when_chatgpt_errors(db_session, fanpage, monkeyp
 
     cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
     monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
-    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_text_unavailable_until", lambda: None)
 
     def broken_generate(*a, **kw):
         raise PolishUnavailable("upstream", "server 500")
@@ -539,7 +565,7 @@ def test_write_ideas_falls_back_on_unparsable_chatgpt_reply(db_session, fanpage,
 
     cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
     monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
-    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_text_unavailable_until", lambda: None)
     monkeypatch.setattr(
         ai_video_idea_writer,
         "generate_text",
@@ -580,7 +606,7 @@ def test_write_ideas_skips_chatgpt_when_resting_or_unconfigured(db_session, fanp
     cfg = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="secret_tok")
     monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg)
     resting_time = datetime.now(timezone.utc) + timedelta(minutes=30)
-    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: resting_time)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_text_unavailable_until", lambda: resting_time)
 
     gen_calls = []
     monkeypatch.setattr(ai_video_idea_writer, "generate_text", lambda *a, **kw: gen_calls.append(True))
@@ -612,7 +638,7 @@ def test_write_ideas_skips_chatgpt_when_resting_or_unconfigured(db_session, fanp
     # (b) config token empty
     cfg_empty = SimpleNamespace(enabled=True, base_url="http://test-gptcli:8099", token="")
     monkeypatch.setattr(ai_video_idea_writer, "get_gptcli_config", lambda db: cfg_empty)
-    monkeypatch.setattr(ai_video_idea_writer, "gptcli_unavailable_until", lambda: None)
+    monkeypatch.setattr(ai_video_idea_writer, "gptcli_text_unavailable_until", lambda: None)
     fallback_calls.clear()
 
     created_count = ai_video_idea_writer.write_ideas(db_session, fanpage, 1)
@@ -628,4 +654,3 @@ def test_top_up_task_routed_off_default_queue():
     from app.tasks.celery_app import celery_app
 
     assert celery_app.conf.task_routes.get("app.tasks.ai_video_plan.top_up_ai_video_ideas") == {"queue": "gallery"}
-

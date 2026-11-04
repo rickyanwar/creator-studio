@@ -41,6 +41,8 @@ DEFAULT_UNAVAILABLE_S = {
     "unavailable": 300,
     "unreachable": 300,
 }
+# Reasons that only limit image generation; text (/v1/text) still works (owner 2026-11-05).
+IMAGE_ONLY_TYPES = frozenset({"soft_cap", "quota"})
 HTTP_MARGIN_S = 120
 MAX_WAIT_S = 1800  # gpt serve runs one job at a time; the wait includes the queue
 TEXT_MAX_WAIT_S = 900  # 15 minutes total wait cap for text jobs
@@ -236,6 +238,23 @@ def gptcli_unavailable_until(now: datetime | None = None) -> datetime | None:
     except Exception as e:
         logger.warning("Redis error in gptcli_unavailable_until: %s", e)
         return None
+
+
+def gptcli_text_unavailable_until(now: datetime | None = None) -> datetime | None:
+    """Like gptcli_unavailable_until, but an image-only cap (soft_cap, quota) does not block text calls."""
+    until = gptcli_unavailable_until(now)
+    if until is None:
+        return None
+    try:
+        r = _redis()
+        reason = r.get(UNAVAILABLE_REASON_KEY)
+        if isinstance(reason, bytes):
+            reason = reason.decode("utf-8")
+        if reason is not None and reason.strip() in IMAGE_ONLY_TYPES:
+            return None
+    except Exception as e:
+        logger.warning("Redis error in gptcli_text_unavailable_until: %s", e)
+    return until
 
 
 def mark_gptcli_unavailable(

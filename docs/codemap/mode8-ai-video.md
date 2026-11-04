@@ -120,6 +120,7 @@ In `ai_video_plan.py:62-77`, the planner prevents template fatigue on a fanpage:
 
 ### 3.5 Prompt Polish Engine Order (owner 2026-11-02)
 - **Engine Order** (`prompt_polish.py`, `ai_video_prepare.py`): ChatGPT first (`POST /v1/text` on `gpt serve` with thinking `high`) -> 9Router Codex (`cx/gpt-6.1-sol`, `cx/gpt-6-sol`, skipped while the Codex budget rests) -> Argon (`gemini-web-serve`) last.
+  ChatGPT is skipped only when gptcli is down for a non-image reason; the image cap (soft_cap/quota) does not block polish or the idea writer (gptcli_text_unavailable_until).
 - **Kill Switch**: Set `GPT_SERVE_TEXT_DAILY_CAP=0` in `/etc/gpt-serve.env` on the VPS to disable the ChatGPT text endpoint.
 
 ---

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from app.models.ai_video import VideoIdea
 from app.services import news_copywriter
 from app.services.ai_video_ideas import ConflictError, LimitExceededError, create_idea
-from app.services.gptcli_client import generate_text, get_gptcli_config, gptcli_unavailable_until
+from app.services.gptcli_client import generate_text, get_gptcli_config, gptcli_text_unavailable_until
 from app.services.video_templates import allowed_video_templates, clip_choices, fanpage_niche, get_template, list_templates
 
 logger = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ def _ideas_via_chatgpt(db, prompt: str, allowed: dict[str, list[int]], count: in
         logger.debug("Mode 8 idea writer: ChatGPT not configured, skipping")
         return None
 
-    resting_until = gptcli_unavailable_until()
+    resting_until = gptcli_text_unavailable_until()
     if resting_until is not None:
         logger.info("ChatGPT resting until %s", resting_until)
         return None

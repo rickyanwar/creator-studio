@@ -35,6 +35,7 @@ from app.services.gptcli_client import (
     generate_image,
     get_gptcli_config,
     gptcli_applies,
+    gptcli_text_unavailable_until,
     gptcli_unavailable_until,
     job_status,
     job_timeout_s,
@@ -72,6 +73,60 @@ class _FakeRedis:
     def expire(self, key: str, seconds: int):
         self._ttl[key] = seconds
         return True
+
+
+@pytest.mark.parametrize("reason", ["soft_cap", "quota", b"soft_cap", " soft_cap "])
+def test_text_unavailable_until_ignores_image_only_caps(reason):
+    now = datetime(2026, 11, 5, tzinfo=timezone.utc)
+    until = now + timedelta(hours=1)
+    fake = _FakeRedis()
+    fake.set(UNAVAILABLE_KEY, until.timestamp())
+    fake._data[UNAVAILABLE_REASON_KEY] = reason
+    with patch("app.services.gptcli_client._redis", return_value=fake):
+        assert gptcli_text_unavailable_until(now) is None
+        assert gptcli_unavailable_until(now) == until
+
+
+@pytest.mark.parametrize("reason", ["logged_out", "sleeping", "unknown", "", None])
+def test_text_unavailable_until_preserves_other_or_missing_reasons(reason):
+    now = datetime(2026, 11, 5, tzinfo=timezone.utc)
+    until = now + timedelta(hours=1)
+    fake = _FakeRedis()
+    fake.set(UNAVAILABLE_KEY, until.timestamp())
+    if reason is not None:
+        fake.set(UNAVAILABLE_REASON_KEY, reason)
+    with patch("app.services.gptcli_client._redis", return_value=fake):
+        assert gptcli_text_unavailable_until(now) == until
+
+
+def test_text_unavailable_until_without_until_returns_none():
+    with patch("app.services.gptcli_client._redis", return_value=_FakeRedis()):
+        assert gptcli_text_unavailable_until() is None
+
+
+def test_text_unavailable_until_reason_redis_error_fails_closed(caplog):
+    now = datetime(2026, 11, 5, tzinfo=timezone.utc)
+    until = now + timedelta(hours=1)
+    fake = _FakeRedis()
+    fake.set(UNAVAILABLE_KEY, until.timestamp())
+    original_get = fake.get
+
+    def get(key):
+        if key == UNAVAILABLE_REASON_KEY:
+            raise redis.RedisError("reason unavailable")
+        return original_get(key)
+
+    with patch.object(fake, "get", side_effect=get), patch("app.services.gptcli_client._redis", return_value=fake):
+        assert gptcli_text_unavailable_until(now) == until
+    assert "Redis error in gptcli_text_unavailable_until: reason unavailable" in caplog.text
+
+
+def test_text_unavailable_until_after_marking_soft_cap():
+    now = datetime(2026, 11, 5, tzinfo=timezone.utc)
+    with patch("app.services.gptcli_client._redis", return_value=_FakeRedis()):
+        until = mark_gptcli_unavailable("soft_cap", None, now=now, day_start="05:30")
+        assert gptcli_text_unavailable_until(now) is None
+        assert gptcli_unavailable_until(now) == until
 
 
 def _make_png_bytes(width: int = 8, height: int = 8, color: tuple = (255, 0, 0)) -> bytes:

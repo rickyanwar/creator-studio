@@ -911,11 +911,11 @@ class TestCaseChatGPTFallback:
         assert "chatgpt: not available" in exc_info.value.detail
         assert not any("/v1/text" in u for u in called_urls)
 
-    def test_gptcli_unavailable_until_set_chatgpt_not_called(self, monkeypatch):
-        """gptcli_unavailable_until() set (monkeypatch) -> ChatGPT not called."""
+    def test_gptcli_text_unavailable_until_set_chatgpt_not_called(self, monkeypatch):
+        """gptcli_text_unavailable_until() set (monkeypatch) -> ChatGPT not called."""
         from datetime import datetime, timedelta, timezone
         monkeypatch.setattr(
-            "app.services.prompt_polish.gptcli_unavailable_until",
+            "app.services.prompt_polish.gptcli_text_unavailable_until",
             lambda: datetime.now(timezone.utc) + timedelta(minutes=15),
         )
 

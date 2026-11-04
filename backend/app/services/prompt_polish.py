@@ -19,7 +19,7 @@ from app.services.gptcli_client import (
     GptcliTextResponse,
     generate_text,
     get_gptcli_config,
-    gptcli_unavailable_until,
+    gptcli_text_unavailable_until,
 )
 
 logger = logging.getLogger(__name__)
@@ -500,7 +500,7 @@ def _post_generate_codex(prompt: str, http_post=None):
 
 def _ask(config: PolishConfig, prompt: str, http_post=None, attempt: int = 1):
     tried: list[str] = []
-    if config.chatgpt and gptcli_unavailable_until() is None:
+    if config.chatgpt and gptcli_text_unavailable_until() is None:
         try:
             resp = _post_generate_chatgpt(config.chatgpt, prompt, http_post=http_post)
             logger.info("prompt_polish attempt %d: answered by ChatGPT", attempt)

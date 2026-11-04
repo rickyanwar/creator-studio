@@ -1,6 +1,7 @@
 """Tests for Mode 8 prompt polish engine order: ChatGPT first, then Codex, then Argon (owner 2026-11-02)."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -55,7 +56,7 @@ def setup_mocks(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "app.services.prompt_polish.gptcli_unavailable_until",
+        "app.services.prompt_polish.gptcli_text_unavailable_until",
         lambda: None,
     )
     monkeypatch.setattr(
@@ -64,6 +65,34 @@ def setup_mocks(monkeypatch):
     )
     mock_session = MagicMock()
     monkeypatch.setattr("app.database.SessionLocal", lambda: mock_session)
+
+
+def test_text_available_calls_chatgpt_first(monkeypatch):
+    monkeypatch.setattr("app.services.prompt_polish.gptcli_text_unavailable_until", lambda: None)
+    called_urls = []
+
+    def _post(url, headers=None, json=None, timeout=None):
+        called_urls.append(url)
+        return FakeResponse(200, {"text": "chatgpt answer"})
+
+    resp = _ask(CFG_ALL, "p", http_post=_post)
+    assert called_urls == ["http://gpt:8099/v1/text"]
+    assert resp.text == "chatgpt answer"
+
+
+def test_text_unavailable_skips_chatgpt_and_asks_codex(monkeypatch):
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    monkeypatch.setattr("app.services.prompt_polish.gptcli_text_unavailable_until", lambda: until)
+    called_urls = []
+
+    def _post(url, headers=None, json=None, timeout=None):
+        called_urls.append(url)
+        return FakeResponse(200, {"choices": [{"message": {"content": "codex answer"}}]})
+
+    resp = _ask(CFG_ALL, "p", http_post=_post)
+    assert not any("/v1/text" in url for url in called_urls)
+    assert any("/chat/completions" in url for url in called_urls)
+    assert resp.account == "codex:cx/gpt-6.1-sol"
 
 
 def test_1_chatgpt_answers_codex_argon_not_called():
