@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_current_user, get_db
 from app.main import app
-from app.models.ai_video import VideoIdea, VideoJob
+from app.models.ai_video import VideoClipQc, VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
 
 _CREATE_TABLES = """
@@ -251,6 +251,7 @@ def engine():
             if stmt:
                 conn.execute(text(stmt))
         conn.commit()
+    VideoClipQc.__table__.create(eng)
     return eng
 
 

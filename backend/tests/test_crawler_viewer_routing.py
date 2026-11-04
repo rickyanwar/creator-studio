@@ -331,7 +331,7 @@ def _make_media(pk="123", media_type=1, code="abc", taken_at=None, url="https://
     m.pk = pk
     m.media_type = media_type
     m.code = code
-    m.taken_at = taken_at or datetime(2026, 10, 5, 10, tzinfo=timezone.utc)
+    m.taken_at = taken_at or datetime.now(timezone.utc)
     m.caption_text = "caption"
     m.resources = []
     m.thumbnail_url = url
@@ -405,6 +405,7 @@ class TestCrawlSourceImageSourceUrls:
 
         with (
             patch("app.tasks.crawler._fetch_medias", return_value=[media]),
+            patch("app.tasks.crawler._try_radar_ingest"),
             patch("app.tasks.image_saver.save_post_images.delay", side_effect=fake_delay),
         ):
             _crawl_source(db, source_id=1)
@@ -461,4 +462,3 @@ class TestBeatScheduleAndImports:
         }
         for mod in deleted_modules:
             assert mod not in celery_app.conf.include, f"Deleted task module {mod} still in celery include"
-

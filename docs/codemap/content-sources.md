@@ -173,20 +173,28 @@ Comprehensive architecture and implementation map covering content discovery, de
   - Pulls public page `/photos` grid markdown via 9Router jina-reader with cache-busting query parameter `?_cb=...` (`facebook_photo_source.py:178`).
   - Regex `_PHOTO_ENTRY_RE` (`facebook_photo_source.py:45`) extracts `fbid`, CDN image URL, and alt text.
   - High-Res Upgrade: Strips `ctp=s206x206` thumbnail override (`_upgrade_image_url`, `facebook_photo_source.py:59, 63`), prompting Facebook CDN to return full 1080x1080 image.
-  - Dedup: Dedupes on `fbid` (extracted from permalink) stored in `GalleryImage.keyword` as `facebook_photo:<fbid>` (`facebook_photo_source.py:137, 151`). URL dedup avoided because CDN domains rotate.
+  - Dedup: `facebook_photo_source.py:_seen_fbids` / `_record_seen` store `GalleryImage.keyword = facebook_photo:<fanpage_id>:<fbid>` for accepted and permanent rejects; legacy `facebook_photo:<fbid>` markers still block every fanpage. Marker rows stay `is_deleted=True`, `is_used=True`, outside gallery photo selection; CDN URLs rotate, so they are not the dedup key.
   - Download: Bypasses standard `classify_and_gate_image` since source images are meme/news graphics (`facebook_photo_source.py:86-95`).
+  - Grid boundaries: `fetch_photo_candidates` starts after the photos-grid link when present; otherwise skips cover/profile image URL patterns. Seen IDs are filtered before the candidate limit. `_photos_url` accepts page usernames, `profile.php?id=...` and `/people/<name>/<id>` URLs; `_fetch_grid_markdown` retries empty grids up to three times with a fresh cache-buster.
+  - Banner reject: `build_idea_from_candidate` records images wider or taller than a 1.6:1 ratio as seen, then removes the download.
 
 ### 6.2 Vision Classification & Filtering
 - **Classifier** (`backend/app/services/facebook_content_classifier.py:110` `classify_facebook_photo`):
   - Single vision prompt categorizes photo into `"news"`, `"quote"`, `"discussion"`, or `"other"`.
   - Reject Gate: `"other"` (memes, raw photos, promos, schedules) rejected immediately (`facebook_content_classifier.py:16, 61`).
   - Topic Filter: If `facebook_photo_topic_filter` set, prompt enforces strict topic matching; fails closed if `on_topic` is not explicitly `True` (`facebook_content_classifier.py:74-80, 106`).
-  - Incomplete Quote Gate: `is_incomplete_quote` (`facebook_photo_source.py:364`) rejects trailing ellipses or clipped quotes.
+  - Incomplete Quote Gate: `facebook_photo_source.py:is_incomplete_quote` rejects empty text, trailing comma/dash/colon/semicolon or a final connector word; `_build_downloaded_idea` checks both extracted and localized quotes.
   - Localization: Rewrites headline/quote/discussion into fanpage language (`_localize_title`, `facebook_photo_source.py:309`).
-  - Stages `FacebookPhotoIdea(status="pending")`. Source photo is deleted; clean subject photo is sourced later during card rendering.
+  - `facebook_photo_source.py:_build_downloaded_idea` stages pending `FacebookPhotoIdea` rows with `source_id`, `gallery_image_id` and `image_local_path`, retaining accepted originals at `facebook_photos/<fanpage_id>/<fbid>.jpg`. Rejected temporary downloads are removed; download/classify/rewrite failures remain unseen for retry. Template rendering still sources a clean subject photo.
 - **Consumption & Caption** (`backend/app/tasks/facebook_photo.py:142` `_consume_one`):
   - Paced 08:00–22:00 WIB with catch-up loop up to 3 ideas/tick (`_MAX_CATCHUP_PER_TICK = 3`, `facebook_photo.py:50, 251`).
-  - Caption generated via `build_caption_prompt` with `with_attribution=False` (`facebook_photo.py:169`) to avoid crediting the competitor page.
+  - Caption generated via `build_caption_prompt` with `with_attribution=False` (`facebook_photo.py:178`) to avoid crediting the competitor page.
+
+### 6.3 Per-Source Formats & Retained Originals (2026-11-04)
+- **Format contract** (`backend/app/services/fb_source_format.py:format_of`, `normalize_format`, `format_for_job`): `follow`, `repost`, `template`, `chatgpt`; `follow` is stored as NULL, and missing/unknown provenance follows the template default. Job lookup uses the newest idea matching `(fanpage_id, source_gallery_image_id)`, then its source's current format.
+- **Render dispatch** (`tasks/facebook_photo.py:_consume_one`): copies the idea's marker into `PublishJob.source_gallery_image_id`, generates a caption without competitor attribution and strips credit lines. `queue_override` supplies `chatgpt` for both AI design and custom-edit sources; `engine_router.py:render_queue_for` routes these to `visual` when gpt-cli applies. Render branches: [rendering-and-recreate.md §5c](rendering-and-recreate.md#5c-per-source-photo-edits--facebook-formats-2026-11-04).
+- **Schema** (`backend/alembic/versions/c80000000053_facebook_source_cards.py:upgrade`): source `format`, `chatgpt_edit_prompt`, `last_fetched_at`; idea `source_id` (indexed FK, `ON DELETE SET NULL`) and `image_local_path`. `c80000000054_fb_visual_engine_to_sources.py:upgrade` converts NULL formats on legacy `fb_visual_engine='chatgpt'` fanpages into explicit `chatgpt`; runtime rendering/routing no longer reads that fanpage toggle.
+- **Retention rule** (`tasks/cleanup.py:_cleanup_facebook_photos`, called by `cleanup_old_designs`): a used idea's original is deleted only after every matching job is published, none is awaiting go-live, and every go-live time is more than seven days old. No jobs, missing timestamps or any unfinished job retain it; successful deletion clears `idea.image_local_path`.
 
 ---
 
@@ -303,7 +311,8 @@ Comprehensive architecture and implementation map covering content discovery, de
 | **5 (Pin)** | Vision cannot identify subject or verify description | Candidate dropped, unlinked | `backend/app/services/pinterest_source.py:218-220` |
 | **6 (FB)** | Vision classifies photo as `"other"` | Candidate discarded | `backend/app/services/facebook_content_classifier.py:16, 90-91` |
 | **6 (FB)** | `topic_filter` active and `on_topic` is not `True` | Candidate discarded (fail-closed) | `backend/app/services/facebook_content_classifier.py:106, 135` |
-| **6 (FB)** | Quote text ends with trailing ellipsis / incomplete | Candidate discarded | `backend/app/services/facebook_photo_source.py:364-388` |
+| **6 (FB)** | Banner aspect ratio exceeds 1.6:1 in either direction | Recorded seen; download removed | `backend/app/services/facebook_photo_source.py:build_idea_from_candidate` |
+| **6 (FB)** | Quote ends with separator punctuation or connector word / is empty | Candidate discarded | `backend/app/services/facebook_photo_source.py:is_incomplete_quote` |
 | **7 (YT)** | Video is Short, or channel video $> \text{max\_age}$ | Video skipped during discovery | `backend/app/tasks/yt_clip.py:88-91` |
 | **7 (YT)** | Pending idea queue $\ge 2 \times \text{daily\_count}$ | Video analysis deferred | `backend/app/tasks/yt_clip.py:389-390` |
 | **7 (YT)** | Video duration $< 180$s or $> 3$ hours, or no subtitles | Video status marked `skipped` | `backend/app/tasks/yt_clip.py:182-195` |

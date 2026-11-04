@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from pathlib import Path
 import pytest
 from alembic.config import Config
@@ -7,9 +8,15 @@ from alembic.script import ScriptDirectory
 from alembic import command
 import sqlalchemy as sa
 from sqlalchemy import text
-from app.database import engine
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
+def config():
+    config = Config(str(BASE_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(BASE_DIR / "alembic"))
+    return config
 
 
 @pytest.fixture(autouse=True)
@@ -21,15 +28,13 @@ def preserve_logging():
     logging.root.level = level
 
 
-def test_single_alembic_head():
-    config = Config(str(BASE_DIR / "alembic.ini"))
+def test_single_alembic_head(config):
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
     assert len(heads) == 1
 
 
-def test_migration_c15_structure():
-    config = Config(str(BASE_DIR / "alembic.ini"))
+def test_migration_c15_structure(config):
     script = ScriptDirectory.from_config(config)
     rev = script.get_revision("c80000000015")
     assert rev is not None
@@ -38,8 +43,12 @@ def test_migration_c15_structure():
     assert hasattr(rev.module, "downgrade")
 
 
-def test_migration_c15_up_down_up_restores_json():
-    config = Config(str(BASE_DIR / "alembic.ini"))
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="TEST_DATABASE_URL not set")
+def test_migration_c15_up_down_up_restores_json(config, monkeypatch):
+    db_url = os.environ["TEST_DATABASE_URL"]
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
+    engine = sa.create_engine(db_url)
 
     # The normal test DB is built with create_all (no alembic_version), so a
     # downgrade has nothing to walk back from; only run against a migrated DB.

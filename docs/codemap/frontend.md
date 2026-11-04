@@ -103,6 +103,7 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
    - **Feature Flags**: `mode1_ig_repost_enabled` (toggled via dedicated optimistic API call `page.tsx:800-815`), `ig_recreate_enabled` (boolean), `visual_engine` (`"off" | "chatgpt"`).
    - **Layout**: `ig_recreate_smart_layout` (boolean), `ig_recreate_split_template_id` (int | null).
    - **IG Source Accounts Table**: Add source (`POST /fanpages/{id}/sources`), delete source (`DELETE /fanpages/{id}/sources/by-username/{username}`), per-source trigger override (`PUT /fanpages/{id}/sources/{sourceId}/trigger`, values: `"every_post" | "viral_only"`), per-source recreate override (`PUT /fanpages/{id}/sources/{sourceId}/recreate`, boolean | null), caption preview (`previewCaption`).
+   - **Source cards** (`components/fanpages/tabs/IgTab.tsx:saveEditPrompt`, `handleFormatChange`): formats `follow` / `repost` / `template` / `chatgpt`; ChatGPT is labelled “Recreate with ChatGPT edit”. Its optional `chatgpt_edit_prompt` (2,000 characters) autosaves after 1,200 ms or on blur through `setSourceEditPrompt` on the recreate endpoint. Nonblank prompt edits the original without template text; blank keeps AI redesign with the template; edit failure posts the original. Stored per fanpage/source link (migration `c80000000052`), not globally on the IG account.
 
 3. **`news` (News Cards — Mode 2)**:
    - **Feature Flags**: `mode2_news_content_enabled` (boolean), `news_visual_engine` (`"off" | "fal" | "chatgpt"`), `mode2_editorial_gate_enabled` (boolean).
@@ -120,8 +121,9 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
    - **Ideas**: `listPinterestContentIdeas`, `updatePinterestContentIdea` (edits: `title`, `description`), `deletePinterestContentIdea`.
 
 6. **`facebook` (FB Photo Recreate — Mode 6)**:
-   - **Configuration**: `facebook_photo_enabled` (boolean), `fb_visual_engine` (`"off" | "fal" | "chatgpt"`), `facebook_photo_daily_count` (int), `facebook_photo_topic_filter` (string).
+   - **Configuration** (`components/fanpages/tabs/FacebookTab.tsx:FacebookTab`): `facebook_photo_enabled`, `facebook_photo_daily_count`, `facebook_photo_topic_filter`, `qa_facebook_enabled` (“Check AI results”). The old fanpage `fb_visual_engine` selector is replaced by per-source formats.
    - **Sources**: `addFacebookPhotoSource` (`POST /fanpages/{id}/facebook-photo-sources`), `updateFacebookPhotoSource`, `deleteFacebookPhotoSource`.
+   - **Source cards** (`components/fanpages/FacebookSourceCard.tsx:FacebookSourceCard`, `handleFormatChange`, `saveEditPrompt`): `FacebookTab` renders a responsive grid with source link, pause/delete controls, last-checked time and `follow` / `repost` / `template` / `chatgpt` selector. “Follow brand default (template)” does not inherit the old engine toggle. Format changes save immediately via `updateFacebookPhotoSource`; failures restore the previous selection. The ChatGPT-only prompt is limited to 2,000 characters, trims to NULL when empty and saves after 1,200 ms or blur. Blank prompt means AI design; nonblank means original-photo edit with original-photo fallback. Captions come from photo text, because public Facebook grids hide post captions.
    - **Ideas**: `listFacebookPhotoIdeas`, `updateFacebookPhotoIdea` (edits: `design_title`, `design_subtitle`, `design_caption`), `deleteFacebookPhotoIdea`.
 
 7. **`youtube` (YouTube Clips — Mode 7)** (`YtClipSection.tsx:56-139`):

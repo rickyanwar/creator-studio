@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import os
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, MetaData
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -84,28 +83,36 @@ class FakeRedis:
         return count
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def db_engine():
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url:
-        engine = create_engine(db_url)
-        import app.models  # noqa: F401
-        Base.metadata.create_all(bind=engine)
-    else:
-        engine = create_engine("sqlite:///:memory:")
-        for t in [
-            TargetFanpage.__table__,
-            PublishJob.__table__,
-            PublishDelivery.__table__,
-            AICopyEvent.__table__,
-            ScrapedArticle.__table__,
-            DesignTemplate.__table__,
-            Settings.__table__,
-        ]:
-            t.create(bind=engine, checkfirst=True)
+    engine = create_engine("sqlite:///:memory:")
+
+    # SQLite must BEGIN before a SAVEPOINT so session commits remain rollbackable.
+    @event.listens_for(engine, "connect")
+    def disable_legacy_transactions(dbapi_connection, connection_record):
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def begin_transaction(connection):
+        connection.exec_driver_sql("BEGIN")
+
+    metadata = MetaData()
+    for table in Base.metadata.tables.values():
+        table.to_metadata(metadata)
+    metadata.tables["social_destinations"].c.supported_media.server_default = None
+    for t in [
+        TargetFanpage.__table__,
+        PublishJob.__table__,
+        PublishDelivery.__table__,
+        SocialDestination.__table__,
+        AICopyEvent.__table__,
+        ScrapedArticle.__table__,
+        DesignTemplate.__table__,
+        Settings.__table__,
+    ]:
+        metadata.tables[t.name].create(bind=engine)
     yield engine
-    if not db_url:
-        engine.dispose()
+    engine.dispose()
 
 
 @pytest.fixture
