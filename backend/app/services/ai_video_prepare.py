@@ -10,7 +10,7 @@ import logging
 from sqlalchemy import and_, or_
 
 from app.models.ai_video import VideoIdea, VideoJob
-from app.services.ai_video_narration import engine_for
+from app.services.ai_video_narration import prompt_engine_for
 from app.services.ai_video_fill import (
     fanpage_niche,
     fill_from_research,
@@ -133,7 +133,7 @@ def _is_matching_prepared(idea, fanpage) -> bool:
     planned = planned_clip_count(idea, fanpage, template)
     if planned is None:
         return False
-    prep = valid_prepared(idea, engine=engine_for(fanpage, template, planned))
+    prep = valid_prepared(idea, engine=prompt_engine_for(fanpage, template, planned))
     if prep is None:
         return False
     return prep.get("clips_count") == planned
@@ -198,7 +198,7 @@ def prepare_idea(db, idea, fanpage, config: PolishConfig) -> str:
     if clips is None:
         return "skipped"
 
-    engine = engine_for(fanpage, template, clips)
+    engine = prompt_engine_for(fanpage, template, clips)
     draft = _resume_draft(idea, clips, engine=engine)
     if draft is not None:
         variables = draft["variables"]

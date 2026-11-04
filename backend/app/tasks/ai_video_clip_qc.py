@@ -9,6 +9,7 @@ from app.database import SessionLocal
 from app.tasks.celery_app import celery_app
 from app.tasks.ai_video_speech_check import SPEECH_MIN_WORDS, check_clip_speech
 from app.services.ai_video_dispatch import _utcnow
+from app.services.ai_video_narration import prompt_engine
 from app.services.ai_video_clip_qc import (
     CLIP_QC_WAIT_LIMIT_S, CLIP_QC_WAIT_RETRY_S,
     accept_attempt, best_attempt, logic_check, max_attempts_for_job,
@@ -145,7 +146,7 @@ def check_clip(qc_id: int):
                     next_prompt = repolish_clip(clip_prompt, mode=mode, clip_index=clip_index,
                                                 clips_total=clips_total, issues=clip_issues,
                                                 template=template, niche=niche, config=config,
-                                                narration_engine=((job.narration or {}).get("engine") or "flow"))
+                                                narration_engine=prompt_engine(job.narration))
                 except PolishUnavailable as exc:
                     _wait(db, row, f"re-polish unavailable: {exc.kind}")
                     return

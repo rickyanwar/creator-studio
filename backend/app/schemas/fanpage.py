@@ -224,6 +224,11 @@ class FanpageBase(BaseModel):
             if engine in ("tts", "asmr") and not tts_allowed(templates[key]):
                 raise ValueError(f"TTS and ASMR narration require a template supporting at least 2 clips: {key}")
             normalized[key] = {"engine": engine, "voice": voice or None}
+            bed = choice.get("bed")
+            if bed not in (None, "music", "asmr"):
+                raise ValueError(f"narration bed must be music or asmr for {key}")
+            if engine == "tts" and bed == "asmr":
+                normalized[key]["bed"] = "asmr"
         return normalized
 
     # ── Viral Radar ───────────────────────────────────────────────────────────

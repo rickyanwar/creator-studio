@@ -9,7 +9,7 @@ from app.models.target_fanpages import TargetFanpage
 from app.services.ai_video_cover_build import apply_prepared_cover, prepare_cover
 from app.services.ai_video_fill import fill_from_research, fill_idea, research_ready
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
-from app.services.ai_video_narration import engine_for, resolve_narration
+from app.services.ai_video_narration import prompt_engine_for, resolve_narration
 from app.services.ai_video_prepare import _is_matching_prepared, polish_enabled, valid_prepared
 from app.services.social_project_eligibility import project_can_generate
 from app.services.topic_similarity import similar_subjects
@@ -206,7 +206,7 @@ def plan_ai_videos():
                 logger.info("Mode 8: fanpage %s reached its daily credit cap; idea %s waits", fanpage.id, idea.id)
                 continue
             clips = fitted
-            engine = engine_for(fanpage, template, clips)
+            engine = prompt_engine_for(fanpage, template, clips)
             if polish_enabled(fanpage):
                 prepared = valid_prepared(idea, engine=engine)
                 if not prepared:

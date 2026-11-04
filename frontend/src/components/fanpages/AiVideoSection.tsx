@@ -271,14 +271,17 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                           <select
                             id={`narrator-${item.key}`}
                             className="input w-full"
-                            value={narration?.engine ?? "flow"}
+                            value={narration?.engine === "tts" && narration?.bed === "asmr" ? "tts_asmr" : (narration?.engine ?? "flow")}
                             onChange={(e) => set("ai_video_narration", {
                               ...form.ai_video_narration,
-                              [item.key]: { engine: e.target.value, voice: null },
+                              [item.key]: e.target.value === "tts_asmr"
+                                ? { engine: "tts", voice: null, bed: "asmr" }
+                                : { engine: e.target.value, voice: null },
                             })}
                           >
                             <option value="flow">Flow voice (default)</option>
                             <option value="tts">Google TTS</option>
+                            <option value="tts_asmr">Google TTS + ASMR</option>
                             <option value="asmr">ASMR + on-screen text</option>
                           </select>
                         </div>
@@ -292,7 +295,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                               value={narration.voice ?? ""}
                               onChange={(e) => set("ai_video_narration", {
                                 ...form.ai_video_narration,
-                                [item.key]: { engine: "tts", voice: e.target.value || null },
+                                [item.key]: { engine: "tts", voice: e.target.value || null, ...(narration?.bed === "asmr" ? { bed: "asmr" } : {}) },
                               })}
                             >
                               <option value="">{item.tts_auto_voice ? `Auto (${item.tts_auto_voice})` : "Auto (matches the template narrator)"}</option>
@@ -321,7 +324,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                   })}
                 </div>
                 <p className="text-[11px] text-text-secondary">
-                  Google TTS: Flow makes only sound effects and music; the narrator is added after the video is made. ASMR + on-screen text: Flow makes only crisp mechanism sounds (no music, no voices) and the narration is shown as text. Both only for videos longer than 10 seconds.
+                  Google TTS: Flow makes only sound effects and music; the narrator is added after the video is made. Google TTS + ASMR: Flow makes only crisp mechanism sounds (no music) and the narrator is added after the video is made. ASMR + on-screen text: Flow makes only crisp mechanism sounds (no music, no voices) and the narration is shown as text. Both only for videos longer than 10 seconds.
                 </p>
               </div>
             )}

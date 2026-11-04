@@ -11,6 +11,18 @@ def engine_for(fanpage, template, clips: int) -> str:
     return "flow"
 
 
+def prompt_engine_for(fanpage, template, clips: int) -> str:
+    engine = engine_for(fanpage, template, clips)
+    if engine == "tts" and narration_choice(fanpage, template.key)["bed"] == "asmr":
+        return "asmr"
+    return engine
+
+
+def prompt_engine(narration: dict | None) -> str:
+    engine = (narration or {}).get("engine") or "flow"
+    return "asmr" if engine == "tts" and (narration or {}).get("bed") == "asmr" else engine
+
+
 def tts_style(template, narrator_preset: str | None) -> str:
     blocks = template.raw["blocks"]
     return "Read this as " + blocks["tts_style"]
@@ -35,4 +47,5 @@ def resolve_narration(fanpage, template, clips: int, variables: dict) -> dict | 
         "voice": choice["voice"] or auto_voice(template.key, preset),
         "style": tts_style(template, preset),
         "language": tts_language(template, fanpage),
+        **({"bed": "asmr"} if choice["bed"] == "asmr" else {}),
     }

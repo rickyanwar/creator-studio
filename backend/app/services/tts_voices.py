@@ -58,5 +58,6 @@ def narration_choice(fanpage, template_key: str) -> dict:
     if isinstance(choice, dict) and choice.get("engine") in ("flow", "tts", "asmr"):
         voice = choice.get("voice")
         if voice is None or (isinstance(voice, str) and voice in TTS_VOICES):
-            return {"engine": choice["engine"], "voice": voice}
-    return {"engine": "flow", "voice": None}
+            return {"engine": choice["engine"], "voice": voice,
+                    "bed": "asmr" if choice["engine"] == "tts" and choice.get("bed") == "asmr" else None}
+    return {"engine": "flow", "voice": None, "bed": None}

@@ -51,16 +51,16 @@ def test_tts_allowed_registry_template():
     {"key": {"engine": "tts", "voice": []}}])
 def test_narration_choice_invalid(settings):
     assert narration_choice(SimpleNamespace(ai_video_narration=settings), "key") == {
-        "engine": "flow", "voice": None,
+        "engine": "flow", "voice": None, "bed": None,
     }
 
 
 def test_narration_choice_missing_and_valid():
-    assert narration_choice(SimpleNamespace(), "key") == {"engine": "flow", "voice": None}
+    assert narration_choice(SimpleNamespace(), "key") == {"engine": "flow", "voice": None, "bed": None}
     for engine in ("flow", "tts", "asmr"):
         for voice in (None, "Charon"):
             settings = {"key": {"engine": engine, "voice": voice}}
-            assert narration_choice(SimpleNamespace(ai_video_narration=settings), "key") == settings["key"]
+            assert narration_choice(SimpleNamespace(ai_video_narration=settings), "key") == {**settings["key"], "bed": None}
 
 
 def test_schema_normalizes_settings():

@@ -157,7 +157,7 @@ export interface Fanpage {
   ai_video_max_credits_per_video: number | null;
   ai_video_max_credits_per_day: number | null;
   ai_video_narrator: string | null;
-  ai_video_narration: Record<string, { engine: "flow" | "tts" | "asmr"; voice: string | null }> | null;
+  ai_video_narration: Record<string, { engine: "flow" | "tts" | "asmr"; voice: string | null; bed?: "asmr" | null }> | null;
   ai_video_title_max_chars?: number;
   ai_video_description_max_chars?: number;
   ai_video_logo_enabled: boolean;
