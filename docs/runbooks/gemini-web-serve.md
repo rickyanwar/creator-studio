@@ -7,7 +7,9 @@
 run Gemini **Argon** (extended thinking) through the Gemini web cookie client. Account
 cookie files live at `/etc/gemini-web/accounts/<name>.json` (mode 600, one file per account);
 runtime state is at `/var/lib/gemini-web-serve/state.json`. Every Gemini request goes
-through the phone proxy `socks5h://100.64.96.50:1080` — the VPS IP is never used.
+through the home STB proxy `socks5h://100.77.191.71:1080` (Tailscale node `stb-proxy`,
+Dante SOCKS5, home internet IP; it replaced the phone's hev-socks5 proxy on 2026-11-05) —
+the VPS IP is never used.
 
 The app side has two scheduled tasks that depend on this service:
 
@@ -57,7 +59,7 @@ The script exits 0 on success and exits 2 on any exception, printing
 | `not_configured` | Brands have polish on but no `GWS_TOKEN` is saved in Settings | Owner |
 | `service_unreachable` | `/health` endpoint unreachable or returned a non-200 bad response | Hermes |
 | `service_unauthorized` | Token mismatch (401); service is running but the app token is wrong | Owner |
-| `proxy_down` | Service reports `proxy_ok: false`; phone proxy at `100.64.96.50:1080` is offline | Hermes (diagnose) → Owner |
+| `proxy_down` | Service reports `proxy_ok: false`; STB proxy at `100.77.191.71:1080` is offline | Hermes (diagnose) → Owner |
 | `no_account_ready` | No account is available and none is simply sleeping/on-break/in-gap | Hermes (wait if cooldown) |
 | `account_needs_login:<name>` | Cookie expired; account needs re-login via VNC | Owner |
 | `account_needs_tos:<name>` | New Gemini Terms of Service pending; owner must accept them via login.py | Owner |
@@ -97,18 +99,22 @@ Run every 15 min via cron (see §6 for the cron command). Keep incident state in
    - Cap: **3 restart attempts per incident**. After 3 failures, stop and message the owner
      with the last health JSON summary (no secrets, no token values).
 
-4. **`proxy_down`** → Hermes cannot fix the phone proxy, but first confirm:
+4. **`proxy_down`** → Hermes cannot fix the STB proxy (it is a box at the owner's home),
+   but first confirm:
    ```bash
-   # Check whether the phone is reachable at all
-   curl -s -m 20 --socks5-hostname 100.64.96.50:1080 https://api.ipify.org
-   # Should print the phone's egress IP, not the VPS IP
+   # Check whether the STB proxy answers at all
+   curl -s -m 20 --socks5-hostname 100.77.191.71:1080 https://api.ipify.org
+   # Should print the home egress IP, not the VPS IP
 
-   tailscale status | grep 100.64.96.50
+   tailscale status | grep stb-proxy
+   tail -n 5 /var/log/phone-proxy-watchdog.log
    ```
-   - Phone is offline or not in Tailscale → message the owner: *"Phone proxy offline
-     (`100.64.96.50`). Argon prompt polish is down. Action needed."* Stop.
-   - Phone appears online but proxy still fails → restart the service once (step 3 path)
+   - STB is offline or not in Tailscale → message the owner: *"STB proxy offline
+     (`stb-proxy`, `100.77.191.71`). Argon prompt polish is down. Check the STB power and
+     home internet, then `systemctl status danted tailscaled` on the STB."* Stop.
+   - STB appears online but proxy still fails → restart the service once (step 3 path)
      and re-check.
+   - Do not touch the phone: it no longer serves the proxy.
 
 5. **`no_account_ready` / `last_run_unavailable:<kind>`** →
    Read `/health` accounts block.
@@ -155,8 +161,8 @@ problem resolves.
 - `curl ... http://172.17.0.1:8098/health` (read)
 - `curl -X POST ... http://172.17.0.1:8098/v1/reload`
 - `journalctl -u gemini-web-serve -n 100 --no-pager`
-- `curl --socks5-hostname 100.64.96.50:1080 https://api.ipify.org` (proxy liveness check)
-- `tailscale status | grep 100.64.96.50`
+- `curl --socks5-hostname 100.77.191.71:1080 https://api.ipify.org` (proxy liveness check)
+- `tailscale status | grep stb-proxy`
 
 ### Forbidden
 - Touching `/opt/studio`, Docker containers, the database, or any other service
@@ -252,7 +258,7 @@ The service spreads account usage to mimic human behaviour. The pattern per acco
 | Gap between successive requests | 4–9 min (randomised) |
 | Daily cap per account | 30–40 requests (randomised) |
 | Concurrency | One request at a time across all accounts |
-| Proxy | Phone proxy only (`socks5h://100.64.96.50:1080`) |
+| Proxy | Home STB proxy only (`socks5h://100.77.191.71:1080`) |
 
 ### Env vars that tune the pattern
 

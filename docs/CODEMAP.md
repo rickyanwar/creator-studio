@@ -38,6 +38,7 @@ Size: backend/app ~48k lines, backend/tests ~38k (146 files), alembic 7k (138 mi
 | `gflow-worker` (`gflow_worker/`) | VPS host systemd | Mode 8: pulls jobs from `/worker/gflow/*`, drives `gflow-cli` + Chrome profiles, uploads MP4 |
 | `phone-runner` (`phone_runner/`) | VPS host, 172.18.0.1:8765 | Android phones over Tailscale ADB, token auth |
 | 9Router | VPS (and Mac) :20128 | all text / vision / image AI goes through it |
+| `stb-proxy` (home STB, Dante SOCKS5) | owner's home, Tailscale `100.77.191.71:1080` | residential exit for gemini-web-serve, gflow-worker, gpt-serve; replaced the phone proxy 2026-11-05. Runbook: [runbooks/stb-proxy.md](runbooks/stb-proxy.md) |
 
 Deploy: push to `main` → `.github/workflows/deploy.yml`. GitHub Actions builds the api/renderer/frontend images and pushes them to a private GHCR (`ghcr.io/rickyanwar/creator-studio/<name>:sha-<sha>`); then it ssh-es to `/opt/studio`, where the VPS pulls them (d60ab71). It aborts on a dirty tree, tags rollback images, runs `pg_dump` + `alembic upgrade head`, restarts, health-checks internal + `https://autostudio.pro/api/health`, and rolls images back on failure (it does **not** downgrade the DB). It restarts `gflow-worker` only if no video job is running.
 
