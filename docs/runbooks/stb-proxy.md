@@ -34,6 +34,9 @@ phone_runner posting device over ADB (`100.64.96.50:5555`). Do not remove Tailsc
 | gflow-worker (Mode 8, Google Flow) | `/etc/gflow-worker.env` `GFLOW_PROXY`, `GFLOW_CLI_BROWSER_PROXY` |
 | gpt-serve / `gpt` CLI (ChatGPT) | `/etc/gpt-serve.env` `GPT_PROXY`; defaults in `/root/chatgpt-cli/src/chatgpt_cli/config.py`, `/usr/local/bin/gpt-daemon` |
 | ai-invite-hunter (cron) | `/root/ai-invite-hunter/.env` `SOCKS_PROXY` |
+| 9Router Antigravity `rickyanwar7777@gmail.com` and `afb8421@gmail.com` (always, owner choice 2026-11-05) | Same as codex: `connectionProxyUrl` = STB and no `proxyPoolId` (a relay pool would override the proxy). The other Antigravity accounts stay on relays |
+| 9Router `codex` connection (always) | 9Router DB, connection `providerSpecificData.connectionProxyUrl` (edit via the 9Router API client, not raw SQL) |
+| 9Router Antigravity / Gemini (fallback only) | Patched `proxyAwareFetch`: relay pools stay primary; on relay error, relay 5xx or Google geo-400 the request is retried once via the STB. Log tag `RELAY-STB-FALLBACK` in `/root/.pm2/logs/9router-error.log`; re-applied after 9Router upgrades by `~/.hermes/skills/devops/9router-antigravity-fallback/scripts/reapply.sh` (both 9Router patches in one command), run automatically every 10 min by Hermes cron `9router-autopatch` (Telegram only when it re-patches or fails) |
 | Hermes scripts | `~/.hermes/scripts/gemini_health_monitor.sh`, `gflow_auth_renew_cron.sh` |
 
 Code defaults that still name the phone (`gflow_worker/proxy_guard.py` revive,
