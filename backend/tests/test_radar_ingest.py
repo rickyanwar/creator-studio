@@ -182,3 +182,39 @@ def test_ingest_medias_makes_taken_at_naive(db_session, mock_settings):
     for k, v in params.items():
         if isinstance(v, datetime):
             assert v.tzinfo is None
+
+
+@patch("app.services.radar_ingest.compute_phash")
+def test_ingest_medias_drops_overlong_thumbnail_url(mock_compute_phash, db_session, mock_settings):
+    """An IG thumbnail URL longer than the column is not stored, but still used for phash."""
+    now = datetime.now(timezone.utc)
+    mock_compute_phash.return_value = "fake_phash"
+    long_url = "https://scontent.cdninstagram.com/v/t51.jpg?" + "x" * 1100
+
+    media = MagicMock()
+    media.media_type = 1
+    media.code = "longurl123"
+    media.taken_at = now - timedelta(hours=1)
+    media.caption_text = "caption"
+    media.like_count = 5
+    media.comment_count = 1
+    media.thumbnail_url = long_url
+    media.resources = []
+
+    db_session.query.return_value.filter_by.return_value.first.side_effect = [
+        mock_settings, None, MagicMock(last_checked_at=None, last_post_seen_at=None)
+    ]
+    db_session.query.return_value.filter_by.return_value.scalar.return_value = 7
+    db_session.execute.return_value = MagicMock(rowcount=1)
+    fetched = []
+
+    ingest_medias(
+        db_session, username="test", radar_account_id=1, ig_source_id=None,
+        medias=[media], now=now, thumb_fetcher=lambda u: fetched.append(u) or b"image",
+    )
+
+    stmt = db_session.execute.call_args[0][0]
+    params = stmt.compile().params
+    assert params["thumbnail_url"] is None
+    assert fetched == [long_url]
+    mock_compute_phash.assert_called_once_with(b"image")

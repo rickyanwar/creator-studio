@@ -224,6 +224,12 @@ def _process_radar_tick(db, r, db_settings):
             )
         except Exception as e:
             logger.error("Error ingesting radar medias for %s: %s", original_uname, e, exc_info=True)
+            # A failed statement leaves the session aborted; without a rollback every
+            # later account in this tick fails with InFailedSqlTransaction.
+            db.rollback()
+            if radar_acc:
+                radar_acc.last_error = f"ingest failed: {e}"[:255]
+                db.commit()
             
         # Scrape once, feed both: Also ingest into Mode 1 if tracked
         if ig_source:

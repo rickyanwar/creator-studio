@@ -237,3 +237,22 @@ def test_process_radar_tick_uses_only_enabled_fanpage_niches(mock_db, mock_redis
         _process_radar_tick(mock_db, mock_redis, db_settings)
 
     assert fetch.call_args.args[0] == ["f1-driver"]
+
+
+@patch("app.services.ig_viewer_scraper.fetch_many_recent_posts")
+@patch("app.services.radar_ingest.ingest_medias")
+def test_process_radar_tick_rolls_back_after_ingest_error(mock_ingest, mock_fetch, mock_db, mock_redis):
+    """A DB error while ingesting one account must roll back so the tick can go on."""
+    db_settings = MagicMock(radar_very_hot_interval_min=None, radar_hot_window_h=None, radar_hot_interval_min=None, radar_cold_interval_min=None)
+    acc1 = MagicMock(ig_username="bad_acc", is_active=True, niche="f1", leader_score=0, avg_scrape_seconds=None)
+    enabled_fanpage = MagicMock(is_active=True, radar_enabled=True, radar_niches=["f1"])
+    mock_db.query.return_value.filter.return_value.all.side_effect = [[enabled_fanpage], [acc1], []]
+    mock_redis.hget.return_value = None
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
+    mock_fetch.return_value = {"bad_acc": [MagicMock()]}
+    mock_ingest.side_effect = Exception("value too long")
+
+    _process_radar_tick(mock_db, mock_redis, db_settings)
+
+    mock_db.rollback.assert_called_once()
+    assert acc1.last_error == "ingest failed: value too long"

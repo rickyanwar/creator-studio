@@ -13,6 +13,10 @@ from app.tasks.image_saver import download_ig_image
 
 logger = logging.getLogger(__name__)
 
+# IG CDN thumbnail URLs can exceed the column; an over-long value aborted the whole
+# radar crawl tick (2026-11-06). Such URLs are only kept in image_source_urls.
+_THUMBNAIL_URL_MAX = RadarPost.__table__.c.thumbnail_url.type.length
+
 @dataclass(frozen=True)
 class IngestResult:
     posts_inserted: int
@@ -116,7 +120,7 @@ def ingest_medias(
             taken_at=taken_at,
             caption=str(caption_raw),
             media_type=media_type,
-            thumbnail_url=thumb_url,
+            thumbnail_url=thumb_url if thumb_url and len(thumb_url) <= _THUMBNAIL_URL_MAX else None,
             image_source_urls=all_urls,
             phash=phash,
             latest_like_count=like_count,

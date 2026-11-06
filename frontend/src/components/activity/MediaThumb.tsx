@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { Icon } from "@iconify/react";
+import { getThumbUrl } from "@/lib/thumb";
 import { isVideoUrl } from "./mediaUtils";
 
 export interface MediaThumbProps {
@@ -30,6 +32,10 @@ export function MediaThumb({
   const mediaIsVideo =
     isVideo || thumbIsVideo || (!!videoUrl && isVideoUrl(videoUrl));
   const blurClass = blurred ? "blur-sm" : "";
+  // Designs are 2-7 MB PNGs; the 88 px box only needs the cached ~10 KB WEBP.
+  // Fall back to the original when the thumb endpoint cannot serve it (e.g. IG CDN URL).
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const imgSrc = thumbUrl && !thumbFailed ? getThumbUrl(thumbUrl, 240) : thumbUrl;
 
   return (
     <div
@@ -58,8 +64,11 @@ export function MediaThumb({
       ) : thumbUrl ? (
         /* eslint-disable-next-line @next/next/no-img-element */
         <img
-          src={thumbUrl}
+          src={imgSrc ?? undefined}
           alt={alt}
+          loading="lazy"
+          decoding="async"
+          onError={() => setThumbFailed(true)}
           className={`w-full h-full object-cover pointer-events-none ${blurClass}`}
         />
       ) : videoUrl ? (

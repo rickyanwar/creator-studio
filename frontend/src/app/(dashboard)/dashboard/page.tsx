@@ -24,6 +24,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useBrandFilter } from "@/contexts/BrandFilterContext";
 import { BrandAvatar } from "@/components/dashboard/BrandAvatar";
 import { PostLightbox } from "@/components/dashboard/PostLightbox";
+import { getThumbUrl } from "@/lib/thumb";
 
 const BRAND_PALETTES = [
   "#C62828",
@@ -911,8 +912,17 @@ export default function DashboardPage() {
                         title="View image"
                       >
                         <img
-                          src={post.thumbnail_url}
+                          src={getThumbUrl(post.thumbnail_url, 360) ?? undefined}
                           alt={post.title || post.fanpage_name}
+                          loading="lazy"
+                          decoding="async"
+                          onError={(e) => {
+                            // Thumb endpoint only serves our own /media files; fall back to the original.
+                            const original = post.thumbnail_url;
+                            if (original && e.currentTarget.src !== new URL(original, window.location.href).href) {
+                              e.currentTarget.src = original;
+                            }
+                          }}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                         />
                         <span className="absolute left-1.5 bottom-1.5 pointer-events-none">
