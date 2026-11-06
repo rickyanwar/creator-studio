@@ -18,6 +18,11 @@ Comprehensive architectural mapping of image sourcing, face detection, crop geom
   - Excluded models: `ag/claude-*` (ignores image), plain `ag/gemini-3-flash` (returns empty), `ag/gemini-3.1-flash-image` (hallucinates descriptions), and any `cx/*` model.
   - Active dead-model filtering: `model_health.is_dead(model)` prunes known broken endpoints; retains full list if all are flagged dead.
 - **Low-Level Vision Execution** (`design_images.py:108-174`): `_vision_chat` sets `OpenAI(timeout=30.0, max_retries=0)` to prevent SDK exponential backoff from compounding across model fallback attempts. Emits telemetry via `ai_caption.log_ai_copy_event` (tracks `latency_ms`, `models_tried`, `outcome="success"|"recovered"|"failed"`).
+- **Vision traffic guards** (2026-11-07, after 9Router Antigravity accounts were disabled for ToS at ~7,600 vision calls/day):
+  - `services/vision_breaker.py`: 5 fully-failed `_vision_chat` calls within 5 min pause ALL vision for 10 min (Redis `vision_breaker:open`). `_vision_chat` raises `VisionPausedError` while paused, and `vision_retry.run_vision_check` does not retry it. Callers fail closed as on any error.
+  - Per-image results in `vision_check_cache`: `watermark`, `focus_point` (raw x,y, clamped per call), `speaker_check` (yes/no only), `verify_subject`. The Pro poster adds `photo_reject` (wrong person for a hero candidate, wrong event, or watermark), keyed by subject + event without the story.
+  - Coarse checks (watermark, focus point, classify type/close-up, photo quality, pick best, subject side) send 512 px; identity and person checks stay at 768 px.
+  - `gallery_label_budget.reserve_backfill`: relabel + backfill of old gallery photos is capped at 100/day; new photos are labeled at download.
 
 ---
 

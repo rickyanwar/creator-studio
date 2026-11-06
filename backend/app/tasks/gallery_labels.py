@@ -178,6 +178,8 @@ def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
     """Safety net task: runs sweep at night (00:00-06:00 WIB) up to min(cap, 40).
     Outside night hours, only processes images downloaded in the last 6 hours
     with labeled_at IS NULL (cap 10 per run)."""
+    from app.services.gallery_label_budget import reserve_backfill
+
     close_db = db is None
     db = db or SessionLocal()
     processed = 0
@@ -226,12 +228,19 @@ def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
             candidates = _pick_label_candidates(db, s, limit, safety_cutoff)
 
         counts = {"new": 0, "relabel": 0, "backfill": 0}
+        backfill_cap_logged = False
 
         for img, kind in candidates:
             if not os.path.exists(img.local_path):
                 img.label_attempts = 3
                 img.label_error = "file missing"
                 db.commit()
+                continue
+
+            if kind in ("relabel", "backfill") and not reserve_backfill():
+                if not backfill_cap_logged:
+                    logger.info("label_new_gallery_images: backfill daily cap reached")
+                    backfill_cap_logged = True
                 continue
 
             if not reserve(s.gallery_labeling_daily_cap, db=db):

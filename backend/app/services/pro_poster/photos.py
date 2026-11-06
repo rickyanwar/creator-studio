@@ -586,6 +586,30 @@ def check_photo(
                 notes=cached.get("notes", ""),
             )
 
+        reject_key = hashlib.sha256(json.dumps(
+            {"subject": hero_name, "event": event_fields}, sort_keys=True,
+        ).encode("utf-8")).hexdigest()
+        try:
+            hit = vision_cache.get_cached("photo_reject", digest, reject_key)
+            if hit is not None:
+                reason = hit["reason"]
+                if reason in ("event", "watermark") or (reason == "person" and candidate.role == "hero"):
+                    logger.info("check_photo: cached reject (%s) for %s", reason, Path(path).name)
+                    return PhotoCheck(
+                        candidate=candidate,
+                        person=hit["person"],
+                        event_match=hit["event_match"],
+                        obstructed=hit["obstructed"],
+                        watermark=hit["watermark"],
+                        quality=hit["quality"],
+                        face_frontal=hit.get("face_frontal", False),
+                        shows=hit.get("shows", ""),
+                        story_fit=0,
+                        notes="cached reject: " + reason,
+                    )
+        except Exception as exc:
+            logger.warning("check_photo reject cache lookup failed: %s", exc)
+
         context_lines = [
             f"- Hero subject name: {hero_name}",
             f"- Series: {series}",
@@ -729,6 +753,24 @@ def check_photo(
                 )
             except Exception as exc:
                 logger.warning("check_photo cache put failed: %s", exc)
+        reason = "event" if event_match == "no" else "watermark" if watermark else "person" if person == "no" else None
+        if reason:
+            try:
+                vision_cache.put_cached(
+                    "photo_reject", digest, reject_key,
+                    {
+                        "reason": reason,
+                        "person": person,
+                        "event_match": event_match,
+                        "obstructed": obstructed,
+                        "watermark": watermark,
+                        "quality": quality,
+                        "face_frontal": face_frontal,
+                        "shows": shows,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("check_photo reject cache put failed: %s", exc)
         return res
 
     except Exception as exc:

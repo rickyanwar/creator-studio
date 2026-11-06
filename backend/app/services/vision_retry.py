@@ -26,11 +26,15 @@ def run_vision_check(
 ) -> T:
     """Call fn() (no args). If it raises, log a warning and call it again after wait_s, up to `attempts` calls in
     total; re-raise the last exception when every call failed. A value returned by fn is returned at once."""
+    from app.services.vision_breaker import VisionPausedError
+
     tag = f" [{label}]" if label else ""
     for attempt in range(1, attempts + 1):
         try:
             return fn()
         except Exception as exc:
+            if isinstance(exc, VisionPausedError):
+                raise
             if attempt < attempts:
                 logger.warning(
                     "Vision check%s attempt %d/%d failed: %s; retrying in %ss",
