@@ -1,8 +1,10 @@
 """Temporary, token-protected labeling workflow for the external Muse agent."""
 
 import re
+from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import redis
 from sqlalchemy import func
@@ -25,6 +27,9 @@ LEASE_PREFIX = "labeler:lease:"
 LEASE_SECONDS = 30 * 60
 CLAIM_LABELS = ("face", "action", "other")
 CONFIDENCE_RANK = {"none": 0, "estimated": 1, "day": 2, "exact": 3}
+# Muse reaches the VPS through the owner's Cloudflare relay, which must forward this path.
+API_PUBLIC_BASE = "https://autostudio.pro/api"
+MUSE_GATE_NOTE = "These photos were found by searching the gallery keyword, so treat the keyword as the subject. A rider or driver on the bike or car, seen from the side, from behind or wearing a helmet, IS the subject when the livery, number or kit fits the keyword: label it ACTION and keep it. Do not reject a photo only because the face is not visible or the vehicle is seen from the side. Reject only for the reasons listed above."
 
 
 def redis_client():
@@ -47,6 +52,10 @@ def label_schema() -> dict:
     return {
         "version": 1,
         "fields": {
+            "label": {"type": "string", "allowed": list(CLAIM_LABELS), "description": "face | action | other — the main content of the photo"},
+            "usable": {"type": "boolean", "description": "Apply the item's gate_instructions exactly; false rejects and deletes the photo"},
+            "content_acceptable": {"type": "boolean", "description": "Apply gate_instructions when low quality is allowed; false rejects and deletes the photo"},
+            "reject_reason": {"type": "string", "description": "Short reason when usable is false"},
             "sport": {"type": "string", "allowed": sorted(SPORTS)},
             "venue": {"type": "object", "fields": {
                 "type": {"type": "string", "allowed": sorted(VENUE_TYPES)},
@@ -209,16 +218,11 @@ def claim_images(db, limit: int, worker: str, client=None, label: str | None = N
         for key in client.scan_iter(match=f"{LEASE_PREFIX}*")
         if key[len(LEASE_PREFIX):].isdigit()
     }
-    usage = (
-        db.query(GalleryImage.keyword, func.count(GalleryImage.id).label("usage_count"))
-        .filter(GalleryImage.is_used.is_(True), GalleryImage.last_used_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=90))
-        .group_by(GalleryImage.keyword)
-        .subquery()
-    )
+    from app.services.design_images import gate_prompt_text
+
     candidates = (db.query(GalleryImage)
-        .outerjoin(usage, GalleryImage.keyword == usage.c.keyword)
-        .filter(GalleryImage.is_deleted.is_(False), GalleryImage.labeled_at.is_(None), GalleryImage.label_attempts < 3)
-        .order_by(func.coalesce(usage.c.usage_count, 0).desc(), GalleryImage.downloaded_at.desc())
+        .filter(GalleryImage.is_deleted.is_(False), GalleryImage.label_pending.is_(True), GalleryImage.labeled_at.is_(None), GalleryImage.label_attempts < 3)
+        .order_by(GalleryImage.downloaded_at.desc())
     )
     if label is not None:
         candidates = candidates.filter(GalleryImage.label == label)
@@ -230,7 +234,11 @@ def claim_images(db, limit: int, worker: str, client=None, label: str | None = N
         if len(selected) >= limit:
             break
         if acquire_lease(client, image.id, worker):
-            selected.append({"id": image.id, "image_url": image.public_url, "keyword": image.keyword,
+            allow_low_quality = (image.attributes or {}).get("pending_gate", {}).get("allow_low_quality", False)
+            selected.append({"id": image.id, "image_url": f"{API_PUBLIC_BASE}/media/thumb?u={quote(image.public_url, safe='')}&w=480",
+                             "image_url_full": image.public_url, "keyword": image.keyword,
+                             "gate_instructions": gate_prompt_text(image.keyword, allow_low_quality, reply_line=False) + "\n" + MUSE_GATE_NOTE,
+                             "requires": ["label", "content_acceptable" if allow_low_quality else "usable"],
                              "extra_keywords": image.extra_keywords or [], "current_label": image.label,
                              "source_engine": image.source_engine, "downloaded_at": image.downloaded_at,
                              "captured_at": image.captured_at,
@@ -251,7 +259,7 @@ def process_results(db, payload: dict, worker: str, client=None) -> dict:
     for item in results:
         image_id = item.get("id")
         row = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
-        if not row or row.labeled_at is not None:
+        if not row or row.is_deleted or row.labeled_at is not None:
             skipped.append(image_id)
             continue
         try:
@@ -260,8 +268,28 @@ def process_results(db, payload: dict, worker: str, client=None) -> dict:
                 row.label_error = str(item["error"])[:300]
                 failed += 1
             else:
+                if row.label_pending:
+                    label = item.get("label")
+                    if not isinstance(label, str) or label.lower() not in CLAIM_LABELS:
+                        raise ValueError("label must be face, action, or other")
+                    allow_low_quality = (row.attributes or {}).get("pending_gate", {}).get("allow_low_quality", False)
+                    gate_field = "content_acceptable" if allow_low_quality else "usable"
+                    usable = item.get(gate_field)
+                    if not isinstance(usable, bool):
+                        raise ValueError(f"{gate_field} must be a boolean")
+                    if not usable:
+                        Path(row.local_path).unlink(missing_ok=True)
+                        row.is_deleted = True
+                        row.label_pending = False
+                        row.label_error = ("muse gate: " + str(item.get("reject_reason") or "not usable"))[:300]
+                        saved += 1
+                        continue
                 attrs = _normalise_result(item, keyword=row.keyword)
                 row.attributes = merge_label_attributes(row.attributes, attrs)
+                if row.label_pending:
+                    row.label = label.lower()
+                    row.label_pending = False
+                    row.attributes.pop("pending_gate", None)
                 row.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 row.label_error = None
                 confidence = item.get("captured_at_confidence")

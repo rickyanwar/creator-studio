@@ -44,6 +44,7 @@ def test_backfill_client_creation_error_fails_closed(monkeypatch):
 
 
 def test_sweep_skips_old_candidates_but_labels_new(monkeypatch, caplog):
+    monkeypatch.setattr(gallery_labels, "_fallback_pending_images", lambda *args: 0)
     db = MagicMock()
     db.query().filter_by().first.return_value = SimpleNamespace(
         gallery_labeling_enabled=True, gallery_labeling_since=datetime(2026, 11, 1),

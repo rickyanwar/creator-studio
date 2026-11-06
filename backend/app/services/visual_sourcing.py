@@ -28,7 +28,7 @@ from typing import Literal
 from sqlalchemy import func, cast, String
 from app.models.gallery import GalleryKeyword, GalleryImage
 from app.models.f1_drivers import F1Driver
-from app.services.gallery_filters import not_keyword_mismatch
+from app.services.gallery_filters import not_keyword_mismatch, not_label_pending
 from app.services.ig_content_classifier import PostAnalysis, is_f1_niche
 from app.services.design_images import (
     fetch_subject_datauri,
@@ -390,6 +390,7 @@ def _find_inset_pick(
         GalleryImage.is_deleted == False,
         GalleryImage.label == label,
         not_keyword_mismatch(),
+        not_label_pending(),
     )
     if exclude_ids:
         base_query = base_query.filter(GalleryImage.id.notin_(exclude_ids))
@@ -666,6 +667,7 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                     GalleryImage.label == label,
                     width_condition,
                     not_keyword_mismatch(),
+                    not_label_pending(),
                 )
                 if exclude_ids:
                     base_query = base_query.filter(GalleryImage.id.notin_(exclude_ids))
@@ -873,6 +875,7 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                     GalleryImage.is_deleted == False,
                     GalleryImage.label == w_labels.get('hero', 'face'),
                     not_keyword_mismatch(),
+                    not_label_pending(),
                 )
                 if exclude_ids:
                     base_query = base_query.filter(GalleryImage.id.notin_(exclude_ids))
@@ -983,4 +986,3 @@ def plan_photos(db, analysis: PostAnalysis, layout: str, niche: str, source_imag
                 except Exception:
                     pass
         raise
-

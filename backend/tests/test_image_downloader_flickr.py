@@ -134,7 +134,7 @@ def test_download_images_runs_flickr_then_getty_same_call():
 
     store_calls = []
 
-    def fake_store(urls, dest_dir, max_num, min_size, skip_urls, engine, subject=None, captured_dates=None):
+    def fake_store(urls, dest_dir, max_num, min_size, skip_urls, engine, subject=None, captured_dates=None, vision_gate=True):
         results = _make_fake_image(engine, min(max_num, len(urls)))
         store_calls.append((engine, max_num))
         return results

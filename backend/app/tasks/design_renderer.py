@@ -309,7 +309,7 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
     """
     from sqlalchemy import or_
     from app.models.gallery import GalleryImage
-    from app.services.gallery_filters import not_keyword_mismatch
+    from app.services.gallery_filters import not_keyword_mismatch, not_label_pending
     from app.services.design_images import (
         niche_keywords, source_news_main, fetch_topic_datauri,
         _eligible_rows, _mark_gallery_image_used,
@@ -367,6 +367,7 @@ def select_image_for_job(db, job, fanpage, article, exclude_marker: str | None =
             or_(GalleryImage.keyword.in_(matched), GalleryImage.extra_keywords.overlap(matched)),
             GalleryImage.is_deleted == False,
             not_keyword_mismatch(),
+            not_label_pending(),
         )
         # Cooldown-fresh only here — a stale match isn't allowed to win over
         # the fresh Getty/Google search below just because it exists.

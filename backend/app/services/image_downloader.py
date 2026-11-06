@@ -58,6 +58,7 @@ class DownloadedImage:
     label: str | None = None  # vision label: "face" | "action" | "other"
     captured_at: date | None = None  # shot date parsed from the Getty caption, if found
     attributes: dict | None = None
+    allow_low_quality: bool = False
 
 
 def keyword_slug(keyword: str) -> str:
@@ -84,6 +85,7 @@ def download_images(
     max_pages: int | None = None,
     allow_topup: bool = True,
     search_hint: str | None = None,
+    vision_gate: bool = True,
 ) -> list[DownloadedImage]:
     """Collect image URLs for a keyword and download the ones that pass dedup
     (skip_urls) and min-size validation.
@@ -106,7 +108,7 @@ def download_images(
         if f_urls:
             results += _fetch_and_store(
                 f_urls, dest_dir, flickr_max, min_size, skip_urls,
-                "flickr", subject=keyword, captured_dates=f_dates,
+                "flickr", subject=keyword, captured_dates=f_dates, vision_gate=vision_gate,
             )
     except Exception as exc:
         logger.warning(
@@ -127,7 +129,7 @@ def download_images(
 
         results += _fetch_and_store(
             urls, dest_dir, remaining, min_size, skip_urls, "9router",
-            subject=keyword, captured_dates=captured_dates,
+            subject=keyword, captured_dates=captured_dates, vision_gate=vision_gate,
         )
 
     return results
@@ -503,6 +505,7 @@ def _fetch_and_store(
     allow_low_quality: bool = False,
     precheck=None,
     fetcher=None,
+    vision_gate: bool = True,
 ) -> list[DownloadedImage]:
     import time
 
@@ -544,10 +547,6 @@ def _fetch_and_store(
             logger.debug("Gallery: skipping %s — %dx%d below min %dx%d", url, img.width, img.height, min_w, min_h)
             continue
 
-        # Upscale small images (e.g. Getty 612px comps). HQ mode (opt-in) uses
-        # UltraSharpV2 + GFPGAN for detailed bikes/gear/faces (slow, CPU); else
-        # the fast FSRCNN x2 + sharpen.
-        final_bytes = content
         if precheck is not None:
             try:
                 if precheck(content):
@@ -556,6 +555,28 @@ def _fetch_and_store(
             except Exception:
                 logger.info("Gallery: rejecting %s — precheck errored", url)
                 continue
+        # Label and gate the original photo before upscaling or saving it.
+        # Fail closed so a later run can retry the same URL on a vision error.
+        label, usable, labels = None, True, None
+        if vision_gate:
+            try:
+                from app.services.gallery_labeler import gate_and_label_image
+                label, usable, labels = gate_and_label_image(
+                    content,
+                    subject=subject,
+                    keyword=subject,
+                    allow_low_quality=allow_low_quality,
+                )
+            except Exception:
+                label, usable, labels = None, False, None
+        if not usable:
+            logger.info("Gallery: rejecting %s — vision quality gate says not usable for design", url)
+            continue
+
+        # Upscale small images (e.g. Getty 612px comps). HQ mode (opt-in) uses
+        # UltraSharpV2 + GFPGAN for detailed bikes/gear/faces (slow, CPU); else
+        # the fast FSRCNN x2 + sharpen.
+        final_bytes = content
         _s = get_settings()
         if _s.hq_upscale_enabled:
             from app.services.hq_upscale import enhance_image_bytes
@@ -574,29 +595,6 @@ def _fetch_and_store(
             logger.warning("Gallery: failed to save %s: %s", url, exc)
             continue
 
-        # Label the photo (face/action/other) AND gate it for actual design
-        # usability AND extract gallery labels — one vision call doing all jobs (see
-        # gallery_labeler.gate_and_label_image). Rejects the obvious junk a
-        # keyword search drags in: crowd/stage/logo-only shots, screenshots,
-        # graphics with text overlays, tiny/blurry/mostly-obstructed subjects.
-        # Fails closed (owner rule: accuracy over availability): on any vision error the photo is skipped; it is not stored, so a later
-        # run retries the same URL.
-        try:
-            from app.services.gallery_labeler import gate_and_label_image
-            label, usable, labels = gate_and_label_image(
-                final_bytes,
-                subject=subject,
-                keyword=subject,
-                allow_low_quality=allow_low_quality,
-            )
-        except Exception:
-            label, usable, labels = None, False, None
-
-        if not usable:
-            logger.info("Gallery: rejecting %s — vision quality gate says not usable for design", url)
-            path.unlink(missing_ok=True)
-            continue
-
         saved.append(DownloadedImage(
             source_url=key,  # stable key stored for dedup across future runs
             local_path=str(path),
@@ -607,6 +605,7 @@ def _fetch_and_store(
             captured_at=captured_dates.get(key),
             label=label,
             attributes=labels,
+            allow_low_quality=allow_low_quality,
         ))
 
     logger.info("Gallery: stored %d/%d candidate images (engine=%s)", len(saved), len(urls), engine)

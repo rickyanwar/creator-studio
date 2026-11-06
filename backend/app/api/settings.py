@@ -128,6 +128,8 @@ def get_settings(db: DB, _: CurrentUser):
         radar_news_stagger_max_min=row.radar_news_stagger_max_min,
         gallery_labeling_enabled=getattr(row, "gallery_labeling_enabled", False),
         gallery_labeling_daily_cap=getattr(row, "gallery_labeling_daily_cap", 1000),
+        gallery_new_labeler=getattr(row, "gallery_new_labeler", "app"),
+        gallery_muse_fallback_hours=getattr(row, "gallery_muse_fallback_hours", 6),
         gallery_labeling_since=getattr(row, "gallery_labeling_since", None),
         gallery_labels_today=labels_today,
         gallery_labels_total=labels_total,
