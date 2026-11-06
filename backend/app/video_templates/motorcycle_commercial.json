@@ -48,6 +48,9 @@
       "prompt": "{style} The hero is {vehicle}, ready at {setting}, the rider astride it in a matching leather suit, visor closed. Cinematic commercial camera work: long lenses, smooth tracking, the whole motorcycle in frame except in detail shots. Three shots with hard cuts, the same motorcycle and rider throughout: [00:00-00:04] Opening detail shot, shallow depth of field, the motorcycle standing still: the camera glides slowly along {detail_1}, then across the tank, golden light on the paint. [00:04-00:07] Long-lens front three-quarter hero shot of the whole motorcycle as the engine fires, boots down, the camera pushing in. [00:07-00:10] Long-lens side tracking shot: the rider lifts both feet onto the pegs and the motorcycle pulls away. {bike_rules} {audio} {narrator} \"{narration_1}\"",
       "narration_words": {
         "en": "18-22"
+      },
+      "narration_words_tts": {
+        "en": "14-16"
       }
     },
     {
@@ -56,6 +59,9 @@
       "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, rider, light and colour grade, travelling only forward. {ride_scene} Cinematic commercial camera work: long lenses, smooth tracking, the whole motorcycle in frame except in detail shots. Three shots with hard cuts, the same motorcycle and rider throughout: [00:00-00:04] Long-lens trackside panning shot of the whole motorcycle accelerating hard, the background streaking, the motorcycle sharp. [00:04-00:07] Slow-motion detail shot, shallow depth of field: close beside the moving front, the fairing, the spinning front wheel and brake disc, the fork working. [00:07-00:10] Low camera outside a sweeping corner: the whole motorcycle and rider lean together, both tyres planted. {bike_rules} {audio} {narrator_followup} \"{narration_2}\"",
       "narration_words": {
         "en": "18-22"
+      },
+      "narration_words_tts": {
+        "en": "14-16"
       }
     },
     {
@@ -64,6 +70,9 @@
       "prompt": "Continue seamlessly from this exact frame: the same {vehicle_short}, rider, light and colour grade, travelling forward. Cinematic commercial camera work: long lenses, smooth tracking, the whole motorcycle in frame except in detail shots. Three shots with hard cuts, the same motorcycle and rider throughout: [00:00-00:03] Long-lens shot of the whole motorcycle: {signature_move} [00:03-00:06] Long-lens head-on shot: the rider brakes in a straight line, the fork dipping, and the motorcycle rolls to a calm stop, boots down. [00:06-00:10] Closing shot: the camera orbits slowly around the stopped motorcycle, golden light over the tank, the race number and the helmet, ending on a calm, caption-free beauty frame. {bike_rules} {audio} {narrator_followup} \"{narration_3}\"",
       "narration_words": {
         "en": "18-22"
+      },
+      "narration_words_tts": {
+        "en": "14-16"
       }
     }
   ],
