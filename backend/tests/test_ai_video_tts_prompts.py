@@ -22,8 +22,10 @@ def variables_for(template, count):
     for name in templates.required_variables(template, count):
         if name.startswith("narration_"):
             variables[name] = (
-                "The camera reveals how this mechanism moves under load while the surrounding structure stays fixed and supports it."
+                "The camera reveals how this mechanism moves under load while the surrounding structure stays fixed and safely supports it throughout."
             )
+            if template.key == "motorcycle_commercial":
+                variables[name] = "This legendary motorcycle brings its distinctive engine and timeless racing character back onto the road today."
         elif name not in variables:
             variables[name] = "a clear close view of the real structure moving gently under load"
     return variables

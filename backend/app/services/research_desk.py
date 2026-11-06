@@ -32,6 +32,7 @@ from app.services.fanpage_language import fanpage_language
 from app.services.real_names import find_person_names, find_real_names
 from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import (
+    accepted_min,
     allowed_video_templates,
     clip_choices,
     clip_templates_for,
@@ -348,7 +349,7 @@ def _narration_words(t, lang: str, engine="flow") -> dict:
     out = {}
     for i, clip in enumerate(t.raw["clip_templates"], start=1):
         lo, hi = map(int, get_narration_budget(clip, lang, engine).split("-"))
-        out[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{lo - 6}-{hi}"}
+        out[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{accepted_min(lo, engine)}-{hi}"}
     return out
 
 
@@ -356,9 +357,10 @@ def _narration_words_by_clips(t, lang: str, engine_for_clips=lambda n: "flow") -
     out = {}
     for n in t.clip_options:
         by_clip = {}
+        engine = engine_for_clips(n)
         for i, clip in enumerate(clip_templates_for(t, n), start=1):
-            lo, hi = map(int, get_narration_budget(clip, lang, engine_for_clips(n)).split("-"))
-            by_clip[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{lo - 6}-{hi}"}
+            lo, hi = map(int, get_narration_budget(clip, lang, engine).split("-"))
+            by_clip[f"narration_{i}"] = {"target": f"{lo}-{hi}", "accepted": f"{accepted_min(lo, engine)}-{hi}"}
         out[str(n)] = by_clip
     return out
 

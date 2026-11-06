@@ -92,7 +92,7 @@ def test_planner_direct_fill_persists_tts(db, monkeypatch, research):
     variables = _valid_variables()
     for name in variables:
         if name.startswith("narration_"):
-            variables[name] = " ".join(variables[name].split()[:18])
+            variables[name] = " ".join(["word"] * 20)
     idea = _idea(session, fp, clips=2, source="muse" if research else "owner",
                  variables=variables if research else None,
                  title="Research title" if research else None, caption="Caption" if research else None)

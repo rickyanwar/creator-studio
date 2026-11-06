@@ -26,6 +26,9 @@ from backend.tests.test_ai_video_tts_prompts import CONFIG, TTS_CASES, variables
 def test_asmr_renders_all_templates(key, count):
     template = templates.get_template(key)
     variables = variables_for(template, count)
+    for index, source in enumerate(templates.clip_templates_for(template, count), start=1):
+        lo = int(templates.get_narration_budget(source, "en", "asmr").split("-")[0])
+        variables[f"narration_{index}"] = " ".join(["word"] * lo)
     if key == "motorsport_tech_explainer":
         variables["channel_name"] = "SECTOR ONE"
     clips = templates.render_clips(template, variables, count, narration_engine="asmr")

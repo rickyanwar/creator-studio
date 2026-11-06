@@ -18,6 +18,12 @@ LANGUAGE_WORD_FACTORS: dict[str, float] = {
     "id": 0.85,
 }
 NO_VOICE_WORD_FACTOR = 0.8
+ACCEPT_SLACK_WORDS = 6
+TTS_ACCEPT_SLACK_WORDS = 2
+
+
+def accepted_min(lo: int, narration_engine: str = "flow") -> int:
+    return lo - (TTS_ACCEPT_SLACK_WORDS if narration_engine == "tts" else ACCEPT_SLACK_WORDS)
 
 
 def get_narration_budget(clip_template: dict, lang_code: str | None = "en",
@@ -25,10 +31,12 @@ def get_narration_budget(clip_template: dict, lang_code: str | None = "en",
     """Return narration word budget (e.g. '22-24' or '18-20') for a language code.
     If language entry in narration_words exists, use it. Otherwise derive from 'en'
     using factor and round to integer range. ASMR (text only) uses a shorter budget;
-    Flow and TTS voices share the template budget.
+    TTS uses narration_words_tts when provided, otherwise the template budget.
     """
     code = (lang_code or "en").split("-")[0].lower()
     words_dict = clip_template.get("narration_words") or {}
+    if narration_engine == "tts" and isinstance(clip_template.get("narration_words_tts"), dict):
+        words_dict = clip_template["narration_words_tts"]
     if code in words_dict:
         budget = str(words_dict[code])
     else:
@@ -334,8 +342,8 @@ def render_clips(t: VideoTemplate, variables: dict, clips: int, lang_code: str |
         narration = f"narration_{index}"
         budget_str = get_narration_budget(clip, lang, narration_engine)
         lo, hi = map(int, budget_str.split("-"))
-        if not lo - 6 <= len(variables[narration].split()) <= hi:
-            raise ValueError(f"{narration} must contain {lo - 6}–{hi} words")
+        if not accepted_min(lo, narration_engine) <= len(variables[narration].split()) <= hi:
+            raise ValueError(f"{narration} must contain {accepted_min(lo, narration_engine)}–{hi} words")
         template_prompt = _VOICE_PART.sub("", clip["prompt"]) if narration_engine in ("tts", "asmr") else clip["prompt"]
         prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), template_prompt)
         if narration_engine in ("tts", "asmr"):
@@ -374,8 +382,8 @@ def _render_plain(t: VideoTemplate, variables: dict, clips: int, lang_code: str 
     for index, clip in enumerate(clip_templates_for(t, clips), start=1):
         narration = f"narration_{index}"
         lo, hi = map(int, get_narration_budget(clip, lang, narration_engine).split("-"))
-        if not lo - 6 <= len(variables[narration].split()) <= hi:
-            raise ValueError(f"{narration} must contain {lo - 6}–{hi} words")
+        if not accepted_min(lo, narration_engine) <= len(variables[narration].split()) <= hi:
+            raise ValueError(f"{narration} must contain {accepted_min(lo, narration_engine)}–{hi} words")
         template_prompt = _VOICE_PART.sub("", clip["prompt"]) if narration_engine in ("tts", "asmr") else clip["prompt"]
         prompt = _PLACEHOLDER.sub(lambda match: substitutions.get(match[1], match[0]), template_prompt)
         if narration_engine in ("tts", "asmr"):
