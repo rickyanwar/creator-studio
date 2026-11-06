@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 KEY_PREFIX = "gallery:label_budget"
 KEY_TTL_SECONDS = 2 * 86400  # 2 days
+BACKFILL_DAILY_CAP = 100  # owner 2026-11-07: relabel + backfill of old photos, to cut 9Router vision traffic
 
 
 def get_budget_redis_client():
@@ -56,6 +57,23 @@ def reserve(cap: int, db=None, redis_client=None, now_utc: datetime | None = Non
         return True
     except Exception as exc:
         logger.warning("gallery_label_budget.reserve: Redis error, failing closed: %s", exc)
+        return False
+
+
+def reserve_backfill(cap: int = BACKFILL_DAILY_CAP, redis_client=None, now_utc=None) -> bool:
+    """Reserve an old-photo labeling slot; fail closed without DB seeding."""
+    key = _get_today_key(now_utc).replace(KEY_PREFIX, "gallery_label_backfill", 1)
+    try:
+        r = redis_client if redis_client is not None else get_budget_redis_client()
+        val = r.incr(key)
+        if val == 1:
+            r.expire(key, KEY_TTL_SECONDS)
+        if val > cap:
+            r.decr(key)
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("gallery_label_budget.reserve_backfill: Redis error, failing closed: %s", exc)
         return False
 
 

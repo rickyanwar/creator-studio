@@ -121,6 +121,12 @@ def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, 
     Every outcome is logged to ai_copy_events so vision's health shows up on
     the dashboard alongside the text-copy success rate.
     """
+    from app.services import vision_breaker
+
+    if vision_breaker.is_open():
+        logger.info("vision paused by breaker (%s)", context)
+        raise vision_breaker.VisionPausedError("vision paused after repeated 9Router failures")
+
     import time
     from openai import OpenAI  # type: ignore
     from app.services.ai_caption import log_ai_copy_event
@@ -171,6 +177,7 @@ def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, 
                         error_message=str(last_exc) if last_exc else None,
                         latency_ms=int((time.monotonic() - t0) * 1000),
                     )
+                    vision_breaker.record_success()
                     return text
                 last_exc = RuntimeError(f"{model}: empty response")
             except Exception as exc:
@@ -183,6 +190,7 @@ def _vision_chat(content: list, max_tokens: int = 1500, temperature: float = 0, 
         error_message=str(last_exc) if last_exc else "no vision models configured",
         latency_ms=int((time.monotonic() - t0) * 1000),
     )
+    vision_breaker.record_failure()
     raise last_exc or RuntimeError("no vision models configured")
 
 
@@ -1746,10 +1754,29 @@ def vision_focus_point(image_bytes: bytes, for_split: bool = False, safe_cy_ceil
     enforcement, same role as detect_focus_point's ceiling. Defaults to the
     old flat 0.7 when omitted, which is permissive enough to have let a
     real face land under a title box that started as high as 44% down."""
+    from app.services import vision_cache
+
+    def _clamp(x, y):
+        if for_split:
+            return [round(min(0.85, max(0.15, x)), 4), round(min(0.75, max(0.2, y)), 4)]
+        # keep the subject slightly above centre so it clears the bottom text
+        ceiling = 0.7 if safe_cy_ceiling is None else safe_cy_ceiling
+        return [round(min(0.85, max(0.15, x)), 4), round(min(ceiling, max(0.15, y)), 4)]
+
+    digest = vision_cache.image_digest(image_bytes)
+    key = f"split={bool(for_split)}"
+    try:
+        hit = vision_cache.get_cached("focus_point", digest, key)
+        if hit is not None:
+            x, y = float(hit["x"]), float(hit["y"])
+            if 0 <= x <= 1 and 0 <= y <= 1:
+                return _clamp(x, y)
+    except Exception:
+        pass
     try:
         # x/y are fractions of the frame, so a downscaled copy is fine here —
         # and keeps the request under the router's size limit (see _vision_datauri).
-        datauri = _vision_datauri(image_bytes)
+        datauri = _vision_datauri(image_bytes, max_dim=512)
         if for_split:
             prompt = (
                 "This photo is one half of a side-by-side split news graphic "
@@ -1783,11 +1810,11 @@ def vision_focus_point(image_bytes: bytes, for_split: bool = False, safe_cy_ceil
         d = _json.loads(m.group(0))
         x = float(d.get("x")); y = float(d.get("y"))
         if 0 <= x <= 1 and 0 <= y <= 1:
-            if for_split:
-                return [round(min(0.85, max(0.15, x)), 4), round(min(0.75, max(0.2, y)), 4)]
-            # keep the subject slightly above centre so it clears the bottom text
-            ceiling = 0.7 if safe_cy_ceiling is None else safe_cy_ceiling
-            return [round(min(0.85, max(0.15, x)), 4), round(min(ceiling, max(0.15, y)), 4)]
+            try:
+                vision_cache.put_cached("focus_point", digest, key, {"x": x, "y": y})
+            except Exception:
+                pass
+            return _clamp(x, y)
     except Exception as exc:
         logger.warning("vision_focus_point failed: %s", exc)
     return None
@@ -1885,7 +1912,7 @@ def classify_image_type(image_bytes: bytes) -> str:
                 "ACTION (a rider/driver on a moving bike/car / on track), or "
                 "OTHER (anything else)."
             )},
-            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes, max_dim=512)}},
         ]
         raw = _vision_chat(content, max_tokens=1500, context="vision_classify_type").upper()
         for w in ("FACE", "ACTION", "OTHER"):
@@ -2024,7 +2051,7 @@ def classify_closeup_match(image_bytes: bytes, criteria: str) -> dict:
                 "Does this photo satisfy that criteria?\n"
                 'Reply with ONLY a JSON object {"match": true|false, "confidence": 0.00-1.00}.'
             )},
-            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes, max_dim=512)}},
         ]
         raw = _vision_chat(content, max_tokens=1500, context="vision_classify_closeup")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -2068,7 +2095,7 @@ def vision_pick_best(candidates: list, subject: str, image_type: str | None = No
         for uri in candidates:
             try:
                 raw = base64.b64decode(uri.split(",", 1)[1])
-                small_uri = _vision_datauri(raw)
+                small_uri = _vision_datauri(raw, max_dim=512)
             except Exception:
                 small_uri = uri
             content.append({"type": "image_url", "image_url": {"url": small_uri}})
@@ -2825,7 +2852,7 @@ def vision_check_photo_quality(image_bytes: bytes) -> bool:
                 '"reason": "one short phrase naming specific evidence"}\n'
                 "good_quality should be true only for detail_score 6 or higher. No markdown fences."
             )},
-            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes, max_dim=512)}},
         ]
         raw = _vision_chat(content, max_tokens=800, context="vision_check_photo_quality")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -2850,6 +2877,15 @@ def vision_has_watermark(image_bytes: bytes) -> bool:
     Fails CLOSED (assume a watermark is present) on any error — same
     convention as vision_check_pin_description/vision_identify_pin_subject;
     an unverifiable photo is skipped, not risked."""
+    from app.services import vision_cache
+
+    digest = vision_cache.image_digest(image_bytes)
+    try:
+        hit = vision_cache.get_cached("watermark", digest, "v1")
+        if hit is not None:
+            return bool(hit["has_watermark"])
+    except Exception:
+        pass
     try:
         content = [
             {"type": "text", "text": (
@@ -2861,7 +2897,7 @@ def vision_has_watermark(image_bytes: bytes) -> bool:
                 "decals on a car or racesuit, signage in the background).\n"
                 'Reply with ONLY a JSON object {"has_watermark": true|false}.'
             )},
-            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes)}},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(image_bytes, max_dim=512)}},
         ]
         raw = _vision_chat(content, max_tokens=200, context="vision_has_watermark")
         m = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -2869,7 +2905,14 @@ def vision_has_watermark(image_bytes: bytes) -> bool:
             return True
         import json as _json
         d = _json.loads(m.group(0))
-        return bool(d.get("has_watermark", True))
+        if not isinstance(d.get("has_watermark"), bool):
+            return True
+        result = d["has_watermark"]
+        try:
+            vision_cache.put_cached("watermark", digest, "v1", {"has_watermark": result})
+        except Exception:
+            pass
+        return result
     except Exception as exc:
         logger.warning("vision_has_watermark failed (treating as watermarked): %s", exc)
         return True
@@ -3623,34 +3666,15 @@ def analyze_subject_side(main_datauri: str) -> str:
     """Vision: which side is the main subject on → 'left' | 'right' | 'center'.
     Used to place the secondary inset in the opposite (emptier) area."""
     try:
-        from openai import OpenAI  # type: ignore
-        from app.config import get_settings
-        from app.services.nine_router import get_nine_router_config
-
-        cfg = get_nine_router_config()
-        if not cfg.base_url:
-            return "center"
-        # Explicit timeout + max_retries=0 (2026-09-02): this call had NEITHER
-        # before — a broken nine_router_vision_model would've hung on the
-        # SDK's own (much longer) default timeout, retried automatically on
-        # top of that, before finally hitting the except below. This function
-        # has no model-to-model fallback of its own, so failing fast just
-        # means reaching the "center" default sooner, never less reliably.
-        client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key or "sk-9router", timeout=30.0, max_retries=0)
-        c = client.chat.completions.create(
-            model=get_settings().nine_router_vision_model,
-            max_tokens=1500,
-            temperature=0,
-            timeout=30.0,
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text": (
-                    "Where is the main person/subject's head positioned in this "
-                    "image? Answer with ONLY one word: LEFT, RIGHT, or CENTER."
-                )},
-                {"type": "image_url", "image_url": {"url": main_datauri}},
-            ]}],
-        )
-        raw = (c.choices[0].message.content or "").upper()
+        b = base64.b64decode(main_datauri.split(",", 1)[1])
+        content = [
+            {"type": "text", "text": (
+                "Where is the main person/subject's head positioned in this "
+                "image? Answer with ONLY one word: LEFT, RIGHT, or CENTER."
+            )},
+            {"type": "image_url", "image_url": {"url": _vision_datauri(b, max_dim=512)}},
+        ]
+        raw = _vision_chat(content, max_tokens=1500, context="vision_subject_side").upper()
         for w in ("LEFT", "RIGHT", "CENTER"):
             if w in raw:
                 return w.lower()

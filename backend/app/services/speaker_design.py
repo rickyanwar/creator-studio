@@ -522,6 +522,17 @@ def verify_speaker_photo(photo: GalleryImage | Any, speaker: str) -> str:
         else:
             photo_bytes = _read_photo(photo)
 
+        from app.services import vision_cache
+
+        digest = vision_cache.image_digest(photo_bytes)
+        key = speaker.strip().lower()
+        try:
+            hit = vision_cache.get_cached("speaker_check", digest, key)
+            if hit is not None and hit["answer"] in ("yes", "no"):
+                return hit["answer"]
+        except Exception:
+            pass
+
         prompt = f"Is the main person in this photo {speaker}? Answer yes / no / unsure"
         data_uri = design_images._vision_datauri(photo_bytes)
         content = [
@@ -536,12 +547,16 @@ def verify_speaker_photo(photo: GalleryImage | Any, speaker: str) -> str:
         )
         ans = (raw or "").strip().lower()
         if re.search(r"\byes\b", ans) and not re.search(r"\bno\b", ans):
-            return "yes"
+            answer = "yes"
         elif re.search(r"\bno\b", ans):
-            return "no"
-        elif "unsure" in ans:
+            answer = "no"
+        else:
             return "unsure"
-        return "unsure"
+        try:
+            vision_cache.put_cached("speaker_check", digest, key, {"answer": answer})
+        except Exception:
+            pass
+        return answer
     except Exception as exc:
         logger.warning("verify_speaker_photo error for speaker %s: %s", speaker, exc)
         return "error"
