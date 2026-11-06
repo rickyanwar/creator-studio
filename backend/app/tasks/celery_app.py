@@ -95,6 +95,11 @@ celery_app.conf.update(
         "app.tasks.phone_watchdog.check_phone_devices": {"queue": "delivery"},
         # Always an AI redesign; explicit apply_async(queue="visual") everywhere, this is the safety net.
         "app.tasks.ig_recreate.run_preview_redesign": {"queue": "visual"},
+        # 9Router-heavy: a slow 9Router made these run 20-58 min and starve the 2-slot default
+        # queue (radar dispatch ticks expired, publishes waited; 2026-11-06). Own worker-ai.
+        # Explicit apply_async(queue="visual") calls still go to visual.
+        "app.tasks.design_renderer.render_design": {"queue": "ai"},
+        "app.tasks.news_copywriter.copywrite_article": {"queue": "ai"},
         # Headless Chrome IG viewer crawls: own single-slot worker so a hung browser never blocks the default queue (incident 2026-10-22).
         "app.tasks.crawler.*": {"queue": "crawl"},
         "app.tasks.radar_crawl.*": {"queue": "crawl"},

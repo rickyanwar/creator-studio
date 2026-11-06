@@ -85,6 +85,22 @@ services:
       redis:
         condition: service_healthy
 
+  worker-ai:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --queues=ai --max-tasks-per-child=50
+    env_file: .env
+    volumes:
+      - ./backend:/app
+      - media_data:/var/www/media
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # ── Celery Beat (Scheduler) ───────────────────
   beat:
     build:

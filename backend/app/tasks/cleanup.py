@@ -129,6 +129,31 @@ def _to_naive_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _radar_still_watching(db, post, now, track_max_age_h=48) -> bool:
+    """Keep source media while an active viral-only destination still awaits Radar."""
+    if not post.ig_source_id or not post.crawled_at:
+        return False
+    if _to_naive_utc(now) - _to_naive_utc(post.crawled_at) >= timedelta(hours=track_max_age_h):
+        return False
+
+    from app.models.fanpage_sources import FanpageSource
+    from app.models.target_fanpages import TargetFanpage
+    from app.models.publish_jobs import PublishJob
+
+    has_job = db.query(PublishJob.id).filter(
+        PublishJob.post_id == post.id,
+        PublishJob.fanpage_id == FanpageSource.fanpage_id,
+    ).exists()
+    return db.query(FanpageSource.id).join(TargetFanpage).filter(
+        FanpageSource.ig_source_id == post.ig_source_id,
+        FanpageSource.trigger == "viral_only",
+        FanpageSource.is_active.is_(True),
+        TargetFanpage.is_active.is_(True),
+        TargetFanpage.radar_enabled.is_(True),
+        ~has_job,
+    ).first() is not None
+
+
 def _job_go_live_time(job) -> datetime | None:
     """Return latest of (job.scheduled_for, latest delivery scheduled_for or published_at of its deliveries, job.published_at)."""
     timestamps = []
@@ -166,6 +191,12 @@ def cleanup_old_media():
     try:
         from app.models.posts import Post, PostStatus
         from app.models.publish_jobs import PublishJob, PublishJobStatus
+        from app.models.settings import Settings
+
+        radar_settings = db.query(Settings).filter_by(id=1).first()
+        track_max_age_h = getattr(radar_settings, "radar_track_max_age_h", None)
+        if track_max_age_h is None:
+            track_max_age_h = 48
 
         candidates = (
             db.query(Post)
@@ -193,6 +224,8 @@ def cleanup_old_media():
                 continue
 
             if _post_media_still_needed(db, jobs, now):
+                continue
+            if _radar_still_watching(db, post, now, track_max_age_h):
                 continue
 
             post_dir = Path(settings.storage_base_path) / "posts" / str(post.uuid)

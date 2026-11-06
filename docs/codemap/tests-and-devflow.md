@@ -218,6 +218,7 @@ CI/CD deployment is controlled by `.github/workflows/deploy.yml` and verified by
    - Gallery image scraping (`app.tasks.gallery_downloader.*`, `app.tasks.gallery_labels.*`) routes to `gallery` queue consumed by `worker-gallery`.
    - YouTube video renders (`app.tasks.yt_clip.*`, `app.tasks.yt_clip_render.*`) and AI video finalize route to `video` queue consumed by `worker-video`.
    - Visual redesigns route to `visual` queue consumed by `worker-visual` (`--concurrency=1`).
+   - News renders (`app.tasks.design_renderer.render_design`) and news copywriter (`app.tasks.news_copywriter.copywrite_article`) route to `ai` queue consumed by `worker-ai` (`--concurrency=2`, 1200 MB cap); explicit `apply_async(queue="visual")` calls still use `visual`.
 5. **VPS Resource Boundaries**:
    - Free RAM is constrained (~1.4 GB free).
    - `worker-video` has `cpus: 2`, `mem_limit: 1500m`, `oom_score_adj: 500`, and `stop_grace_period: 5m` (`docker-compose.server.yml:121-124`). Under host pressure, the Linux OOM-killer kills the video worker before touching production API or database containers.

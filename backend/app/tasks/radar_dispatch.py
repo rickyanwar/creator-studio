@@ -248,6 +248,12 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
                     break
             
             if post and link:
+                if not post.image_local_paths:
+                    d.status = DecisionStatus.FAILED
+                    d.reason = "source media already cleaned"
+                    d.post_id = post.id
+                    db.commit()
+                    continue
                 c = 0 if d.rule in ('fast', 'burst') else _fanpage_stagger(slot)
                 if d.rule in ('fast', 'burst'):
                     c = 0 if slot == 0 else random.randint(0, news_stagger_max * 60)
@@ -260,6 +266,15 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
                     d.post_id = post.id
                     db.commit()
                     slot += 1
+                else:
+                    if not link.fanpage.mode1_ig_repost_enabled:
+                        d.status = DecisionStatus.FAILED
+                        d.reason = "Mode 1 IG repost is off for this fan page"
+                    else:
+                        d.status = DecisionStatus.SKIPPED_DEDUP
+                        d.reason = "a publish job already exists for this post"
+                    d.post_id = post.id
+                    db.commit()
             else:
                 d.status = DecisionStatus.FAILED
                 d.reason = "Post missing for viral_only link"
@@ -326,4 +341,3 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
 def _fanpage_stagger(slot: int) -> int:
     from app.tasks.fan_out import _FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX
     return 0 if slot == 0 else random.randint(_FANPAGE_STAGGER_MIN, _FANPAGE_STAGGER_MAX)
-

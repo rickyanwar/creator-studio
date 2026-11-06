@@ -51,6 +51,7 @@ Comprehensive architecture and implementation map covering content discovery, de
   - Sets `Post.status = stored`, dispatches `create_fanout_jobs.delay(post_id)` (`image_saver.py:127, 134`).
 - **Fan-Out** (`backend/app/tasks/fan_out.py:94` `create_fanout_jobs`):
   - Skips links where `trigger == 'viral_only'` (`fan_out.py:125`).
+  - Radar decisions whose fan-out is skipped end `failed`/`skipped_dedup` instead of staying queued.
   - Mode 1 Gate: skips fanpage if `not link.fanpage.mode1_ig_repost_enabled` (`fan_out.py:29`).
   - Idempotency: checks if `PublishJob` already exists for `(post_id, fanpage_id)` (`fan_out.py:37`).
   - Stagger: random 60 to 1500s delay (`_fanpage_stagger`, `fan_out.py:13, 18`) between fanpages sharing the same IG source.
@@ -289,6 +290,8 @@ Comprehensive architecture and implementation map covering content discovery, de
 ---
 
 ## 9. Comprehensive Content Skip Gates Summary
+
+Cleanup keeps media while an active `viral_only` link still waits for Radar within `radar_track_max_age_h` (default 48 hours).
 
 | Mode | Skip Gate Condition | Action Taken | Exact Location |
 |---|---|---|---|

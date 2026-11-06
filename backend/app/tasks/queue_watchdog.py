@@ -11,11 +11,12 @@ from app.tasks.phone_watchdog import send_telegram_fallback
 logger = logging.getLogger(__name__)
 
 # Waiting-task limits per queue; normal levels are 0-30 on the default queue.
-QUEUE_BACKLOG_LIMITS = {"celery": 200, "crawl": 50, "visual": 100, "video": 50, "gallery": 300}
+QUEUE_BACKLOG_LIMITS = {"celery": 200, "crawl": 50, "visual": 100, "ai": 150, "video": 50, "gallery": 300}
 QUEUE_WORKERS = {
     "celery": "worker",
     "crawl": "worker-crawl",
     "visual": "worker-visual",
+    "ai": "worker-ai",
     "video": "worker-video",
     "gallery": "worker-gallery",
 }

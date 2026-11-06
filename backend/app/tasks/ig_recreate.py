@@ -186,10 +186,18 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
         link = db.query(FanpageSource).filter_by(fanpage_id=fanpage_id, ig_source_id=post.ig_source_id).first() if post.ig_source_id else None
         recreate_enabled = link.ig_recreate_enabled if (link and link.ig_recreate_enabled is not None) else fanpage.ig_recreate_enabled
         if not recreate_enabled:
+            if decision:
+                decision.status = DecisionStatus.FAILED
+                decision.reason = "IG recreate is off for this source"
+                db.commit()
             return
         effective_engine = resolve_effective_engine(fanpage, link)
         if not post.image_local_paths:
             logger.warning("IG-recreate: post %d has no images", post_id)
+            if decision:
+                decision.status = DecisionStatus.FAILED
+                decision.reason = "source media already cleaned"
+                db.commit()
             return
 
         ig_source = db.query(IGSource).filter_by(id=post.ig_source_id).first()

@@ -85,6 +85,7 @@ Breaking these has caused real incidents.
   - `gallery` queue: gallery downloads and labels
   - `video` queue: ffmpeg work
   - `visual` queue: AI image redesign
+  - `ai` queue: news render (`render_design`) + news copywriter (9Router-heavy), own `worker-ai` (2 slots)
   - `delivery` queue: social delivery dispatch (phone posting) + phone watchdog, own single-slot `worker-delivery`
   - `crawl` queue: IG viewer crawls + Viral Radar crawl (headless Chrome), own single-slot `worker-crawl`
 
