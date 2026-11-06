@@ -75,7 +75,7 @@ def choose_layout(brief: PosterBrief, selection: PhotoSelection) -> str:
         return "face_ref_scene"
     if selection.context:
         return "action_full_bleed"
-    return "typographic"
+    return "scene"
 
 
 def direct(
@@ -85,6 +85,7 @@ def direct(
     headline: str | None = None,
     story_text: str | None = None,
     concept: PosterConcept | None = None,
+    absent_hero: str | None = None,
 ) -> ArtDirection:
     """Generate story-driven designer brief prompt and ordered reference images."""
     layout = choose_layout(brief, selection)
@@ -206,6 +207,15 @@ def direct(
             "- Tell THIS story, not just show a vehicle on a new background. Show the moment, the result or what is at stake as the story describes it, in the real setting of this event.",
             "- Stay true to the story: do not invent results, places, people or objects that contradict it. It must be physically logical and believable as a real photo.",
         ]
+    if absent_hero and has_person:
+        must_do_lines.append(
+            f"- The story is mainly about {absent_hero}, but no verified photo of him exists. Do not show, draw or invent {absent_hero} anywhere in the poster; {hero} (who is also part of this story) is the person shown."
+        )
+    if layout == "scene":
+        must_do_lines.extend([
+            "- No reference photos exist for this story, so the artwork must not show any real person, face, team kit or specific vehicle. Never invent a person, a face, a race number or a team livery.",
+            "- Tell the story with the place, the light, the weather and objects named in the story (for example the circuit at night, empty grandstands, the pit lane, storm clouds over the track, a trophy, a chequered flag). Vehicles may appear only far away, small and out of focus, with no readable number, livery or team colours.",
+        ])
     if hero_subj is not None and (selection.hero is not None or selection.face_ref is not None):
         must_do_lines.append(
             f"- {hero} must be recognisably himself: show his face clearly, turned toward the camera (front or three-quarter view), with his real face and likeness from the reference photos; never show him only from behind or with his face hidden."
@@ -221,7 +231,9 @@ def direct(
         )
     main_subject_str = hero_subj.name if hero_subj is not None else "the main subject"
     context_count = len(selection.context)
-    if strict:
+    if layout == "scene":
+        must_do_lines.append("- Layout: one full-bleed image. No inset, no circles, no split.")
+    elif strict:
         if context_count:
             must_do_lines.append(
                 f"- Layout: {main_subject_str} large in the frame, plus at most ONE inset inside a large circle (about 40-45% of the card width) with a clean solid white ring and a soft drop shadow, upper-left, its top edge no higher than 12% of the image height (the page logo sits in the top corners); the hero overlaps the edge of the circle, in front of it, with a soft contact shadow. "

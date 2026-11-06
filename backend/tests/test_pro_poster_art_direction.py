@@ -152,8 +152,8 @@ def test_choose_layout():
     ctx_check = _make_check(role="context", path="/images/ctx.jpg")
     face_check = _make_check(role="hero", path="/images/face_ref.jpg")
 
-    # 1. No hero, no face_ref, no context -> typographic
-    assert choose_layout(brief, PhotoSelection(hero=None, face_ref=None, context=())) == "typographic"
+    # 1. No hero, no face_ref, no context -> scene
+    assert choose_layout(brief, PhotoSelection(hero=None, face_ref=None, context=())) == "scene"
 
     # 2. Hero None + face_ref -> face_ref_scene (both with and without context)
     assert (
@@ -440,17 +440,28 @@ def test_no_hero_brief_omits_likeness_line():
     assert "Tell THIS story" in p
 
 
-def test_typographic_empty_prompt_and_refs():
-    """Typographic layout must produce empty prompt, empty refs, and empty allowed_text."""
-    brief = _make_brief()
+@pytest.mark.parametrize("series", ["MotoGP", "Formula 1"])
+def test_scene_prompt_and_empty_refs(series):
+    """No photos produces a person-less, full-bleed scene in every series."""
+    brief = _make_brief(series=series, subjects=(Subject(name="Jake Dixon"),))
     selection = PhotoSelection(hero=None, face_ref=None, context=())
 
     direction = direct(brief, selection)
 
-    assert direction.layout == "typographic"
-    assert direction.prompt == ""
+    assert direction.layout == "scene"
+    assert "No reference photos exist for this story" in direction.prompt
+    assert "one full-bleed image. No inset" in direction.prompt
+    assert "Jake Dixon large in the frame" not in direction.prompt
+    assert "Never invent a person, a face, a race number or a team livery." in direction.prompt
     assert direction.refs == ()
     assert direction.allowed_text == ()
+
+
+def test_promoted_hero_prompt_excludes_absent_hero():
+    brief = _make_brief(series="MotoGP", subjects=(Subject(name="Joan Mir"),))
+    direction = direct(brief, PhotoSelection(hero=_make_check()), absent_hero="Jake Dixon")
+    assert "Do not show, draw or invent Jake Dixon" in direction.prompt
+    assert "Joan Mir (who is also part of this story) is the person shown." in direction.prompt
 
 
 def test_retry_prompt_keeps_refs_and_appends_correction():
