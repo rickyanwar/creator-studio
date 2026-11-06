@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from app.services.pro_poster.pipeline import (
     _story_text,
     compose_pro_poster,
     pro_poster_applies,
+    promote_secondary,
 )
 from app.services.pro_poster.types import (
     ArtDirection,
@@ -89,8 +91,8 @@ def _make_direction(layout: str = "hero_with_context") -> ArtDirection:
 @patch("app.services.pro_poster.photos.select_photos")
 @patch("app.services.pro_poster.art_direction.direct")
 @patch("app.services.pro_poster.pipeline.generate_ex")
-def test_compose_typographic_path_no_generation(mock_gen, mock_direct, mock_select):
-    """Typographic layout immediately returns without generating an image."""
+def test_compose_scene_generation(mock_gen, mock_direct, mock_select):
+    """No verified photos generates a scene without references."""
     db = MagicMock()
     fanpage = MagicMock(id=10)
     job = MagicMock(id=101, design_analysis_json={})
@@ -99,24 +101,29 @@ def test_compose_typographic_path_no_generation(mock_gen, mock_direct, mock_sele
     brief = _make_brief(101)
     selection = _make_selection(has_hero=False)
     mock_select.return_value = selection
-    mock_direct.return_value = ArtDirection(layout="typographic", prompt="", refs=())
+    mock_direct.return_value = ArtDirection(layout="scene", prompt="Scene", refs=())
+    mock_gen.return_value = GenerationResult(image=b"raw", engine="gptcli", meta={}, event_id=None)
 
     with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
-         patch("app.services.story_photo.fetch_story_photo", return_value=None):
+         patch("app.services.story_photo.fetch_story_photo", return_value=None), \
+         patch("app.services.speaker_design._finish", return_value=b"scene"), \
+         patch("app.services.pro_poster.qa.check_safety", return_value=QAResult(passed=True)):
         result = compose_pro_poster(db, fanpage, job, article)
 
-    assert result.image is None
-    assert result.direction.layout == "typographic"
-    assert result.attempts == 0
-    assert result.fallback_reason == "no verified photo"
-    mock_gen.assert_not_called()
+    assert result.image == b"scene"
+    assert result.direction.layout == "scene"
+    assert result.attempts == 1
+    assert result.fallback_reason is None
+    req = mock_gen.call_args.args[1]
+    assert req.refs == ()
+    assert req.layout == "action"
 
 
 @patch("app.services.pro_poster.photos.select_photos")
 @patch("app.services.pro_poster.art_direction.direct")
 @patch("app.services.pro_poster.pipeline.generate_ex")
-def test_compose_typographic_photo_check_error(mock_gen, mock_direct, mock_select):
-    """Typographic layout with photo check errors sets fallback_reason to 'photo check error'."""
+def test_compose_scene_photo_check_error(mock_gen, mock_direct, mock_select):
+    """Photo check errors defer instead of generating a scene."""
     db = MagicMock()
     fanpage = MagicMock(id=10)
     job = MagicMock(id=101, design_analysis_json={})
@@ -144,13 +151,14 @@ def test_compose_typographic_photo_check_error(mock_gen, mock_direct, mock_selec
     assert result.attempts == 0
     assert result.fallback_reason == "photo check error"
     mock_gen.assert_not_called()
+    mock_direct.assert_not_called()
 
 
 @patch("app.services.pro_poster.photos.select_photos")
 @patch("app.services.pro_poster.art_direction.direct")
 @patch("app.services.pro_poster.pipeline.generate_ex")
-def test_compose_typographic_all_rejected_person_no(mock_gen, mock_direct, mock_select):
-    """Typographic layout with all rejected person='no' sets fallback_reason to 'no verified photo'."""
+def test_compose_scene_all_rejected_person_no(mock_gen, mock_direct, mock_select):
+    """Rejected identities without check errors still allow a scene generation."""
     db = MagicMock()
     fanpage = MagicMock(id=10)
     job = MagicMock(id=101, design_analysis_json={})
@@ -167,24 +175,25 @@ def test_compose_typographic_all_rejected_person_no(mock_gen, mock_direct, mock_
     )
     selection = PhotoSelection(hero=None, context=(), rejected=(no_chk,))
     mock_select.return_value = selection
-    mock_direct.return_value = ArtDirection(layout="typographic", prompt="", refs=())
+    mock_direct.return_value = ArtDirection(layout="scene", prompt="Scene", refs=())
+    mock_gen.side_effect = NoAllowedEngine()
 
     with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
          patch("app.services.story_photo.fetch_story_photo", return_value=None):
         result = compose_pro_poster(db, fanpage, job, article)
 
     assert result.image is None
-    assert result.direction.layout == "typographic"
+    assert result.direction.layout == "scene"
     assert result.attempts == 0
-    assert result.fallback_reason == "no verified photo"
-    mock_gen.assert_not_called()
+    assert result.fallback_reason == "engine: chatgpt not available"
+    mock_gen.assert_called_once()
 
 
 @patch("app.services.pro_poster.photos.select_photos")
 @patch("app.services.pro_poster.art_direction.direct")
 @patch("app.services.pro_poster.pipeline.generate_ex")
-def test_compose_typographic_empty_selection(mock_gen, mock_direct, mock_select):
-    """Typographic layout with empty selection sets fallback_reason to 'no verified photo'."""
+def test_compose_scene_empty_selection_engine_failure(mock_gen, mock_direct, mock_select):
+    """Scene engine failures return to the renderer's old path."""
     db = MagicMock()
     fanpage = MagicMock(id=10)
     job = MagicMock(id=101, design_analysis_json={})
@@ -193,17 +202,18 @@ def test_compose_typographic_empty_selection(mock_gen, mock_direct, mock_select)
     brief = _make_brief(101)
     selection = PhotoSelection(hero=None, context=(), rejected=())
     mock_select.return_value = selection
-    mock_direct.return_value = ArtDirection(layout="typographic", prompt="", refs=())
+    mock_direct.return_value = ArtDirection(layout="scene", prompt="Scene", refs=())
+    mock_gen.side_effect = VisualEngineError(kind="quota", message="Quota exceeded")
 
     with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
          patch("app.services.story_photo.fetch_story_photo", return_value=None):
         result = compose_pro_poster(db, fanpage, job, article)
 
     assert result.image is None
-    assert result.direction.layout == "typographic"
-    assert result.attempts == 0
-    assert result.fallback_reason == "no verified photo"
-    mock_gen.assert_not_called()
+    assert result.direction.layout == "scene"
+    assert result.attempts == 1
+    assert result.fallback_reason == "engine: quota"
+    mock_gen.assert_called_once()
 
 
 @patch("app.services.pro_poster.photos.select_photos")
@@ -611,8 +621,8 @@ def test_render_design_switch_on_image_success(mock_resolve, mock_session, mock_
 @patch("app.services.design_images.prepare_design_images")
 @patch("app.tasks.design_renderer.SessionLocal")
 @patch("app.services.design_images.resolve_template")
-def test_render_design_switch_on_no_image_typographic(mock_resolve, mock_session, mock_prepare, mock_post):
-    """Switch ON + no image -> typographic background used, no 'needs manual image' error."""
+def test_render_design_switch_on_no_image_old_path(mock_resolve, mock_session, mock_prepare, mock_post):
+    """Switch ON + no image uses the existing gallery fallback."""
     db = MagicMock()
     mock_session.return_value = db
 
@@ -678,19 +688,19 @@ def test_render_design_switch_on_no_image_typographic(mock_resolve, mock_session
     with patch("app.services.pro_poster.pipeline.compose_pro_poster", return_value=pro_result), \
          patch("app.services.pro_poster.typo_background.make_typographic_background", return_value=b"fake_bg_png") as mock_tb, \
          patch("app.services.pro_poster.typo_background.background_datauri", return_value="data:image/png;base64,BG") as mock_uri, \
-         patch("app.services.design_images.single_photo_face_fits") as mock_fits, \
+         patch("app.tasks.design_renderer._maybe_compose_speaker_design", return_value=None), \
+         patch("app.tasks.design_renderer.select_image_for_job", return_value=("data:image/png;base64,AAAA", None, "gallery:10")) as mock_select, \
+         patch("app.services.design_images.single_photo_face_fits", return_value=True), \
          patch("app.services.design_images.focus_points_for", return_value=[]), \
          patch("pathlib.Path.mkdir"), \
          patch("pathlib.Path.write_bytes"):
         render_design(203)
 
-    mock_tb.assert_called_once()
-    mock_uri.assert_called_once_with(b"fake_bg_png")
-    # Face fits check is skipped for typographic card
-    mock_fits.assert_not_called()
-    assert job.last_image_marker == "pro_poster_typo"
+    mock_tb.assert_not_called()
+    mock_uri.assert_not_called()
+    mock_select.assert_called_once()
+    assert job.last_image_marker == "gallery:10"
     assert job.design_engine == "template"
-    assert job.design_engine_note == "no verified photo"
     assert job.last_error is None
     assert job.status == PublishJobStatus.pending_publish
 
@@ -1269,3 +1279,97 @@ def test_story_for_photos_truncation():
     assert _story_for_photos("Only Headline", None) == "Only Headline"
     assert _story_for_photos(None, "Only Story") == "Only Story"
 
+
+@pytest.mark.parametrize("subjects", [(), (Subject("Jake Dixon"),), (Subject("Joan Mir", "secondary"),)])
+def test_promote_secondary_requires_both_roles(subjects):
+    assert promote_secondary(replace(_make_brief(), subjects=subjects)) is None
+
+
+def test_promote_secondary_preserves_other_subjects_and_teams():
+    hero = Subject("Jake Dixon", "hero", "Hero team")
+    secondary = Subject("Joan Mir", "secondary", "Honda")
+    others = (Subject("Other", "mentioned"), Subject("Next", "secondary"))
+    brief = replace(_make_brief(), subjects=(others[0], hero, secondary, others[1]))
+    promoted = promote_secondary(brief)
+    assert promoted == replace(brief, subjects=(
+        Subject("Joan Mir", "hero", "Honda"),
+        Subject("Jake Dixon", "mentioned", "Hero team"),
+        *others,
+    ))
+    assert brief.subjects[1] == hero
+
+
+@pytest.mark.parametrize("use_face_ref", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_compose_promotes_secondary_and_preserves_original_brief(use_face_ref, dry_run):
+    from app.services.pro_poster.brief import brief_to_dict
+
+    brief = replace(_make_brief(), subjects=(Subject("Jake Dixon"), Subject("Joan Mir", "secondary")))
+    stored = brief_to_dict(brief)
+    job = MagicMock(id=1, design_title="Jake Dixon and Joan Mir", design_analysis_json={"pro_poster_brief": stored})
+    article = MagicMock(scraped_content="Race report")
+    checked = _make_selection().hero
+    alt = PhotoSelection(hero=None, face_ref=checked) if use_face_ref else PhotoSelection(hero=checked)
+    with patch("app.services.story_photo.fetch_story_photo", return_value=None), \
+         patch("app.services.pro_poster.photos.select_photos", side_effect=[_make_selection(False), alt]) as select, \
+         patch("app.services.pro_poster.concept.build_concept", return_value=None) as concept, \
+         patch("app.services.pro_poster.pipeline.generate_ex", return_value=GenerationResult(image=b"raw", engine="gptcli", meta={}, event_id=None)) as generate, \
+         patch("app.services.speaker_design._finish", return_value=b"poster"), \
+         patch("app.services.pro_poster.qa.check_safety", return_value=QAResult(passed=True)):
+        result = compose_pro_poster(MagicMock(), MagicMock(id=10), job, article, dry_run=dry_run)
+
+    assert select.call_count == 2
+    assert select.call_args_list[0].args[1].subjects[0].name == "Jake Dixon"
+    promoted = select.call_args_list[1].args[1]
+    assert promoted.subjects[0] == Subject("Joan Mir")
+    assert concept.call_args.args == (promoted, alt)
+    generate.assert_called_once()
+    assert result.image == b"poster"
+    assert "Do not show, draw or invent Jake Dixon" in result.direction.prompt
+    assert job.design_analysis_json["pro_poster_brief"] == stored
+    if dry_run:
+        assert "pro_poster_promoted" not in job.design_analysis_json
+    else:
+        assert job.design_analysis_json["pro_poster_promoted"] == {"from": "Jake Dixon", "to": "Joan Mir"}
+
+
+def test_compose_secondary_photo_error_prevents_scene():
+    brief = replace(_make_brief(), subjects=(Subject("Jake Dixon"), Subject("Joan Mir", "secondary")))
+    error = replace(_make_selection().hero, person="error")
+    job = MagicMock(id=1, design_analysis_json={})
+    with patch("app.services.pro_poster.pipeline.build_brief", return_value=brief), \
+         patch("app.services.story_photo.fetch_story_photo", return_value=None), \
+         patch("app.services.pro_poster.concept.build_concept", return_value=None), \
+         patch("app.services.pro_poster.photos.select_photos", side_effect=[PhotoSelection(hero=None), PhotoSelection(hero=None, rejected=(error,))]), \
+         patch("app.services.pro_poster.pipeline.generate_ex") as generate:
+        result = compose_pro_poster(MagicMock(), MagicMock(), job, MagicMock())
+    assert result.fallback_reason == "photo check error"
+    generate.assert_not_called()
+
+
+def test_no_promotion_when_hero_photo_check_errored():
+    """A vision error on the hero's photos means retry later, never swap to the secondary subject."""
+    from app.services.pro_poster import pipeline
+    from app.services.pro_poster.types import (
+        EventContext, PhotoCandidate, PhotoCheck, PhotoSelection, PosterBrief, Subject,
+    )
+    brief = PosterBrief(
+        job_id=1,
+        subjects=(Subject("Jake Dixon", "hero"), Subject("Joan Mir", "secondary")),
+        event=EventContext(series="MotoGP"), story_type="other", mood="neutral", badge_label="MOTOGP NEWS",
+    )
+    errored = PhotoCheck(
+        candidate=PhotoCandidate(source="gallery", gallery_image_id=1, path_or_url="/x.jpg", role="hero"),
+        person="error", event_match="error", obstructed=False, watermark=False, quality=0,
+    )
+    job = MagicMock(id=1, design_analysis_json={"pro_poster_brief": pipeline.brief_to_dict(brief)})
+    with patch.object(pipeline, "get_settings"), \
+         patch("app.services.story_photo.fetch_story_photo", return_value=None), \
+         patch.object(pipeline.photos, "select_photos", return_value=PhotoSelection(hero=None, rejected=(errored,))) as sel, \
+         patch.object(pipeline.concept_mod, "build_concept", return_value=None), \
+         patch.object(pipeline, "generate_ex") as gen:
+        res = pipeline.compose_pro_poster(MagicMock(), MagicMock(id=1), job, MagicMock())
+    assert sel.call_count == 1
+    gen.assert_not_called()
+    assert res.fallback_reason == "photo check error"
+    assert "pro_poster_promoted" not in job.design_analysis_json

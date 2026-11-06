@@ -629,6 +629,11 @@ def render_design(self, job_id: int):
                     pro_poster_engine = {"9router": "codex", "gptcli": "chatgpt"}.get(pp_res.engine, pp_res.engine)
                     scores_str = " ".join(f"{k}:{v}" for k, v in pp_res.qa.scores.items()) if (pp_res.qa and pp_res.qa.scores) else ""
                     note_text = f"pro poster · qa {scores_str}".strip()
+                    if pp_res.direction is not None and pp_res.direction.layout == "scene":
+                        note_text = f"pro poster scene (no verified photo) · qa {scores_str}".strip()
+                    promoted = (job.design_analysis_json or {}).get("pro_poster_promoted")
+                    if promoted:
+                        note_text = f"pro poster (photo of {promoted['to']}, none of {promoted['from']}) · qa {scores_str}".strip()
                     pro_poster_engine_note = note_text[:200]
                     pro_poster_label = pp_res.brief.badge_label
                 elif pp_res.fallback_reason in ("no verified photo", "photo check error"):
@@ -648,19 +653,7 @@ def render_design(self, job_id: int):
                                 until=datetime.now(timezone.utc) + timedelta(minutes=PHOTO_CHECK_RETRY_MINUTES),
                                 reason=f"photo check error, retry {retries + 1}/{PHOTO_CHECK_MAX_RETRIES}",
                             )
-                    # TYPOGRAPHIC CARD
-                    from app.services.pro_poster import typo_background
-                    bg_bytes = typo_background.make_typographic_background(
-                        pp_res.brief,
-                        brand_color=getattr(fanpage, "accent_color", None),
-                        seed=job.id,
-                    )
-                    image_src = typo_background.background_datauri(bg_bytes)
-                    image_marker = "pro_poster_typo"
-                    pro_poster_engine = "template"
-                    note = "no verified photo (photo check error)" if pp_res.fallback_reason == "photo check error" else (pp_res.fallback_reason or "")
-                    pro_poster_engine_note = note[:200]
-                    pro_poster_label = pp_res.brief.badge_label
+                    logger.info("Pro poster job %d has no verified photo (%s); using the old path", job_id, pp_res.fallback_reason)
                 else:
                     logger.info("Pro poster job %d fell back to the old path: %s", job_id, pp_res.fallback_reason)
             except VisualEngineDeferred as exc:

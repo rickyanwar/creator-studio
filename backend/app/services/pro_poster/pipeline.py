@@ -6,6 +6,7 @@ visual_engine (ChatGPT/Codex), vision QA review, and fallback decisions.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from app.services import speaker_design
 from app.services.gptcli_client import GptcliError
 from app.services.pro_poster import art_direction, concept as concept_mod, photos, qa
 from app.services.pro_poster.brief import brief_from_dict, brief_to_dict, build_brief
-from app.services.pro_poster.types import PosterBrief, PosterConcept, ProPosterResult
+from app.services.pro_poster.types import ArtDirection, PosterBrief, PosterConcept, ProPosterResult, Subject
 from app.services.qa_toggles import qa_enabled
 from app.services.visual_engine import (
     GenerationRequest,
@@ -33,7 +34,21 @@ _LAYOUT_MAP: dict[str, str] = {
     "hero_with_context": "inset",
     "hero_solo": "solo",
     "action_full_bleed": "action",
+    "scene": "action",
 }
+
+
+def promote_secondary(brief: PosterBrief) -> PosterBrief | None:
+    """A: the hero has no verified photo -> make the first secondary subject the poster person."""
+    hero = next((s for s in brief.subjects if s.role == "hero"), None)
+    secondary = next((s for s in brief.subjects if s.role == "secondary"), None)
+    if hero is None or secondary is None:
+        return None
+    return replace(brief, subjects=(
+        Subject(name=secondary.name, role="hero", team=secondary.team),
+        Subject(name=hero.name, role="mentioned", team=hero.team),
+        *(s for s in brief.subjects if s is not hero and s is not secondary),
+    ))
 
 
 def pro_poster_applies(db: Session, fanpage: Any) -> bool:
@@ -164,7 +179,7 @@ def compose_pro_poster(
     1. Build or reuse brief from job.design_analysis_json
     2. Fetch and persist article story photo if available
     3. Select verified hero and context photos
-    4. Art direct composition (or fallback to typographic if no photo)
+    4. Art direct composition (a scene if no photo)
     5. Generate card via visual_engine (with deferral propagation)
     6. Run safety QA checks (identity + event)
     7. Log summary line and return result
@@ -209,6 +224,32 @@ def compose_pro_poster(
     selection = photos.select_photos(
         db, brief, story_photo_path=story_photo_path, story=story
     )
+    promoted_from: str | None = None
+    extra_photo_errors = 0
+    first_photo_errors = sum(1 for c in selection.rejected if c.person == "error")
+    if not dry_run and job and (getattr(job, "design_analysis_json", None) or {}).get("pro_poster_promoted"):
+        analysis = dict(job.design_analysis_json)
+        analysis.pop("pro_poster_promoted", None)  # stale from an earlier render
+        job.design_analysis_json = analysis
+    # Only when the hero truly has no verified photo: a vision error means retry later, not swap people.
+    if selection.hero is None and selection.face_ref is None and not first_photo_errors:
+        promoted = promote_secondary(brief)
+        if promoted is not None:
+            alt = photos.select_photos(db, promoted, story_photo_path=story_photo_path, story=story)
+            if alt.hero is not None or alt.face_ref is not None:
+                promoted_from = next(s.name for s in brief.subjects if s.role == "hero")
+                promoted_to = promoted.subjects[0].name
+                logger.info(
+                    "ProPoster job=%s no verified photo of %s, using secondary subject %s",
+                    getattr(job, "id", None), promoted_from, promoted_to,
+                )
+                brief, selection = promoted, alt
+                if not dry_run and job:
+                    analysis = dict(getattr(job, "design_analysis_json", None) or {})
+                    analysis["pro_poster_promoted"] = {"from": promoted_from, "to": promoted_to}
+                    job.design_analysis_json = analysis
+            else:
+                extra_photo_errors = sum(1 for c in alt.rejected if c.person == "error")
 
     concept: PosterConcept | None = None
     try:
@@ -224,28 +265,32 @@ def compose_pro_poster(
         concept = None
 
     # 4. Art direction
+    layout = art_direction.choose_layout(brief, selection)
+    photo_errors = (
+        sum(1 for c in selection.rejected if c.person == "error") if promoted_from else first_photo_errors
+    ) + extra_photo_errors
+    if layout == "scene" and photo_errors:
+        # 9Router vision errors: let design_renderer retry later instead of generating a person-less scene
+        res = ProPosterResult(
+            image=None,
+            brief=brief,
+            selection=selection,
+            direction=ArtDirection(layout="typographic", prompt="", refs=(), allowed_text=()),
+            qa=None,
+            engine=None,
+            attempts=0,
+            fallback_reason="photo check error",
+        )
+        _log_job_summary(job, res)
+        return res
     direction = art_direction.direct(
         brief,
         selection,
         headline=headline,
         story_text=story_text,
         concept=concept,
+        absent_hero=promoted_from,
     )
-    if direction.layout == "typographic":
-        photo_errors = sum(1 for c in selection.rejected if c.person == "error")
-        reason = "photo check error" if photo_errors else "no verified photo"
-        res = ProPosterResult(
-            image=None,
-            brief=brief,
-            selection=selection,
-            direction=direction,
-            qa=None,
-            engine=None,
-            attempts=0,
-            fallback_reason=reason,
-        )
-        _log_job_summary(job, res)
-        return res
 
     # 5. Generation request
     gen_layout = _LAYOUT_MAP.get(direction.layout, "inset")

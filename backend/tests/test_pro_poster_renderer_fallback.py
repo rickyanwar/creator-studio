@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -88,11 +89,18 @@ def _setup_render_design_mocks(job_id: int = 203):
 @patch("app.services.design_images.prepare_design_images")
 @patch("app.tasks.design_renderer.SessionLocal")
 @patch("app.services.design_images.resolve_template")
+@pytest.mark.parametrize("layout,promoted,prefix", [
+    ("hero_with_context", None, "pro poster · qa"),
+    ("scene", None, "pro poster scene (no verified photo)"),
+    ("hero_solo", {"from": "Jake Dixon", "to": "Joan Mir"}, "pro poster (photo of Joan Mir, none of Jake Dixon)"),
+])
 def test_renderer_pro_poster_passed_uses_pro_poster_marker(
-    mock_resolve, mock_session, mock_prepare, mock_post
+    mock_resolve, mock_session, mock_prepare, mock_post, layout, promoted, prefix
 ):
     """When pro poster passes with image, image_marker is 'pro_poster'."""
     db, job, fanpage, article, template = _setup_render_design_mocks(203)
+    if promoted:
+        job.design_analysis_json["pro_poster_promoted"] = promoted
     mock_session.return_value = db
     mock_resolve.return_value = template
     mock_prepare.return_value = ({"objects": []}, ["img1"])
@@ -102,7 +110,7 @@ def test_renderer_pro_poster_passed_uses_pro_poster_marker(
         image=b"valid_pro_poster_png",
         brief=_make_brief(203, badge_label="F1 NEWS"),
         selection=PhotoSelection(hero=None, context=(), rejected=()),
-        direction=ArtDirection(layout="hero_with_context", prompt="p", refs=()),
+        direction=ArtDirection(layout=layout, prompt="p", refs=()),
         qa=QAResult(passed=True, scores={"event": 5, "ai_look": 5}, issues=()),
         engine="gptcli",
         attempts=1,
@@ -118,7 +126,8 @@ def test_renderer_pro_poster_passed_uses_pro_poster_marker(
 
     assert job.last_image_marker == "pro_poster"
     assert job.design_engine == "chatgpt"
-    assert "pro poster · qa event:5 ai_look:5" in job.design_engine_note
+    assert job.design_engine_note.startswith(prefix)
+    assert "event:5 ai_look:5" in job.design_engine_note
     assert job.design_analysis_json["pro_poster_qa"]["passed"] is True
 
 
@@ -126,10 +135,10 @@ def test_renderer_pro_poster_passed_uses_pro_poster_marker(
 @patch("app.services.design_images.prepare_design_images")
 @patch("app.tasks.design_renderer.SessionLocal")
 @patch("app.services.design_images.resolve_template")
-def test_renderer_pro_poster_no_verified_photo_uses_typo_marker(
+def test_renderer_pro_poster_no_verified_photo_uses_old_path(
     mock_resolve, mock_session, mock_prepare, mock_post
 ):
-    """When image is None and fallback_reason is 'no verified photo', marker is 'pro_poster_typo'."""
+    """No verified photo uses the existing speaker/gallery fallback."""
     db, job, fanpage, article, template = _setup_render_design_mocks(203)
     mock_session.return_value = db
     mock_resolve.return_value = template
@@ -150,18 +159,20 @@ def test_renderer_pro_poster_no_verified_photo_uses_typo_marker(
     with patch("app.services.pro_poster.pipeline.compose_pro_poster", return_value=pp_res), \
          patch("app.services.pro_poster.typo_background.make_typographic_background", return_value=b"fake_bg_png") as mock_tb, \
          patch("app.services.pro_poster.typo_background.background_datauri", return_value="data:image/png;base64,BG") as mock_uri, \
-         patch("app.services.design_images.single_photo_face_fits") as mock_fits, \
+         patch("app.tasks.design_renderer._maybe_compose_speaker_design", return_value=None) as mock_speaker, \
+         patch("app.tasks.design_renderer.select_image_for_job", return_value=("data:image/jpeg;base64,/9j/4AAQ", MagicMock(local_path="/p"), "article_hero")) as mock_select, \
+         patch("app.services.design_images.single_photo_face_fits", return_value=True), \
          patch("app.services.design_images.focus_points_for", return_value=[]), \
          patch("pathlib.Path.mkdir"), \
          patch("pathlib.Path.write_bytes"):
         render_design(203)
 
-    mock_tb.assert_called_once()
-    mock_uri.assert_called_once_with(b"fake_bg_png")
-    mock_fits.assert_not_called()
-    assert job.last_image_marker == "pro_poster_typo"
+    mock_tb.assert_not_called()
+    mock_uri.assert_not_called()
+    mock_speaker.assert_called_once()
+    mock_select.assert_called_once()
+    assert job.last_image_marker == "article_hero"
     assert job.design_engine == "template"
-    assert job.design_engine_note == "no verified photo"
 
 
 @patch("app.tasks.design_renderer.httpx.post")
@@ -210,10 +221,10 @@ def test_renderer_pro_poster_photo_check_error_retries_and_defers(
 @patch("app.services.design_images.prepare_design_images")
 @patch("app.tasks.design_renderer.SessionLocal")
 @patch("app.services.design_images.resolve_template")
-def test_renderer_pro_poster_photo_check_error_max_retries_uses_typo_marker(
+def test_renderer_pro_poster_photo_check_error_max_retries_uses_old_path(
     mock_resolve, mock_session, mock_prepare, mock_post
 ):
-    """When fallback_reason is 'photo check error' and max retries used, falls back to typo card."""
+    """Exhausted photo check retries use the existing speaker/gallery fallback."""
     db, job, fanpage, article, template = _setup_render_design_mocks(205)
     job.design_analysis_json = {"photo_check_retries": 2}
     mock_session.return_value = db
@@ -235,18 +246,20 @@ def test_renderer_pro_poster_photo_check_error_max_retries_uses_typo_marker(
     with patch("app.services.pro_poster.pipeline.compose_pro_poster", return_value=pp_res), \
          patch("app.services.pro_poster.typo_background.make_typographic_background", return_value=b"fake_bg_png") as mock_tb, \
          patch("app.services.pro_poster.typo_background.background_datauri", return_value="data:image/png;base64,BG") as mock_uri, \
-         patch("app.services.design_images.single_photo_face_fits") as mock_fits, \
+         patch("app.tasks.design_renderer._maybe_compose_speaker_design", return_value=None) as mock_speaker, \
+         patch("app.tasks.design_renderer.select_image_for_job", return_value=("data:image/jpeg;base64,/9j/4AAQ", MagicMock(local_path="/p"), "article_hero")) as mock_select, \
+         patch("app.services.design_images.single_photo_face_fits", return_value=True), \
          patch("app.services.design_images.focus_points_for", return_value=[]), \
          patch("pathlib.Path.mkdir"), \
          patch("pathlib.Path.write_bytes"):
         render_design(205)
 
-    mock_tb.assert_called_once()
-    mock_uri.assert_called_once_with(b"fake_bg_png")
-    mock_fits.assert_not_called()
-    assert job.last_image_marker == "pro_poster_typo"
+    mock_tb.assert_not_called()
+    mock_uri.assert_not_called()
+    mock_speaker.assert_called_once()
+    mock_select.assert_called_once()
+    assert job.last_image_marker == "article_hero"
     assert job.design_engine == "template"
-    assert job.design_engine_note == "no verified photo (photo check error)"
 
 
 @patch("app.tasks.design_renderer.httpx.post")

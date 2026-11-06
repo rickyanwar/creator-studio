@@ -102,7 +102,7 @@ class PosterConcept:
 
 @dataclass(frozen=True)
 class ArtDirection:
-    layout: Literal["hero_with_context", "hero_solo", "action_full_bleed", "face_ref_scene", "duo", "typographic"]
+    layout: Literal["hero_with_context", "hero_solo", "action_full_bleed", "face_ref_scene", "duo", "typographic", "scene"]
     prompt: str                     # full prompt for the image engine (no headline text in the image)
     refs: tuple[str, ...]           # reference image paths in the order the prompt names them
     size: str = "1024x1536"

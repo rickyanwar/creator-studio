@@ -42,6 +42,9 @@ def _fanpage_stagger(slot: int, breaking: bool = False) -> int:
 logger = logging.getLogger(__name__)
 
 
+SWEEP_REDISPATCH_SECONDS = 1800
+
+
 def _redis():
     import redis
     from app.config import get_settings
@@ -290,10 +293,24 @@ def copywrite_pending_articles():
             .all()
         )
 
+        # A slow 9Router left one article queued 11 times (2026-11-06): re-dispatch an article
+        # at most once per SWEEP_REDISPATCH_SECONDS; a dropped task is still retried after that.
+        try:
+            r = _redis()
+        except Exception:
+            r = None
+        dispatched = 0
         for (article_id,) in articles:
+            if r is not None:
+                try:
+                    if not r.set(f"copywriter:sweep:{article_id}", 1, nx=True, ex=SWEEP_REDISPATCH_SECONDS):
+                        continue
+                except Exception:
+                    pass  # Redis hiccup: dispatch anyway, duplicates are no-ops
             copywrite_article.delay(article_id)
+            dispatched += 1
 
-        if articles:
-            logger.info("Copywriter sweep: dispatched %d pending articles", len(articles))
+        if dispatched:
+            logger.info("Copywriter sweep: dispatched %d pending articles", dispatched)
     finally:
         db.close()
