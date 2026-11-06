@@ -150,6 +150,8 @@ class Settings(Base):
     # ── Gallery Labeling ──────────────────────────────────────────────────────
     gallery_labeling_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     gallery_labeling_daily_cap = Column(Integer, default=1000, nullable=False, server_default="1000")
+    gallery_new_labeler = Column(String(16), default="app", nullable=False, server_default="app")
+    gallery_muse_fallback_hours = Column(Integer, default=6, nullable=False, server_default="6")
     gallery_labeling_since = Column(DateTime, nullable=True)
 
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -495,6 +495,9 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
             return
 
         slug = keyword_slug(kw.keyword)
+        from app.models.settings import Settings
+        s = db.query(Settings).filter_by(id=1).first()
+        muse_mode = s is not None and s.gallery_new_labeler == "muse"
         dest_dir = Path(settings.storage_base_path) / "gallery" / slug
 
         # Dedup: all URLs ever stored for this keyword (global uniqueness is
@@ -515,6 +518,7 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
                 max_pages=kw.max_pages,
                 allow_topup=allow_topup,
                 search_hint=NICHE_SEARCH_HINT.get(kw.niche or "", kw.niche or None),
+                vision_gate=not muse_mode,
             )
         except Exception as exc:
             kw.last_download_error = str(exc)[:512]
@@ -527,7 +531,9 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
             image_attrs = None
             image_labeled_at = None
             image_label_error = None
-            if getattr(item, "attributes", None):
+            if muse_mode:
+                image_attrs = {"pending_gate": {"allow_low_quality": getattr(item, "allow_low_quality", False)}}
+            elif getattr(item, "attributes", None):
                 from app.services.muse_labeler import merge_label_attributes
                 image_attrs = merge_label_attributes(None, item.attributes)
                 image_labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -547,12 +553,13 @@ def download_keyword(self, keyword_id: int, max_num: int | None = None, allow_to
                 attributes=image_attrs,
                 labeled_at=image_labeled_at,
                 label_error=image_label_error,
+                label_pending=muse_mode,
             )
             db.add(image)
             try:
                 db.commit()
                 saved += 1
-                if not image_labeled_at:
+                if not muse_mode and not image_labeled_at:
                     _enqueue_label_if_enabled(db, image.id)
             except IntegrityError:
                 # URL already stored under another keyword — drop the duplicate file

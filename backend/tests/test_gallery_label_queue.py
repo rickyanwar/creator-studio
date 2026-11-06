@@ -33,7 +33,9 @@ from zoneinfo import ZoneInfo
 
 @pytest.fixture(autouse=True)
 def _night_clock_for_queue_tests():
-    with patch("app.tasks.gallery_labels._get_now", return_value=datetime(2026, 10, 19, 2, 0, tzinfo=ZoneInfo("Asia/Jakarta"))), \
+    # Exercise the retained legacy queue path; production disables it.
+    with patch("app.tasks.gallery_labels.RELABEL_AND_BACKFILL_ENABLED", True), \
+         patch("app.tasks.gallery_labels._get_now", return_value=datetime(2026, 10, 19, 2, 0, tzinfo=ZoneInfo("Asia/Jakarta"))), \
          patch("app.services.gallery_label_budget.reserve_backfill", return_value=True):
         yield
 
@@ -510,4 +512,3 @@ def test_label_new_gallery_images_daytime_skips_old_labels_recent_and_night_runs
 
         db_session.refresh(img_old)
         assert img_old.labeled_at is not None  # Processed during night sweep!
-

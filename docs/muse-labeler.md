@@ -1,14 +1,20 @@
-# TEMPORARY: Muse Gallery Labeler
+# Muse Gallery Labeler
 
-This temporary API lets the external Muse agent label downloaded gallery photos. It is protected by a revocable API token and is intended to be removed after the backlog is complete.
+This API lets Muse label new gallery photos when the owner selects Muse in Settings → Gallery labels. It is protected by a revocable API token. Claims return only NEW photos waiting for Muse (`label_pending`), newest first. Old unlabeled photos are no longer offered; Muse must not relabel anything. Relabeling and backfill are off.
+
+Each claimed item includes `gate_instructions` (the exact download check the app used to run) and `requires`. Every result must include `label` (`face` | `action` | `other`) and `usable` (or `content_acceptable` when listed in `requires`), judged strictly by `gate_instructions`, plus `reject_reason` when not usable. `usable: false` deletes the photo. A result missing the required fields is rejected and the photo stays waiting. Waiting photos are not used anywhere until labeled.
+
+If a photo waits longer than the owner's fallback hours (Settings → Gallery labels, default 6 hours), the app checks it itself using 9Router Antigravity quota, unless Muse holds its lease. A result for a photo that is no longer waiting is skipped.
 
 ## Connection
 
-- Base URL: `https://autostudio.pro/api` (HTTPS only)
+- Base URL: the owner's Cloudflare Worker relay (HTTPS only). The upstream API is `https://autostudio.pro/api`; the relay must forward `/api/labeler/*` (it was set up for `/api/research/*` and `/api/health`).
 - Header: `Authorization: Bearer <token>`
 - Required scope: `labels:write`
 
-Call `GET /labeler/schema` once. Then repeat `POST /labeler/claim` with `{"limit":50,"worker":"muse"}`, or use the optional legacy gallery-label filter `{"limit":50,"worker":"muse","label":"face"}` where `label` is `face`, `action`, or `other`. Label every returned image, and post one result per image to `POST /labeler/results`. Stop when claim returns zero items, or sleep five minutes and retry. Finish when `GET /labeler/stats` reports `remaining: 0`.
+Several Muse accounts may label at the same time. Each account must send its own unique `worker` value in claim and results, for example `muse-a` or `muse-b`. Each claimed photo is leased to that worker for 30 minutes, so two workers never get the same photo. Use one API token per account so a single account can be revoked alone.
+
+Call `GET /labeler/schema` once. Then repeat `POST /labeler/claim` with `{"limit":50,"worker":"muse-a"}`. Judge every returned image using its `gate_instructions` and post one result per image to `POST /labeler/results`, sending the same `worker`. Stop when claim returns zero items, or sleep five minutes and retry.
 
 ## Label Schema
 
@@ -40,6 +46,8 @@ Almost all photos are Getty editorial images. The server computes the shot date 
 Muse should not spend effort guessing dates. Use `getty_hints` to keep `event_name` and session values consistent across photos from the same keyword batch. Override the server date only with stronger visual or caption evidence. Set `archival_photo: true` when the visual evidence (livery, car generation, or kit) clearly shows the photo is older than the estimated date; the server keeps the date and lowers confidence to `estimated`. Focus effort on visual labels such as `shot_type`, `activity`, `expression`, keyword-guided `people`, and `quality`.
 
 ## Examples
+
+The examples below show rich label data. Every submitted result must also include the required `label` and `usable` (or `content_acceptable` when required); include `reject_reason` when not usable. Send the account's unique `worker` with the results request.
 
 ### MotoGP photo
 

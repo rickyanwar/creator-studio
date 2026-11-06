@@ -131,5 +131,5 @@ def test_download_images_passes_search_hint_and_keeps_bare_keyword_as_vision_sub
     )
     mock_store.assert_called_once_with(
         fake_urls, "/tmp/test_gallery", 10, (500, 500), frozenset(), "9router",
-        subject="alex pereira", captured_dates=fake_dates,
+        subject="alex pereira", captured_dates=fake_dates, vision_gate=True,
     )

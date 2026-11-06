@@ -106,6 +106,7 @@ class GalleryImage(Base):
     # Rich label attributes & metadata
     attributes = Column(JSONB(none_as_null=True), nullable=True)
     labeled_at = Column(DateTime, nullable=True)
+    label_pending = Column(Boolean, default=False, nullable=False, server_default="false")
     label_error = Column(String(300), nullable=True)
     label_attempts = Column(SmallInteger, default=0, nullable=False, server_default="0")
 

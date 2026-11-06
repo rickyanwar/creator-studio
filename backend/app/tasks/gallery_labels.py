@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from sqlalchemy import func, cast, String
@@ -15,6 +16,7 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 _WIB = ZoneInfo("Asia/Jakarta")
+RELABEL_AND_BACKFILL_ENABLED = False  # owner 2026-11-07: no relabel/backfill, saves Antigravity quota
 
 
 def _get_now() -> datetime:
@@ -46,7 +48,11 @@ def label_gallery_image(image_id: int, force: bool = False, relabel: bool = Fals
             return
 
         img = db.query(GalleryImage).filter_by(id=image_id).first()
-        if not img or img.is_deleted or (img.labeled_at is not None and not relabel):
+        if not img or img.is_deleted or img.label_pending:
+            return
+        if not RELABEL_AND_BACKFILL_ENABLED and (relabel or img.labeled_at is not None):
+            return
+        if img.labeled_at is not None and not relabel:
             return
         if not img.downloaded_at or (not force and (not s.gallery_labeling_since or img.downloaded_at < s.gallery_labeling_since)):
             return
@@ -115,6 +121,7 @@ def _pick_label_candidates(
         db.query(GalleryImage)
         .filter(
             GalleryImage.is_deleted == False,
+            GalleryImage.label_pending.is_(False),
             GalleryImage.labeled_at.is_(None),
             GalleryImage.downloaded_at >= s.gallery_labeling_since,
             GalleryImage.downloaded_at <= safety_cutoff,
@@ -128,7 +135,7 @@ def _pick_label_candidates(
         candidates.append((img, "new"))
 
     # b. RELABEL
-    if len(candidates) < limit:
+    if RELABEL_AND_BACKFILL_ENABLED and len(candidates) < limit:
         needed = limit - len(candidates)
         relabel_batch = (
             db.query(GalleryImage)
@@ -150,7 +157,7 @@ def _pick_label_candidates(
                     break
 
     # c. BACKFILL
-    if len(candidates) < limit:
+    if RELABEL_AND_BACKFILL_ENABLED and len(candidates) < limit:
         needed = limit - len(candidates)
         backfill_rows = (
             db.query(GalleryImage)
@@ -173,6 +180,57 @@ def _pick_label_candidates(
     return candidates
 
 
+def _fallback_pending_images(db, s: Settings, now: datetime) -> int:
+    from app.services import muse_labeler
+    from app.services.gallery_labeler import gate_and_label_image
+
+    now = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo else now
+    rows = (db.query(GalleryImage).filter(
+        GalleryImage.label_pending.is_(True),
+        GalleryImage.is_deleted.is_(False),
+        GalleryImage.label_attempts < 3,
+        GalleryImage.downloaded_at < now - timedelta(hours=s.gallery_muse_fallback_hours),
+    ).order_by(GalleryImage.downloaded_at.asc()).limit(10).all())
+    labeled = rejected = errors = 0
+    client = muse_labeler.redis_client() if rows else None
+    for row in rows:
+        if not muse_labeler.acquire_lease(client, row.id, "app-fallback"):
+            continue
+        try:
+            attrs = dict(row.attributes or {})
+            allow_low_quality = attrs.pop("pending_gate", {}).get("allow_low_quality", False)
+            db.commit()
+            try:
+                label, usable, labels = gate_and_label_image(
+                    Path(row.local_path).read_bytes(), subject=row.keyword,
+                    keyword=row.keyword, allow_low_quality=allow_low_quality,
+                )
+            except Exception:
+                label, usable, labels = None, False, None
+            if label is None and usable is False and labels is None:
+                row.label_attempts = (row.label_attempts or 0) + 1
+                row.label_error = "fallback gate error"
+                errors += 1
+            elif not usable:
+                Path(row.local_path).unlink(missing_ok=True)
+                row.is_deleted = True
+                row.label_pending = False
+                row.label_error = "app gate: not usable"
+                rejected += 1
+            else:
+                row.label = label
+                row.attributes = merge_label_attributes(attrs, labels or {})
+                row.labeled_at = now if labels is not None else None
+                row.label_pending = False
+                row.label_error = None
+                labeled += 1
+            db.commit()
+        finally:
+            muse_labeler.release_lease(client, row.id, "app-fallback")
+    logger.info("gallery muse fallback: %d labeled, %d rejected, %d errors", labeled, rejected, errors)
+    return labeled + rejected
+
+
 @celery_app.task(name="app.tasks.gallery_labels.label_new_gallery_images")
 def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
     """Safety net task: runs sweep at night (00:00-06:00 WIB) up to min(cap, 40).
@@ -185,8 +243,10 @@ def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
     processed = 0
     try:
         s = db.query(Settings).filter_by(id=1).first()
+        if s:
+            processed = _fallback_pending_images(db, s, now if now is not None else _get_now())
         if not s or not s.gallery_labeling_enabled or not s.gallery_labeling_since:
-            return 0
+            return processed
 
         curr_time = now if now is not None else _get_now()
         if curr_time.tzinfo is None:
@@ -206,6 +266,7 @@ def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
                 db.query(GalleryImage)
                 .filter(
                     GalleryImage.is_deleted == False,
+                    GalleryImage.label_pending.is_(False),
                     GalleryImage.labeled_at.is_(None),
                     GalleryImage.downloaded_at >= six_hours_ago,
                     GalleryImage.label_attempts < 3,
@@ -220,7 +281,7 @@ def label_new_gallery_images(db=None, *, now: datetime | None = None) -> int:
                     "and no recent unlabeled images in last 6h — skipping sweep",
                     now_wib.hour,
                 )
-                return 0
+                return processed
             candidates = [(img, "new") for img in recent_rows]
         else:
             limit = min(s.gallery_labeling_daily_cap, 40)

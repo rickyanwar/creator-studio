@@ -53,6 +53,8 @@ class SettingsUpdate(BaseModel):
     # ── Gallery Labeling ──
     gallery_labeling_enabled: Optional[bool] = None
     gallery_labeling_daily_cap: Optional[int] = Field(None, ge=0, le=5000)
+    gallery_new_labeler: Optional[Literal["app", "muse"]] = None
+    gallery_muse_fallback_hours: Optional[int] = Field(None, ge=1, le=72)
 
     # ── Visual Engine ──
     visual_engine_daily_max: Optional[int] = Field(None, ge=0, le=1000)
@@ -143,6 +145,8 @@ class SettingsOut(BaseModel):
     # ── Gallery Labeling ──
     gallery_labeling_enabled: bool = False
     gallery_labeling_daily_cap: int = 1000
+    gallery_new_labeler: Literal["app", "muse"] = "app"
+    gallery_muse_fallback_hours: int = 6
     gallery_labeling_since: Optional[datetime] = None
 
     # ── Gallery Labeling Stats (optional for stats display) ──

@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import String, cast, func, or_
 
 from app.models.gallery import GalleryImage
-from app.services.gallery_filters import not_keyword_mismatch
+from app.services.gallery_filters import not_keyword_mismatch, not_label_pending
 from app.services import design_images, speaker_design
 from app.services.pro_poster.brief import _SERIES_ALIASES, _normalize_series
 from app.services.pro_poster.types import (
@@ -205,7 +205,7 @@ def _query_person_rows(db, names: list[str]) -> list[GalleryImage]:
     try:
         return (
             db.query(GalleryImage)
-            .filter(GalleryImage.is_deleted.is_(False), or_(*conditions), not_keyword_mismatch())
+            .filter(GalleryImage.is_deleted.is_(False), or_(*conditions), not_keyword_mismatch(), not_label_pending())
             .order_by(func.coalesce(GalleryImage.captured_at, GalleryImage.downloaded_at).desc())
             .limit(100)
             .all()
@@ -213,7 +213,7 @@ def _query_person_rows(db, names: list[str]) -> list[GalleryImage]:
     except Exception as exc:
         logger.debug("_query_person_rows failed: %s", exc)
         try:
-            return db.query(GalleryImage).filter(GalleryImage.is_deleted.is_(False), not_keyword_mismatch()).all()
+            return db.query(GalleryImage).filter(GalleryImage.is_deleted.is_(False), not_keyword_mismatch(), not_label_pending()).all()
         except Exception:
             return []
 
@@ -241,7 +241,7 @@ def _query_context_rows(db, series: str) -> list[GalleryImage]:
         hasattr(db, "bind") and db.bind and getattr(db.bind, "dialect", None) and db.bind.dialect.name == "sqlite"
     )
     try:
-        query = db.query(GalleryImage).filter(GalleryImage.is_deleted.is_(False), not_keyword_mismatch())
+        query = db.query(GalleryImage).filter(GalleryImage.is_deleted.is_(False), not_keyword_mismatch(), not_label_pending())
         if series:
             series_list = _get_series_aliases(series)
             if is_sqlite:
@@ -258,7 +258,7 @@ def _query_context_rows(db, series: str) -> list[GalleryImage]:
     except Exception as exc:
         logger.debug("_query_context_rows failed: %s", exc)
         try:
-            return db.query(GalleryImage).filter(GalleryImage.is_deleted.is_(False), not_keyword_mismatch()).all()
+            return db.query(GalleryImage).filter(GalleryImage.is_deleted.is_(False), not_keyword_mismatch(), not_label_pending()).all()
         except Exception:
             return []
 

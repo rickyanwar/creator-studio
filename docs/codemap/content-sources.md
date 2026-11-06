@@ -280,6 +280,11 @@ Comprehensive architecture and implementation map covering content discovery, de
   - Event Window Eviction: If keyword at ceiling (500) AND in event window, soft-deletes oldest 30 photos (`_EVENT_WINDOW_EVICTION_BATCH = 30`, `gallery_downloader.py:77, 406`) ordered by `captured_at.asc().nullsfirst()`, `downloaded_at.asc()` (`gallery_downloader.py:334`) to make room for race weekend coverage.
 
 ### 8.3 Rich Gallery Labeling
+- `settings.gallery_new_labeler` selects `app` (default) or `muse` for new gallery downloads.
+- Muse downloads set `gallery_images.label_pending`; pending photos are never selectable (`gallery_filters.not_label_pending()`).
+- Muse claims return pending photos only, newest first; old photos are not offered for relabeling.
+- The app checks waiting photos after `gallery_muse_fallback_hours` (default 6), unless Muse holds an active lease.
+- Relabeling and backfill are off (`RELABEL_AND_BACKFILL_ENABLED = False`).
 - **Tasks**: `label_gallery_image` (`backend/app/tasks/gallery_labels.py:32`) and safety net `label_new_gallery_images` (`gallery_labels.py:90`).
 - **Budget Control**: Redis counter `reserve(s.gallery_labeling_daily_cap)` (`backend/app/services/gallery_label_budget.py:34`). Drops task if daily cap reached (`gallery_labels.py:50, 120`). Safety net caps at `min(daily_cap, 40)` per tick (`gallery_labels.py:100`).
 - **Vision Schema** (`backend/app/services/gallery_labeler.py:69` `LABEL_PROMPT`):
