@@ -17,6 +17,16 @@ from app.services.prompt_polish_health import snapshot
 router = APIRouter(prefix="/prompt-polish", tags=["prompt-polish"])
 
 
+def polish_engine(account) -> str | None:
+    if not isinstance(account, str) or not account:
+        return None
+    if account.startswith("chatgpt"):
+        return "chatgpt"
+    if account.startswith("codex"):
+        return "codex"
+    return "argon"
+
+
 def _newest_job_for_idea(db, idea_id: int) -> VideoJob | None:
     """Return the most recently created VideoJob for a given idea_id, or None."""
     return (
@@ -105,6 +115,7 @@ def get_prompt_polish_idea(idea_id: int, db: DB, _: CurrentUser):
 
     return {
         "idea_id": idea.id,
+        "engine": polish_engine(prep_any.get("account")),
         "state": state,
         "prepared_at": idea.prepared_at.isoformat() if idea.prepared_at else None,
         "polish_attempts": idea.polish_attempts or 0,
@@ -142,13 +153,16 @@ def get_prompt_polish_job(job_id: int, db: DB, _: CurrentUser):
     ]
 
     changes = []
+    engine = None
     if job.idea_id:
         idea = db.query(VideoIdea).filter(VideoIdea.id == job.idea_id).first()
         if idea and isinstance(idea.prepared, dict):
             changes = idea.prepared.get("changes") or []
+            engine = polish_engine(idea.prepared.get("account"))
 
     return {
         "job_id": job.id,
+        "engine": engine,
         "polished": polished,
         "clips": clips,
         "changes": changes,
@@ -211,3 +225,27 @@ def get_prompt_polish_ideas_state(
         result[str(idea.id)] = _idea_state(idea, fanpage, newest_job)
 
     return result
+
+
+@router.get("/ideas-engine")
+def get_prompt_polish_ideas_engine(
+    ids: Optional[str] = Query(None),
+    db: DB = None,
+    _: CurrentUser = None,
+):
+    if not ids:
+        return {}
+    id_list = []
+    for part in ids.split(","):
+        part = part.strip()
+        if part.isdigit():
+            id_list.append(int(part))
+            if len(id_list) >= 200:
+                break
+    if not id_list:
+        return {}
+    ideas = db.query(VideoIdea).filter(VideoIdea.id.in_(id_list)).all()
+    return {
+        str(idea.id): polish_engine(idea.prepared.get("account") if isinstance(idea.prepared, dict) else None)
+        for idea in ideas
+    }

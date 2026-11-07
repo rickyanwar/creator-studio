@@ -853,6 +853,7 @@ export interface PromptPolishClip {
 }
 
 export interface PromptPolishIdea {
+  engine?: "chatgpt" | "codex" | "argon" | null;
   idea_id: number;
   state: "off" | "polished" | "waiting" | "failed" | string;
   prepared_at: string | null;
@@ -865,6 +866,7 @@ export interface PromptPolishIdea {
 }
 
 export interface PromptPolishJob {
+  engine?: "chatgpt" | "codex" | "argon" | null;
   job_id: number;
   polished: boolean;
   clips: PromptPolishClip[];

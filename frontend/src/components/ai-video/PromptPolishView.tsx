@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+export const polishEngineName = (engine?: "chatgpt" | "codex" | "argon" | null) =>
+  engine === "chatgpt" ? "ChatGPT" : engine === "codex" ? "Codex" : engine === "argon" ? "Argon" : null;
+
 export interface PromptPolishClipItem {
   index?: number;
   mode: string;
@@ -12,9 +15,11 @@ export interface PromptPolishClipItem {
 export interface PromptPolishViewProps {
   clips: PromptPolishClipItem[];
   changes?: string[];
+  engine?: "chatgpt" | "codex" | "argon" | null;
 }
 
-export function PromptPolishView({ clips = [], changes = [] }: PromptPolishViewProps) {
+export function PromptPolishView({ clips = [], changes = [], engine }: PromptPolishViewProps) {
+  const engineName = polishEngineName(engine);
   const [activeTabs, setActiveTabs] = useState<Record<number, "argon" | "original">>({});
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
   const [copiedKey, setCopiedKey] = useState<number | null>(null);
@@ -84,7 +89,7 @@ export function PromptPolishView({ clips = [], changes = [] }: PromptPolishViewP
                             : "text-text2 hover:text-text"
                         }`}
                       >
-                        Argon
+                        Polished
                       </button>
                       {showOriginalTab && (
                         <button
@@ -123,7 +128,7 @@ export function PromptPolishView({ clips = [], changes = [] }: PromptPolishViewP
       {changes && changes.length > 0 && (
         <div className="mt-2.5 pt-2 border-t border-line">
           <div className="text-[11px] font-semibold text-text mb-1">
-            Changes by Argon
+            {engineName ? `Changes by ${engineName}` : "Changes"}
           </div>
           <ul className="list-disc list-inside space-y-0.5 text-[11px] text-text2">
             {changes.map((item, cIdx) => (

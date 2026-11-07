@@ -486,6 +486,10 @@ export const getPromptPolishIdeaStates = (ids: number[]) =>
   api.get<Record<string, "off" | "polished" | "waiting" | "failed">>("/prompt-polish/ideas-state", {
     params: { ids: ids.join(",") },
   });
+export const getPromptPolishIdeaEngines = (ids: number[]) =>
+  api.get<Record<string, "chatgpt" | "codex" | "argon" | null>>("/prompt-polish/ideas-engine", {
+    params: { ids: ids.join(",") },
+  });
 // F1 Drivers
 import { F1Driver } from "./types";
 
