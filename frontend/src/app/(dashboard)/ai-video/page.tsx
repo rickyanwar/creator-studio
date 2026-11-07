@@ -18,6 +18,7 @@ import {
   updateGflowAccount,
   listGflowWorkers,
   getPromptPolishIdeaStates,
+  getPromptPolishIdeaEngines,
   getPromptPolishIdea,
   getPromptPolishJob,
 } from "@/lib/api";
@@ -34,7 +35,7 @@ import type {
 } from "@/lib/types";
 import ClipPlayer from "@/components/ClipPlayer";
 import { ResearchIdeaDetails } from "@/components/ai-video/ResearchIdeaDetails";
-import { PromptPolishView } from "@/components/ai-video/PromptPolishView";
+import { PromptPolishView, polishEngineName } from "@/components/ai-video/PromptPolishView";
 import ClipQcHistorySection from "@/components/ai-video/ClipQcHistory";
 import { useFanpages } from "@/lib/useFanpages";
 
@@ -429,7 +430,7 @@ function WorkerCard({ worker, now }: { worker: GflowWorker; now: number }) {
   );
 }
 
-function IdeaPolishSection({ ideaId, state }: { ideaId: number; state: string }) {
+function IdeaPolishSection({ ideaId, state, engine }: { ideaId: number; state: string; engine?: PromptPolishIdea["engine"] }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<PromptPolishIdea | null>(null);
@@ -461,7 +462,7 @@ function IdeaPolishSection({ ideaId, state }: { ideaId: number; state: string })
         disabled={loading}
         className="text-xs font-semibold text-text2 hover:text-text cursor-pointer inline-flex items-center gap-1"
       >
-        <span>{open ? "Hide prompts" : "Show prompts"}</span>
+        <span>{open ? "Hide prompts" : "Show prompts"}{polishEngineName(data?.engine ?? engine) ? ` (${polishEngineName(data?.engine ?? engine)})` : ""}</span>
         {loading && <span className="text-[10px] text-text2 font-normal">loading…</span>}
       </button>
       {error && <p className="text-xs text-bad mt-1">{error}</p>}
@@ -472,7 +473,7 @@ function IdeaPolishSection({ ideaId, state }: { ideaId: number; state: string })
               Polish error: {data.polish_error}
             </p>
           )}
-          <PromptPolishView clips={data.clips} changes={data.changes} />
+          <PromptPolishView clips={data.clips} changes={data.changes} engine={data.engine} />
         </div>
       )}
     </div>
@@ -503,8 +504,9 @@ function JobPolishSection({ jobId }: { jobId: number }) {
     }
   };
 
-  const btnLabel = data?.polished ? "Show prompts (Argon)" : "Show prompts";
-  const closeLabel = data?.polished ? "Hide prompts (Argon)" : "Hide prompts";
+  const engineName = polishEngineName(data?.engine);
+  const btnLabel = engineName ? `Show prompts (${engineName})` : "Show prompts";
+  const closeLabel = engineName ? `Hide prompts (${engineName})` : "Hide prompts";
 
   return (
     <div className="pt-1">
@@ -520,7 +522,7 @@ function JobPolishSection({ jobId }: { jobId: number }) {
       {error && <p className="text-[11px] text-bad mt-1">{error}</p>}
       {open && data && (
         <div className="mt-2">
-          <PromptPolishView clips={data.clips} changes={data.changes} />
+          <PromptPolishView clips={data.clips} changes={data.changes} engine={data.engine} />
         </div>
       )}
     </div>
@@ -553,6 +555,11 @@ export default function AiVideoPage() {
   const { data: polishStates = {} } = useSWR(
     ideaIdsKey ? ["prompt-polish-idea-states", ideaIdsKey] : null,
     () => getPromptPolishIdeaStates(ideaIds).then((r) => r.data),
+    { refreshInterval: 15000 }
+  );
+  const { data: polishEngines = {} } = useSWR(
+    ideaIdsKey ? ["prompt-polish-idea-engines", ideaIdsKey] : null,
+    () => getPromptPolishIdeaEngines(ideaIds).then((r) => r.data),
     { refreshInterval: 15000 }
   );
   const { data: jobs = [], mutate: mutateJobs } = useSWR(
@@ -777,7 +784,7 @@ export default function AiVideoPage() {
                         <StatusPill value={idea.status} />
                         {polishState === "polished" && (
                           <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold whitespace-nowrap bg-pri-soft text-pri-text">
-                            Polished (Argon)
+                            {polishEngineName(polishEngines[idea.id]) ? `Polished (${polishEngineName(polishEngines[idea.id])})` : "Polished"}
                           </span>
                         )}
                         {polishState === "waiting" && (
@@ -814,7 +821,7 @@ export default function AiVideoPage() {
                     {idea.source === "muse" && <ResearchIdeaDetails idea={idea} />}
 
                     {(polishState === "polished" || polishState === "failed") && (
-                      <IdeaPolishSection ideaId={idea.id} state={polishState} />
+                      <IdeaPolishSection ideaId={idea.id} state={polishState} engine={polishEngines[idea.id]} />
                     )}
 
                     {actionError?.id === idea.id && (

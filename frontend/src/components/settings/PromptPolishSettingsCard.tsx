@@ -141,10 +141,10 @@ export function PromptPolishSettingsCard({
     <section className="bg-surface border border-line rounded-[14px] p-5 space-y-4">
       <div>
         <h2 className="text-base font-semibold text-text">
-          Prompt polish (Gemini Argon)
+          Prompt polish
         </h2>
         <p className="text-xs text-text2 mt-1">
-          Rewrites video clip prompts with Gemini Argon to ensure logical continuity, consistent voice, and natural sound before generation.
+          Rewrites every clip prompt before the video is made (logic, continuity, same voice and sound). ChatGPT first, then Codex, then Gemini Argon when both are resting.
         </p>
       </div>
 

@@ -177,10 +177,11 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
             <div className="sm:col-span-2 flex items-center justify-between p-3 rounded-lg border border-hairline">
               <div>
                 <label htmlFor="prompt-polish-ai-video" className="text-xs font-medium text-text-primary cursor-pointer">
-                  Polish prompts with Gemini Argon
+                  Prompt polish
                 </label>
                 <p className="text-[11px] text-text-secondary mt-0.5">
-                  On: every clip prompt is rewritten by Gemini Argon (logic, continuity, same voice and sound) before the video is made. Videos wait until the prompts are polished. Off: the template prompts are used as they are.
+                  Rewrites every clip prompt before the video is made (logic, continuity, same voice and sound). ChatGPT first, then Codex, then Gemini Argon when both are resting.
+                  {" "}On: videos wait until the prompts are polished. Off: the template prompts are used as they are.
                 </p>
               </div>
               <input
