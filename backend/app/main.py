@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.utils.logger import setup_logging
+from app.api import fb_groups, group_share, group_share_pic
 from app.api import auth, fanpages, publish_jobs, settings as settings_router, jobs, ig_sources, dashboard, notifications, logs, news_sources, gallery, templates, yt_clips, scraper_health, analytics, strategy, hermes, ai_video_ideas, gflow_worker, ai_video_jobs, radar, f1_drivers, labeler, media_thumb, research, content_projects, social_media, social_brands, prompt_polish
 
 
@@ -56,6 +57,9 @@ app.include_router(media_thumb.router)
 app.include_router(content_projects.router)
 app.include_router(social_media.router)
 app.include_router(social_brands.router)
+app.include_router(fb_groups.router)
+app.include_router(group_share.router)
+app.include_router(group_share_pic.router)
 app.include_router(prompt_polish.router)
 
 

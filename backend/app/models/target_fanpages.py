@@ -50,6 +50,8 @@ class TargetFanpage(Base):
 
     # ── Local toggles ─────────────────────────────
     is_active = Column(Boolean, default=False, nullable=False)
+    fb_share_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    fb_share_settings = Column(JSON, nullable=True)
     publish_mode = Column(Enum(PublishMode), default=PublishMode.manual_review, nullable=False)
 
     # ── Publish pacing (anti-bot-detection) ───────

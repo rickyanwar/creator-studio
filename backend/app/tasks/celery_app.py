@@ -52,6 +52,7 @@ celery_app = Celery(
         "app.tasks.queue_watchdog",
         "app.tasks.prompt_polish_watchdog",
         "app.tasks.ai_video_alerts",
+        "app.tasks.fb_share",
     ],
 )
 
@@ -100,6 +101,7 @@ celery_app.conf.update(
         # Explicit apply_async(queue="visual") calls still go to visual.
         "app.tasks.design_renderer.render_design": {"queue": "ai"},
         "app.tasks.news_copywriter.copywrite_article": {"queue": "ai"},
+        "app.tasks.fb_share.*": {"queue": "ai"},
         # Headless Chrome IG viewer crawls: own single-slot worker so a hung browser never blocks the default queue (incident 2026-10-22).
         "app.tasks.crawler.*": {"queue": "crawl"},
         "app.tasks.radar_crawl.*": {"queue": "crawl"},
@@ -110,6 +112,10 @@ celery_app.conf.update(
 
 # ── Beat schedule ─────────────────────────────────────────────────────────────
 celery_app.conf.beat_schedule = {
+    "fb-share-tick": {
+        "task": "app.tasks.fb_share.fb_share_tick",
+        "schedule": 300,
+    },
     # Crawler: ticks every minute — task reads crawl_interval_minutes from DB
     # and self-throttles, so changing the interval in the UI takes effect immediately.
     "crawl-ig-sources": {

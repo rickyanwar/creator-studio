@@ -634,6 +634,33 @@ class PhoneRunnerClient:
         except Exception as exc:
             return False, sanitize_error(f"notification_error_{type(exc).__name__}")
 
+    def send_pic_messages(self, target: str, messages: list[dict]) -> tuple[bool, str]:
+        """Send an ordered PIC bundle through the authenticated host runner."""
+        if not self.base_url or not self.token:
+            return False, "missing_configuration"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        timeout_cfg = httpx.Timeout(timeout=130.0, connect=self.connect_timeout)
+        try:
+            with httpx.Client(timeout=timeout_cfg) as client:
+                resp = client.post(
+                    f"{self.base_url}/pic-send",
+                    json={"target": target, "messages": messages}, headers=headers,
+                )
+            if resp.status_code != 200:
+                return False, f"http_{resp.status_code}"
+            try:
+                data = resp.json()
+            except Exception:
+                return False, "malformed_response"
+            if not isinstance(data, dict) or type(data.get("sent")) is not bool:
+                return False, "malformed_response"
+            return data["sent"], sanitize_error(str(data.get("detail") or ""))
+        except Exception as exc:
+            return False, sanitize_error(f"pic_send_error_{type(exc).__name__}")
+
     def discover_devices(
         self,
         *,
@@ -837,4 +864,3 @@ def _format_destination_payload(dest: Any) -> dict[str, Any]:
         "kind": getattr(dest, "kind", None),
         "parent_profile_id": parent_profile_id,
     }
-

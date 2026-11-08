@@ -62,6 +62,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Publish",
     items: [
       { id: "activity", label: "Activity", href: "/history", icon: "solar:history-bold-duotone" },
+      { id: "fb-groups", label: "Facebook groups", href: "/facebook-groups", icon: "solar:users-group-rounded-bold-duotone" },
     ],
   },
   {

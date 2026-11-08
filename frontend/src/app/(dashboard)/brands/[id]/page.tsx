@@ -60,6 +60,7 @@ import { SettingsTabs, type SettingsTab, type SettingsTabId } from "@/components
 import { TARGET_COUNTRIES, isValidTz } from "@/components/fanpages/tabs/GlobalTab";
 import { ContentTab } from "@/components/fanpages/tabs/ContentTab";
 import { ChannelsTab } from "@/components/fanpages/tabs/ChannelsTab";
+import { GroupShareTab } from "@/components/brand/group-share/GroupShareTab";
 import { PacingTab } from "@/components/fanpages/tabs/PacingTab";
 import { CaptionsTab } from "@/components/fanpages/tabs/CaptionsTab";
 import { DesignTab } from "@/components/fanpages/tabs/DesignTab";
@@ -80,6 +81,7 @@ function getInitials(name: string): string {
 const VALID_TABS: Record<string, SettingsTabId> = {
   content: "content",
   channels: "channels",
+  groupshare: "groupshare",
   pacing: "pacing",
   captions: "captions",
   design: "design",
@@ -718,6 +720,7 @@ export default function BrandEditPage() {
   const tabs: SettingsTab[] = [
     { id: "content", label: "Content", count: `${enabledModes.length} on` },
     { id: "channels", label: "Channels", count: String(channelCount) },
+    { id: "groupshare", label: "Group share" },
     { id: "pacing", label: "Pacing & review" },
     { id: "captions", label: "Captions" },
     { id: "design", label: "Design" },
@@ -943,6 +946,8 @@ export default function BrandEditPage() {
         />
       )}
 
+      {activeTab === "groupshare" && <GroupShareTab key={fanpageId} fanpageId={fanpageId} />}
+
       {activeTab === "pacing" && (
         <PacingTab
           form={form}
@@ -1051,6 +1056,7 @@ export default function BrandEditPage() {
       )}
 
       {/* ── Sticky Save Bar ────────────────────────────── */}
+      {activeTab !== "groupshare" && (
       <div
         className={`fixed bottom-[56px] lg:bottom-0 right-0 z-30 bg-surface/90 backdrop-blur-md border-t border-line p-3 sm:px-8 transition-[left] duration-300 ${
           collapsed ? "left-0 lg:left-[80px]" : "left-0 lg:left-[248px]"
@@ -1086,6 +1092,7 @@ export default function BrandEditPage() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

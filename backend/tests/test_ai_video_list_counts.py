@@ -156,6 +156,8 @@ CREATE TABLE IF NOT EXISTS target_fanpages (
     watermark_text TEXT,
     watermark_image_url TEXT,
     last_synced_at TEXT,
+    fb_share_enabled INTEGER NOT NULL DEFAULT 0,
+    fb_share_settings TEXT,
     created_at TEXT,
     updated_at TEXT
 );
