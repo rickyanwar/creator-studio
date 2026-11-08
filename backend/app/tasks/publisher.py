@@ -276,6 +276,14 @@ def publish_job(self, job_id: int):
         from app.models.posts import Post, PostStatus
         from app.services.repliz_client import get_repliz_client_from_db
 
+        from app.services.fb_share.group_jobs import hand_over, is_group_only
+        if is_group_only(db, job_id):
+            job = db.get(PublishJob, job_id)
+            if job is not None:
+                hand_over(db, job, datetime.now(timezone.utc))
+                db.commit()
+            return
+
         # Atomic claim: pending_publish -> publishing. Guards against the same
         # job being sent to Repliz twice — e.g. a slow render dispatching
         # publish_job twice (see design_renderer.render_design), a manual

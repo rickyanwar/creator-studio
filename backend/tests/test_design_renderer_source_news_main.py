@@ -1,4 +1,9 @@
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 from unittest.mock import patch, MagicMock
 from app.tasks.design_renderer import render_design
 from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
@@ -122,4 +127,3 @@ def test_render_design_discussion_mode4(mock_path, mock_post, mock_source, mock_
     kwargs = mock_source.call_args[1]
     assert "exclude_paths" in kwargs
     assert "/tmp/excluded.jpg" in kwargs["exclude_paths"]
-

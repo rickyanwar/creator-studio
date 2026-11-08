@@ -682,6 +682,10 @@ def ensure_deliveries(
     Freezes immutable snapshot fields, allocates local-day slots with method quotas,
     respects supported media capabilities, and returns existing rows unchanged on retry.
     """
+    from app.services.fb_share.group_jobs import is_group_only
+    if is_group_only(db, job.id):
+        return []
+
     post = getattr(job, "post", None)
     if post is None and getattr(job, "post_id", None):
         post = db.query(Post).filter_by(id=job.post_id).first()

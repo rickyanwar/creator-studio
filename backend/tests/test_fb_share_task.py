@@ -41,6 +41,7 @@ def test_failing_brand_does_not_stop_next(monkeypatch):
     feeder = ModuleType("app.services.fb_share.feeder")
     classify = ModuleType("app.services.fb_share.classify")
     feeder.collect_published_items = Mock(side_effect=[RuntimeError("bad brand"), 1])
+    feeder.collect_group_only_items = Mock(return_value=0)
     classify.classify_pending_items = Mock(return_value=1)
     from app.services import fb_share as package
     monkeypatch.setitem(sys.modules, feeder.__name__, feeder)

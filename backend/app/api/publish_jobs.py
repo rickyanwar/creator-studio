@@ -55,10 +55,14 @@ def list_jobs(
     fanpage_id: Optional[int] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0),
+    include_group_only: bool = False,
 ):
     from app.models.publish_jobs import PublishJob, PublishJobStatus
 
     q = db.query(PublishJob).filter(PublishJob.is_deleted == False)
+    if not include_group_only:
+        from app.services.fb_share.group_jobs import group_publish_job_ids
+        q = q.filter(PublishJob.id.notin_(group_publish_job_ids()))
     if status:
         try:
             q = q.filter(PublishJob.status == PublishJobStatus(status))

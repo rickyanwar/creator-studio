@@ -6,6 +6,21 @@ from sqlalchemy.dialects import postgresql
 from app.database import Base
 
 
+class FbShareGroupJob(Base):
+    __tablename__ = "fb_share_group_jobs"
+    __table_args__ = (
+        CheckConstraint("publish_job_id IS NOT NULL OR video_job_id IS NOT NULL", name="ck_fb_share_group_jobs_job"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    fanpage_id = Column(Integer, nullable=False, index=True)
+    mode = Column(String(24), nullable=False)
+    publish_job_id = Column(Integer, unique=True, index=True)
+    video_job_id = Column(Integer, unique=True, index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    handed_at = Column(DateTime)
+
+
 class FbGroup(Base):
     __tablename__ = "fb_groups"
     __table_args__ = (

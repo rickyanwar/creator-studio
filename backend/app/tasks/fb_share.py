@@ -43,6 +43,7 @@ def fb_share_tick():
             try:
                 fanpage = db.get(TargetFanpage, brand_id)
                 feeder.collect_published_items(db, fanpage, now)
+                feeder.collect_group_only_items(db, fanpage, now)
                 classify.classify_pending_items(db, fanpage)
                 plan_brand(db, fanpage, now, random.Random())
             except Exception:

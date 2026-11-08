@@ -3,11 +3,11 @@
 import { useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { getGroupShare, updateGroupShare, listFbGroupNiches, listFbGroups, listGroupShareAccounts, listGroupShareMemberships, updateGroupShareMemberships, listGroupShareTasks, getGroupShareSummary } from "@/lib/api";
-import type { GroupShareConfig, GroupShareSettings, GroupShareAccount, GroupShareMembershipIn, GroupShareMembershipStatus, ModeKey } from "@/lib/types";
+import type { GroupShareConfig, GroupShareSettings, GroupShareAccount, GroupShareMembershipIn, GroupShareMembershipStatus } from "@/lib/types";
 import { DeliveryEditor } from "./DeliveryEditor";
+import { GroupModeList } from "./GroupModeList";
 import { Field, NumberField, Toggle, TableWrap, inputClass, panelClass, buttonClass, primaryClass, errorMessage, deliveryLabels } from "./Fields";
 
-const modes: [ModeKey, string][] = [["ig", "Instagram"], ["news", "News card"], ["discussion", "Discussion"], ["pinterest", "Pinterest"], ["fb_recreate", "FB photo recreate"], ["yt_clips", "YouTube clips"], ["ai_video", "AI video"], ["viral_radar", "Viral radar"]];
 const membershipOptions: [GroupShareMembershipStatus, string][] = [["joined", "Joined"], ["not_member", "Not a member"], ["pending_approval", "Pending approval"], ["removed", "Removed"], ["unknown", "Unknown"], ["banned", "Banned"]];
 
 export function GroupShareTab({ fanpageId }: { fanpageId: number }) {
@@ -97,18 +97,7 @@ export function GroupShareTab({ fanpageId }: { fanpageId: number }) {
           <div className="flex flex-wrap items-end gap-3"><div className="min-w-0 flex-1"><Field label="Add niche"><input className={inputClass} list="group-share-niche-suggestions" value={nicheInput} onChange={(e) => setNicheInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNiche(); } }} /></Field></div><button type="button" className={buttonClass} onClick={addNiche}>Add niche</button></div>
           <datalist id="group-share-niche-suggestions">{niches.data?.map((niche) => <option key={niche} value={niche} />)}</datalist>
         </section>
-        <section className={panelClass} aria-labelledby="group-sources-heading"><h3 id="group-sources-heading" className="font-semibold text-text">What goes to groups</h3>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">{modes.map(([mode, label]) => {
-            const source = settings.sources[mode] ?? { source: "off", groups_only_per_day: 0 };
-            return <div key={mode} className="min-w-0 space-y-3 rounded-xl border border-line bg-surface2 p-3">
-              <Field label={label}><select className={inputClass} value={source.source} onChange={(e) => setSettings({ ...settings, sources: { ...settings.sources, [mode]: { ...source, source: e.target.value as typeof source.source } } })}>
-                <option value="off">Off</option><option value="follow">Follow brand content</option><option value="groups_only">Made for groups only</option><option value="both">Both</option>
-              </select></Field>
-              {(source.source === "groups_only" || source.source === "both") && <NumberField label="Groups-only per day" value={source.groups_only_per_day} max={50} onChange={(value) => setSettings({ ...settings, sources: { ...settings.sources, [mode]: { ...source, groups_only_per_day: value ?? 0 } } })} />}
-            </div>;
-          })}</div>
-          <p className="text-xs text-text2">Follow brand content = reuse posts after they go live on the brand&apos;s page. Made for groups only = extra posts that never go to the page.</p>
-        </section>
+        <GroupModeList fanpageId={fanpageId} settings={settings} onChange={setSettings} />
         <section className={panelClass} aria-labelledby="group-muse-heading"><h3 id="group-muse-heading" className="font-semibold text-text">Muse research for groups</h3>
           <Toggle switchRole label="Enable Muse research" checked={settings.muse.enabled} onChange={(enabled) => setSettings({ ...settings, muse: { ...settings.muse, enabled } })} />
           <NumberField label="Items per day" value={settings.muse.per_day} onChange={(per_day) => setSettings({ ...settings, muse: { ...settings.muse, per_day: per_day ?? 0 } })} />

@@ -1,6 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
