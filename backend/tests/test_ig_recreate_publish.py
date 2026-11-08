@@ -3,6 +3,11 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 from sqlalchemy.orm import Session

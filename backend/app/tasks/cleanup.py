@@ -192,6 +192,8 @@ def cleanup_old_media():
         from app.models.posts import Post, PostStatus
         from app.models.publish_jobs import PublishJob, PublishJobStatus
         from app.models.settings import Settings
+        from app.models.fb_group_share import FbShareGroupJob
+        from app.services.fb_share.group_jobs import media_cleanup_allowed
 
         radar_settings = db.query(Settings).filter_by(id=1).first()
         track_max_age_h = getattr(radar_settings, "radar_track_max_age_h", None)
@@ -216,11 +218,19 @@ def cleanup_old_media():
             if not jobs:
                 continue
 
-            # Delete only when every job of the post is published
-            if not all(j.status == PublishJobStatus.published for j in jobs):
+            finished_group_ids = {
+                row.publish_job_id for row in db.query(FbShareGroupJob).filter(
+                    FbShareGroupJob.publish_job_id.in_([j.id for j in jobs]),
+                    FbShareGroupJob.handed_at.isnot(None),
+                ) if media_cleanup_allowed(db, row.publish_job_id, now)
+            }
+            # Completed group shares have their own retention instead of cleanup_at.
+            if not all(j.status == PublishJobStatus.published or (
+                j.status == PublishJobStatus.skipped and j.id in finished_group_ids
+            ) for j in jobs):
                 continue
 
-            if not all(j.cleanup_at and j.cleanup_at <= now for j in jobs):
+            if not all(j.id in finished_group_ids or (j.cleanup_at and j.cleanup_at <= now) for j in jobs):
                 continue
 
             if _post_media_still_needed(db, jobs, now):
@@ -306,15 +316,18 @@ def cleanup_old_designs():
     try:
         from sqlalchemy import and_, or_
         from app.models.publish_jobs import PublishJob, PublishJobStatus
+        from app.services.fb_share.group_jobs import group_publish_job_ids, media_cleanup_allowed
 
         candidates = (
             db.query(PublishJob)
             .filter(
                 PublishJob.design_image_path.isnot(None),
-                PublishJob.status == PublishJobStatus.published,
                 or_(
-                    and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
-                    and_(PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
+                    and_(PublishJob.status == PublishJobStatus.published, or_(
+                        and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
+                        and_(PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
+                    )),
+                    PublishJob.id.in_(group_publish_job_ids()),
                 ),
             )
             .all()
@@ -324,6 +337,8 @@ def cleanup_old_designs():
         pending_ids = _job_go_live_pending(db, published_ids, now)
 
         for job in candidates:
+            if not media_cleanup_allowed(db, job.id, now):
+                continue
             if job.status == PublishJobStatus.published:
                 if job.id in pending_ids:
                     kept_not_live += 1
@@ -407,15 +422,17 @@ def cleanup_old_ai_videos():
         from sqlalchemy import and_, or_, func
         from app.models.ai_video import VideoJob
         from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
+        from app.services.fb_share.group_jobs import group_publish_job_ids, is_group_only, is_group_only_video, media_cleanup_allowed
 
         publish_candidates = (
             db.query(PublishJob)
             .filter(
                 PublishJob.content_type == ContentType.ai_video,
                 PublishJob.video_path.isnot(None),
-                PublishJob.status == PublishJobStatus.published,
                 or_(
-                    and_(PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
+                    PublishJob.id.in_(group_publish_job_ids()),
+                    and_(PublishJob.status == PublishJobStatus.published,
+                         PublishJob.published_at.isnot(None), PublishJob.published_at <= published_cutoff),
                     and_(PublishJob.status == PublishJobStatus.published,
                          PublishJob.published_at.is_(None), PublishJob.updated_at <= cutoff),
                 ),
@@ -435,6 +452,8 @@ def cleanup_old_ai_videos():
 
         skipped_publish_ids = set()
         for job in publish_candidates:
+            if not media_cleanup_allowed(db, job.id, now):
+                continue
             if job.status == PublishJobStatus.published:
                 if job.id in pending_ids:
                     kept_not_live += 1
@@ -461,6 +480,9 @@ def cleanup_old_ai_videos():
 
         for job in video_candidates:
             eligible = False
+            if is_group_only_video(db, job.id) or (job.publish_job_id and is_group_only(db, job.publish_job_id)):
+                if job.publish_job_id and media_cleanup_allowed(db, job.publish_job_id, now):
+                    eligible = True
             if job.status == "done" and job.publish_job_id:
                 publish_job = db.get(PublishJob, job.publish_job_id)
                 if publish_job and publish_job.status == PublishJobStatus.published:

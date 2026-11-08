@@ -1,6 +1,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 import types
 
 from app.models.publish_jobs import PublishJobStatus
@@ -238,4 +243,3 @@ def test_facebook_photo_consume_one_strips_credit_lines():
     assert db.add.called
     added_job = db.add.call_args[0][0]
     assert added_job.ai_generated_caption == "Inspiring quote.\n\n#Motorsport"
-

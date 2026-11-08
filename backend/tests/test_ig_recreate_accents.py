@@ -1,4 +1,9 @@
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 from unittest.mock import patch, MagicMock, mock_open
 from app.tasks.design_renderer import render_design
 from app.tasks.ig_recreate import render_ig_recreate, _build_quote_attribution

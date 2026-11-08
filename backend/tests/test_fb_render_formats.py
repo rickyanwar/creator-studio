@@ -4,6 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 from PIL import Image
 
 from app.config import get_settings

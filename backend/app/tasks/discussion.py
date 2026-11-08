@@ -515,7 +515,7 @@ def _topup_queue(db, fanpage) -> bool:
     return True
 
 
-def _consume_one(db, fanpage) -> bool:
+def _consume_one(db, fanpage, *, group_only=False) -> bool:
     """Pop the oldest pending DiscussionContentIdea into a PublishJob.
     Returns True if one was created. No AI call here — the copy was already
     drafted at topup time (or via the manual-add API endpoint) — mirrors
@@ -575,6 +575,10 @@ def _consume_one(db, fanpage) -> bool:
         idea.status = "used"
         idea.used_at = datetime.now(timezone.utc).replace(tzinfo=None)
         try:
+            if group_only:
+                from app.services.fb_share.group_jobs import mark_group_job
+                db.flush()
+                mark_group_job(db, fanpage_id=fanpage.id, mode="discussion", publish_job_id=job.id)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -592,7 +596,7 @@ def _consume_one(db, fanpage) -> bool:
         )
 
         # Auto mode → render now (staggered slightly); review mode waits for designer.
-        if fanpage.discussion_publish_mode == PublishMode.auto:
+        if group_only or fanpage.discussion_publish_mode == PublishMode.auto:
             from app.tasks.design_renderer import render_discussion
             render_discussion.apply_async(args=[job.id], countdown=random.randint(5, 90))
 
@@ -610,6 +614,7 @@ def generate_discussion_content():
         from app.models.target_fanpages import TargetFanpage
         from app.models.publish_jobs import PublishJob, ContentType
         from app.services.social_project_eligibility import project_can_generate
+        from app.services.fb_share.group_jobs import group_publish_job_ids, remaining_groups_only_today
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         now_wib = now_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
@@ -643,18 +648,19 @@ def generate_discussion_content():
                     PublishJob.fanpage_id == fp.id,
                     PublishJob.content_type == ContentType.discussion,
                     PublishJob.is_deleted == False,
+                    PublishJob.id.notin_(group_publish_job_ids()),
                     PublishJob.created_at >= day_start_utc,
                     PublishJob.created_at < day_end_utc,
                 )
                 .scalar()
             ) or 0
 
-            if count_today >= quota:
-                continue
-            if count_today >= _target_by_now(quota, now_hour):
-                continue  # ahead of pace — wait for a later slot
+            if count_today < quota and count_today < _target_by_now(quota, now_hour) and _consume_one(db, fp):
+                created += 1
 
-            if _consume_one(db, fp):
+            for _ in range(min(3, remaining_groups_only_today(db, fp.id, "discussion", now_utc))):
+                if not _consume_one(db, fp, group_only=True):
+                    break
                 created += 1
 
         if topped_up or created:

@@ -760,7 +760,8 @@ def render_design(self, job_id: int):
         # Auto-mode fanpages go straight to Repliz (Phase 2E); review-mode jobs
         # wait for the admin to publish from the queue/designer.
         from app.models.target_fanpages import PublishMode
-        if fanpage.mode2_publish_mode == PublishMode.auto:
+        from app.services.fb_share.group_jobs import is_group_only
+        if fanpage.mode2_publish_mode == PublishMode.auto or is_group_only(db, job.id):
             from app.tasks.publisher import publish_job
             publish_job.delay(job.id)
 
@@ -967,7 +968,8 @@ def render_discussion(self, job_id: int):
 
         logger.info("Discussion: job %d rendered → %s (%d bytes)", job_id, filename, len(png_bytes))
 
-        if fanpage.discussion_publish_mode == PublishMode.auto:
+        from app.services.fb_share.group_jobs import is_group_only
+        if fanpage.discussion_publish_mode == PublishMode.auto or is_group_only(db, job.id):
             from app.tasks.publisher import publish_job
             publish_job.delay(job.id)
 
@@ -1083,7 +1085,8 @@ def render_pinterest(self, job_id: int):
                 "Pinterest: job %d posted directly (photo doesn't crop well onto template %d)",
                 job_id, template.id,
             )
-            if fanpage.pinterest_publish_mode == PublishMode.auto:
+            from app.services.fb_share.group_jobs import is_group_only
+            if fanpage.pinterest_publish_mode == PublishMode.auto or is_group_only(db, job.id):
                 from app.tasks.publisher import publish_job
                 publish_job.delay(job.id)
             return
@@ -1173,7 +1176,8 @@ def render_pinterest(self, job_id: int):
 
         logger.info("Pinterest: job %d rendered → %s (%d bytes)", job_id, filename, len(png_bytes))
 
-        if fanpage.pinterest_publish_mode == PublishMode.auto:
+        from app.services.fb_share.group_jobs import is_group_only
+        if fanpage.pinterest_publish_mode == PublishMode.auto or is_group_only(db, job.id):
             from app.tasks.publisher import publish_job
             publish_job.delay(job.id)
 
@@ -1375,7 +1379,8 @@ def _render_facebook_direct(db, job, fanpage, idea, prompt=None):
     job.status = PublishJobStatus.pending_publish
     job.last_error = None
     db.commit()
-    if fanpage.facebook_photo_publish_mode == PublishMode.auto:
+    from app.services.fb_share.group_jobs import is_group_only
+    if fanpage.facebook_photo_publish_mode == PublishMode.auto or is_group_only(db, job.id):
         from app.tasks.publisher import publish_job
         publish_job.delay(job.id)
 
@@ -1594,7 +1599,8 @@ def render_facebook_photo(self, job_id: int):
             "Facebook photo: job %d (%s) rendered → %s (%d bytes)", job_id, category, filename, len(png_bytes),
         )
 
-        if fanpage.facebook_photo_publish_mode == PublishMode.auto:
+        from app.services.fb_share.group_jobs import is_group_only
+        if fanpage.facebook_photo_publish_mode == PublishMode.auto or is_group_only(db, job.id):
             from app.tasks.publisher import publish_job
             publish_job.delay(job.id)
 
@@ -1687,21 +1693,49 @@ def render_pending_designs():
             )
             .all()
         )
+        from app.services.fb_share.group_jobs import (
+            group_publish_job_ids, is_group_only, mark_group_job, remaining_groups_only_today,
+        )
         if stale_jobs:
             for sj in stale_jobs:
+                if is_group_only(db, sj.id):
+                    continue
+                if remaining_groups_only_today(db, sj.fanpage_id, "news", now_naive) > 0:
+                    mark_group_job(db, fanpage_id=sj.fanpage_id, mode="news", publish_job_id=sj.id)
+                    db.flush()
+                    continue
                 sj.status = PublishJobStatus.skipped
                 sj.last_error = "stale: news older than 24 h, not rendered"
             db.commit()
-            logger.info("Marked %d stale news jobs as skipped (older than %dh)", len(stale_jobs), NEWS_STALE_HOURS)
+            logger.info("Processed %d stale news jobs for Page skip or group overflow (older than %dh)", len(stale_jobs), NEWS_STALE_HOURS)
 
         from app.services.visual_fair_queue import visual_news_fanpage_ids
         visual_ids = visual_news_fanpage_ids(db)
+
+        # Group renders use the normal engine queue, without Page fairness counters or JIT claims.
+        group_jobs = db.query(PublishJob).filter(
+            PublishJob.status == PublishJobStatus.pending_design,
+            PublishJob.content_type == ContentType.news_content,
+            PublishJob.id.in_(group_publish_job_ids()),
+            not_stuck_on_missing_image, not_deferred,
+        ).limit(10).all()
+        from app.services.engine_router import render_queue_for
+        for group_job in group_jobs:
+            if not _acquire_queued_lock(group_job.id):
+                continue
+            fp = db.query(TargetFanpage).filter_by(id=group_job.fanpage_id).first()
+            queue = render_queue_for(db, fp, "news") if fp else None
+            if queue:
+                render_design.apply_async(args=[group_job.id], queue=queue, expires=1800)
+            else:
+                render_design.delay(group_job.id)
 
         jobs_filter = [
             PublishJob.status == PublishJobStatus.pending_design,
             PublishJob.content_type == ContentType.news_content,
             TargetFanpage.mode2_publish_mode == PublishMode.auto,
             PublishJob.created_at >= stale_cutoff,
+            PublishJob.id.notin_(group_publish_job_ids()),
             not_stuck_on_missing_image,
             not_deferred,
         ]

@@ -19,6 +19,7 @@ from app.models.posts import Post, PostStatus
 from app.models.target_fanpages import TargetFanpage
 from app.models.publish_jobs import PublishJob
 from app.services.radar_clustering import token_set, jaccard
+from app.services.fb_share.group_jobs import group_publish_job_ids, remaining_groups_only_today
 from app.tasks.fan_out import fanout_link
 from app.tasks.ig_recreate import recreate_post_for_fanpage
 from app.tasks.image_saver import download_ig_image
@@ -116,6 +117,8 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
         # created today
         created_today = db.query(func.count(RadarStoryDecision.id)).filter(
             RadarStoryDecision.fanpage_id == d.fanpage_id,
+            ~func.coalesce(RadarStoryDecision.reason, "").startswith("group_only:"),
+            (RadarStoryDecision.publish_job_id.is_(None) | RadarStoryDecision.publish_job_id.notin_(group_publish_job_ids())),
             RadarStoryDecision.status.in_([DecisionStatus.CREATED, DecisionStatus.DISPATCHED]),
             RadarStoryDecision.created_at >= day_start_utc,
             RadarStoryDecision.created_at < day_end_utc
@@ -125,6 +128,8 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
         # Let's just use the latest created_at of CREATED/DISPATCHED decision for this fanpage
         last_decision = db.query(func.max(RadarStoryDecision.created_at)).filter(
             RadarStoryDecision.fanpage_id == d.fanpage_id,
+            ~func.coalesce(RadarStoryDecision.reason, "").startswith("group_only:"),
+            (RadarStoryDecision.publish_job_id.is_(None) | RadarStoryDecision.publish_job_id.notin_(group_publish_job_ids())),
             RadarStoryDecision.status.in_([DecisionStatus.CREATED, DecisionStatus.DISPATCHED])
         ).scalar()
         last_time = last_decision or datetime.min
@@ -174,12 +179,24 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
 
         created_today = db.query(func.count(RadarStoryDecision.id)).filter(
             RadarStoryDecision.fanpage_id == d.fanpage_id,
+            ~func.coalesce(RadarStoryDecision.reason, "").startswith("group_only:"),
+            (RadarStoryDecision.publish_job_id.is_(None) | RadarStoryDecision.publish_job_id.notin_(group_publish_job_ids())),
             RadarStoryDecision.status.in_([DecisionStatus.CREATED, DecisionStatus.DISPATCHED]),
             RadarStoryDecision.created_at >= day_start_utc,
             RadarStoryDecision.created_at < day_end_utc
         ).scalar() or 0
 
-        if created_today >= fanpage.radar_daily_max:
+        group_only = created_today >= fanpage.radar_daily_max
+        # Group decisions dispatched earlier have no marker row until recreate runs; count them too.
+        pending_group = db.query(func.count(RadarStoryDecision.id)).filter(
+            RadarStoryDecision.fanpage_id == d.fanpage_id,
+            func.coalesce(RadarStoryDecision.reason, "").startswith("group_only:"),
+            RadarStoryDecision.publish_job_id.is_(None),
+            RadarStoryDecision.status == DecisionStatus.DISPATCHED,
+            RadarStoryDecision.created_at >= day_start_utc,
+            RadarStoryDecision.created_at < day_end_utc
+        ).scalar() or 0 if group_only else 0
+        if group_only and remaining_groups_only_today(db, d.fanpage_id, "viral_radar", now_utc) - pending_group <= 0:
             d.status = DecisionStatus.SKIPPED_DAILY_MAX
             d.reason = "daily cap reached"
             db.commit()
@@ -260,7 +277,18 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
                 else:
                     c = _fanpage_stagger(slot)
                 
-                if fanout_link(db, post, link, countdown=c, radar_decision_id=d.id):
+                if group_only:
+                    # Persist the lane in reason before recreate creates its PublishJob.
+                    d.reason = "group_only: " + (d.reason or "daily cap overflow")
+                    recreate_post_for_fanpage.apply_async(
+                        args=[post.id, d.fanpage_id],
+                        kwargs={"radar_decision_id": d.id, "group_only": True}, countdown=c,
+                    )
+                    d.status = DecisionStatus.DISPATCHED
+                    d.post_id = post.id
+                    db.commit()
+                    slot += 1
+                elif fanout_link(db, post, link, countdown=c, radar_decision_id=d.id):
                     if d.status != DecisionStatus.CREATED:
                         d.status = DecisionStatus.DISPATCHED
                     d.post_id = post.id
@@ -331,7 +359,11 @@ def _process_story(db, story, sharing_mode: str, share_max: int, news_stagger_ma
             else:
                 c = _fanpage_stagger(slot)
                 
-            recreate_post_for_fanpage.apply_async(args=[post.id, d.fanpage_id], kwargs={"radar_decision_id": d.id}, countdown=c)
+            kwargs = {"radar_decision_id": d.id}
+            if group_only:
+                kwargs["group_only"] = True
+                d.reason = "group_only: " + (d.reason or "daily cap overflow")
+            recreate_post_for_fanpage.apply_async(args=[post.id, d.fanpage_id], kwargs=kwargs, countdown=c)
             
             d.status = DecisionStatus.DISPATCHED
             d.post_id = post.id

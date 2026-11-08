@@ -299,12 +299,19 @@ def finalize_ai_video(video_job_id: int):
                 )
                 db.add(publish_job)
                 db.flush()
+                from app.services.fb_share.group_jobs import is_group_only_video, link_video_publish_job
+                group_only = is_group_only_video(db, job.id)
+                if group_only:
+                    link_video_publish_job(db, video_job_id=job.id, publish_job_id=publish_job.id)
                 job.qc = {"technical": technical, "vision": vision, "passed": False,
                           "reasons": reasons, "overlay": overlay_info}
                 job.publish_job_id, job.status = publish_job.id, "done"
                 if idea:
                     idea.status = "done"
                 db.commit()
+                if group_only and publish_status == PublishJobStatus.pending_publish:
+                    from app.tasks.publisher import publish_job as publish_task
+                    publish_task.delay(publish_job.id)
                 return
         elif not tts_failed:
             raw_path = Path(job.video_path)
@@ -336,11 +343,15 @@ def finalize_ai_video(video_job_id: int):
         )
         db.add(publish_job)
         db.flush()
+        from app.services.fb_share.group_jobs import is_group_only_video, link_video_publish_job
+        group_only = is_group_only_video(db, job.id)
+        if group_only:
+            link_video_publish_job(db, video_job_id=job.id, publish_job_id=publish_job.id)
         job.publish_job_id, job.status, job.finished_at = publish_job.id, "done", datetime.now(timezone.utc).replace(tzinfo=None)
         if idea:
             idea.status = "done"
         db.commit()
-        if publish_status == PublishJobStatus.pending_publish and fanpage.ai_video_publish_mode == PublishMode.auto:
+        if publish_status == PublishJobStatus.pending_publish and (group_only or fanpage.ai_video_publish_mode == PublishMode.auto):
             from app.tasks.publisher import publish_job as publish_task
             publish_task.delay(publish_job.id)
     except Exception as exc:

@@ -63,6 +63,28 @@ def load_image_bytes(ref: str) -> bytes:
     return data
 
 
+def collect_group_only_items(db, fanpage, now: datetime) -> int:
+    from app.models.fb_group_share import FbShareGroupJob
+    from .group_jobs import hand_over
+
+    jobs = db.query(PublishJob).join(
+        FbShareGroupJob, FbShareGroupJob.publish_job_id == PublishJob.id,
+    ).filter(FbShareGroupJob.fanpage_id == fanpage.id, FbShareGroupJob.handed_at.is_(None)).order_by(
+        FbShareGroupJob.created_at, FbShareGroupJob.id,
+    ).limit(10).all()
+    job_ids = [job.id for job in jobs]
+    count = 0
+    for job_id in job_ids:
+        try:
+            item = hand_over(db, db.get(PublishJob, job_id), now)
+            db.commit()
+            count += item is not None
+        except Exception:
+            db.rollback()
+            logger.warning("Group Share: hand-over failed for publish job %s", job_id, exc_info=True)
+    return count
+
+
 def collect_published_items(db, fanpage, now: datetime, *, loader=None) -> int:
     _, settings = get_brand_share(db, fanpage.id)
     niches = settings["niches"]

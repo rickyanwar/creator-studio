@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import pytest
 from unittest.mock import MagicMock, patch
 
 from app.config import get_settings
@@ -14,6 +15,11 @@ from app.tasks.design_renderer import (
     render_design,
     render_facebook_photo,
 )
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 
 
 def _make_job(**kwargs):

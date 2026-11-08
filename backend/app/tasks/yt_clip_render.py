@@ -156,7 +156,8 @@ def render_youtube_clip(job_id: int):
         job.status, job.last_error = PublishJobStatus.pending_publish, None
         db.commit()
         logger.info("yt_clip_render: job %d rendered → %s (%.1fs)", job.id, job.video_url, job.video_duration_s or 0)
-        if fanpage.yt_clip_publish_mode == PublishMode.auto:
+        from app.services.fb_share.group_jobs import is_group_only
+        if fanpage.yt_clip_publish_mode == PublishMode.auto or is_group_only(db, job.id):
             from app.tasks.publisher import publish_job
             publish_job.delay(job.id)
     except Exception as exc:
@@ -178,6 +179,7 @@ def _unlink(path: str | None) -> None:
 
 
 def _cleanup_job_videos(db) -> int:
+    from app.services.fb_share.group_jobs import group_publish_job_ids, media_cleanup_allowed
     from sqlalchemy import and_, or_
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
 
@@ -191,8 +193,10 @@ def _cleanup_job_videos(db) -> int:
             and_(PublishJob.status.in_([PublishJobStatus.failed, PublishJobStatus.skipped]),
                  PublishJob.updated_at <= now - _FAILED_VIDEO_KEEP),
             and_(PublishJob.is_deleted == True, PublishJob.updated_at <= now - _FAILED_VIDEO_KEEP),  # noqa: E712
+            PublishJob.id.in_(group_publish_job_ids()),
         ),
     ).all()
+    jobs = [job for job in jobs if media_cleanup_allowed(db, job.id, now)]
     for job in jobs:
         _unlink(job.video_path)
         job.video_path, job.video_url = None, None
@@ -210,6 +214,8 @@ def _cleanup_job_videos(db) -> int:
         PublishJob.updated_at <= now - _THUMBNAIL_KEEP,
     ).all()
     for job in old_thumbs:
+        if not media_cleanup_allowed(db, job.id, now):
+            continue
         _unlink(job.video_thumbnail_path)
         job.video_thumbnail_path, job.video_thumbnail_url = None, None
     db.commit()

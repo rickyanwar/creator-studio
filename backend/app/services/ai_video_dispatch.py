@@ -442,6 +442,8 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
             continue
 
     # 2. Unpinned queued jobs
+    from app.services.fb_share.group_jobs import group_publish_job_ids, group_video_job_ids
+
     unpinned_jobs = (
         db.query(VideoJob)
         .filter(
@@ -468,6 +470,10 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
                     PublishJob.fanpage_id.in_(fp_ids),
                     PublishJob.content_type == ContentType.ai_video,
                     PublishJob.is_deleted.is_(False),
+                    PublishJob.id.notin_(group_publish_job_ids()),
+                    PublishJob.id.notin_(db.query(VideoJob.publish_job_id).filter(
+                        VideoJob.id.in_(group_video_job_ids()), VideoJob.publish_job_id.isnot(None),
+                    )),
                     PublishJob.status.in_([
                         PublishJobStatus.pending_publish,
                         PublishJobStatus.pending_review,
@@ -497,13 +503,13 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
 
     last_started = dict(
         db.query(VideoJob.fanpage_id, func.max(VideoJob.started_at))
-        .filter(VideoJob.started_at.isnot(None))
+        .filter(VideoJob.started_at.isnot(None), VideoJob.id.notin_(group_video_job_ids()))
         .group_by(VideoJob.fanpage_id)
         .all()
     )
     started_today = dict(
         db.query(VideoJob.fanpage_id, func.count(VideoJob.id))
-        .filter(VideoJob.started_at >= _wib_day_start_utc(now), VideoJob.status != "cancelled")
+        .filter(VideoJob.started_at >= _wib_day_start_utc(now), VideoJob.status != "cancelled", VideoJob.id.notin_(group_video_job_ids()))
         .group_by(VideoJob.fanpage_id)
         .all()
     )

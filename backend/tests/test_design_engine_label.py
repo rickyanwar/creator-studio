@@ -20,6 +20,14 @@ from app.tasks.design_renderer import (
 from app.tasks.ig_recreate import render_ig_recreate
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
+
+
 def _make_job(**kwargs):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     defaults = {

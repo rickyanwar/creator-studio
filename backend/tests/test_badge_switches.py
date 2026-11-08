@@ -2,6 +2,11 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_group_jobs(monkeypatch):
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *args: False)
 from app.models.design_templates import DesignTemplate
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.target_fanpages import PublishMode, TargetFanpage

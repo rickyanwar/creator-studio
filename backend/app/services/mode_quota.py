@@ -165,6 +165,7 @@ def waiting_groups(
     now_utc: datetime,
 ) -> set[str]:
     """Identify groups with active waiting content without deliveries for this destination."""
+    from app.services.fb_share.group_jobs import group_publish_job_ids
     aware_now = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
     naive_cutoff = aware_now.astimezone(timezone.utc).replace(
         tzinfo=None
@@ -184,6 +185,7 @@ def waiting_groups(
             PublishJob.created_at >= naive_cutoff,
             PublishJob.is_deleted.is_(False),
             PublishJob.id.not_in(delivered_job_ids),
+            PublishJob.id.notin_(group_publish_job_ids()),
         )
         .distinct()
     )
