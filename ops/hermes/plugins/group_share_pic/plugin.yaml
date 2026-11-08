@@ -1,0 +1,5 @@
+name: group_share_pic
+version: "1.0"
+description: Route PIC direct messages to Studio before AI dispatch
+provides_hooks:
+  - pre_gateway_dispatch

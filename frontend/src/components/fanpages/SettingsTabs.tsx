@@ -5,6 +5,7 @@ import type React from "react";
 export type SettingsTabId =
   | "content"
   | "channels"
+  | "groupshare"
   | "pacing"
   | "captions"
   | "design"

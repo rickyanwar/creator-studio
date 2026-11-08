@@ -111,7 +111,7 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        if self.path not in ("/probe", "/dry-run", "/publish", "/rehearse", "/recover", "/notify", "/resolve-post"):
+        if self.path not in ("/probe", "/dry-run", "/publish", "/rehearse", "/recover", "/notify", "/resolve-post", "/pic-send"):
             self.send_json(404, {"error": "not_found"})
             return
 
@@ -121,6 +121,18 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
 
         body = self.read_json_body()
         if body is None:
+            return
+
+        if self.path == "/pic-send":
+            from phone_runner.pic_send import send_pic_messages, validate_request
+
+            target, messages = body.get("target"), body.get("messages")
+            error = validate_request(target, messages)
+            if error:
+                self.send_json(400, {"error": error})
+                return
+            sent, detail = send_pic_messages(target, messages)
+            self.send_json(200, {"sent": sent, "detail": detail})
             return
 
         if self.path == "/notify":

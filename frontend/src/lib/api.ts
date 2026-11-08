@@ -604,3 +604,29 @@ export const deleteDeviceAssignment = (destinationId: number, deviceId: number) 
 // ── Social Media Activity (R1/U1) ─────────────────────────────────────────────
 export const listSocialMediaActivity = (params?: DeliveryActivityQueryParams) =>
   api.get<DeliveryActivity[]>("/social-media/activity", { params });
+
+// Group share
+export const listFbGroups = (params?: { niche?: string; include_inactive?: boolean }) =>
+  api.get<import("./types").FbGroup[]>("/fb-groups", { params }).then((r) => r.data);
+export const listFbGroupNiches = () => api.get<string[]>("/fb-groups/niches").then((r) => r.data);
+export const createFbGroup = (data: import("./types").FbGroupIn) =>
+  api.post<import("./types").FbGroup>("/fb-groups", data).then((r) => r.data);
+export const updateFbGroup = (id: number, data: Partial<import("./types").FbGroupIn>) =>
+  api.patch<import("./types").FbGroup>(`/fb-groups/${id}`, data).then((r) => r.data);
+export const deactivateFbGroup = (id: number) => api.delete(`/fb-groups/${id}`).then((r) => r.data);
+export const getGroupShare = (id: number) =>
+  api.get<import("./types").GroupShareConfig>(`/fanpages/${id}/group-share`).then((r) => r.data);
+export const updateGroupShare = (id: number, data: import("./types").GroupShareConfig) =>
+  api.put<import("./types").GroupShareConfig>(`/fanpages/${id}/group-share`, data).then((r) => r.data);
+export const listGroupShareAccounts = (id: number) =>
+  api.get<import("./types").GroupShareAccount[]>(`/fanpages/${id}/group-share/accounts`).then((r) => r.data);
+export const updateGroupShareAccount = (id: number, destinationId: number, data: import("./types").GroupShareDeliveryIn) =>
+  api.put<import("./types").GroupShareAccount>(`/fanpages/${id}/group-share/accounts/${destinationId}`, data).then((r) => r.data);
+export const listGroupShareMemberships = (id: number) =>
+  api.get<import("./types").GroupShareMembership[]>(`/fanpages/${id}/group-share/memberships`).then((r) => r.data);
+export const updateGroupShareMemberships = (id: number, items: import("./types").GroupShareMembershipIn[]) =>
+  api.put<import("./types").GroupShareMembership[]>(`/fanpages/${id}/group-share/memberships`, { items }).then((r) => r.data);
+export const listGroupShareTasks = (id: number, params?: { state?: string; limit?: number }) =>
+  api.get<import("./types").GroupShareTask[]>(`/fanpages/${id}/group-share/tasks`, { params }).then((r) => r.data);
+export const getGroupShareSummary = (id: number) =>
+  api.get<import("./types").GroupShareSummary>(`/fanpages/${id}/group-share/summary`).then((r) => r.data);

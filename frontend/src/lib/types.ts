@@ -1357,3 +1357,93 @@ export interface DeliveryActivityQueryParams {
   limit?: number;
   offset?: number;
 }
+
+export type FbGroupKind = "person_fan" | "team_fan" | "general" | "meme";
+export interface FbGroupIn {
+  niche: string;
+  url: string;
+  fb_group_id?: string | null;
+  name: string;
+  kind: FbGroupKind;
+  subject: string | null;
+  language: string;
+  posting_identity: "page_allowed" | "profile_only";
+  needs_admin_approval: boolean;
+  allowed_days: number[] | null;
+  banned_content: string[] | null;
+  daily_cap: number;
+  is_active?: boolean;
+  paused_reason?: string | null;
+  notes: string | null;
+}
+export interface FbGroup extends FbGroupIn {
+  id: number;
+  fb_group_id: string | null;
+  is_active: boolean;
+  paused_reason: string | null;
+}
+export type ModeKey = "ig" | "news" | "discussion" | "pinterest" | "fb_recreate" | "yt_clips" | "ai_video" | "viral_radar";
+export interface GroupShareSettings {
+  niches: string[];
+  sources: Record<ModeKey, { source: "off" | "follow" | "groups_only" | "both"; groups_only_per_day: number }>;
+  muse: { enabled: boolean; per_day: number };
+  credit: boolean;
+  must_edit: boolean;
+  caps: { start_per_day: number; weekly_increase: number; max_per_day: number; min_gap_minutes: number; per_group_per_day: number };
+}
+export interface GroupShareConfig { enabled: boolean; settings: GroupShareSettings }
+export interface GroupShareDeliveryIn {
+  mode: "phone_auto" | "pic_whatsapp" | "pic_telegram" | null;
+  phone_device_id: number | null;
+  pic_name: string | null;
+  pic_contact: string | null;
+  task_hours_start: string | null;
+  task_hours_end: string | null;
+  start_per_day: number | null;
+  weekly_increase: number | null;
+  max_per_day: number | null;
+  is_active: boolean;
+}
+export interface GroupShareDelivery extends GroupShareDeliveryIn {
+  calibration: Record<string, { ok: boolean; at: string; note: string }> | null;
+  calibrated_at: string | null;
+  paused_until: string | null;
+  block_count: number;
+}
+export interface GroupShareAccount {
+  destination_id: number;
+  name: string;
+  kind: "facebook_profile" | "facebook_page";
+  parent_profile_id: number | null;
+  parent_profile_name: string | null;
+  delivery: GroupShareDelivery | null;
+}
+export type GroupShareMembershipStatus = "unknown" | "joined" | "pending_approval" | "not_member" | "removed" | "banned";
+export interface GroupShareMembershipIn { destination_id: number; group_id: number; status: GroupShareMembershipStatus }
+export interface GroupShareMembership extends GroupShareMembershipIn { checked_at: string | null }
+export interface GroupShareTask {
+  id: number;
+  item_id: number;
+  group_id: number;
+  group_name: string;
+  group_url: string;
+  destination_id: number;
+  destination_name: string;
+  delivery_mode: GroupShareDeliveryIn["mode"];
+  caption: string | null;
+  scheduled_for: string | null;
+  state: string;
+  post_url: string | null;
+  error: string | null;
+  media_kind: string | null;
+  media_first: string | null;
+  created_at: string;
+}
+export interface GroupShareSummary {
+  enabled: boolean;
+  today_published: number;
+  today_planned: number;
+  pending_admin: number;
+  paused_accounts: number;
+  groups_joined: number;
+}
