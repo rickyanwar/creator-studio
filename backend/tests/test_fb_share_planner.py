@@ -7,10 +7,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.models.fb_group_share import FbGroup, FbGroupMembership, FbShareDelivery, FbShareItem, FbShareTask
+from app.models.fb_group_share import FbGroup, FbGroupMembership, FbShareBrandSettings, FbShareDelivery, FbShareItem, FbShareTask
 from app.models.social_publishing import SocialDestination
 from app.models.target_fanpages import TargetFanpage
 from app.services.fb_share import planner
+from app.services.fb_share.brand_settings import set_brand_share
 from app.services.fb_share.pic_messages import ONBOARDING_TEXT
 from backend.tests.test_fb_group_share_models import db_session
 
@@ -19,8 +20,7 @@ NOW = datetime(2026, 11, 8, 10)
 
 def seed(db, groups=3, destination_id=1, **delivery_values):
     brand = db.get(TargetFanpage, 1)
-    brand.fb_share_enabled = True
-    brand.fb_share_settings = {}
+    set_brand_share(db, brand.id, True, {})
     db.get(SocialDestination, destination_id).timezone = "UTC"
     delivery = FbShareDelivery(destination_id=destination_id, mode="pic_whatsapp", is_active=True,
                                pic_contact="+62 (812) 345", created_at=NOW, **delivery_values)
@@ -166,7 +166,7 @@ def test_expiry_unclassified_and_disabled_brand(db_session):
     assert planner.plan_brand(db_session, brand, NOW, random.Random(0)) == 0
     assert expired.status == "expired" and unclassified.status == "new"
     unclassified.sentiment = {}
-    brand.fb_share_enabled = False
+    set_brand_share(db_session, brand.id, False, {})
     assert planner.plan_brand(db_session, brand, NOW, random.Random(0)) == 0
 
 
@@ -287,12 +287,14 @@ def test_dispatch_expiry_and_phone_left_planned(db_session, dispatch):
     dispatch.send_pic_messages.assert_not_called()
 
 
-@pytest.mark.parametrize("setting", ["disabled_brand", "inactive", "paused"])
+@pytest.mark.parametrize("setting", ["disabled_brand", "missing_settings", "inactive", "paused"])
 def test_dispatch_requires_enabled_active_unpaused_brand(db_session, dispatch, setting):
     brand, delivery = seed(db_session, groups=1)
     entry = task(db_session, item(db_session))
     if setting == "disabled_brand":
-        brand.fb_share_enabled = False
+        set_brand_share(db_session, brand.id, False, {})
+    elif setting == "missing_settings":
+        db_session.delete(db_session.get(FbShareBrandSettings, brand.id))
     elif setting == "inactive":
         delivery.is_active = False
     else:

@@ -9,7 +9,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models.fb_group_share import FbShareItem
+from app.models.fb_group_share import FbShareBrandSettings, FbShareItem
+from app.services.fb_share.brand_settings import set_brand_share
 from app.services.fb_share.classify import CLASSIFY_PROMPT, classify_pending_items
 
 
@@ -17,14 +18,17 @@ from app.services.fb_share.classify import CLASSIFY_PROMPT, classify_pending_ite
 def db_session():
     engine = create_engine("sqlite://")
     FbShareItem.__table__.create(engine)
+    FbShareBrandSettings.__table__.create(engine)
     with sessionmaker(bind=engine)() as db:
         yield db
     engine.dispose()
 
 
 @pytest.fixture
-def fanpage():
-    return SimpleNamespace(id=1, fb_share_settings={"niches": ["f1", "motogp"]})
+def fanpage(db_session):
+    set_brand_share(db_session, 1, True, {"niches": ["f1", "motogp"]})
+    db_session.commit()
+    return SimpleNamespace(id=1)
 
 
 def item(db, **values):
