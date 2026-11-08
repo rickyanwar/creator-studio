@@ -49,7 +49,8 @@ def test_failing_brand_does_not_stop_next(monkeypatch):
     monkeypatch.setattr(package, "classify", classify, raising=False)
     brands = [Mock(id=1), Mock(id=2)]
     db = Mock()
-    db.query.return_value.filter_by.return_value.all.return_value = brands
+    monkeypatch.setattr(fb_share, "enabled_fanpage_ids", Mock(return_value=[1, 2]))
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = brands
     db.get.side_effect = brands
     monkeypatch.setattr(fb_share, "SessionLocal", lambda: db)
     plan = Mock()
@@ -60,6 +61,7 @@ def test_failing_brand_does_not_stop_next(monkeypatch):
     from app.services import phone_runner_client
     monkeypatch.setattr(phone_runner_client, "PhoneRunnerClient", lambda: client)
     fb_share.fb_share_tick.run()
+    fb_share.enabled_fanpage_ids.assert_called_once_with(db)
     assert feeder.collect_published_items.call_count == 2
     assert classify.classify_pending_items.call_args.args == (db, brands[1])
     assert plan.call_args.args[:2] == (db, brands[1])
@@ -80,7 +82,8 @@ def test_registration():
 
 def test_concurrent_tick_returns_without_work(monkeypatch, redis_lock):
     db = Mock()
-    db.query.return_value.filter_by.return_value.all.return_value = []
+    monkeypatch.setattr(fb_share, "enabled_fanpage_ids", Mock(return_value=[]))
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
     sessions = Mock(return_value=db)
     monkeypatch.setattr(fb_share, "SessionLocal", sessions)
 

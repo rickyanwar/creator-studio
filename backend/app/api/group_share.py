@@ -9,7 +9,8 @@ from app.api.deps import CurrentUser, DB
 from app.models.fb_group_share import FbGroup, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask
 from app.models.social_publishing import PhoneDevice, SocialDestination
 from app.models.target_fanpages import TargetFanpage
-from app.schemas.fb_group_share import AccountOut, DeliveryIn, DeliveryOut, GroupShareIn, MembershipOut, MembershipsIn, merge_settings
+from app.schemas.fb_group_share import AccountOut, DeliveryIn, DeliveryOut, GroupShareIn, MembershipOut, MembershipsIn
+from app.services.fb_share.brand_settings import get_brand_share, set_brand_share
 
 router = APIRouter(prefix="/fanpages", tags=["group-share"])
 
@@ -47,17 +48,18 @@ def _account(db, destination, delivery):
 
 @router.get("/{fanpage_id}/group-share")
 def get_settings(fanpage_id: int, db: DB, _: CurrentUser):
-    brand = _brand(db, fanpage_id)
-    return {"enabled": brand.fb_share_enabled, "settings": merge_settings(brand.fb_share_settings)}
+    _brand(db, fanpage_id)
+    enabled, settings = get_brand_share(db, fanpage_id)
+    return {"enabled": enabled, "settings": settings}
 
 
 @router.put("/{fanpage_id}/group-share")
 def put_settings(fanpage_id: int, body: GroupShareIn, db: DB, _: CurrentUser):
-    brand = _brand(db, fanpage_id)
-    brand.fb_share_enabled = body.enabled
-    brand.fb_share_settings = body.settings.model_dump()
+    _brand(db, fanpage_id)
+    set_brand_share(db, fanpage_id, body.enabled, body.settings.model_dump())
     db.commit()
-    return {"enabled": brand.fb_share_enabled, "settings": merge_settings(brand.fb_share_settings)}
+    enabled, settings = get_brand_share(db, fanpage_id)
+    return {"enabled": enabled, "settings": settings}
 
 
 @router.get("/{fanpage_id}/group-share/accounts", response_model=list[AccountOut])
@@ -152,7 +154,8 @@ def list_tasks(fanpage_id: int, db: DB, _: CurrentUser, state: str | None = None
 
 @router.get("/{fanpage_id}/group-share/summary")
 def get_summary(fanpage_id: int, db: DB, _: CurrentUser):
-    brand = _brand(db, fanpage_id)
+    _brand(db, fanpage_id)
+    enabled, _settings = get_brand_share(db, fanpage_id)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     tasks = db.query(FbShareTask).join(FbShareItem, FbShareItem.id == FbShareTask.item_id).join(
@@ -166,7 +169,7 @@ def get_summary(fanpage_id: int, db: DB, _: CurrentUser):
         SocialDestination, SocialDestination.id == FbGroupMembership.destination_id,
     ).filter(SocialDestination.content_project_id == fanpage_id, FbGroupMembership.status == "joined").scalar()
     return {
-        "enabled": brand.fb_share_enabled,
+        "enabled": enabled,
         "today_published": today.filter(FbShareTask.state == "published").count(),
         "today_planned": today.filter(FbShareTask.state == "planned").count(),
         "pending_admin": tasks.filter(FbShareTask.state == "pending_admin").count(),

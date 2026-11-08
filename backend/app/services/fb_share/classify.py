@@ -5,7 +5,7 @@ import logging
 import re
 
 from app.models.fb_group_share import FbShareItem
-from app.schemas.fb_group_share import merge_settings
+from .brand_settings import get_brand_share
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,8 @@ def classify_pending_items(db, fanpage, *, max_items: int = 10, generate=None) -
     ).order_by(FbShareItem.created_at, FbShareItem.id).limit(max_items).all()
     if not items:
         return 0
-    niches = merge_settings(fanpage.fb_share_settings)["niches"]
+    _, settings = get_brand_share(db, fanpage.id)
+    niches = settings["niches"]
     posts = "\n".join(
         f"id={item.id} media={item.media_kind} caption={' '.join((item.caption or '')[:600].splitlines())}"
         for item in items

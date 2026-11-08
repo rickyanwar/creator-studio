@@ -18,7 +18,7 @@ from sqlalchemy.schema import DefaultClause
 from app.models.target_fanpages import TargetFanpage
 from app.models.social_publishing import PhoneDevice, SocialDestination
 from app.models.fb_group_share import (
-    FbGroup, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask,
+    FbGroup, FbShareBrandSettings, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask,
 )
 
 
@@ -36,7 +36,7 @@ def db_session():
     original = column.server_default
     column.server_default = DefaultClause(text("'[\"image\", \"album\", \"video\"]'"))
     try:
-        for model in (TargetFanpage, PhoneDevice, SocialDestination, FbGroup, FbShareDelivery,
+        for model in (TargetFanpage, PhoneDevice, SocialDestination, FbGroup, FbShareBrandSettings, FbShareDelivery,
                       FbGroupMembership, FbShareItem, FbShareTask):
             model.__table__.create(engine)
     finally:
@@ -56,6 +56,7 @@ def db_session():
 
 
 @pytest.mark.parametrize("model,values", [
+    (FbShareBrandSettings, dict(fanpage_id=1)),
     (FbGroup, dict(niche="f1", url="https://www.facebook.com/groups/f1", name="F1", kind="general")),
     (FbShareDelivery, dict(destination_id=1)),
     (FbGroupMembership, dict(destination_id=1, group_id=1)),
@@ -95,7 +96,8 @@ def test_migration_matches_models_and_downgrades():
         migration.upgrade()
         from sqlalchemy import inspect
         inspector = inspect(connection)
-        for model in (FbGroup, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask):
+        assert [col["name"] for col in inspector.get_columns("target_fanpages")] == ["id"]
+        for model in (FbGroup, FbShareBrandSettings, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask):
             table = model.__table__
             assert {col["name"] for col in inspector.get_columns(table.name)} == set(table.c.keys())
             assert {tuple(row["column_names"]) for row in inspector.get_unique_constraints(table.name)} == {
@@ -114,3 +116,27 @@ def test_migration_matches_models_and_downgrades():
         assert set(inspect(connection).get_table_names()) == {"target_fanpages", "social_destinations", "phone_devices"}
         assert [col["name"] for col in inspect(connection).get_columns("target_fanpages")] == ["id"]
     engine.dispose()
+
+
+def test_brand_share_defaults_upsert_order_and_rollback(db_session):
+    from app.services.fb_share.brand_settings import get_brand_share, set_brand_share, enabled_fanpage_ids
+    from app.schemas.fb_group_share import merge_settings
+
+    assert get_brand_share(db_session, 1) == (False, merge_settings(None))
+    assert enabled_fanpage_ids(db_session) == []
+    set_brand_share(db_session, 2, True, {"niches": ["motogp"]})
+    set_brand_share(db_session, 1, True, {"niches": ["f1"]})
+    assert enabled_fanpage_ids(db_session) == [1, 2]
+    assert get_brand_share(db_session, 1) == (True, merge_settings({"niches": ["f1"]}))
+    db_session.commit()
+    set_brand_share(db_session, 1, False, {})
+    assert enabled_fanpage_ids(db_session) == [2]
+    assert db_session.query(FbShareBrandSettings).count() == 2
+    db_session.rollback()
+    assert get_brand_share(db_session, 1)[0] is True
+    db_session.get(FbShareBrandSettings, 1).settings = None
+    assert get_brand_share(db_session, 1) == (True, merge_settings(None))
+    db_session.commit()
+    db_session.execute(text("DELETE FROM target_fanpages WHERE id = 1"))
+    db_session.commit()
+    assert get_brand_share(db_session, 1) == (False, merge_settings(None))

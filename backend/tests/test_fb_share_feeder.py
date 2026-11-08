@@ -14,7 +14,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import DefaultClause
 
-from app.models.fb_group_share import FbShareItem
+from app.models.fb_group_share import FbShareBrandSettings, FbShareItem
+from app.services.fb_share.brand_settings import set_brand_share
 from app.models.publish_jobs import ContentType, PublishJob
 from app.models.radar import RadarStoryDecision
 from app.models.social_publishing import PublishDelivery, SocialDestination
@@ -57,7 +58,7 @@ def db_session():
     engine = create_engine("sqlite://")
     column = SocialDestination.__table__.c.supported_media
     with patch.object(column, "server_default", DefaultClause(text("'[]'"))):
-        for model in (TargetFanpage, SocialDestination, PublishJob, PublishDelivery, FbShareItem, RadarStoryDecision):
+        for model in (TargetFanpage, FbShareBrandSettings, SocialDestination, PublishJob, PublishDelivery, FbShareItem, RadarStoryDecision):
             model.__table__.create(engine)
     with sessionmaker(bind=engine)() as db:
         db.add_all([TargetFanpage(id=1, name="Brand"), TargetFanpage(id=2, name="Other")])
@@ -75,8 +76,8 @@ def db_session():
 
 def brand(db, *, niches=None, mode="ig", source="follow"):
     fanpage = db.get(TargetFanpage, 1)
-    fanpage.fb_share_settings = {"niches": ["f1"] if niches is None else niches,
-                                 "sources": {mode: {"source": source}}}
+    set_brand_share(db, fanpage.id, True, {"niches": ["f1"] if niches is None else niches,
+                                          "sources": {mode: {"source": source}}})
     db.commit()
     return fanpage
 

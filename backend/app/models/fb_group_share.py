@@ -33,6 +33,16 @@ class FbGroup(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class FbShareBrandSettings(Base):
+    __tablename__ = "fb_share_brand_settings"
+
+    fanpage_id = Column(Integer, ForeignKey("target_fanpages.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    settings = Column(JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class FbShareDelivery(Base):
     __tablename__ = "fb_share_deliveries"
     __table_args__ = (

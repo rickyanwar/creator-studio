@@ -12,7 +12,7 @@ from app.models.fb_group_share import FbShareItem
 from app.models.publish_jobs import PublishJob
 from app.models.radar import RadarStoryDecision
 from app.models.social_publishing import PublishDelivery, SocialDestination
-from app.schemas.fb_group_share import merge_settings
+from .brand_settings import get_brand_share
 from app.services.radar_clustering import compute_phash
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def load_image_bytes(ref: str) -> bytes:
 
 
 def collect_published_items(db, fanpage, now: datetime, *, loader=None) -> int:
-    settings = merge_settings(fanpage.fb_share_settings)
+    _, settings = get_brand_share(db, fanpage.id)
     niches = settings["niches"]
     if not niches:
         return 0

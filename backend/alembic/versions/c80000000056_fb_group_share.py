@@ -12,8 +12,6 @@ depends_on = None
 
 def upgrade():
     json_type = sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
-    op.add_column("target_fanpages", sa.Column("fb_share_enabled", sa.Boolean(), nullable=False, server_default=sa.false()))
-    op.add_column("target_fanpages", sa.Column("fb_share_settings", json_type, nullable=True))
     op.create_table(
         "fb_groups",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -38,6 +36,14 @@ def upgrade():
         sa.CheckConstraint("posting_identity IN ('page_allowed','profile_only')", name="ck_fb_groups_posting_identity"),
     )
     op.create_index("ix_fb_groups_niche", "fb_groups", ["niche"])
+    op.create_table(
+        "fb_share_brand_settings",
+        sa.Column("fanpage_id", sa.Integer(), sa.ForeignKey("target_fanpages.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("settings", json_type, nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now(), onupdate=sa.func.now()),
+    )
     op.create_table(
         "fb_share_deliveries",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -126,7 +132,6 @@ def downgrade():
     op.drop_table("fb_share_items")
     op.drop_table("fb_group_memberships")
     op.drop_table("fb_share_deliveries")
+    op.drop_table("fb_share_brand_settings")
     op.drop_index("ix_fb_groups_niche", table_name="fb_groups")
     op.drop_table("fb_groups")
-    op.drop_column("target_fanpages", "fb_share_settings")
-    op.drop_column("target_fanpages", "fb_share_enabled")

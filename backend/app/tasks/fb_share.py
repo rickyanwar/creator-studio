@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models.target_fanpages import TargetFanpage
+from app.services.fb_share.brand_settings import enabled_fanpage_ids
 from app.services.fb_share.planner import dispatch_due, plan_brand
 from app.tasks.celery_app import celery_app
 
@@ -35,7 +36,9 @@ def fb_share_tick():
 
         db = SessionLocal()
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        brand_ids = [row.id for row in db.query(TargetFanpage).filter_by(fb_share_enabled=True).all()]
+        brand_ids = [row.id for row in db.query(TargetFanpage).filter(
+            TargetFanpage.id.in_(enabled_fanpage_ids(db)),
+        ).order_by(TargetFanpage.id).all()]
         for brand_id in brand_ids:
             try:
                 fanpage = db.get(TargetFanpage, brand_id)

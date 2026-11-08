@@ -13,12 +13,11 @@ from sqlalchemy import or_
 
 from app.config import get_settings
 from app.models.fb_group_share import (
-    FbGroup, FbGroupMembership, FbShareDelivery, FbShareItem, FbShareTask,
+    FbGroup, FbGroupMembership, FbShareBrandSettings, FbShareDelivery, FbShareItem, FbShareTask,
 )
 from app.models.social_publishing import SocialDestination
-from app.models.target_fanpages import TargetFanpage
-from app.schemas.fb_group_share import merge_settings
 from . import caps
+from .brand_settings import get_brand_share
 from .pic_messages import ONBOARDING_TEXT, build_task_messages
 from .routing import select_groups
 from .types import GroupInfo, SentRecord, ShareItem
@@ -50,10 +49,11 @@ def _task_window(slot, delivery, zone):
 
 
 def plan_brand(db, fanpage, now: datetime, rng: random.Random) -> int:
-    if not fanpage.fb_share_enabled:
+    enabled, settings = get_brand_share(db, fanpage.id)
+    if not enabled:
         return 0
     now = _utc(now)
-    limits = merge_settings(fanpage.fb_share_settings)["caps"]
+    limits = settings["caps"]
     accounts = db.query(FbShareDelivery, SocialDestination).join(
         SocialDestination, SocialDestination.id == FbShareDelivery.destination_id,
     ).filter(
@@ -175,9 +175,9 @@ def dispatch_due(db, now, client) -> int:
     ).join(FbGroup, FbGroup.id == FbShareTask.group_id).join(
         FbShareDelivery, FbShareDelivery.destination_id == FbShareTask.destination_id,
     ).join(SocialDestination, SocialDestination.id == FbShareTask.destination_id).join(
-        TargetFanpage, TargetFanpage.id == SocialDestination.content_project_id,
+        FbShareBrandSettings, FbShareBrandSettings.fanpage_id == SocialDestination.content_project_id,
     ).filter(
-        TargetFanpage.fb_share_enabled.is_(True),
+        FbShareBrandSettings.enabled.is_(True),
         FbShareDelivery.is_active.is_(True),
         or_(FbShareDelivery.paused_until.is_(None), FbShareDelivery.paused_until < now),
         FbShareTask.state == "planned",
