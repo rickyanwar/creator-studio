@@ -1,6 +1,6 @@
 # Deep Dive D2: Publishing Ledger, Delivery Dispatch, and Phone Automation
 
-> Generated 2026-10-16 at main 25edf38 from a full read of the listed files. The "Verified claims" list at the bottom was checked line by line against the code. Other details are a careful map but not each re-checked. Read the real code before changing behaviour, and update this file when the code changes.
+Refreshed 2026-11-10 at main 8bc0f82.
 
 
 Comprehensive technical reference for the publishing subsystem: legacy Repliz vs S1b delivery ledger path selection, `PublishDelivery` state transitions, distributed claim/lease semantics, audience-aware slot math, device recovery, reconciliation, and fail-closed phone automation.
@@ -39,13 +39,15 @@ PublishJob (status: pending_publish)
    │             │      ├─► youtube_clip, ai_video: _publish_video_job()
    │             │      └─► ig_repost: create_album_schedule() (>=2 images) or create_image_schedule() (1 image)
    │             ├─► Slot allocation: _next_schedule_at(db, job.fanpage_id, breaking=job.is_breaking)
-   │             ├─► Sets job.status = 'published', job.cleanup_at = now + 6h (or 48h for video)
+    │             ├─► Sets job.status = 'published'; cleanup_at = max(now, go-live) + 6h (video: go-live + 48h)
    │             └─► _maybe_mark_post_done(db, post)
 ```
 
 `services/job_status_sync.py` preserves stale-only skip errors and never downgrades published jobs.
 `sync-finished-publish-jobs` runs every 15 min to close pending jobs finished through any path,
 updating source article/post records on success. Repliz schedules mixed with failed/skipped stay pending.
+
+`job_status_sync.py:decide_job_status` and `apply_job_status` are the shared pure status helpers. All `repliz_scheduled`/`published` sets are accepted; all-terminal sets succeed if any delivery is published. Otherwise failures precede skips, selecting the lowest-ID error; all stale-only skips preserve their original error. Uncertain/unfinished sets make no decision. Published parents are never downgraded or re-timestamped. Success sets `cleanup_at = max(job.published_at, delivery scheduled_for values) + 6h`; one actual Repliz delivery also copies schedule ID/time to the parent.
 
 Hermes always runs via `systemd-run` (transient unit outside the phone-runner sandbox, `HERMES_OUTSIDE_SANDBOX=1`) because it must write `/root/.hermes` while the runner keeps `ProtectHome=read-only` (2026-10-17, 432cbd0).
 
@@ -163,14 +165,22 @@ Implemented in `backend/app/services/publishing_schedule.py`.
 - `social_delivery_planner.news_slot_available(db, job, now_utc)` and `_plan_slot()`:
   - Shared slot math between pre-render stale check and `ensure_deliveries`.
   - Read-only (no row locks, no database writes) and fail-open (returns `True` on missing fan page, no active destinations, or unexpected errors).
-  - Inspects all active destinations for the fan page: returns `True` if at least one destination can schedule the news job within `destination.news_stale_hours` (default 24 h) from job creation. News arriving within 4 hours before sleep or during sleep may post in the first 3 waking hours the next morning. Used by `visual_fair_queue` to skip dead news jobs before generating images.
+   - Inspects all active destinations: freshness is `event_days.news_fresh_hours`, the destination limit (default 24 h) capped at 6 h on event days or 12 h otherwise, using the job's creation day in destination timezone. Ordinary news must post on its arrival local day. `_overnight_news_ok` permits news created within 4 h before sleep or during sleep into the first 3 waking hours, still within its age limit. Used by `visual_fair_queue` before image generation.
 
-### 4.7 Event-Window Live News (`services/event_days.py:is_live_event_news`)
-- During an event window (MotoGP/F1/UFC/Boxing race/event weekend from Thursday press conference day to day after race), new news posts immediately outside the daily schedule:
+### 4.7 Event Boost, Quotas & News Priority
+- `backend/app/services/event_days.py:effective_daily_target` doubles destination slots inside the fanpage's matching gallery-keyword event window. `publisher.py:_event_boosted_daily_limit` also doubles legacy daily limits. Window closes inclusively at H+1 (`gallery_downloader._EVENT_WINDOW_DAYS_AFTER = 1`); event refresh holds the date through H+2 (`_EVENT_REFRESH_HOLD_DAYS_AFTER = 2`) so western destination timezones retain H+1 boost.
+- `backend/app/services/mode_quota.py:pick_slot`, `group_quotas`: largest-remainder mode split, after event boost and `fitting_daily_target` capacity cap. Non-news prefers peak-weight slots; news takes earliest. News may borrow idle quotas at any time when `borrow_hours_before_sleep > 0` (default 3); other modes borrow only inside that end-of-day window. A mode with fresh waiting content is protected; AI-video quota above its cap can be borrowed even while it waits.
+- `mode_quota.py:ai_video_daily_cap`: positive `ai_video_daily_count` caps AI-video reservations per destination local day, including when mode shares are off; nonpositive/missing means no cap. It cannot borrow past its cap. Search blocks up to 14 days, then warns and returns a plain audience slot, so this bounded fallback is not a strict cap guarantee.
+- `social_delivery_planner.py:_supersedable_news_delivery`, `ensure_deliveries`: when no fresh slot fits, a newer job may take an older untouched non-breaking news delivery's future slot; the replaced delivery becomes skipped with `stale: superseded by fresher news (job <id>)`. Claims, attempts, external IDs and uncertainty prevent replacement. `visual_fair_queue.py:pick_next_news_job` prioritizes breaking/event news, newest first; ordinary news is newest first within each fanpage, with least-served fanpage fairness.
+- `social_delivery_dispatch.py:_news_dispatch_gate`: ordinary Repliz news waits until at most `REPLIZ_NEWS_SUBMIT_LEAD_MINUTES = 45` before go-live. Over-age unsent news becomes skipped (`stale: news too old to post at dispatch`). Non-event breaking news bypasses this gate; event news still gets its freshness check.
+
+### 4.8 Event-Window Live News (`services/event_days.py:is_live_event_news`)
+- During a matching niche's event window (MotoGP/F1/UFC/Boxing: H-3 through H+1), new news posts immediately outside the daily schedule:
   1. **Minimum Gap**: 10 minutes between posts on the same destination (`scheduled_for = max(now + 60s, latest reservation/live send + 10 min)`). `claim_paced_delivery_for_dispatch` uses `min(destination.min_gap_minutes, 10)` as the pace gap.
   2. **Sleep Window Bypass**: Posts even inside the audience's sleep window.
   3. **Extra Posts (No Quota Consumption)**: Deliveries are extra; they do not count toward daily target or mode quotas in `pick_slot` / `fitting_daily_target`.
-  4. **Dispatch & Replan**: `_news_dispatch_gate` returns "go" immediately (skipping 45-min Repliz lead) while keeping 6 h stale check. `replan_stale_scheduled_deliveries` leaves live event news alone (never moves them back onto the normal grid).
+   4. **Dispatch & Replan**: `_news_dispatch_gate` returns "go" immediately (skipping 45-min Repliz lead) while keeping 6 h stale check. `replan_stale_scheduled_deliveries` leaves live event news alone (never moves them back onto the normal grid).
+   5. **Reservation horizon**: `mode_quota.pick_slot` only uses reservations up to `now + 10 min` for the immediate-path anchor; later pre-booked slots do not delay live news. Live news still respects in-flight mutual exclusion. This path is separate from the normal 15-minute grid floor.
 
 ---
 
@@ -210,6 +220,15 @@ Mounted at `/social-media` (prefix `/social-media`), read-only except GPT-CLI to
    - Mixed mode method selection: `choose_method_for_slot(dest.mode, slot_index=idx, phone_daily_target, repliz_daily_target)`. In mixed mode: `idx mod (phone + repliz) < phone` -> `"phone"`, else `"repliz"`.
    - Appends `next_slot` to `simulated_reservations`.
 5. **Assembly**: real slots + estimated slots merged, sorted by `at` UTC timestamp, and indexed sequentially `0..N-1`.
+
+### 5.4 Today's Plan (`backend/app/services/day_plan.py:destination_day_plan`)
+- Returns destination-local date/time, event-adjusted `daily_target`, `base_daily_target`, mode `quotas`, `used`, `remaining`, `remaining_total`, and up to 30 simulated `upcoming_slots` that still fall today. No writes; adds phantom reservations locally during simulation. Invalid timezone falls back to UTC for day accounting.
+- Uses `mode_quota.group_reservations` and shared audience-slot math. This summary calculates quotas on the raw boosted target, without the planner's fitting cap, AI-video cap, borrowing or live-news exclusions; treat it as a breakdown, not a dispatch guarantee.
+
+### 5.5 Target Gap Diagnosis (`backend/app/scripts/target_gap_report.py:build_report`, `main`)
+- Read-only CLI: `python -m app.scripts.target_gap_report --days 3 --json --destination <id>` from `backend`; flags are optional. Reports 1–14 completed destination-local days plus today-so-far, event multiplier, fitting-cap target, supply, news outcomes and unused quotas.
+- Shortfall attribution order: `DELIVERY_FAILED`, `QUOTA_BLOCKED`, `FANPAGE_INACTIVE`, `AI_VIDEO_CAP`, `NO_SUPPLY`, `NEWS_DISCARDED`, `UNDER_TARGET_OTHER`. Invalid destination timezone falls back to `Europe/London`.
+- `fetch_day_deliveries` counts `uncertain` and `repliz_scheduled` as posted alongside `published`; these are diagnostic counts, not confirmed live posts. Past boosts use current keyword event dates, so a historical event can appear unboosted after refresh.
 
 ---
 
@@ -343,7 +362,7 @@ Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `pho
 ### 10.2 Identity & Navigation Gates
 - **Conflict Short-Circuit** (`publish._check_candidate_identity`): If candidate capture observes root ID $\ne$ expected main profile ID or composer ID $\ne$ expected target ID, immediately fails with `identity_mismatch`. Model navigation is never invoked on conflicting sessions.
 - **Proof Chain Verification** (`identity_proof.prove_identity`, `identity_proof.find_own_profile_name_identity`):
-  - Profiles use `own_profile_name_v1` as the primary path (2026-10-30): exact profile name on the own-profile root screen, owner-only controls (Edit cover photo / Edit profile picture / Dashboard), then ONE deep link `fb://profile/<expected id>` that must show the owner view (a visitor view with Follow / Add friend / Message fails closed, `Profile id binding failed`), then the matching composer author header. No Settings visit, clipboard or scrolling for profiles.
+   - Profiles use `own_profile_name_v1`: exact profile name text in package `com.facebook.katana`, at least one clickable owner edit control (`Edit cover photo`, `Edit profile picture`, `Edit profile`, `Edit Personal details`), AND exact `Dashboard`. A clickable visitor marker fails closed. `_bind_profile_id` opens `fb://profile/<expected id>` once and requires the owner view, then the proof composer must match the author. No Settings/clipboard URL chain by default; deterministic navigation may scroll a restored profile back to its header.
   - `own_url_chain_v1` (Settings → Copy link → clipboard) only runs for profiles when `collect_own_url_proof_chain(profile_url_proof=True)` is passed (tests only). Facebook renamed the button to "Copy <name>'s link" (child text "Copy link") around 2026-10-28; `find_root_settings_controls` / `find_page_settings_controls` accept both labels.
   - Pages retain strict URL chain verification.
 - **Identity UI retry** (`publish._identity_failure_is_ui_state`, 2026-10-31): when the proof could not read the screen (collector exception, or an error with `not found` / `missing` / `window focus` / `IME restoration` / `timed out` / `timeout` / `not awake` / `deadline exceeded` (2026-11-05) and no `mismatch` / `observed` / `does not match` / `visitor`), the runner returns `waiting_for_device` + `identity_ui_unready` (nothing posted) instead of `failed`. The backend (`social_delivery_dispatch.IDENTITY_UI_MAX_RETRIES = 2`) retries via routine recovery twice, then fails the delivery with `identity_unverified: identity could not be read after 3 tries`. A passed-but-contradictory proof or a seen mismatch stays a terminal `identity_unverified`. `identity_proof.verify_foreground_facebook` wakes a screen that fell asleep mid-proof once (`SCREEN_REWAKE_SETTLE_SECONDS` 1.5) and re-checks before failing; every later identity check still runs.
@@ -359,7 +378,7 @@ Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `pho
 - **Caption paste + Enter** (`publish._enter_caption`): the caption is pasted from the Portal clipboard (typing is the fallback). When it ends in a `#hashtag` or `@mention`, one Enter (keycode 66) follows, because Facebook's suggestion list otherwise covers the caption and the `composer_after_typing` vision gate read a suggestion (`#motorsport`) instead of the text (2026-10-17). Both caption checks strip the trailing newline.
 - **Content Pre-Tap Verification** (`modern_composer`, `vision_verify.verify_gate`):
   - Hierarchy verification: verifies caption input node contains expected text and media preview matches.
-  - Pre-SHARE vision verification gates (`composer_before_typing`, `composer_after_typing`, `post_settings`) fail closed (`vision_gate_failed`) on any mismatch or vision API error.
+   - Pre-SHARE gates (`composer_before_typing`, `composer_after_typing`, `post_settings`) block submission on mismatch or API error. `_pre_share_vision_failure` returns `waiting_for_device` / `vision_unavailable` when vision could not run; a content mismatch returns `failed` / `vision_gate_failed`. At `composer_after_typing`, an empty/scrolled-off author is allowed only if the pre-typing gate already verified it; a visible wrong author still fails.
 
 - **Photo albums (2-9 photos)** (`album_composer.attach_album_from_gallery`): `am start` cannot send a list of URIs, so SEND_MULTIPLE is not used. The album path keeps the empty, author-verified proof composer open, stages the photos at least 1.5 s apart (`stage_media_files(min_gap_seconds=...)`), opens the composer's **Gallery** → **Select multiple**, checks that the newest N picker items ("Photo, item K, taken on <minute>") fall inside the phone-clock staging window (and item N+1 does not), taps them oldest-first so the album keeps the media order, taps **Next** and requires tiles "Photo 1..N of N". Over 9 photos, any video, an unreadable phone clock/timezone, or any mismatch fails closed with `media_attach_failed`. Live rehearsal with 2 photos passed every gate on 2026-10-17.
 - **Facebook pop-ups** (`interstitials.clear_interstitials`): taps only exact safe labels ("Not now", "Maybe later", "Skip", "No thanks", "Got it", and "Wait" on an Android "isn't responding" dialog). It never acts on composer/picker/share-sheet screens, and never when a danger label (Retry, Discard, Delete, Post, Share, Allow, Update, Log out, ...) is in the same dialog container. It is called when the own profile is not found, when the share intent does not reach the composer, and before each post-link search. After SHARE, a posting problem on screen ("Couldn't post", a "Retry"/"Try again" button) stops the search with no tap, and the delivery stays `uncertain`.
@@ -369,7 +388,7 @@ Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `pho
 ### 10.5 Post-Tap Verification Gate
 - **Single Submission**: `SHARE` button tapped exactly once with humanized coordinate jitter (`publish_may_have_started = True`).
 - **Post Link Resolution & Downgrade** (`modern_composer.resolve_latest_post_link`): Resolves permalink by finding post matching first 30 normalized caption characters on profile. For photo posts, attempts link resolution. For video/Reels: 8 attempts 15s apart bounded by a deadline, checking profile posts, All tab + pull-to-reload + Feed fallback. If unproven within the deadline, delivery downgrades to `uncertain` (`post_identity_unproven`). Post-SHARE vision failure (`posted` gate) also downgrades to `uncertain` (`post_vision_mismatch`). Never retries after SHARE.
-- **Posted-Gate Mismatch Override**: A `posted` gate mismatch is overridden to `published` when the permalink owner ID matches the destination actor ID (commit `720ebe3`).
+- **Posted-Gate Override** (`publish.py:_execute_publish_core`): a caption-matched post ID with matching permalink owner overrides a `posted` vision mismatch. Vision-service failure after link resolution also keeps the proven post published. A missing/unproven post link remains uncertain.
 - **When Facebook is Closed**:
   Facebook app is explicitly force-stopped/closed:
   1. At the start of every run (ensures clean initial state).
@@ -399,13 +418,14 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
 
 ### 11.1 Identity & Navigation Protocol
 - **Profile Name Identity (`own_profile_name_v1`)**:
-  - Facebook Profile destinations require: exact profile name on own-profile root screen, presence of owner-only controls ("Edit cover photo", "Edit profile picture", or "Dashboard"), and composer author header matching exact profile name (`identity_proof.find_own_profile_name_identity`).
+   - Facebook Profile destinations require exact profile name, a clickable owner edit control AND `Dashboard`, plus matching proof-composer author (`identity_proof.find_own_profile_name_identity`). `Dashboard` alone is insufficient; `Messages` is not owner proof.
   - The numeric id is bound by the `fb://profile/<id>` owner-view check (`identity_proof._bind_profile_id`, live-verified 2026-10-30: own id → owner view, other id → visitor view with "Follow"). The URL chain (`own_url_chain_v1`) is not used for profiles in production. Pages strictly require URL chain.
   - Exact match prevents posting as Page or mismatched account ("Agung Baelah" != "Agung"). If session is a Page, name check fails and nothing is typed.
-  - **Page id on the phone**: for New Pages Experience pages the URL chain sees the page's profile-style id (e.g. GP Weekend `100094901131361`), not the classic page id Repliz reports as `generatedId` (`113659828455762`). A phone `facebook_page` destination must store the profile-style id in `facebook_actor_id`; the classic id fails closed with `identity_unverified`. Page rehearsal (GP Weekend under Agung) passed every gate on 2026-10-17, and a profile run that starts in the Page session switches back to the root profile.
+   - **Page id on the phone**: New Pages Experience URL chains expose a profile-style page ID, not necessarily Repliz's classic `generatedId`. Store the phone-observed ID in `facebook_actor_id`; a different ID fails closed with `identity_unverified`.
 - **Deterministic Root Navigation** (`identity_proof._try_open_own_root_without_model`):
   - Direct intents (`fb://feed`, `fb://profile`) with `allow_name_identity=True` for profile targets.
-  - Model navigation (`mobilerun`) is last resort: capped at 120s with 60s reserved (`MODEL_NAV_MAX_SECONDS = 120`, `MODEL_NAV_RESERVE_SECONDS = 60`).
+   - Model navigation (`mobilerun`) is last resort: capped at 120s with 60s reserved (`MODEL_NAV_MAX_SECONDS = 120`, `MODEL_NAV_RESERVE_SECONDS = 60`).
+   - `_switch_back_to_root_session` tries the exact root row first. If absent, `_switch_via_other_account_entry` opens the unique account-level entry (`another account`, `other account`, `switch account`, `see all profiles`), then requires the exact root row. Login/credential screens stop navigation. It never chooses an arbitrary account or types credentials.
 
 ### 11.2 Media Attachment via Share Intent
 - Photo and Video/Reel media attached via Android `SEND` share intent instead of UI gallery picker:
@@ -427,7 +447,7 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
         │  Verify author header, attached media, empty input (fail-closed)
         ▼
 [4. Type Caption via Portal IME]
-        │  mobilerun type -> A11y tree check confirms exact caption text
+        │  Portal clipboard paste (Portal IME typing fallback); A11y checks exact caption
         ▼
 [5. Vision Gate: composer_after_typing]
         │  Verify caption rendered with photo intact (fail-closed)
@@ -456,15 +476,16 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
 ### 11.4 Vision Verification Gates (`vision_verify.py`)
 - Verification only (no agentic decisions): Gemini models via VPS 9Router (`MOBILERUN_API_BASE` + runner key, request sets `"stream": false`). Model IDs filtered to Gemini and intersected with live `/v1/models`.
 - Fail-closed boundary:
-  - **Pre-SHARE gates** (`composer_before_typing`, `composer_after_typing`, `post_settings`): Any failure or API error aborts and discards draft -> `vision_gate_failed`.
-  - **Post-SHARE gates** (`posted`): Submission already executed; failure cannot abort, only downgrades to `uncertain` (`post_vision_mismatch`).
+   - **Pre-SHARE gates** (`composer_before_typing`, `composer_after_typing`, `post_settings`): mismatches fail with `vision_gate_failed`; unavailable vision waits with `vision_unavailable`. No SHARE occurs on either outcome.
+   - **Post-SHARE gate** (`posted`): submission cannot be undone. An unoverridden mismatch becomes `uncertain` / `post_vision_mismatch`; proven post identity can override it as described in §10.5.
 - Gate verdicts recorded in `evidence.vision_gates`.
+- `vision_verify.py:ask_vision` uses 25s per model inside a 110s call budget. `_prepare_vision_image` uses ffmpeg JPEG shrinking (screenshot max side 2000, reference 1280); above 3,000,000 combined raw bytes it tries half those dimensions. Shrink failure retains original bytes/MIME, so the threshold is not a hard payload cap. Safe attempt traces retain only model, elapsed time and outcome, never response bodies or credentials.
 
 ### 11.5 Human-like Interaction & Time Budgets
 - **Anti-Bot Interaction (`humanize.py`)**: Random tap coordinates within inner 60% of bounding boxes; randomized 1–3s pauses between actions. Real device, real app only.
 - **Time Limits**:
   - Backend timeout: `PhoneRunnerClient.publish_timeout = 600`s (triggers `uncertain` on expiration). Raised from 280 s on 2026-10-17: a real rehearsal reached SHARE after ~170 s (identity proof + 3 vision gates + typing a 426-char caption).
-  - Runner internal budget: aborts safely before SHARE if elapsed time > 300 s (`time_budget_exceeded`); the whole run stays under 540 s.
+   - Runner internal budget: `publish.py:pre_share_max_seconds` starts at 300s and scales with media size up to 420s; the whole-run budget is 540s. Pre-SHARE exhaustion returns `waiting_for_device` / `time_budget_exceeded`. A resolved post can remain published when the final vision service is unavailable; without proven post identity it remains uncertain.
   - Rehearsal facts (2026-10-17): `fb://profile` restores the last scroll position, so deterministic navigation scrolls the own profile back to the top (only when the owner-only "Manage posts" control is visible). A long caption plus the on-screen keyboard hides the attached photo; the runner hides the keyboard with one Back press (tapping KEEP EDITING if the discard dialog appears) before re-checking the photo.
 
 ### 11.6 Rehearsal Mode & Host Requirements
@@ -472,6 +493,22 @@ Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`,
 - **Media Host Allowlist**: `/etc/phone-runner.env` requires `PHONE_RUNNER_MEDIA_HOSTS=autostudio.pro` to download staged media.
 - **Python 3.12 TLS Compatibility**: `media_staging.PinnedIPHTTPSHandler` omits `check_hostname` from `do_open()` (removed in Python 3.12); TLS verified via `wrap_socket(server_hostname=...)`.
 - **Operational Deploy Guard**: Never push to `main` while any delivery is `publishing` or an active device lease exists. Container restart kills running `/publish` and strands delivery in `uncertain`.
+
+---
+
+## 12. Cleanup & Queue Monitoring
+
+### 12.1 Media Retention (`backend/app/tasks/cleanup.py`)
+- `cleanup_old_media`: normal source posts need at least one job, all jobs published, and all `cleanup_at` values elapsed. `_post_media_still_needed` retains any schedule until go-live + 6h, pending-publish/publishing jobs up to 48h (or indefinitely without creation time), and live delivery states with no schedule or a schedule newer than `now - 6h`. `_radar_still_watching` protects active `viral_only` destinations lacking a job inside `radar_track_max_age_h` (default 48). No age-only orphan/stuck-post deletion runs.
+- `cleanup_old_designs`: normal candidates are published jobs with `published_at` at least 7 days old, or missing `published_at` and `updated_at` at least 21 days old. Pending, review, rendering, failed and skipped normal jobs are not age-deleted. `_job_go_live_pending` and latest `_job_go_live_time` protect scheduled deliveries and the 7-day live retention; deletion clears both design path and URL.
+- `cleanup_old_ai_videos`: normal publish output follows 7-day published retention, with 14-day `updated_at` fallback when publish time is absent. A `VideoJob` must be `done` and linked to a published parent before video/thumbnail/narration files qualify. Unpublished/failed stock is retained. Paths must resolve under `storage_base_path/ai_videos`; deletion clears stored video/thumbnail paths and URLs.
+- `_cleanup_facebook_photos`: used originals need matching jobs, every job published, no pending go-live and every latest live timestamp strictly older than 7 days; missing jobs/timestamps retain the original. Successful deletion clears `image_local_path`.
+- `cleanup_old_clip_qc_files`: deletes attempt/contact-sheet files older than 14 days except videos in `queued`, `claimed`, `generating`, `uploaded` or linked to a pending-review publish job. QC artifacts have their own lifecycle. `cleanup_old_thumbs` deletes cached WEBP thumbnails older than 30 days, weekly.
+- The `_LIVE_DELIVERY_STATES` guard only protects a dated live delivery until scheduled time + 6h. It does not retain an overdue uncertain/needs-human delivery indefinitely; parent success is not proof that every destination finished.
+
+### 12.2 Backlog Watchdog (`backend/app/tasks/queue_watchdog.py:check_queue_backlog`)
+- Beat `check-queue-backlog`: every 300s, expires 290s. `backlog_over_limits` checks Redis `LLEN` for strict exceedance: `celery: 200`, `crawl: 50`, `visual: 100`, `ai: 150`, `video: 50`, `gallery: 300`. Queue `delivery` is not monitored here.
+- Redis `queue_watchdog:alerted:<queue>` (`SET NX EX`, 3600s) limits owner Telegram alerts to once per queue/hour. Alerts identify the matching worker via `phone_watchdog.send_telegram_fallback`; this task does not restart workers. Redis errors log and return an empty result.
 
 ---
 

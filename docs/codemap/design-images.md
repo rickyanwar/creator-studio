@@ -1,9 +1,9 @@
 # Deep Dive D1a: `backend/app/services/design_images.py`
 
-> Generated 2026-10-16 at main 25edf38 from a full read of the listed files. The "Verified claims" list at the bottom was checked line by line against the code. Other details are a careful map but not each re-checked. Read the real code before changing behaviour, and update this file when the code changes.
+Refreshed 2026-11-10 at main 8bc0f82.
 
 
-Comprehensive architectural mapping of image sourcing, face detection, crop geometry, vision gating, split/inset composition, and fail-safe boundaries across 3,836 lines of production design pipeline code.
+Map of image sourcing, gallery labeling, crop geometry, vision gating, split/inset composition, and fail-safe boundaries. Read the real code before changing behavior.
 
 ---
 
@@ -14,15 +14,41 @@ Comprehensive architectural mapping of image sourcing, face detection, crop geom
 - **Vision Transport & Payloads** (`design_images.py:40`): `_vision_datauri(image_bytes, max_dim=768, quality=78)` rescales images to <=768px JPEG quality 78 before sending to 9Router. Prevents HTTP 413 Payload Too Large when bundling up to 8 candidate data-URIs. Callers keep original uncompressed bytes for final rendering.
 - **Model Fallback Chain & Circuit Breaking** (`design_images.py:77-105`):
   - Primary: `settings.nine_router_vision_model`.
-  - Ordered fallbacks (`_VISION_MODEL_FALLBACKS`, 2026-10-17): `FlashFast` (combo), `ag/gemini-3.8-flash-medium`, `-low`, `-high` — owner rule: Gemini 3.8 Flash only.
-  - Excluded models: `ag/claude-*` (ignores image), plain `ag/gemini-3-flash` (returns empty), `ag/gemini-3.1-flash-image` (hallucinates descriptions), and any `cx/*` model.
+  - Ordered fallbacks (`_VISION_MODEL_FALLBACKS`): `ag/gemini-3.8-flash-low`, `ag/gemini-3.8-flash-medium`, `ag/gemini-3.8-flash-high`, `FlashFast` (combo), after the configured primary, with duplicates removed.
+  - `_vision_models` excludes `cx/*`; it does not otherwise validate the configured primary against this fallback list.
   - Active dead-model filtering: `model_health.is_dead(model)` prunes known broken endpoints; retains full list if all are flagged dead.
 - **Low-Level Vision Execution** (`design_images.py:108-174`): `_vision_chat` sets `OpenAI(timeout=30.0, max_retries=0)` to prevent SDK exponential backoff from compounding across model fallback attempts. Emits telemetry via `ai_caption.log_ai_copy_event` (tracks `latency_ms`, `models_tried`, `outcome="success"|"recovered"|"failed"`).
-- **Vision traffic guards** (2026-11-07, after 9Router Antigravity accounts were disabled for ToS at ~7,600 vision calls/day):
-  - `services/vision_breaker.py`: 5 fully-failed `_vision_chat` calls within 5 min pause ALL vision for 10 min (Redis `vision_breaker:open`). `_vision_chat` raises `VisionPausedError` while paused, and `vision_retry.run_vision_check` does not retry it. Callers fail closed as on any error.
-  - Per-image results in `vision_check_cache`: `watermark`, `focus_point` (raw x,y, clamped per call), `speaker_check` (yes/no only), `verify_subject`. The Pro poster adds `photo_reject` (wrong person for a hero candidate, wrong event, or watermark), keyed by subject + event without the story.
+- **Vision traffic guards**:
+  - `services/vision_breaker.py:is_open`, `record_failure`, `record_success`: `FAIL_THRESHOLD=5`, `FAIL_WINDOW_SECONDS=300`, `PAUSE_SECONDS=600`. Redis `vision_breaker:fails` expires 300 s after the first failure; a successful `_vision_chat` clears it. Five fully failed calls without an intervening success open `vision_breaker:open` for 600 s. Redis errors allow calls through.
+  - `_vision_chat` raises `VisionPausedError` before model dispatch while open. Existing caller-specific error defaults still apply (see §6). A final `location is not supported` error permits two more complete model passes after 2 s and 4 s; other errors do not repeat the pass.
+  - `services/vision_retry.py:run_vision_check`: `VISION_CHECK_ATTEMPTS=3`, `VISION_RETRY_WAIT_SECONDS=20`; retries raised exceptions only, returns ordinary rejection values immediately, and re-raises `VisionPausedError` without waiting.
   - Coarse checks (watermark, focus point, classify type/close-up, photo quality, pick best, subject side) send 512 px; identity and person checks stay at 768 px.
-  - `gallery_label_budget.reserve_backfill`: relabel + backfill of old gallery photos is capped at 100/day; new photos are labeled at download.
+
+### Persistent vision caches
+
+`services/vision_cache.py:image_digest`, `get_cached`, `put_cached` use SHA-256 of the input image bytes, plus `(kind, key)`. All entries have `CACHE_DAYS=90`, checked at read time; updates reset `created_at`. Cache errors become misses/logged write failures. `models/vision_check_cache.py:VisionCheckCache` and migration `c80000000040_vision_check_cache.py:upgrade` define `vision_check_cache` with a unique `(kind, image_sha256, key)` index, JSON `result`, and `created_at`.
+
+| Kind | Key construction / caller | Stored verdicts |
+| :--- | :--- | :--- |
+| `watermark` | `design_images.py:vision_has_watermark`, key `v1` | Explicit yes/no answer only; errors return True without caching |
+| `focus_point` | `design_images.py:vision_focus_point`, `split=True` or `split=False` | Valid raw `{x,y}` fractions; clamp against the current `safe_cy_ceiling` on every call |
+| `verify_subject` | `design_images.py:vision_verify_subject`, lowercase stripped `subject\|niche` | Positive or negative result with confidence ≥ 0.70; unsure/errors are not cached |
+| `speaker_check` | `speaker_design.py:verify_speaker_photo`, lowercase stripped speaker name | `answer=yes` or `no`; unsure/errors are not cached |
+| `photo_check` | `pro_poster/photos.py:check_photo`, SHA-256 of sorted JSON containing caption, event, must_avoid, story[:600], subject | Full verdict when person and event are each yes/no |
+| `photo_reject` | Same caller; SHA-256 of sorted JSON containing subject + event only | Wrong event, watermark, or wrong person; a cached person rejection applies only to hero candidates |
+
+The Pro poster event key contains circuit, night, rain, series, session, vehicle, year. All six kinds share the 90-day TTL; breaker keys are separate Redis state.
+
+### Gallery app / Muse labeling
+
+- `tasks/gallery_downloader.py:download_keyword` reads `Settings.gallery_new_labeler` (`app|muse`). Migration `c80000000055_gallery_muse_new_labels.py:upgrade` adds this setting (default `app`), `gallery_muse_fallback_hours` (default 6), `GalleryImage.label_pending` (default False), and a partial pending index on `downloaded_at`.
+- App path: `image_downloader.py:_fetch_and_store` calls `gallery_labeler.py:gate_and_label_image` on the original photo before upscale/save. One call supplies usability, coarse label, and structured attributes; errors reject the candidate. `download_keyword` merges attributes and sets `labeled_at`; only missing labels are enqueued separately.
+- Muse path: download uses `vision_gate=False`, persists `label_pending=True` and `attributes.pending_gate.allow_low_quality`, and does not enqueue the app labeler. Pending rows are unavailable for design selection. `services/gallery_filters.py:not_label_pending` supplies the shared SQL filter in `design_images`, `visual_sourcing`, speaker/Pro poster selection, and task image selection.
+- `services/muse_labeler.py:claim_images`, `process_results`, `merge_label_attributes` handle leased external labeling and attribute merging. `tasks/gallery_labels.py:label_gallery_image` skips pending rows. `label_new_gallery_images` first calls `_fallback_pending_images`, even when ordinary app labeling is disabled. Beat runs this sweep every 600 s (expires 590 s); gallery downloads run every 1800 s (expires 1700 s), on the `gallery` queue.
+- Late fallback: up to 10 pending, nondeleted rows older than `gallery_muse_fallback_hours`, with `label_attempts < 3`; acquire Muse lease as `app-fallback`, call the app gate, release lease. Gate errors increment attempts and leave pending. Unusable rows lose their file and become deleted/nonpending. Accepted rows receive label/merged attributes and clear pending.
+- Ordinary safety sweep: day runs process up to 10 unlabeled nonpending photos from the last 6 h; 00:00–06:00 WIB runs take up to 40, excluding the last 15 min. The enabled/since/daily-cap settings still govern these calls; `LabelerUnavailable` releases budget and stops the tick.
+- `gallery_labels.py:RELABEL_AND_BACKFILL_ENABLED=False` disables old-photo relabel/backfill, including forced relabels. If enabled later, `gallery_label_budget.py:reserve_backfill` additionally caps these at `BACKFILL_DAILY_CAP=100` per UTC day, Redis `gallery_label_backfill:<YYYY-MM-DD>`, TTL 172800 s; Redis failure denies reservation.
+- `image_downloader.py:download_images` collects Getty and Flickr in the same run. `_collect_urls_flickr` uses `gallery_flickr_enabled`, `gallery_flickr_max_pages`, and `gallery_flickr_search_url_template`; taken-date window is yesterday through today WIB, `_b` URLs are 1024 px, and `captured_at` uses the window start date.
 
 ---
 
