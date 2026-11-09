@@ -192,6 +192,44 @@ def test_exclude_keeps_another_clips_media_id_out(cfg, studio, runner, monkeypat
     assert "clip-1" in passed_exclude
 
 
+def test_exclude_reads_earlier_attempt_state_files(cfg, studio, runner, monkeypatch):
+    """Exclude list includes media ids from earlier attempts when no clips are finished."""
+    runner._sleep = lambda s: None
+
+    def mock_i2v(*args, **kwargs):
+        return GflowResult(
+            ok=False,
+            payload={},
+            exit_code=9,
+            error_class="TransportError",
+            retryable=True,
+            message="migrated host: no YhhmEf reply within 60s of clicking submit",
+        )
+
+    monkeypatch.setattr(runner.gflow, "i2v", mock_i2v)
+    monkeypatch.setattr(runner.gflow, "t2v", mock_i2v)
+    monkeypatch.setattr(runner.gflow, "stranded_candidates", lambda *a, **kw: [])
+
+    passed_exclude = None
+
+    def mock_recover_from_project(*, profile, project, submit_time, out_dir, exclude):
+        nonlocal passed_exclude
+        passed_exclude = list(exclude)
+        return GflowResult(ok=False, payload={}, exit_code=0, message="none")
+
+    monkeypatch.setattr(runner.gflow, "recover_from_project", mock_recover_from_project)
+
+    job = payload(1)
+    earlier_state = cfg.work_dir / "jobs" / f"{job['id']}-g0" / "state.json"
+    earlier_state.parent.mkdir(parents=True)
+    earlier_state.write_text('{"clips": {"1": {"media_id": "old-attempt-clip"}}}')
+
+    runner.run_job(job)
+
+    assert passed_exclude is not None
+    assert "old-attempt-clip" in passed_exclude
+
+
 def test_recover_from_project_subprocess_invocation(runner, monkeypatch, tmp_path):
     """Test GflowRunner.recover_from_project executing subprocess and parsing output."""
     monkeypatch.setenv("FAKE_RECOVER_MODE", "recovered")
