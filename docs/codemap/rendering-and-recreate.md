@@ -1,6 +1,6 @@
 # Deep Dive D1b: Card Rendering & AI Recreate Pipeline
 
-> Generated 2026-10-16 at main 25edf38 from a full read of the listed files. The "Verified claims" list at the bottom was checked line by line against the code. Other details are a careful map but not each re-checked. Read the real code before changing behaviour, and update this file when the code changes.
+Refreshed 2026-11-10 at main 8bc0f82.
 
 
 Architectural analysis of card generation across Mode 2 (News), Mode 3 (IG Recreate), Mode 4 (Discussion), Mode 5 (Pinterest), and Mode 6 (Facebook Photo Recreate), covering Celery task orchestration, headless Chromium rendering, Fabric.js injection contracts, AI visual generation (`visual_engine`, `redesign_pipeline`, `speaker_design`), and failure recovery.
@@ -121,8 +121,9 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
     - If `template_json.accentFollowsFanpage` is true, updates title & caption `titleAccentColor = look.secondary`.
     - Updates label and quote icon inks: badge background to `look.badge`, text to `look.badgeText`.
     - Quote marks: set to `look.quoteMarks` (supports group/path and textbox icon fills).
-    - Quote streak (`look.streak`): if `streak === false`, hides streak children; otherwise recolors streak PNG via `recolorStreakDataUri` (`inject.js:79`) using luma weighting `(0.299*r + 0.587*g + 0.114*b)/255.0 * targetRGB`. Verified in `renderer/test/look.test.js`.
+    - Quote streak (`look.streak`): if `streak === false`, hides streak children; otherwise recolors streak PNG via `recolorStreakDataUri` using `max(r,g,b)/255.0 * targetRGB`, preserving bright red streak intensity and alpha. Covered by `renderer/test/look.test.js`.
 - **Highlight Glow** (`inject.js:441`): When `titleHighlightGlow` / `captionHighlightGlow` is configured and `**marked**` ranges exist:
+  - Accent adaptation recolors an existing title glow only; it never creates one on a template without glow.
   - Base layer sets highlighted text fill to `rgba(0,0,0,0)`.
   - Duplicate `fabric.Textbox` created with glowing `fabric.Shadow` (`blur=14`, `color=accentGlowColor`), transparent base text, and accent fill on ranges, stacked immediately above base layer.
 - **Chroma Shift Fringe** (`inject.js:482`): When `titleChromaShift.px` / `captionChromaShift.px` is configured:
@@ -147,6 +148,7 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
   ```
 - **Lifecycle**: Chromium spun up per request and closed in `finally` block (`server.js:40, 74`). Timeout: `60_000ms` (`RENDER_TIMEOUT_MS`).
 - **Accent/Look Parsing** (`server.js:68`): Passes `body.look || body.accent` (`accent: (body.look && typeof body.look === "object" && !Array.isArray(body.look)) ? body.look : (body.accent || null)`).
+- **HTML covers** (`server.js:renderHtmlOnce`, `POST /render-html`): accepts `html`, `width`, `height`, optional `ready_flag` (default `__coverReady`). Uses the same single-render queue and 60 s timeout, waits up to 15 s for `window[ready_flag] === true`, then screenshots the requested viewport as PNG. Empty `ready_flag` disables that wait. Used for HTML-based covers rather than Fabric card templates.
 
 ### Payload Schema (`renderer:3001/render`)
 
@@ -219,16 +221,21 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
 - **Entry point** `visual_engine.generate_ex(db, req, *, timeout, fanpage_id, exclude) -> GenerationResult(image, engine, meta, event_id)`. `generate()` is now `generate_ex(...).image`.
   - When gpt-cli does not apply (switch off, no token, or fanpage not listed) it calls `_generate_legacy`, which is the old `generate` body verbatim: own daily cap over all `image_gen` events, own event.
 - **Engine order** comes from `engine_router.plan_engines`:
-  - night (00:00 to `ai_day_start` WIB) → Codex only, paced by `codex_budget.wait_night_gap`;
-  - day → `gptcli_first`, or Codex first for `share`/`overflow` up to `codex_share_percent` of day jobs;
-  - `gptcli_unavailable` → Codex.
-  - Codex is dropped when its 5 h usage (`codex_budget.get_codex_usage`, estimate by default), rest flag or Codex-only daily cap forbids it.
+  - If gpt-cli does not apply, immediately returns Codex with reason `gptcli_off`; legacy generation handles its own cap.
+  - Night is `ai_night_start` to `ai_day_start` WIB (defaults `00:00`–`05:30`, supports a window crossing midnight). Codex only, paced by `codex_budget.wait_night_gap`.
+  - Day defaults to `(gptcli, 9router)`, reason `gptcli_first`. A shared cooldown returns Codex only, reason `gptcli_unavailable`.
+  - Share selection uses `codex_share_percent` (code/model default 35), `codex_share_window_jobs` (40), and probability `max(0, target_share - observed_share)`. Observed share counts successful-provider Codex events with `plan=share` or `overflow` over recent events whose reason is share/overflow/gptcli_first. It is not a hard percentage cap.
+  - A queue length ≥ `codex_overflow_queue_len` (3) in Redis `visual` or gpt serve chooses `(9router, gptcli)`, reason `overflow`, while usage is below `CODEX_OVERFLOW_MAX_PCT=70`. Ordinary share requires usage below `codex_share_max_pct` (60). gpt serve health queue length includes a running profile and is cached 30 s at `gptcli:queue_len_cache`.
+  - Weekly usage ahead of `(WIB weekday + 1)/7*100 + 15` disables intentional share/overflow; it does not remove Codex as a fallback.
+  - `codex_allowed` removes Codex for rest state, 5 h usage ≥ `codex_night_max_pct` (70) at night or `codex_fallback_max_pct` (85) by day, or Codex-only `image_gen` events today ≥ `visual_engine_daily_max` (60). Explicit `exclude` also removes engines.
   - Empty order → `VisualEngineError('quota')` by day, `VisualEngineDeferred(until)` at night.
 - **gpt serve client** `gptcli_client.generate_image` (POST `/v1/images/generations`, size `gptcli_size`, thread `gptcli_thread`, `X-Request-Id = request_id_for(prompt, images)`).
-  - Temporary errors (sleeping, quota, soft_cap, logged_out, unavailable, cloudflare_challenge, unreachable) set Redis `gptcli:unavailable_until`.
+  - Initial POST wait is 90 s, then `job_status` polling every 15 s after ReadTimeout; total wait defaults to 1800 s, running limit 600 s. Completion re-POSTs with the same request ID to retrieve the result. Four missing polls or two unknown polls fail.
+  - Temporary errors set Redis `gptcli:unavailable_until` and `gptcli:unavailable_reason`. `unavailable` needs 3 errors within 900 s (`gptcli:unavailable_streak`); success clears the streak. Positive `Retry-After` wins; otherwise quota 10800 s, soft_cap 3600 s, logged_out/cloudflare_challenge 1800 s, unavailable/unreachable 300 s, sleeping until day start. Redis TTL is the delay + 60 s.
+  - `generate_text` uses `/v1/text`, high thinking, default 900 s total wait. `gptcli_text_unavailable_until` ignores image-only `quota`/`soft_cap` cooldowns, so image capacity does not block text.
 - **One `image_gen` event per call**, with `error_message` starting `plan=<reason>;`. `outcome` is success | recovered | failed | deferred.
-- **ChatGPT results** skip full QA and go through `identity_check.check_identity` instead: SFace < 0.25 rejects at once, otherwise Gemini FlashFast must say same person with confidence ≥ 0.6. Team radio layouts also get the OCR check (`redesign_pipeline._radio_ocr_ok`). A failed or unsure check means `generate_ex(..., exclude={"gptcli"})` runs and the Codex image takes the old QA.
-  - In `speaker_design.compose_speaker_design(..., content_kind="news"|"facebook")` the old `identity_score ≥ 0.40` check applies to Codex images only.
+- **ChatGPT results** skip full QA and, when mode QA is on, go through `identity_check.check_identity`: SFace < 0.25 rejects at once, otherwise Gemini must confirm same person with confidence ≥ 0.6. Team radio layouts also get OCR (`redesign_pipeline._radio_ocr_ok`), even with mode QA off. Failed identity/OCR returns a failed redesign; it does not generate a second Codex image. Engine transport failure can still fall back within `generate_ex`.
+  - In `speaker_design.compose_speaker_design(..., content_kind="news"|"facebook")`, mode QA enables ChatGPT identity checking and the Codex `identity_score ≥ 0.40` gate; QA off bypasses both generated-result gates.
 - **Night deferral**: `VisualEngineDeferred` propagates out of `redesign_card` / `compose_speaker_design`. The tasks call `design_renderer._defer_job`, which sets `pending_design` plus `publish_jobs.design_not_before`, with no Celery retry and no long ETA.
   - `render_pending_designs` skips jobs whose `design_not_before` is in the future, and re-dispatches deferred `ig_recreate` jobs (queue `visual`) once the time passes.
   - A manual IG preview fails fast instead of waiting.
@@ -244,13 +251,13 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
      - `action`: News type + hero labeled action + no secondary.
      - `solo`: Fallback layout.
 2. **Photo Sourcing (`services/visual_sourcing.py:plan_photos`)**:
-   - Hero: `GalleryImage` (label `face` or `action`) with exact keyword match -> surname ILIKE -> vision picker prompt (`:531`).
-   - Inset: Inset context search in gallery. If candidate shows hero face/helmet, vision rejects it (`:328`). Fallback to Jina search if in event window (`:354`), or asset team logo (`:405`), or imagined mode (`:412`).
+   - Hero: `GalleryImage` with exact name variants, then surname ILIKE only for multiword person names; niche-scoped keywords, nonpending/nonmismatch filters. Person face candidates require `vision_verify_subject` confidence ≥ 0.70, trying the picker winner then up to two alternatives. Nonperson heroes use action photos; F1 people outside the driver grid require face photos.
+   - Inset: `_find_inset_pick` rejects hero face/helmet and mismatched context/sport; person face candidates also need identity verification. Jina fallback is event-window-only and requires explicit same-sport/context matches. Team-logo assets are allowed. Missing real person references are dropped, never imagined; MotoGP also drops all imagined insets.
    - What-If Alternative: Finds alternate photo of hero with different pose (`:646`).
 3. **Prompt Composition**:
-   - Bottom 35% explicitly reserved: *"Bottom 35% MUST be a smooth dark gradient with no faces, no bodies, no objects, completely empty (a headline is added later)"* (`visual_engine.py:79, 91, 101, 148`).
+   - `prompt_rules.py:text_zone_line` reserves the bottom 35% for template badge/headline: plain, not dark; no faces, hands, insets or important objects. Shared prompts retain real logos and prohibit invented faces, added text and glow.
 4. **Visual QA Gate (`services/visual_qa.py:check_generated`)**:
-   - Evaluates: `identity_hero`, `identity_inset`, `plain_whatif_suit`, `inset_shows_hero`, `text_on_image`, `source_branding_visible`, `ai_look >= 4`, `bottom_area_empty`, `radio_text_matches`.
+   - `visual_qa.py:check_generated`, `evaluate` gate identity, source branding and team-radio OCR. `plain_whatif_suit` and `inset_shows_hero` are notes, not blockers. No aesthetic/AI-look/text-zone score gate. Vision exceptions retry through `vision_retry.run_vision_check`, then fail with `qa_unavailable`.
    - Single-call mode: If QA fails, `notes.append("QA failed; no retry (single-call mode)")` (`redesign_pipeline.py:306`); returns `ok=False`.
 5. **Final Text Rendering**:
    - If `layout == 'team_radio'`: `final_text_rendered_by = 'ai'`. Text generated directly in image.
@@ -267,7 +274,7 @@ Template resolution (`design_images.py:resolve_template`, called by all tasks):
 - **Identity Gate** (`speaker_design.py:27, 527-529`):
   - Uses OpenCV SFace model (`cv2.FaceRecognizerSF_create`, model `face_recognition_sface_2021dec.onnx`).
   - Computes cosine similarity `identity_score(speaker_bytes, generated)`.
-  - Rejection threshold: If score `< IDENTITY_THRESHOLD` (`0.40`), rejects and returns `None` (falling back to standard image cascade).
+   - With mode QA enabled, Codex results below `IDENTITY_THRESHOLD` (`0.40`) return `None` for standard image fallback. ChatGPT results use `identity_check.check_identity` instead; see §5.
 - Prompt text shared with the redesign prompts comes from `services/prompt_rules.py` (`realism_block`, `text_zone_line`, `avoid_block`).
 
 ## 5a. Pro poster (Mode 2 news, live since 2026-10-19, 8baa04f)
@@ -280,10 +287,15 @@ Switch: `Settings.pro_poster_enabled` + `pro_poster_fanpage_ids` (`[]` = every f
 3. **Photos** (`photos.select_photos`, at most 12 checks, 3 in parallel per batch, early stop once a strong hero (or hero + frontal portrait) and 2 story-fitting context photos are found): candidates from the story photo + gallery (Getty slug = trusted caption). One strict-JSON Gemini check per photo (`check_photo`: person, event match, obstruction, watermark, `face_frontal`, `story_fit`, quality). Picks `hero` (sorted by face_frontal, story_fit, quality), `context`, a front-facing `portrait` when the hero is not frontal, or `face_ref`.
 4. **Concept** (`concept.build_concept`, Gemini): key moment, scene, inset, palette, mood, graphic words. Optional; errors → no concept.
 5. **Art direction** (`art_direction.direct`): layout `hero_with_context` / `hero_solo` / `face_ref_scene` / `action_full_bleed` / `scene` (no verified photo). Before concept building, a hero without a verified hero/face reference promotes the first secondary subject if their photo verifies; the original cached brief stays unchanged and `pro_poster_promoted` records the substitution. With no references, generate a full-bleed scene without people, faces, team kit or specific vehicles, mapped to engine layout `action`. Photo-check errors defer instead (`typographic` is only the error marker). Designer-brief prompt v4: house style = white-ring inset with a different context, front-facing face reference, no invented faces, series logos banned. The text zone is the bottom 35% (`prompt_rules.TEMPLATE_TEXT_ZONE_PCT`). The wording says "covered later by text, keep it plain, not dark".
-6. **One generation**: follows `engine_router.plan_engines` (no longer ChatGPT-only): the Codex share `settings.codex_share_percent` = 20, plus night and ChatGPT cooldown. Calls `visual_engine.generate_ex(db, req, fanpage_id=fanpage_id)`. `VisualEngineDeferred` propagates (the job is deferred); engine errors → fallback.
-7. **Safety QA only** (`qa.check_safety`): identity via `identity_check` (SFace, reject < 0.25, then Gemini), `gear_identity` (helmet, number, kit, livery) when no face is found, plus the event check. No aesthetic scores, no retry.
+6. **One generation**: follows `engine_router.plan_engines` (§5), including configured share, overflow, night and ChatGPT cooldown. Calls `visual_engine.generate_ex(db, req, fanpage_id=fanpage_id)`. `VisualEngineDeferred` propagates; no allowed engine reports attempts=0, generation errors attempts=1.
+7. **Safety QA only** (`qa.check_safety`), conditional on `qa_toggles.qa_enabled(fanpage, "news")`: identity via `identity_check` (SFace, reject < 0.25, then Gemini), `gear_identity` (helmet, number, kit, livery) when identity failed without an SFace score, plus event check. No aesthetic scores or second generation; check errors use `vision_retry`.
 
 Results in `design_renderer`: image → `image_marker="pro_poster"`, `design_engine` labels: gptcli → `chatgpt`, 9router → `codex`; notes identify scenes and promoted subjects. No typographic card is published: failures use the old speaker/gallery/manual-image path, with photo-check errors deferred until retries are exhausted. If the AI generation was already used (`pro_poster_spent`), speaker design is skipped, so there is never a second AI image. QA result is stored in `design_analysis_json["pro_poster_qa"]`.
+
+- `pipeline.py:promote_secondary` is tried only without hero/face_ref and without initial photo-check errors. It swaps the first secondary into hero and the original hero into mentioned; the substitution takes effect only with a verified alternate hero/face_ref. Context-only selection can use `action_full_bleed`; no references uses `scene`, mapped to engine layout `action` without people/faces/kit/specific vehicles.
+- `design_renderer.py:render_design` defers photo-check errors twice, 10 min each (`PHOTO_CHECK_MAX_RETRIES=2`, `PHOTO_CHECK_RETRY_MINUTES=10`), releasing the fair-queue page claim. Exhaustion uses the ordinary image path; no usable image leaves `pending_design` with `needs manual image`.
+- `services/pro_poster/typo_background.py:make_typographic_background`, `background_datauri` still exist. Production rendering no longer calls them. `scripts/pro_poster_eval.py` retains a typographic preview branch and tests still reference the module; `pro_poster_typo` comparisons in `design_renderer` are leftover checks, not an active image-production branch.
+- Pro poster photo cache keys/TTLs and the shared breaker are in [design-images.md §1](design-images.md#1-architectural-overview--configuration).
 
 Eval: `python -m app.scripts.pro_poster_eval --jobs <ids> --run <name> [--pace s] [--fresh-brief]` runs dry, writes `storage/pro_poster_eval/<run>/` (`index.json`, `<job>_new.png`, attempts). On the VPS run it with `docker run` on the prod image, not `compose run`.
 
@@ -297,20 +309,26 @@ Eval: `python -m app.scripts.pro_poster_eval --jobs <ids> --run <name> [--pace s
   - It keeps working when only one page has jobs (work-conserving).
   - `news_copywriter` and `render_pending_designs` no longer enqueue visual-routed news (`render_queue_for(db, fp, "news") == "visual"`).
 - **Pre-render stale skip**: `_has_news_slot(db, job, now_utc)` checks `social_delivery_planner.news_slot_available`. Jobs with no News slot within 24 h are skipped BEFORE rendering, with `last_error` "stale: no News slot within 24 h, AI poster not rendered".
-- **Just-in-time design (JIT)**: a non-breaking job is rendered only when its page's next free slot (`social_delivery_planner.next_news_slot_utc`) is ≤ `JIT_LEAD_MINUTES` (30; owner 2026-10-21) away.
+- **Just-in-time design (JIT)**: normally a nonpriority job waits until its page's next free slot (`social_delivery_planner.next_news_slot_utc`) is ≤ `JIT_LEAD_MINUTES` (30) away; lookahead can render earlier.
   - The newest job of that page is picked.
   - On dispatch, the page is claimed (`visual_fair:news:claim:<fanpage_id>`, TTL until the slot + 10 min), so one slot gets one design.
   - Jobs that never get a near slot stay `pending_design` and are retired by the 24 h stale sweep without being rendered.
-  - Breaking news bypasses JIT.
+  - Breaking and live-event news bypass JIT; newest priority job is considered first. Served counters expire after 48 h; page claims use `max(900 s, slot delay + 600 s)`.
+- **Lookahead exception** (`visual_fair_queue.py:chatgpt_can_look_ahead`, `lookahead_horizon`, `ahead_count`): up to `LOOKAHEAD_HOURS=6`, with `MAX_AHEAD_PER_PAGE=6`. ChatGPT must be outside its night window, idle, available, and below 42 `gptcli` image events in 3 h (`GPTCLI_WINDOW_BUDGET`, leaving headroom). Codex lookahead requires allowed budget and an empty visual queue; night horizon ends at day start, daytime cooldown horizon ends at ChatGPT availability. Lookahead bypasses an existing page claim.
+- **Freshness / groups**: `pick_next_news_job` applies `event_days.news_fresh_hours` using the minimum configured active-destination stale hours. Stale nonbreaking jobs or jobs without a same-news-day/24 h slot may be converted to group-only jobs if quota remains, otherwise skipped. Group-only jobs bypass Page fair counters/JIT and are dispatched by `render_pending_designs`.
 - **Stale-only jobs leave the queue**: `publisher.publish_job` sets a job to `skipped` when ALL its deliveries are `skipped` with a "stale:" error (before, they stayed `pending_publish` = "Ready to publish" forever).
 - **Reuse finished designs (one-off)**: `python -m app.scripts.replan_stale_designs [--apply] [--hours 24] [--fanpage-id N]`.
   - Dry-run by default.
-  - It replans fresh stale-skipped designs newest first into free slots, and marks the rest skipped.
+  - `scripts/replan_stale_designs.py:replan_stale_designs` selects nondeleted `pending_publish` News jobs with at least one delivery, all skipped with `stale:` errors, and no `repliz_schedule_id`/`facebook_post_id`. It does not select jobs already marked skipped.
+  - Fresh jobs (default ≤24 h) are processed newest first per page: delete old skipped deliveries, call `ensure_deliveries`, skip if all replacements are stale. Old candidates become skipped. Dry run executes planning then rolls back; `--apply` commits.
   - It never calls Repliz itself.
 
 ---
 
 ## 5c. Per-source photo edits & Facebook formats (2026-11-04)
+
+- **Result QA switches** (`services/qa_toggles.py:qa_enabled`, `qa_mode_for_content_kind`): migration `c80000000045_fanpage_qa_toggles.py:upgrade` adds `qa_news_enabled`, `qa_ig_enabled`, `qa_facebook_enabled`, `qa_ai_video_enabled` to fanpages, all default True. Missing fanpage/value or unknown mode keeps QA enabled. The switches govern generated-result checks in Pro poster, speaker design, IG redesign/edit, Facebook edit, and AI video; they do not disable source-photo identity/usability gates.
+- **Badge switches** (`design_renderer.py:badge_label_for`, `_news_badge_text`, `_discussion_badge_text`, `render_card_png`): migration `c80000000047_badge_switches.py:upgrade` adds `badge_breaking_enabled=True`, `badge_discussion_enabled=True`, `news_badge_percent=100`. News selection is stable per job: SHA-1 of `badge:<job_id>` modulo 100 < percent (clamped 0–100); no job ID always selects. Disabling BREAKING falls back to the regular page/niche news label. Discussion/HOT TAKE obey only the discussion switch, not the percentage. Empty labels hide both text and pill in `inject.js`; speaker subtitle badges are separate.
 
 - **IG entry** (`tasks/ig_recreate.py:render_ig_recreate`, `_try_ig_edit`, `_render_ig_edit`): before template/title validation, resolve the `(fanpage_id, ig_source_id)` link. A nonblank `fanpage_sources.chatgpt_edit_prompt` plus `ig_mode.resolve_effective_engine(...) == "chatgpt"` edits the first stored IG image, bypassing card rendering. Blank prompt keeps the existing redesign path. Migration `c80000000052_fanpage_source_edit_prompt.py:upgrade` adds the nullable Text field.
 - **Shared editor** (`services/ig_photo_edit.py:edit_ig_photo`, `build_edit_prompt`): references the original through `visual_engine.generate_ex` (300 s timeout). Owner instructions are followed by rules preserving real faces, natural skin/grain, logos and camera perspective; no HDR/over-sharpening or added borders/captions/watermarks/frames. Engine is recorded as `chatgpt`, `codex` or `codex_fallback`; no aesthetic QA pass.
@@ -376,7 +394,7 @@ Prevents race conditions between Celery beat sweeps, manual UI triggers, and ret
    - `_NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_HOURS = 6`.
    - Jobs whose `last_error` matches `needs manual image%` are excluded from the `render_pending_designs` sweep until 6 hours have elapsed, preventing continuous paid Getty/vision API burns.
 3. **Queue Separation**:
-   - Standard renders run on default Celery worker.
+   - `celery_app.py` routes `render_design` to `ai` (worker-ai); explicit `queue="visual"` overrides this for fair-dispatched gpt-cli News. Other traditional card tasks retain their existing default routing.
    - AI visual recreate jobs dispatched to dedicated queue `'visual'` (`ig_recreate.py:329`): `render_ig_recreate.apply_async((job.id,), queue='visual')`.
 
 ---
@@ -391,8 +409,8 @@ Prevents race conditions between Celery beat sweeps, manual UI triggers, and ret
 | **Caption Similarity Check** | `ig_recreate.py:278-295` | `captions_too_similar` returns True against other fanpage captions for same radar story | Retries generation up to 2 times | If still similar after 2 retries, marks `decision.status = SKIPPED_SIMILAR_CAPTION` and halts job creation (`:292`) |
 | **Face-Fit Safe Zone Loop** | `design_renderer.py:377-397, 1050-1065` | Candidate photo fails `single_photo_face_fits` (face center exceeds template safe ceiling) | Excludes candidate via `exclude_marker` and retries up to 3 candidate photos | If all 3 fail, resets job to `pending_design` with `last_error="needs manual image..."` |
 | **Expression Override Pass** | `speaker_design.py:438-443` | `is_bad_expression(speaker_photo, mood)` detects expression contradicting story mood | Injects `_EXPRESSION_EDIT_SERIOUS` or `_EXPRESSION_EDIT_HAPPY` into image generation prompt | Generation request proceeds with edited prompt; SFace identity score verifies result |
-| **SFace Identity Gating** | `speaker_design.py:527-529` | `identity_score(speaker_bytes, generated) < 0.40` | Rejects generated image, logs warning, returns `None` | `design_renderer` falls back to standard multi-tier image selection cascade (`:376`) |
-| **Visual QA Verification** | `redesign_pipeline.py:305-308` | `check_generated` returns `passed == False` on any of 8 criteria | Single-call mode: logs `notes.append("QA failed; no retry (single-call mode)")` | Returns `RedesignResult(ok=False)`. Falls back to template path or fails job |
+| **SFace Identity Gating** | `speaker_design.py:compose_speaker_design` | Mode QA on, Codex result, `identity_score(speaker_bytes, generated) < 0.40` | Rejects generated image, logs warning, returns `None` | `design_renderer` falls back to standard image selection |
+| **Visual QA Verification** | `redesign_pipeline.py:redesign_card` | Mode QA on, Codex result, `check_generated` rejects identity/branding/radio text | No second generation; check exceptions can retry through `vision_retry` | Returns `RedesignResult(ok=False)`. Falls back to template path or fails job |
 | **Celery Task Retries** | `design_renderer.py:293, 567, 767, 1068`; `ig_recreate.py:404` | Unhandled Python exception during render task execution | `job.status` reset to `pending_design`, task re-queued with `self.retry(countdown=180, max_retries=2)` | Celery marks task failed; `recover_stuck_renders` acts as outer safety net |
 
 ### What Fails the Job vs. What Halts/Retries
@@ -419,4 +437,4 @@ backend/app/tasks/design_renderer.py:1270 - _NEEDS_MANUAL_IMAGE_RETRY_COOLDOWN_H
 backend/app/tasks/design_renderer.py:1384 - recover_stuck_renders resets jobs orphaned in rendering status older than 30 minutes back to pending_design.
 backend/app/tasks/ig_recreate.py:63 - _rewrite_news_title verifies source numbers exist in AI rewrite; if missing after re-prompt, falls back to raw source text.
 backend/app/services/visual_engine.py:197 - generate queries AICopyEvent count since midnight Asia/Jakarta and raises VisualEngineError('quota') if >= visual_engine_daily_max (default 60).
-backend/app/services/speaker_design.py:27 - compose_speaker_design rejects generated images with OpenCV SFace cosine similarity below IDENTITY_THRESHOLD = 0.40.
+backend/app/services/speaker_design.py:compose_speaker_design - With mode QA enabled, Codex images must pass IDENTITY_THRESHOLD = 0.40; ChatGPT images use identity_check instead.

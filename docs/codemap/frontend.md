@@ -1,6 +1,6 @@
 # Deep Dive D5: Frontend Architecture (Next.js App Router)
 
-> Generated 2026-10-16 at main 25edf38 from a full read of the listed files. The "Verified claims" list at the bottom was checked line by line against the code. Other details are a careful map but not each re-checked. Read the real code before changing behaviour, and update this file when the code changes.
+Refreshed 2026-11-10 at main 8bc0f82.
 
 
 Comprehensive technical reference for the Studio frontend: App Router page hierarchy, component composition, SWR/Axios data layer, authentication lifecycle, styling tokens, Fabric.js card designer, multi-tab fanpage configuration, and routing mismatch audit.
@@ -39,14 +39,31 @@ Browser Client (Next.js 14.2.18 App Router)
 
 Nginx proxy configuration (`nginx/conf.d/app.conf:65-66`) defines `proxy_pass http://api:8000/;` with a trailing slash. Nginx strips the `/api/` URI prefix before dispatching requests to the FastAPI ASGI application (`http://api:8000`). Consequently, FastAPI routers must register with bare prefixes (e.g., `APIRouter(prefix="/fanpages")`).
 
-### Route Mismatch Findings
+### Route Contracts
 
 | Frontend Call (`frontend/src/lib/api.ts`) | Frontend Path | Backend Router Prefix / Definition | Real URL sent by Nginx | Backend Expectation | Status / Impact |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `listRadarAccounts` (`api.ts:395`), `listRadarStories` (`api.ts:404`), `getShadowReport` (`api.ts:406`), etc. | `/radar/...` | `backend/app/api/radar.py:12`:<br>`prefix="/radar"` | `GET /radar/...` | `GET /radar/...` | **VERIFIED 2026-10-18**: backend router uses prefix `/radar` and matches the frontend. |
 | `getScraperHealth` (`api.ts:39`) | `/scraper-health` | `backend/app/api/scraper_health.py:14`:<br>`prefix="/scraper-health"` | `GET /scraper-health` | `GET /scraper-health` | **FIXED 2026-10-18**: switched to bare prefix `/scraper-health` on frontend and backend. |
 | `listF1Drivers` (`api.ts:486`), `syncF1Drivers` (`api.ts:489`), `createF1Driver` (`api.ts:492`) | `/f1-drivers/...` | `backend/app/main.py:40`:<br>`prefix="/f1-drivers"` | `GET /f1-drivers/...` | `GET /f1-drivers/...` | **FIXED 2026-10-18**: switched to bare prefix `/f1-drivers` on frontend and backend. |
-| `listBurners` (`api.ts:69`), `createBurner` (`api.ts:71`), `deleteBurner` (`api.ts:74`), etc. | `/burners/...` | **None**: No burner router in `backend/app/main.py` | `GET /burners` | _No router_ | **DEAD CODE**: Burner endpoints in `api.ts` point to nonexistent backend routes. Not consumed by any active frontend component. |
+
+The dead burner client functions were removed. Do not recreate them.
+
+### Current navigation and redirects
+
+`frontend/src/components/layout/Sidebar.tsx:NAV_GROUPS`, `isItemActive`, `Sidebar`:
+
+| Group | Label → route |
+|---|---|
+| Overview | Home → `/dashboard`; Analytics → `/analytics`; Strategy → `/strategy` |
+| Create | Brands → `/brands`; Review queue → `/queue`; AI video → `/ai-video` |
+| Sources | Instagram & news → `/sources`; Viral radar → `/radar`; Gallery → `/gallery` |
+| Publish | Activity → `/history`; Facebook groups → `/facebook-groups` |
+| Design | Templates → `/templates` |
+| System | Logs & alerts → `/logs`; Settings → `/settings` |
+
+Brands also matches `/fanpages`, `/social-media`, `/content-projects`; Sources matches `/news-sources`. Active links set `aria-current="page"`. Sidebar is desktop-only, 248 px expanded / 80 px collapsed.
+Canonical settings live at `/brands/[id]`, accounts at `/brands/accounts`, and channels at `/brands/channels/new` and `/brands/channels/[id]`. Old fanpages/social-media/content-projects pages redirect there. `fanpages/[id]/page.tsx:FanpageRedirectPage` preserves query values, including repeated parameters. `/news-sources` redirects to `/sources?tab=news`.
 
 ---
 
@@ -58,38 +75,37 @@ Nginx proxy configuration (`nginx/conf.d/app.conf:65-66`) defines `proxy_pass ht
 | `/login` | `login/page.tsx:7` | HTML form, custom inputs | `login()` (`api.ts:33`) | `POST /auth/login` (`backend/app/api/auth.py:27`) |
 | Shell | `(dashboard)/layout.tsx:10` | `Sidebar`, `TopAppBar`, `BottomTabBar`, `SettingsDrawer`, `NotificationDropdown` | `getNotifications()` (`api.ts:435`) | `GET /notifications` (`backend/app/api/notifications.py:14`) |
 | `/dashboard` | `(dashboard)/dashboard/page.tsx:21` | `KpiCard`, `CrawlerHealthCard` | `getDashboardStats`, `getCrawlerHealth`, `triggerCrawl`, `triggerFanpageSync`, `restartBeat` (`api.ts:37,38,373-375`) | `GET /dashboard/stats`, `GET /dashboard/health`, `POST /jobs/crawl-now`, `POST /jobs/sync-fanpages`, `POST /jobs/restart-beat` |
-| `/fanpages` | `(dashboard)/fanpages/page.tsx:85` | `FanpageMenu` | `listFanpages`, `updateFanpage`, `triggerFanpageSync` (`api.ts:42,44,374`) | `GET /fanpages`, `PUT /fanpages/{id}`, `POST /jobs/sync-fanpages` |
-| `/fanpages/[id]` | `(dashboard)/fanpages/[id]/page.tsx:82` | `SettingsTabs`, `GlobalPublishMode`, `YtClipSection`, `YtClipLists`, `AiVideoSection` | ~30 functions (see section 4) | `GET /fanpages/{id}`, `PUT /fanpages/{id}`, sub-resource endpoints in `fanpages.py` & `yt_clips.py` |
+| `/brands` | `(dashboard)/brands/page.tsx` | Brand cards, create/connect workflow | `socialBrandsApi.ts`, `brandCreateApi.ts`, `platformChannelsApi.ts` | `/social-media/brands`, `/content-projects`, `/social-media/destinations` |
+| `/brands/[id]` | `(dashboard)/brands/[id]/page.tsx` | `SettingsTabs`, `ContentTab`, `ChannelsTab`, `GroupShareTab`, `PacingTab`, `CaptionsTab`, `DesignTab`, `IdeasTab` | Fanpage API, `socialBrandsApi.ts`, Group Share functions | `/fanpages/{id}`, `/social-media/brands/{id}`, `/fanpages/{id}/group-share/*` |
+| `/facebook-groups` | `(dashboard)/facebook-groups/page.tsx:FacebookGroupsPage` | `GroupForm`, shared group fields | `listFbGroups`, `listFbGroupNiches`, `createFbGroup`, `updateFbGroup`, `deactivateFbGroup` | `api/fb_groups.py`: `/fb-groups`, `/fb-groups/niches`, `/fb-groups/{id}` |
 | `/queue` | `(dashboard)/queue/page.tsx:66` | `QueueCard`, `ClipPlayer`, Lightbox | `listJobs`, `publishJob`, `skipJob`, `updateJobCaption`, `regenerateCaption`, `renderJobNow` (`api.ts:85-106,353`) | `GET /publish-jobs`, `POST /publish-jobs/{id}/publish`, `POST /publish-jobs/{id}/skip`, `PUT /publish-jobs/{id}/caption`, `POST /publish-jobs/{id}/regenerate-caption`, `POST /publish-jobs/{id}/render-now` |
 | `/history` | `(dashboard)/history/page.tsx:98` | `HistoryCard`, `ClipPlayer`, `ConfirmDialog`, `Toast` | `listJobs`, `listFanpages`, `getJobStats`, `deletePublishJob`, `reeditJob` (`api.ts:85,42,91,104,106`) | `GET /publish-jobs`, `GET /fanpages`, `GET /publish-jobs/stats`, `DELETE /publish-jobs/{id}`, `POST /publish-jobs/{id}/reedit` |
 | `/designer/[jobId]` | `(dashboard)/designer/[jobId]/page.tsx:41` | `TemplateEditor` (dynamic ssr:false) | `getDesignPayload`, `uploadDesignImage`, `proxyImageUrl` (`api.ts:344,346,355`) | `GET /publish-jobs/{id}/design-payload`, `POST /publish-jobs/{id}/design-image`, `GET /gallery/proxy` |
 | `/templates` | `(dashboard)/templates/page.tsx:31` | `TemplateThumbnail` | `listTemplates`, `listTemplateStyles`, `updateStyleDefaults`, `createTemplate`, `updateTemplate`, `deleteTemplate` (`lib/designTemplatesApi.ts`, `api.ts:334-341`) | `GET /templates`, `GET /templates/styles`, `PUT /templates/styles/{style}/defaults`, `POST /templates`, `PUT /templates/{id}`, `DELETE /templates/{id}` |
 | `/templates/[id]` | `(dashboard)/templates/[id]/page.tsx:23` | `TemplateEditor`, `TemplateThumbnail` | `getTemplate`, `updateTemplate` (`api.ts:336,339`) | `GET /templates/{id}`, `PUT /templates/{id}` |
-| `/sources` | `(dashboard)/sources/page.tsx:32` | Source rows, Health badges | `listIGSources`, `deleteIGSource`, `getCrawlerHealth`, `getScraperHealth` (`api.ts:109,128,38,39`) | `GET /ig-sources`, `DELETE /ig-sources/{id}`, `GET /dashboard/health`, `GET /api/scraper-health` |
-| `/news-sources` | `(dashboard)/news-sources/page.tsx:76` | Article drawer, Selector tester | `listNewsSources`, `createNewsSource`, `updateNewsSource`, `deleteNewsSource`, `scrapeNewsSourceNow`, `testNews*`, `listNewsArticles` (`api.ts:143-168`) | `GET /news-sources`, `POST /news-sources`, `PUT /news-sources/{id}`, `DELETE /news-sources/{id}`, `POST /news-sources/{id}/scrape-now`, `POST /news-sources/test-*`, `GET /news-sources/{id}/articles` |
+| `/sources` | `(dashboard)/sources/page.tsx` | IG rows/niche controls/health; `components/sources/NewsSourcesPanel.tsx` for news tab | IG/news source CRUD, scraper health, test/scrape helpers | `/ig-sources`, `/dashboard/health`, `/scraper-health`, `/news-sources/*` |
 | `/gallery` | `(dashboard)/gallery/page.tsx:79` | `ConfirmDialog`, `PromptDialog`, `Toast`, Image viewer | `listGalleryKeywords`, `listGalleryImages`, `uploadGalleryImage`, `importGalleryLinks`, `startAIFilterScan`, `bulkDeleteGalleryImages`, `updateGalleryImageLabels` (`api.ts:171-215`) | `GET /gallery/keywords`, `GET /gallery/images`, `POST /gallery/images/upload`, `POST /gallery/images/import-links`, `POST /gallery/ai-filter/scan`, `POST /gallery/images/bulk-delete`, `PATCH /gallery/images/{id}/labels` |
 | `/ai-video` | `(dashboard)/ai-video/page.tsx:67` | `ResearchIdeaDetails`, `ClipPlayer` | `listAiVideoTemplates`, `listAiVideoIdeas`, `createAiVideoIdea`, `approveAiVideoIdea`, `rejectAiVideoIdea`, `listAiVideoJobs`, `retryAiVideoJob`, `cancelAiVideoJob`, `listGflowAccounts`, `updateGflowAccount`, `listGflowWorkers` (`api.ts:463-481`) | `GET /ai-video/templates`, `GET /ai-video/ideas`, `POST /ai-video/ideas`, `POST /ai-video/ideas/{id}/approve`, `POST /ai-video/ideas/{id}/reject`, `GET /ai-video/jobs`, `POST /ai-video/jobs/{id}/retry`, `POST /ai-video/jobs/{id}/cancel`, `GET /ai-video/accounts`, `PATCH /ai-video/accounts/{id}`, `GET /ai-video/workers` |
 | `/radar` | `(dashboard)/radar/page.tsx:27` | AccountCard, StoryCard, ShadowReport | `listRadarAccounts`, `createRadarAccount`, `updateRadarAccount`, `deleteRadarAccount`, `listRadarNiches`, `listRadarStories`, `getShadowReport`, `previewRadarDecision`, `regenerateRadarDecision` (`api.ts:394-412`) | `GET /radar/accounts`, `POST /radar/accounts`, `PATCH /radar/accounts/{id}`, `DELETE /radar/accounts/{id}`, `GET /radar/niches`, `GET /radar/stories`, `GET /radar/shadow-report`, `POST /radar/decisions/{id}/preview`, `POST /radar/decisions/{id}/regenerate` |
 | `/strategy` | `(dashboard)/strategy/page.tsx:18` | RecCard, MemoryDiff | `listRecommendations`, `approveRecommendation`, `rejectRecommendation`, `getContentMemory`, `refreshContentMemory` (`api.ts:447-456`) | `GET /strategy/recommendations`, `POST /strategy/recommendations/{id}/approve`, `POST /strategy/recommendations/{id}/reject`, `GET /strategy/memory/{id}`, `POST /strategy/memory/{id}/refresh` |
 | `/analytics` | `(dashboard)/analytics/page.tsx:9` | StatCards, TrendBadges, PostTable | `getAnalyticsOverview`, `getFanpageAnalytics` (`api.ts:378,380`) | `GET /analytics/overview`, `GET /analytics/fanpages/{id}` |
 | `/logs` | `(dashboard)/logs/page.tsx:49` | LogRows, CategoryFilter | `getLogs` (`api.ts:384`) | `GET /logs` (`backend/app/api/logs.py:20`) |
-| `/settings` | `(dashboard)/settings/page.tsx:17` | `YouTubeSettingsCard`, `HermesTokensCard`, `AiVideoSettingsCard`, `GalleryLabelsSettingsCard`, `F1DriversSettings`, `DevicesSettingsCard` | `getSettings`, `updateSettings`, `testReplizCredentials`, `testProxies`, `testRelays`, `listF1Drivers`, `syncF1Drivers`, `listPhoneDevices`, `discoverPhoneDevices` (`api.ts:361-370, 485-506, 562, 574`) | `GET /settings`, `PUT /settings`, `POST /settings/repliz/test`, `POST /settings/proxies/test`, `POST /settings/relays/test`, `GET/POST /api/f1-drivers`, `GET /social-media/devices` |
-| `/content-projects`| `(dashboard)/content-projects/page.tsx:24` | ProjectCard, CreateModal | `listContentProjects`, `createContentProject` (`api.ts:528,534`) | `GET /content-projects`, `POST /content-projects` |
-| `/social-media` | `(dashboard)/social-media/page.tsx:100` | `SocialTabs` | `listBrands` (`lib/socialBrandsApi.ts:154`) | `GET /social-media/brands` |
-| `/social-media/accounts` | `(dashboard)/social-media/accounts/page.tsx` | `SocialTabs`, `AccountDevicesCard` | `listReplizAccounts` (`lib/socialBrandsApi.ts:180`), `listPhoneDevices` (`api.ts:562`) | `GET /social-media/repliz-accounts`, `GET /social-media/devices` |
-| `/social-media/brands/[id]` | `(dashboard)/social-media/brands/[id]/page.tsx` | `SocialTabs`, `DesignTemplatesSection`, `BrandPacingCard`, `BrandContentTable`, `BrandAiImageCard`, `BrandChannelCard`, `BrandExplainerBox` | `getBrand`, `setBrandGptcli` (`lib/socialBrandsApi.ts:157,160`), `updateFanpage`, `listTemplates`, `listTemplateStyles` | `GET /social-media/brands/{id}`, `PUT /social-media/brands/{id}/gptcli`, `PUT /fanpages/{id}`, `GET /templates`, `GET /templates/styles` |
-| `/social-media/channels/new` | `(dashboard)/social-media/channels/new/page.tsx` | `StepBrand`, `StepPlatform`, `StepPublishMethod`, `StepPacing` | `createSocialDestination` (`api.ts:542`), `listPhoneDevices`, `listReplizAccounts` | `POST /social-media/destinations`, `GET /social-media/devices`, `GET /social-media/repliz-accounts` |
-| `/social-media/channels/[id]` | `(dashboard)/social-media/channels/[id]/page.tsx` | `ChannelHeader`, `PublishTab`, `FallbackTab`, `MediaTab`, `PacingTab`, `ContentTab`, `HistoryTab` | `getDestination`, `updateDestination` (`api.ts`), `getEstimatedTimes`, `getRecentDeliveries` (`lib/socialBrandsApi.ts:165,170`) | `GET/PATCH /social-media/destinations/{id}`, `GET /social-media/destinations/{id}/estimated-times`, `GET /social-media/destinations/{id}/recent` |
-| `/social-media/legacy` | `(dashboard)/social-media/legacy/page.tsx` | `AccountDevicesCard`, `SchedulePreview` (no `SocialTabs`) | `listSocialDestinations`, `createSocialDestination`, `updateSocialDestination`, `deleteSocialDestination`, `getSchedulePreview`, `listSocialMediaActivity` (`api.ts:538-556, 594`) | `GET /social-media/destinations`, `POST /social-media/destinations`, `PATCH /social-media/destinations/{id}`, `DELETE /social-media/destinations/{id}`, `GET /social-media/destinations/{id}/schedule-preview`, `GET /social-media/activity` |
+| `/settings` | `(dashboard)/settings/page.tsx` | Provider/image/video settings, `PromptPolishSettingsCard`, `GalleryLabelsSettingsCard`, devices/tokens | Settings CRUD and provider/device probes | `/settings/*`, `/prompt-polish/health`, `/f1-drivers`, `/social-media/devices` |
+| `/brands/accounts` | `(dashboard)/brands/accounts/page.tsx` | Account/device management | `listReplizAccounts`, phone device helpers | `/social-media/repliz-accounts`, `/social-media/devices` |
+| `/brands/channels/new` | `(dashboard)/brands/channels/new/page.tsx` | `StepBrand`, `StepPlatform`, `StepPublishMethod`, `StepPacing` | `createSocialDestination`, `platformChannelsApi.ts` | `/social-media/destinations`, platform channel endpoints |
+| `/brands/channels/[id]` | `(dashboard)/brands/channels/[id]/page.tsx` | `ChannelHeader`, publish/fallback/media/pacing/content/history tabs | Destination helpers, `getEstimatedTimes`, `getRecentDeliveries` | `/social-media/destinations/{id}`, `/estimated-times`, `/recent` |
 
 ---
 
-## 4. `fanpages/[id]` Tab Configuration & Field Specifications
+## 4. Brand Tab Configuration & Field Specifications
 
-Target page: `frontend/src/app/(dashboard)/fanpages/[id]/page.tsx:82`.
-Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, payload)` where `payload = { ...form, mode2_caption_language: form.caption_language }`.
+Target page: `frontend/src/app/(dashboard)/brands/[id]/page.tsx`.
+`handleSave` dispatches `updateFanpage(fanpageId, { ...form, mode2_caption_language: form.caption_language })` after deleting brand-look/template fields, which the Design controls save separately.
+`selectTab` stores `?tab=<key>` with `router.replace(..., {scroll:false})`. Current tabs: `content`, `channels`, `groupshare`, `pacing`, `captions`, `design`, `ideas`; default `content`. `VALID_TABS` maps old per-mode tab keys to Content. Group Share saves independently of the general form.
 
-### 4.1 Tab Structure (`SettingsTabs.tsx:5-15`)
+### 4.1 Content Modes and Shared Brand Settings
+
+The numbered groups below describe fields/components, not separate top-level tabs. `ContentTab.tsx` expands mode panels; Channels, Pacing & review, Captions, Design and Ideas own the cross-mode controls.
 
 1. **`global` (Global & Safety)**:
    - **Publish Modes** (`GlobalPublishMode.tsx:3-11`): `publish_mode`, `mode2_publish_mode`, `discussion_publish_mode`, `pinterest_publish_mode`, `facebook_photo_publish_mode`, `yt_clip_publish_mode`, `ai_video_publish_mode` (values: `"auto" | "manual_review"`).
@@ -107,7 +123,7 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
 
 3. **`news` (News Cards — Mode 2)**:
    - **Feature Flags**: `mode2_news_content_enabled` (boolean), `news_visual_engine` (`"off" | "fal" | "chatgpt"`), `mode2_editorial_gate_enabled` (boolean).
-   - **Design & Layout**: `quote_shorten_enabled` (boolean), `mode2_gallery_niches` (string array of enabled gallery niches), `mode2_title_max_chars` (int), `mode2_badge_text` (string | null). (Note: the legacy "Template accent colour" picker was removed; accent colors are configured via Brand Look on the Global tab).
+    - **Design & Layout**: `quote_shorten_enabled` (boolean), `mode2_gallery_niches` (string array), `mode2_title_max_chars`, `mode2_badge_text`. Brand Look lives in Design. `badge_breaking_enabled`, `badge_discussion_enabled`, `news_badge_percent` control card badges; `qa_news_enabled`, `qa_ig_enabled`, `qa_facebook_enabled`, `qa_ai_video_enabled` control generated-result checks.
    - **Source Links**: `addFanpageNewsSource` (`POST /fanpages/{id}/news-sources`), `removeFanpageNewsSource` (`DELETE /fanpages/{id}/news-sources/{newsSourceId}`), copy preview (`previewNewsCopy`).
 
 4. **`discussion` (Discussion Cards — Mode 4)**:
@@ -133,7 +149,9 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
 8. **`aivideo` (AI Video — Mode 8)** (`AiVideoSection.tsx:13-298`):
    - **Generation Limits**: `ai_video_enabled` (boolean), `ai_video_daily_count` (int 0–10), `ai_video_min_score` (int 0–100 | null), `ai_video_templates` (string array of template keys), `ai_video_template` (string | null), `ai_video_seconds_min` (int >= 4), `ai_video_seconds_max` (int >= 4), `ai_video_max_credits_per_video` (int | null), `ai_video_max_credits_per_day` (int | null), `ai_video_narrator` (`"EN-DOC" | "EN-PADDOCK" | "EN-AUSSIE-ENG" | "EN-SCOT" | "EN-JOURNO-F" | "EN-US-ENG"`), `ai_video_title_max_chars` (int), `ai_video_description_max_chars` (int).
    - **Overlay Branding**: `ai_video_logo_enabled` (bool), `ai_video_logo_size_pct` (5–30%), `ai_video_logo_position` (`"top_right" | "top_left" | "bottom_right" | "bottom_left"`), `ai_video_logo_margin_pct` (0–10%), `ai_video_captions_enabled` (bool), `ai_video_caption_size` (40–140px), `ai_video_caption_bottom_pct` (5–70%), `ai_video_caption_highlight` (hex string).
-   - **Overlay Preview**: `previewAiVideoOverlay` (`POST /ai-video/fanpages/{id}/overlay-preview`, blob response converted to object URL).
+    - **Overlay Preview**: `previewAiVideoOverlay` (`POST /ai-video/fanpages/{id}/overlay-preview`, blob response converted to object URL).
+    - **Prompt/QC controls** (`AiVideoSection.tsx:AiVideoSection`): `ai_video_prompt_polish_enabled`, `ai_video_clip_qc_enabled`, `ai_video_clip_qc_max_attempts` (1–10, default 4; includes the initial attempt). Best-of-limit clips require manual review.
+    - **Per-template narration**: `ai_video_narration[template_key]` selects Flow voice, Google TTS, ASMR, or Google TTS + ASMR. TTS includes Auto/catalog voice and optional `bed="asmr"`; only selected templates with a 2+ clip option show these controls. `listTtsVoices` uses immutable SWR. Preview audio is a static `/voice-samples/<locale>-<voice>.mp3` (`id-ID`, `fr-FR`, otherwise `en-US`), not a synthesis call. Single-clip backend jobs still use Flow voice.
 
 9. **`radar` (Viral Radar)**:
    - **Parameters**: `radar_enabled` (boolean), `radar_shadow` (boolean), `radar_niches` (string array), `radar_min_likes` (int >= 1), `radar_confirm_ratio` (float >= 0.1), `radar_fast_ratio` (float >= 0.1), `radar_fast_window_min` (int >= 1), `radar_shelf_news_h` (int >= 1), `radar_shelf_evergreen_h` (int >= 1), `radar_burst_enabled` (boolean), `radar_daily_max` (int >= 0), `visual_engine` (string).
@@ -154,7 +172,9 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
 
 ### 5.2 History & Publishing Ledger Audit (`history/page.tsx`)
 - **Pagination**: Uses `useSWRInfinite` with fixed `PAGE_SIZE = 30` (`page.tsx:96, 120`). Flattens paginated pages into a continuous array.
-- **Publication Lag Verification** (`page.tsx:24-32`): `jobTimes()` compares `published_at` (hand-off to Repliz/phone dispatch) against `scheduled_for` (actual live slot on Facebook after sleep-window and pacing gap evaluation). Flags items as `isPendingLive` if scheduled live time is >60 seconds in the future.
+- **Live vs scheduled**: `jobTimes` compares the hand-off timestamp and planned slot. Repliz `published_at` is hand-off; phone `published_at` is actual live time. `liveState` checks delivery copies/legacy timing before presenting a post as live; Repliz acceptance alone stays Scheduled.
+- **Scheduled tab**: loads `listSocialMediaActivity` instead of paged jobs, sorts delivery slots and offers cancel/previews. Activity initializes at All brands and uses backend totals rather than the loaded page length. `MediaThumb.tsx` and `lib/thumb.ts` use lightweight WEBP thumbnails; full media opens in preview/lightbox.
+- **Day plan** (`components/history/TodayPlanCard.tsx:TodayPlanCard`): mounted only on Scheduled; polls `GET /social-media/day-plan` every 60 s with optional `destination_id` and `content_project_id`. Shows remaining per-mode counts (or remaining total), destination city/local clock, and first eight upcoming slots in WIB with an overflow count. Handler: `backend/app/api/social_media.py:get_day_plan`, service `services/day_plan.py`.
 - **Job Deletion & Re-edit**:
   - `deletePublishJob(id)`: Presents `ConfirmDialog`. Calls `DELETE /publish-jobs/{id}`, deleting the job record from PostgreSQL and issuing a remote cancel call to the Repliz API (`repliz_deleted`).
   - `reeditJob(id)`: Dispatches `POST /publish-jobs/{id}/reedit`, resetting job status back to `pending_design` or `pending_review` for re-authoring.
@@ -173,6 +193,29 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
 - **Typography & Font Pre-caching**: Constrained to fonts vendored in `renderer/fonts/` (`FONTS` array, line 24: `Poppins`, `Montserrat`, `Roboto`, `Oswald`, `Playfair Display`, `Bebas Neue`, `Anton`, `Pacifico`, `Tusker Grotesk`, `Agrandir`, `Agrandir Grand Light`) ensuring WYSIWYG identity between browser canvas and the headless Chrome renderer.
 - **Serialization**: `toTemplateJson()` produces a serialized Fabric JSON object alongside a `placeholderConfig` metadata map confirming whether `has_title` and `has_image_slot` are satisfied before persistence (`TemplateEditorPage:43-48`).
 
+### 5.5 Facebook Groups and Brand Group Share
+
+| File / entry point | Responsibility |
+|---|---|
+| `app/(dashboard)/facebook-groups/page.tsx:FacebookGroupsPage`, `GroupForm` | Shared niche catalog. Add/edit, niche filter, Show paused, pause/resume (DELETE soft-deactivates; PATCH resumes). Fields include kind/subject, language, identity, admin approval, allowed weekdays (Mon=0), banned content, daily cap, notes. Client validates required trimmed text and HTTP(S) URL; backend normalizes Facebook group URLs. |
+| `components/brand/group-share/GroupShareTab.tsx:GroupShareTab`, `save`, `saveMemberships` | Brand tab `groupshare`: independent enable/settings save, niches, mode sources, Muse/rule controls, caps, account delivery editor, batch memberships, read-only queue. Queue (latest 50) and summary poll every 30 s. Fetch active groups for each selected niche and deduplicate IDs. |
+| `components/brand/group-share/GroupModeList.tsx:GroupModeList`, `updateSource` | Eight mode keys: `ig`, `news`, `discussion`, `pinterest`, `fb_recreate`, `yt_clips`, `ai_video`, `viral_radar`. Off/on plus follow/groups_only/both. Turning on defaults to follow when the brand mode is enabled, otherwise groups_only. Follow/both disabled when brand mode is off. Extra group count clamps to 0–5 for AI video, 0–50 otherwise. |
+| `components/brand/group-share/DeliveryEditor.tsx:DeliveryEditor`, `save` | `phone_auto`, `pic_whatsapp`, `pic_telegram`; phone device/calibration display, PIC contact, task hours, nullable ramp overrides, active toggle. Clears irrelevant phone/PIC fields on save; no calibration action. Telegram helper requires the PIC to start the bot. |
+| `components/brand/group-share/Fields.tsx:Field`, `NumberField`, `Toggle`, `TableWrap`, `errorMessage` | Shared labeled controls, nullable counts, semantic switches, focusable horizontal tables, validation/error formatting and delivery labels. |
+
+`lib/api.ts` exports catalog/settings/accounts/memberships/tasks/summary clients; these Group Share helpers return response data directly, unlike many older helpers returning Axios responses. Types live in `lib/types.ts`.
+Backend entry points: `api/fb_groups.py`, `api/group_share.py`; see [group-share.md §6](group-share.md#6-api-entry-points).
+UI controls for Muse/credit/must-edit are stored but not implemented by the share pipeline. Automatic phone group posting is groundwork only. Groups-only options do not bypass normal mode enablement/generation gates; see [group-share.md §9](group-share.md#9-setup-gaps-and-code-concerns).
+
+### 5.6 AI Video Prompt Polish, QC History and Worker Status
+
+- `app/(dashboard)/ai-video/page.tsx:AiVideoPage`: Ideas/Jobs/Accounts tabs. Ideas default to `active` (pilot/proposed/approved), filtered by brand, limit 100. Jobs start at 100 with offset-based Load more; only the first page auto-refreshes (15 s). Counts come from `getAiVideoCounts`, not the loaded slice. Accounts poll 30 s, workers 5 s; worker activity distinguishes generating, checking credits, waiting, paused and offline.
+- `IdeaPolishSection` / `JobPolishSection` lazily fetch `getPromptPolishIdea` / `getPromptPolishJob`. Bulk states and engines poll every 15 s through `/prompt-polish/ideas-state` and `/ideas-engine`. Actual engine badges come from backend metadata, never a fixed Argon label.
+- `components/ai-video/PromptPolishView.tsx:PromptPolishView`, `polishEngineName`: per-clip collapse, Polished/Original comparison when `prompt_original` exists, copy current text, change list attributed to ChatGPT/Codex/Argon only when known. Data comes from `api/prompt_polish.py`.
+- `components/ai-video/ClipQcHistory.tsx:ClipQcHistorySection`, `getVerdictInfo`: first open fetches `getAiVideoClipQc(jobId)` (`GET /ai-video/jobs/{id}/clip-qc`); caches locally with no polling. Groups attempts by clip/generation, labels discarded restarts, shows pass/kept-best/unavailable/checking, marks the used attempt, and renders attempt video, checked contact sheet, issues, waiting reason and prompt. Missing retained files show a placeholder. Job cards use `clip_qc_summary`.
+- `components/settings/PromptPolishSettingsCard.tsx:PromptPolishSettingsCard`, `handleSave`, `handleClearToken`: edits changed `prompt_polish_base_url`/model/token via `updateSettings`; password input is blank after save, saved-token indicator uses `has_prompt_polish_token`. Health polls 60 s through `getPromptPolishHealth`: service/account problems, brand/prepared/waiting/failed counters and last success. Text explains ChatGPT, then Codex, then Argon; the account panel still describes Gemini service health.
+- `components/settings/GalleryLabelsSettingsCard.tsx`: `gallery_new_labeler` selects app or Muse for new photos; `gallery_muse_fallback_hours` controls late app fallback. Image settings expose night-window and Pro poster controls. Backend behavior: [design-images.md §1](design-images.md#1-architectural-overview--configuration).
+
 ---
 
 ## 6. Shared Components & Design Tokens
@@ -185,13 +228,13 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
 - `CaptionCriteriaEditor` (`frontend/src/components/CaptionCriteriaEditor.tsx:54`): Form component binding `caption_tone`, `caption_language`, `caption_max_length`, `caption_hashtag_count`, `caption_cta_text`, and `caption_custom_prompt`.
 - `SchedulePreview` (`frontend/src/components/social-media/SchedulePreview.tsx:14`): Gantt-style timeline visualization of queued posts against active destination sleep-windows.
 - `AccountDevicesCard` (`frontend/src/components/social-media/AccountDevicesCard.tsx:21`): Device pool status manager showing ADB device health and active assignments.
-- `DesignTemplatesSection` (`frontend/src/components/brand/DesignTemplatesSection.tsx`): Brand styling manager mounted on `fanpages/[id]` (Global tab) and `/social-media/brands/[id]`. Configures `template_style` (`gp`, `highlight`, `classic`), brand color overrides (`brand_override`, `accent_color`, `accent_secondary_color`, `badge_color`, `badge_text_color`, `quote_mark_color`, `quote_streak`), and previews 3 template category cards.
+- `DesignTemplatesSection` (`frontend/src/components/brand/DesignTemplatesSection.tsx`): Brand styling manager in `/brands/[id]` Design. Configures `template_style` (`gp`, `highlight`, `classic`), brand color overrides and previews three template categories; saves independently of the general brand form.
 - `TemplateThumbnail` (`frontend/src/components/designer/TemplateThumbnail.tsx`): Client-side Fabric.js card preview with neutral photo slot fill (`#3A4152`). Accepts `look` (`BrandLook`), `label`, `title`, `subtitle`, `caption` props.
 - `adaptLook.ts` (`frontend/src/components/designer/adaptLook.ts`): TypeScript mirror of renderer `renderer/inject.js` color logic (`normalizeLook`, `adaptLook`, `tintStreakDataUri`).
 - `brandLook.ts` (`frontend/src/lib/brandLook.ts`): Palettes (`SWATCHES`, `PRESETS`), WCAG luminance / contrast calculations, `autoInk`, and look resolvers (`resolveLook`, `lookForFanpage`).
 - `designTemplatesApi.ts` (`frontend/src/lib/designTemplatesApi.ts`): Typed API client for `/templates/styles` and `/templates/styles/{style}/defaults`.
 - `socialBrandsApi.ts` (`frontend/src/lib/socialBrandsApi.ts`): Typed API client for `/social-media/brands`, `/destinations/{id}/estimated-times`, `/recent`, `/repliz-accounts`.
-- `SocialTabs` (`frontend/src/components/social-media/SocialTabs.tsx`): Sub-navigation bar across `/social-media` with tabs `Brands`, `Publishing accounts`, `Classic view`, and `Activity`. Specialized subcomponents in `components/social-media/brand/*` (`BrandPacingCard`, `BrandContentTable`, `BrandAiImageCard`, `BrandChannelCard`, `BrandExplainerBox`) and `components/social-media/channel/*` (`ChannelHeader`, `StepBrand`, `StepPlatform`, `StepPublishMethod`, `StepPacing`, `PublishTab`, `FallbackTab`, `MediaTab`, `PacingTab`, `ContentTab`, `HistoryTab`, `EstimatedSlotsView`).
+- `components/social-media/channel/*`: canonical Brands channel pages reuse `ChannelHeader`, wizard steps, publishing/fallback/media/pacing/content/history controls and `EstimatedSlotsView`. Component directory names do not imply that old `/social-media` pages remain active.
 
 ### 6.2 Token Architecture (`globals.css` & `tailwind.config.js`)
 - **Palettes**: Custom HSL/RGB CSS variables mapped in Tailwind:
@@ -209,10 +252,10 @@ Global Save handler (`page.tsx:781-798`): dispatches `updateFanpage(fanpageId, p
 2. `frontend/src/lib/api.ts:24` - Response interceptor removes `"token"` from `localStorage` and triggers `window.location.href = "/login"` on HTTP 401.
 3. `nginx/conf.d/app.conf:66` - Nginx proxy passes `/api/` to `http://api:8000/`, stripping the `/api/` prefix.
 4. `backend/app/api/radar.py:12` - Radar APIRouter uses prefix `/radar` and matches the frontend (verified 2026-10-18).
-5. `backend/app/api/scraper_health.py:14` - Scraper health router uses `prefix="/api/scraper-health"`; it works in prod only because `api.ts:39` also adds `/api` (double prefix). CORRECTED by reviewer: the executor first claimed it 404s; live check shows 403 (route exists).
-6. `backend/app/main.py:40` - F1 drivers router is registered with `prefix="/api/f1-drivers"`; works in prod via the same double-`/api` pattern (`api.ts:486`). CORRECTED by reviewer: not a 404.
-7. `frontend/src/lib/api.ts:69` - `listBurners`/`createBurner` call `/burners`, which has no backend router (live 404). The functions are unused by any page, so this is dead code, not a visible bug.
-8. `frontend/src/app/(dashboard)/fanpages/[id]/page.tsx:786` - `handleSave` injects `mode2_caption_language: form.caption_language` into the fanpage update payload.
+5. `backend/app/api/scraper_health.py` - Bare `/scraper-health` prefix matches `getScraperHealth`; no double `/api` workaround.
+6. `backend/app/main.py` - F1 drivers router is registered with bare `/f1-drivers`.
+7. `frontend/src/lib/api.ts` - Burner client functions are absent.
+8. `frontend/src/app/(dashboard)/brands/[id]/page.tsx:handleSave` - Injects `mode2_caption_language: form.caption_language`; old fanpage page redirects.
 9. `frontend/src/components/fanpages/GlobalPublishMode.tsx:3` - `PUBLISH_MODE_FIELDS` binds 7 distinct content modes to `"auto"` or `"manual_review"`.
 10. `frontend/src/app/(dashboard)/queue/page.tsx:14` - Queue data fetcher aggregates `pending_review`, `pending_design`, and `pending_publish` jobs in a single `Promise.all`.
 11. `frontend/src/components/designer/TemplateEditor.tsx:24` - Editor typography is restricted to 11 hardcoded system/vendored fonts (`Poppins`, `Montserrat`, `Roboto`, `Oswald`, `Playfair Display`, `Bebas Neue`, `Anton`, `Pacifico`, `Tusker Grotesk`, `Agrandir`, `Agrandir Grand Light`).

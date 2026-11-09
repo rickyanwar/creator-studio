@@ -1,6 +1,6 @@
 # Deep Dive D4: Content Sources + AI Copy (Modes 1, 2, 4, 5, 6, 7 + Gallery)
 
-> Generated 2026-10-16 at main 25edf38 from a full read of the listed files. The "Verified claims" list at the bottom was checked line by line against the code. Other details are a careful map but not each re-checked. Read the real code before changing behaviour, and update this file when the code changes.
+Refreshed 2026-11-10 at main 8bc0f82.
 
 
 Comprehensive architecture and implementation map covering content discovery, deduplication, pacing/quota math, copy generation prompts, model fallbacks, breaking-news fast track, event-aware gallery throttling, and content skip gates across backend tasks and services.
@@ -10,7 +10,7 @@ Comprehensive architecture and implementation map covering content discovery, de
 ## 1. Cross-Cutting AI Infrastructure & Model Fallbacks
 
 ### 1.1 9Router Resolution & Model Health
-- **Config Resolution** (`backend/app/services/nine_router.py:43`): `_resolve()` fetches DB `Settings` (id=1) columns `nine_router_base_url`, `nine_router_model`, `nine_router_api_key_encrypted` (decrypted via `app.services.encryption.decrypt`), and `nine_router_discussion_model` (default `"smart-combo"`). DB settings override env vars with 30-second memory cache TTL (`nine_router.py:20, 78`).
+- **Config Resolution** (`backend/app/services/nine_router.py:_resolve`): fetches DB `Settings` (id=1) columns `nine_router_base_url`, `nine_router_model`, `nine_router_api_key_encrypted` (decrypted via `app.services.encryption.decrypt`), and `nine_router_discussion_model` (default `"FlashFast"`). DB settings override env vars with 30-second memory cache TTL.
 - **Health Tracking** (`backend/app/services/model_health.py:32`): Status stored in Redis hash `model_health` with 26-hour TTL (`model_health.py:33`). Probes models sequentially with 0.5s pause (`model_health.py:35`). Hard rules:
   1. Never probe or store `cx/*` IDs (`model_health.py:128, 174`).
   2. Fetches live `/v1/models` (`model_health.py:69`); configured IDs not on live list immediately marked `dead("not listed")` without HTTP probe (`model_health.py:179`).
@@ -18,7 +18,7 @@ Comprehensive architecture and implementation map covering content discovery, de
 
 ### 1.2 Multi-Tier AI Provider & Fallback Chains
 - **Caption Generation Fallback** (`backend/app/services/ai_caption.py:330`):
-  1. **Primary**: 9Router (`_call_router`, `ai_caption.py:223`) with timeout 75.0s, temperature 0.7, max_tokens 8192, `max_retries=0` (`ai_caption.py:253`). Order tried: `preferred_router_model` (if passed) $\to$ configured default model $\to$ `ROUTER_MODEL_FALLBACKS` (14 models from Claude Opus/Sonnet down to Gemini 3.1 Pro; `ai_caption.py:201-216`), filtering out dead models via `is_dead()` (`ai_caption.py:373-379`).
+   1. **Primary**: 9Router (`ai_caption.py:_call_router`) with timeout 75.0s, temperature 0.7, max_tokens 8192, `max_retries=0`. Order: preferred model, configured default, then `ROUTER_MODEL_FALLBACKS`: `FlashFast`, `ag/gemini-3.8-flash-medium`, `ag/gemini-3.8-flash-low`, `ag/gemini-3.8-flash-high`. Effective model IDs are deduplicated. Health filtering excludes dead models; if all are dead it restores the chain, excluding explicit `cx/*` IDs.
   2. **Failover to Gemini**: (`_call_gemini`, `ai_caption.py:281`) using `settings.gemini_model`. Consecutive errors increment Redis key `ai:gemini_consecutive_failures` (`ai_caption.py:70`).
   3. **Failover to Groq**: If consecutive Gemini failures $\ge$ `settings.ai_fallback_after_failures`, sets Redis key `ai:switched_to_groq_until` with TTL `ai_fallback_reset_after_minutes * 60` (`ai_caption.py:84`). Groq uses `settings.groq_model` (gpt-oss-120b) with `max_tokens=5000` (`ai_caption.py:318`) to allow hidden reasoning budget while staying below 8000 TPM limit.
 - **JSON Recovery Engine** (`backend/app/services/news_copywriter.py:549` `_generate_with_fallback`):
@@ -38,10 +38,10 @@ Comprehensive architecture and implementation map covering content discovery, de
 |---|---|---|
 | Wave Controller | `backend/app/tasks/crawler.py:55` `crawl_all_sources` | Skips if WIB hour in `[crawl_sleep_start_wib, crawl_sleep_end_wib)` (default 01:00–06:00 WIB; `crawler.py:48-52`). Acquires Redis string lock `ig_crawl:wave` (TTL 1800s, `crawler.py:33, 105`). Enforces `crawl_interval_minutes` (`crawler.py:79-98`). Filters active sources with `TargetFanpage.mode1_ig_repost_enabled == True` (`crawler.py:110-123`). |
 | Wave Step Dispatch | `crawler.py:171` `crawl_wave_step` | Processes sources sequentially with 30–90s random delay (`crawler.py:214`). 90-minute wave deadline (`crawler.py:36, 193`). If viewer busy, retries current step after 60s (`crawler.py:199`). |
-| Login-free Scraper | `backend/app/services/ig_viewer_scraper.py:980` `fetch_recent_posts` | Distributed Redis mutex `ig_viewer:browser_lock` (`ig_viewer_scraper.py:35`) with 300s TTL. Launches Patchright/Playwright with extensive anti-detection flags (`ig_viewer_scraper.py:86-113`). Iterates `_TIERS`: GramSnap $\to$ AnonyIG $\to$ IGStoryViewer (`ig_viewer_scraper.py:875-879`). Inter-tier jitter 2.0–5.0s (`ig_viewer_scraper.py:904`). |
+| Login-free Scraper | `backend/app/services/ig_viewer_scraper.py:fetch_recent_posts`, `fetch_many_recent_posts` | Redis mutex `ig_viewer:browser_lock`, token-checked release, TTL `max(_LOCK_TIMEOUT, _session_deadline(n_users) + 30)`. Patchright/Playwright tiers: GramSnap, AnonyIG, IGStoryViewer; inter-tier jitter 2–5s. `_session_watchdog` kills descendant Chrome/Chromium processes on deadline, never the Playwright node driver. `ViewerSessionTimeout` and Celery soft limits propagate rather than becoming ordinary tier errors. Crawler and Radar browser tasks use queue `crawl`. |
 | Ingestion & Dedup | `crawler.py:279` `_ingest_mode1_medias` | Fetches 9–15 posts. Dedup: checks `Post.ig_media_id` (`crawler.py:291`). Skips posts older than `max_post_age_days` (`crawler.py:285-301`). Skips videos and reels (`crawler.py:316`). Album handling: `media_type == 8`, counts image resources (`crawler.py:305`); skips video-only albums (`crawler.py:310`). Subsets image URLs by `source.album_image_indices or [1]` (`crawler.py:343`). Creates `Post(status=crawled)`. |
 | Cross-Ingest Radar | `crawler.py:237` `_try_radar_ingest` | If account tracked in Radar or linked via `trigger == 'viral_only'`, cross-ingests medias into Radar pipeline (`crawler.py:258-273`). |
-| Source Niche & Routing | `ig_sources.py`, `ig_recreate.py` | `ig_sources.niche` assigns niche category; `GET /ig-sources` computes `niche_mismatch` against linked fanpage gallery niches (Motorsport matches F1/MotoGP). Mode 3 IG recreate uses source niche for gallery photo lookup and AI context. |
+| Source Niche & Routing | `ig_sources.py`, `ig_recreate.py` | `ig_sources.niche` assigns niche category; `GET /ig-sources` computes `niche_mismatch` against linked fanpage gallery niches (Motorsport matches F1/MotoGP). Mode 3 IG recreate uses source niche for gallery photo lookup and AI context. Migration `backend/alembic/versions/c80000000037_ig_source_niche.py:upgrade` adds nullable `String(64)` niche and backfills known usernames into F1, MotoGP, Motorsport, UFC, NBA and Sports. |
 
 ### 2.2 Image Storage & Fan-Out
 - **Image Saver** (`backend/app/tasks/image_saver.py:87` `save_post_images`):
@@ -91,6 +91,9 @@ Comprehensive architecture and implementation map covering content discovery, de
   - Failure Stubs: If title/content extraction fails and page is NOT a bot challenge (`_looks_like_bot_challenge`, `news_scraper.py:154`), sets `permanent_failure = True` and writes `ScrapedArticle(status=skipped)` to halt infinite re-scraping (`news_scraper.py:189-215, 241-248`).
 
 ### 3.2 Editorial Gate & Copywriting
+- **Article concurrency** (`backend/app/tasks/news_copywriter.py:copywrite_article`): Redis `SET NX EX` on `news_copywriter:article:<id>`, TTL `_ARTICLE_LOCK_TTL = 1800`; an occupied lock exits before AI calls. Redis failure lets the task run. The lock is deleted in `finally`; existing `(source_article_id, fanpage_id)` jobs are skipped. `copywrite_article` runs on queue `ai`.
+- **Sweep dedupe** (`news_copywriter.py:copywrite_pending_articles`): every 5 minutes, selects up to 20 distinct subscribed scraped articles older than 2 minutes. `copywriter:sweep:<id>` with `SWEEP_REDISPATCH_SECONDS = 1800` prevents repeated dispatch during slow copywriting. Redis errors permit dispatch. Only eligible active projects/subscriptions are considered.
+- **Cross-source same-story check** (`backend/app/services/news_dedup.py:recent_story_jobs`, `find_duplicate_job`): after the optional editorial gate, compares each article/fanpage against at most 40 news jobs created on that fanpage in the last `DEDUP_WINDOW_HOURS = 48`, newest first. Failed/skipped jobs and the same article ID are excluded; pending jobs also count. No candidates means no AI call. Otherwise one `generate_caption` call uses the Flash fallback chain to compare meaning across languages. Same event plus same main point is duplicate; another person's reaction or a later development is distinct. A valid duplicate skips that pair without creating a job; AI errors or unusable verdicts let it through. If no generation failed, the article becomes `copywritten`, including editorial/dedup skips.
 - **Editorial Gate** (`backend/app/services/editorial_gate.py:123` `evaluate_article`):
   - Opt-in via `TargetFanpage.mode2_editorial_gate_enabled` (`tasks/news_copywriter.py:93`). Fails open on exception (`tasks/news_copywriter.py:107-114`).
   - **One editorial call** (`_judge_post_worthiness`): no fact-check and no web search since 2026-10-31 (owner: the model's knowledge lags the current season and it rejected real news as "fabricated"). The prompt says never to judge whether facts are true; it rejects only off-niche, purely promotional, or empty/garbled articles, and predicts engagement `low`/`medium`/`high`. `EditorialVerdict.fact_check` is always `"off"`.
@@ -102,7 +105,7 @@ Comprehensive architecture and implementation map covering content discovery, de
 - **Breaking News Fast Track**:
   - Detection: Prompt sets `is_breaking: true` for high-impact events (major signings, race results, severe injuries) (`news_copywriter.py:207`).
   - Render Stagger: Normal stagger is 60–1500s; breaking news stagger is 5–90s (`tasks/news_copywriter.py:30-31, 38`).
-  - Publisher Bypass (`backend/app/tasks/publisher.py:134, 162-179`): `breaking=True` skips daily cap check and calendar day-hopping. Respects sleep window (`_push_past_sleep`), but schedules immediately with a tight 5–10 min minimum gap from the fanpage's last post (`publisher.py:173`).
+   - Legacy publisher bypass (`backend/app/tasks/publisher.py:_next_schedule_at`): `breaking=True` skips daily caps/day-hopping, respects sleep, and draws a triangular 5–10 min gap (mode 7 min). Ledger scheduling uses destination slot/quota rules; event-window news has its own immediate path. See [publishing.md §4](publishing.md#4-slot-computation--scheduling-engine).
 
 ---
 
@@ -267,7 +270,8 @@ Comprehensive architecture and implementation map covering content discovery, de
 - **Event Window Logic** (`gallery_downloader.py:188` `_in_event_window`):
   - Window opens before `next_event_date`: MotoGP (H-3), F1 (H-3), UFC/Boxing (H-3), other (H-2) (`_NICHE_EVENT_WINDOW_DAYS_BEFORE`, `gallery_downloader.py:102-107`).
   - Window closes: `next_event_date + 1 day` (`_EVENT_WINDOW_DAYS_AFTER = 1`, `gallery_downloader.py:185`).
-  - Event date refresh (`refresh_keyword_event_dates`, beat 02:00 WIB): a future date is never re-checked; a date that passed within the last 14 days is re-checked every 20 h (`_EVENT_PASSED_LOOKUP_INTERVAL_HOURS`, `_EVENT_PASSED_FAST_RECHECK_DAYS`) so back-to-back race weekends are found in time; otherwise every 5 days (`_EVENT_LOOKUP_INTERVAL_DAYS`). News freshness (6 h race day / 12 h other days, `event_days.news_fresh_hours`) is decided by the day the news job was created, not by today (2026-10-31).
+   - Event date refresh (`gallery_downloader.py:refresh_keyword_event_dates`, beat 02:00 WIB) preserves `next_event_date` through event date + `_EVENT_REFRESH_HOLD_DAYS_AFTER = 2` (window's H+1 plus one timezone buffer day). After this hold, dates passed within 14 days are rechecked every 20 h (`_EVENT_PASSED_LOOKUP_INTERVAL_HOURS`, `_EVENT_PASSED_FAST_RECHECK_DAYS`); otherwise every 5 days (`_EVENT_LOOKUP_INTERVAL_DAYS`).
+   - Shared policy (`backend/app/services/event_days.py:event_multiplier`, `effective_daily_target`, `news_fresh_hours`): destinations get `daily_target * 2` inside any matching niche's event window, including H+1. Detection reuses `publisher.py:_event_boosted_daily_limit` and gallery keyword dates; errors return multiplier 1. Freshness is the destination limit capped at 6 h in an event window, 12 h otherwise, based on the job's creation day in the destination timezone. News uses earliest slots, may replace untouched older news, and normal Repliz news is submitted no earlier than 45 minutes before go-live; see publishing map.
   - Inside window: news sources for fan pages in event window are checked every 15 minutes (`effective_scrape_interval_minutes = min(scrape_interval_minutes, 15)`, `tasks/news_scraper.py`).
   - Event-window live news (`services/event_days.py:is_live_event_news`): posts immediately outside normal schedule rules with minimum 10-minute gap on destination (`scheduled_for = max(now + 60s, latest + 10 min)`), bypasses daily targets, mode quotas/borrowing, grid, and sleep windows. Live event news deliveries are extra and do not consume daily target or mode quotas.
   - Inside window: interval tightens from 24h to 4h (`_EVENT_WINDOW_INTERVAL_HOURS = 4`, `gallery_downloader.py:147, 208`).
@@ -335,9 +339,17 @@ Cleanup keeps media while an active `viral_only` link still waits for Radar with
 
 ---
 
+## 10. Research Desk Idea Supply
+
+- **Brief and intake** (`backend/app/services/research_desk.py:build_brief`, `pack_schema`, `submit_pack`): Muse research supports `f1`, `motogp`, `health`; `ai_video_researcher != "muse"` returns idle. One pack serves exactly one channel (`MAX_CHANNELS_PER_PACK = 1`), at most 10 packs/request. Brief channels sort by idea-bank coverage then channel ID; `bank_target` is daily count × `ai_video_idea_bank_days`. Live fills the bank; pilot also caps waiting Muse reviews at `muse_pilot_packs`. `go_live` releases held Muse pilot ideas according to score.
+- **Template contract** (`research_desk.py:template_item`, `_check_variant`): exports per-length `clip_prompts_by_clips`, narration plans and engine-specific word budgets via `prompt_engine_for`. Non-vehicle templates reject `vehicle_preset`/`team_livery`. Health has its own guide. `real_names_allowed` permits real maker/model/team/sponsor names while still rejecting detected person names; ordinary templates reject detected real names. Variables are rendered and validated before acceptance.
+- **Subject uniqueness** (`research_desk.py:used_subjects`, `_check_variant`): newest 500 non-rejected ideas from the last `TOPIC_DAYS = 30` supply cross-channel exclusions; checks also include variants accepted in this submission. Same-channel normalized-topic checks remain. `backend/app/services/topic_similarity.py:subject_of`, `subject_tokens`, `similar_subjects` compare text before the first colon, strip stop words/year/sport tokens, singularize long trailing-s tokens and allow prefixes of at least 4 characters. At least 60% of the smaller token set must match. This is lexical subject matching, separate from the AI news-story dedup.
+
+---
+
 ## Verified claims
 
-1. `backend/app/services/nine_router.py:28` - Default discussion model is "FlashFast" (owner rule 2026-10-17: text and vision use only the FlashFast combo + gemini-3.8-flash ids).
+1. `backend/app/services/nine_router.py:_DEFAULT_DISCUSSION_MODEL` - Default discussion model is "FlashFast"; `ai_caption.py:ROUTER_MODEL_FALLBACKS` contains FlashFast plus the three gemini-3.8-flash IDs. Direct Gemini/Groq legacy failover remains implemented.
 2. `backend/app/services/model_health.py:128` - Model health probing strictly asserts that model names starting with "cx/" are never probed.
 3. `backend/app/services/ai_caption.py:253` - OpenAI SDK max_retries is set to 0 to prevent internal retries from stacking on top of ROUTER_MODEL_FALLBACKS.
 4. `backend/app/services/news_copywriter.py:623` - If Groq output fails JSON parsing, it retries once via Gemini before failing.
