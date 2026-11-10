@@ -501,15 +501,17 @@ def claim_job(db: Session, worker_id: str) -> Optional[Tuple[VideoJob, GflowAcco
             return False
         return stock.get(fid, 0) >= max(1, daily_count.get(fid) or 1) * STOCK_PRIORITY_DAYS
 
+    # Group jobs count here too: a Group Share lane is its own fanpage, so lanes take turns
+    # with the brand pages like any other page.
     last_started = dict(
         db.query(VideoJob.fanpage_id, func.max(VideoJob.started_at))
-        .filter(VideoJob.started_at.isnot(None), VideoJob.id.notin_(group_video_job_ids()))
+        .filter(VideoJob.started_at.isnot(None))
         .group_by(VideoJob.fanpage_id)
         .all()
     )
     started_today = dict(
         db.query(VideoJob.fanpage_id, func.count(VideoJob.id))
-        .filter(VideoJob.started_at >= _wib_day_start_utc(now), VideoJob.status != "cancelled", VideoJob.id.notin_(group_video_job_ids()))
+        .filter(VideoJob.started_at >= _wib_day_start_utc(now), VideoJob.status != "cancelled")
         .group_by(VideoJob.fanpage_id)
         .all()
     )

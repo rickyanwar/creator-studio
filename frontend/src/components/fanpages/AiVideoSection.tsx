@@ -5,15 +5,18 @@ import { Icon } from "@iconify/react";
 import useSWRImmutable from "swr/immutable";
 import type { FanpageDetail, AiVideoTemplate, TtsVoice } from "@/lib/types";
 import { listTtsVoices, previewAiVideoOverlay } from "@/lib/api";
+import { LockedField, isLocked } from "@/components/brand/group-share/laneLock";
 
 type Props = {
   form: Partial<FanpageDetail>;
   set: (key: string, value: unknown) => void;
   templates?: AiVideoTemplate[];
   onNavigateTab?: (tab: string) => void;
+  /** Group Share lane: fields owned by the brand page, shown read-only. */
+  lockedFields?: readonly string[];
 };
 
-export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Props) {
+export function AiVideoSection({ form, set, templates = [], onNavigateTab, lockedFields }: Props) {
   const { data: voices = [] } = useSWRImmutable("ai-video-tts-voices", () =>
     listTtsVoices().then((r) => r.data as TtsVoice[])
   );
@@ -462,6 +465,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                 </button>
               </div>
             )}
+            <LockedField locked={isLocked(lockedFields, "ai_video_logo_enabled", "ai_video_logo_size_pct", "ai_video_logo_position", "ai_video_logo_margin_pct", "ai_video_captions_enabled", "ai_video_caption_size", "ai_video_caption_bottom_pct", "ai_video_caption_highlight")}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="flex items-center gap-2 text-sm text-text-primary">
                 <input
@@ -544,6 +548,7 @@ export function AiVideoSection({ form, set, templates = [], onNavigateTab }: Pro
                 />
               </label>
             </div>
+            </LockedField>
             {previewUrl && (
               <img
                 src={previewUrl}

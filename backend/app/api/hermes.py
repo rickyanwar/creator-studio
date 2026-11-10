@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.api.deps import DB, require_hermes_scope
 from app.models.target_fanpages import TargetFanpage
+from app.services.fb_share.lanes import lane_fanpage_ids
 from app.services import content_memory
 
 class MemoryResponse(BaseModel):
@@ -100,7 +101,7 @@ class FanpageHermesResponse(BaseModel):
 
 @router.get("/fanpages", response_model=List[FanpageHermesResponse])
 def get_fanpages_hermes(db: DB, token: ApiToken = Depends(require_hermes_scope("read"))):
-    fanpages = db.query(TargetFanpage).all()
+    fanpages = db.query(TargetFanpage).filter(TargetFanpage.id.notin_(lane_fanpage_ids())).all()
     res = []
     for f in fanpages:
         clip_choices_map = {}

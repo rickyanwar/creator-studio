@@ -244,7 +244,13 @@ def resolve_template(db, category: str, fanpage=None, job_template_id: int | Non
                 return t
 
     q = db.query(DesignTemplate).filter(DesignTemplate.is_default == True, DesignTemplate.category == category)
-    q = q.filter((DesignTemplate.fanpage_id == fanpage.id) | (DesignTemplate.fanpage_id.is_(None))) if fanpage is not None else q.filter(DesignTemplate.fanpage_id.is_(None))
+    if fanpage is not None:
+        # A group lane renders with its brand's own templates.
+        from app.services.fb_share.lanes import lane_brand_id
+        owner_id = lane_brand_id(db, fanpage.id) or fanpage.id
+        q = q.filter((DesignTemplate.fanpage_id == owner_id) | (DesignTemplate.fanpage_id.is_(None)))
+    else:
+        q = q.filter(DesignTemplate.fanpage_id.is_(None))
     return q.order_by(DesignTemplate.fanpage_id.desc().nullslast()).first()
 
 

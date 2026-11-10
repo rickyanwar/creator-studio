@@ -13,8 +13,7 @@ from app.services.ai_video_fill import fill_from_research, fill_idea, research_r
 from app.services.ai_video_idea_writer import MAX_IDEAS_PER_RUN, write_ideas
 from app.services.ai_video_narration import prompt_engine_for, resolve_narration
 from app.services.ai_video_prepare import _is_matching_prepared, polish_enabled, valid_prepared
-from app.services.fb_share.brand_settings import get_brand_share
-from app.services.fb_share.group_jobs import group_publish_job_ids, group_video_job_ids, mark_group_job, remaining_groups_only_today
+from app.services.fb_share.lanes import lane_fanpage_ids
 from app.services.social_project_eligibility import project_can_generate
 from app.services.topic_similarity import similar_subjects
 from app.services.video_templates import allowed_video_templates, credits_estimate, fit_clips_to_credits, get_template, pick_clips
@@ -44,10 +43,6 @@ def video_stock(db, fanpage_id: int) -> int:
                 PublishJob.fanpage_id == fanpage_id,
                 PublishJob.content_type == ContentType.ai_video,
                 PublishJob.is_deleted.is_(False),
-                PublishJob.id.notin_(group_publish_job_ids()),
-                PublishJob.id.notin_(db.query(VideoJob.publish_job_id).filter(
-                    VideoJob.id.in_(group_video_job_ids()), VideoJob.publish_job_id.isnot(None),
-                )),
                 PublishJob.status.in_([
                     PublishJobStatus.pending_publish,
                     PublishJobStatus.pending_review,
@@ -78,7 +73,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration, *, group_only=False):
+def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration):
     job = VideoJob(
         fanpage_id=fanpage.id,
         idea_id=idea.id,
@@ -100,9 +95,6 @@ def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title,
         apply_prepared_cover(job, cover)
     else:
         prepare_cover(db, fanpage, job, variables=variables)
-    if group_only:
-        db.flush()
-        mark_group_job(db, fanpage_id=fanpage.id, mode="ai_video", video_job_id=job.id)
     db.commit()
 
 
@@ -110,23 +102,21 @@ def _create_and_commit_job(db, fanpage, idea, template, clips, variables, title,
 def plan_ai_videos():
     db = SessionLocal()
     try:
-        fanpages = db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True, project_can_generate()).all()  # noqa: E712
-        for fanpage, group_only in ((page, group) for page in fanpages for group in (False, True)):
+        lane_ids = set(db.scalars(lane_fanpage_ids()).all())
+        for fanpage in db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.ai_video_enabled == True, project_can_generate()).all():  # noqa: E712
             now = datetime.now(timezone.utc)
-            if group_only and remaining_groups_only_today(db, fanpage.id, "ai_video", now) <= 0:
-                continue
             local_today = now.astimezone(_fanpage_tz(fanpage)).date()
             local_midnight = datetime.combine(local_today, datetime.min.time(), tzinfo=_fanpage_tz(fanpage)).astimezone(timezone.utc).replace(tzinfo=None)
-            today_query = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.created_at >= local_midnight, VideoJob.status != "cancelled")
-            today_jobs = today_query.filter(VideoJob.id.notin_(group_video_job_ids())).all()
-            made_today, _ = _daily_counts(today_jobs)
-            _, total_spent_today = _daily_counts(today_query.all())
-            open_jobs = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.status.in_(["queued", "claimed", "generating"]))
-            open_count = open_jobs.filter(VideoJob.id.in_(group_video_job_ids()) if group_only else VideoJob.id.notin_(group_video_job_ids())).count()
-            if open_count >= (1 if group_only else 2):
+            today_jobs = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.created_at >= local_midnight, VideoJob.status != "cancelled").all()
+            made_today, spent_today = _daily_counts(today_jobs)
+            open_count = db.query(VideoJob).filter(VideoJob.fanpage_id == fanpage.id, VideoJob.status.in_(["queued", "claimed", "generating"])).count()
+            if open_count >= 2:
                 continue
             stock = video_stock(db, fanpage.id)
-            if not group_only and made_today >= fanpage.ai_video_daily_count and stock >= fanpage.ai_video_daily_count * AI_VIDEO_STOCK_DAYS:
+            # A group lane keeps no stock (its videos are handed to Group Share when they finish),
+            # so its daily count alone caps production.
+            stock_target = 0 if fanpage.id in lane_ids else fanpage.ai_video_daily_count * AI_VIDEO_STOCK_DAYS
+            if made_today >= fanpage.ai_video_daily_count and stock >= stock_target:
                 continue
             for idea in db.query(VideoIdea).filter(VideoIdea.fanpage_id == fanpage.id, VideoIdea.status == "proposed").all():
                 if fanpage.ai_video_min_score is not None and idea.score is not None and idea.score >= fanpage.ai_video_min_score:
@@ -217,20 +207,8 @@ def plan_ai_videos():
                 db.commit()
                 continue
             budget = per_video
-            if group_only:
-                _, share_settings = get_brand_share(db, fanpage.id)
-                group_daily = share_settings["sources"]["ai_video"]["groups_only_per_day"]
-                group_jobs = db.query(VideoJob).filter(
-                    VideoJob.fanpage_id == fanpage.id,
-                    VideoJob.id.in_(group_video_job_ids()),
-                    VideoJob.created_at >= now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None),
-                    VideoJob.status != "cancelled",
-                ).all()
-                _, group_spent = _daily_counts(group_jobs)
-                group_left = group_daily * credits_estimate(template, clips) - group_spent
-                budget = group_left if budget is None else min(budget, group_left)
             if per_day is not None:
-                left_today = per_day - total_spent_today
+                left_today = per_day - spent_today
                 budget = left_today if budget is None else min(budget, left_today)
             fitted = fit_clips_to_credits(template, clips, budget)
             if fitted is None:
@@ -252,7 +230,7 @@ def plan_ai_videos():
                 cover = prepared.get("cover")
                 try:
                     narration = resolve_narration(fanpage, template, clips, variables)
-                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration, group_only=group_only)
+                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration)
                 except ValueError as exc:
                     db.rollback()
                     idea.status, idea.error = "failed", str(exc)[:2000]
@@ -268,7 +246,7 @@ def plan_ai_videos():
                     variables, title, caption, rendered, _provider = filler(db, idea, fanpage, clips)
                     cover = None
                     narration = resolve_narration(fanpage, template, clips, variables)
-                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration, group_only=group_only)
+                    _create_and_commit_job(db, fanpage, idea, template, clips, variables, title, caption, rendered, cover, narration)
                 except ValueError as exc:
                     db.rollback()
                     idea.status, idea.error = "failed", str(exc)[:2000]

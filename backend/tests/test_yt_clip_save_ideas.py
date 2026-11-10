@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock, patch, call
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _no_group_job(monkeypatch):
+    # These tests use a MagicMock db; no job here is a Group Share job.
+    monkeypatch.setattr("app.services.fb_share.group_jobs.is_group_only", lambda *a: False)
+
+
 # S11: _save_ideas now calls _taken_ranges(db, video_id) internally.
 # All tests in this module use distinct, non-overlapping time ranges per
 # highlight so the intra-batch de-dup does not interfere with pre-S11 tests.

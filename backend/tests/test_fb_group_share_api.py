@@ -67,7 +67,7 @@ def test_settings_defaults_and_merge(client):
     assert defaults["settings"]["caps"]["min_gap_minutes"] == 30
     result = client.put(path, json={"enabled": True, "settings": {"sources": {"ig": {"source": "both"}}}})
     assert result.status_code == 200
-    assert result.json()["settings"]["sources"]["ig"] == {"source": "both", "groups_only_per_day": 0}
+    assert result.json()["settings"]["sources"]["ig"] == {"source": "both", "groups_only_per_day": 0, "follow_per_day": 0}
     assert result.json()["settings"]["caps"] == defaults["settings"]["caps"]
     assert client.get(path).json() == result.json()
     assert client.get("/fanpages/999/group-share").status_code == 404

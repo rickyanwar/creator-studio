@@ -128,7 +128,7 @@ def _topup_queue(db, fanpage) -> int:
     return created
 
 
-def _consume_one(db, fanpage, *, group_only=False) -> bool:
+def _consume_one(db, fanpage) -> bool:
     """Pop the oldest pending idea into a PublishJob. Returns True if one
     was created."""
     from pathlib import Path
@@ -198,10 +198,6 @@ def _consume_one(db, fanpage, *, group_only=False) -> bool:
 
     idea.status = "used"
     idea.used_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    if group_only:
-        from app.services.fb_share.group_jobs import mark_group_job
-        db.flush()
-        mark_group_job(db, fanpage_id=fanpage.id, mode="pinterest", publish_job_id=job.id)
     db.commit()
 
     logger.info(
@@ -209,7 +205,7 @@ def _consume_one(db, fanpage, *, group_only=False) -> bool:
         fanpage.id, job.id, idea.id, idea.source_type, idea.title,
     )
 
-    if group_only or fanpage.pinterest_publish_mode == PublishMode.auto:
+    if fanpage.pinterest_publish_mode == PublishMode.auto:
         from app.tasks.design_renderer import render_pinterest
         render_pinterest.apply_async(args=[job.id], countdown=random.randint(5, 90))
 
@@ -226,7 +222,6 @@ def generate_pinterest_content():
         from app.models.target_fanpages import TargetFanpage
         from app.models.publish_jobs import PublishJob, ContentType
         from app.services.social_project_eligibility import project_can_generate
-        from app.services.fb_share.group_jobs import group_publish_job_ids, remaining_groups_only_today
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         now_wib = now_utc.replace(tzinfo=timezone.utc).astimezone(WIB)
@@ -259,7 +254,6 @@ def generate_pinterest_content():
                     PublishJob.fanpage_id == fp.id,
                     PublishJob.content_type == ContentType.pinterest_content,
                     PublishJob.is_deleted == False,
-                    PublishJob.id.notin_(group_publish_job_ids()),
                     PublishJob.created_at >= day_start_utc,
                     PublishJob.created_at < day_end_utc,
                 )
@@ -273,11 +267,6 @@ def generate_pinterest_content():
                     break
                 count_today += 1
                 catchup_left -= 1
-                created += 1
-
-            for _ in range(min(_MAX_CATCHUP_PER_TICK, remaining_groups_only_today(db, fp.id, "pinterest", now_utc))):
-                if not _consume_one(db, fp, group_only=True):
-                    break
                 created += 1
 
         if topped_up or created:

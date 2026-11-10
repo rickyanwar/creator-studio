@@ -65,6 +65,8 @@ class GptcliConfig:
     thread: str
     size: str
     day_start: str   # "HH:MM" WIB
+    # Group lanes of the allow-listed brands: a lane uses ChatGPT when its brand does.
+    lane_fanpage_ids: tuple[int, ...] = ()
 
 
 class GptcliError(Exception):
@@ -153,6 +155,8 @@ def get_gptcli_config(db) -> GptcliConfig:
     else:
         fanpage_ids = ()
 
+    lane_fanpage_ids = _lane_ids_of_brands(db, fanpage_ids)
+
     thread = str(getattr(row, "gptcli_thread", "studio") or "studio")
     size = str(getattr(row, "gptcli_size", "1080x1350") or "1080x1350")
     day_start = str(getattr(row, "ai_day_start", "05:30") or "05:30")
@@ -165,7 +169,25 @@ def get_gptcli_config(db) -> GptcliConfig:
         thread=thread,
         size=size,
         day_start=day_start,
+        lane_fanpage_ids=lane_fanpage_ids,
     )
+
+
+def _lane_ids_of_brands(db, brand_ids: tuple[int, ...]) -> tuple[int, ...]:
+    """Group lane fanpage ids of ``brand_ids`` (empty when there are no lanes)."""
+    if not brand_ids:
+        return ()
+    try:
+        from app.models.fb_group_share import FbShareLane
+        from app.services.fb_share.lanes import _lane_table_exists
+
+        if not _lane_table_exists(db.connection()):
+            return ()
+        rows = db.query(FbShareLane.lane_fanpage_id).filter(FbShareLane.brand_fanpage_id.in_(brand_ids)).all()
+        return tuple(sorted(lane_id for (lane_id,) in rows))
+    except Exception as e:
+        logger.warning("gptcli: group lane lookup failed: %s", type(e).__name__)
+        return ()
 
 
 def gptcli_applies(cfg: GptcliConfig, fanpage_id: int | None) -> bool:
@@ -173,7 +195,8 @@ def gptcli_applies(cfg: GptcliConfig, fanpage_id: int | None) -> bool:
         cfg.enabled
         and cfg.token
         and cfg.base_url
-        and (not cfg.fanpage_ids or (fanpage_id is not None and fanpage_id in cfg.fanpage_ids))
+        and (not cfg.fanpage_ids or (fanpage_id is not None and (
+            fanpage_id in cfg.fanpage_ids or fanpage_id in cfg.lane_fanpage_ids)))
     )
 
 

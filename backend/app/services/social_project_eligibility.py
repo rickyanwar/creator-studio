@@ -2,12 +2,14 @@
 
 Correlated predicate determining whether a content project (TargetFanpage)
 is eligible to generate content based on legacy Repliz connection status
-or active Phone/Mixed SocialDestination routes.
+or active Phone/Mixed SocialDestination routes, or a Group Share lane whose
+brand has Group Share enabled.
 """
 
 from __future__ import annotations
 
 from sqlalchemy import and_, exists, func, or_, select
+from app.models.fb_group_share import FbShareBrandSettings, FbShareLane
 from app.models.social_publishing import SocialDestination
 from app.models.target_fanpages import TargetFanpage
 
@@ -19,7 +21,9 @@ def project_can_generate(fanpage_model=None):
     - Its legacy Repliz connection is true (TargetFanpage.is_connected == True)
       AND repliz_account_id is non-null and non-empty, OR
     - It has an active Phone or Mixed SocialDestination (SocialDestination.is_active == True,
-      mode in ('phone', 'mixed')).
+      mode in ('phone', 'mixed')), OR
+    - It is a Group Share lane and its brand's fb_share_brand_settings.enabled is true
+      (a lane has no Repliz/phone destination; its jobs are handed to Group Share).
 
     Note: TargetFanpage.is_active remains checked by the caller.
     """
@@ -41,7 +45,19 @@ def project_can_generate(fanpage_model=None):
         func.trim(model.repliz_account_id) != "",
     )
 
+    enabled_group_lane = exists(
+        select(1)
+        .select_from(FbShareLane)
+        .join(FbShareBrandSettings, FbShareBrandSettings.fanpage_id == FbShareLane.brand_fanpage_id)
+        .where(
+            FbShareLane.lane_fanpage_id == model.id,
+            FbShareBrandSettings.enabled == True,
+        )
+        .correlate(model)
+    )
+
     return or_(
         legacy_repliz_route,
         has_active_phone_route,
+        enabled_group_lane,
     )

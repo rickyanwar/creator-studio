@@ -1,4 +1,4 @@
-"""Regression checks for group-only review gates, batching, quotas and cleanup."""
+"""Regression checks for group-job review gates, batching, Viral Radar on a lane and cleanup."""
 
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import DefaultClause
 
 from app.models.ai_video import VideoJob
-from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareItem, FbShareTask
+from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareItem, FbShareLane, FbShareTask
 from app.models.ig_sources import IGSource
 from app.models.posts import Post, PostStatus
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
@@ -163,13 +163,13 @@ def test_feeder_oldest_ten_commit_each_and_continue_after_failure(db, monkeypatc
     assert str(jobs[-2].id) in caplog.text
 
 
-def radar_story(db, shortcode, now, *, status=DecisionStatus.QUEUED, reason=None):
+def radar_story(db, shortcode, now, *, status=DecisionStatus.QUEUED, reason=None, fanpage_id=1):
     story = RadarStory(first_seen_at=now, last_member_at=now, created_at=now)
     db.add(story)
     db.flush()
     story.posts.append(RadarPost(ig_source_id=1, ig_username="source", shortcode=shortcode,
                                 taken_at=now, media_type="image", image_source_urls=[]))
-    decision = RadarStoryDecision(story_id=story.id, fanpage_id=1, rule="fast", status=status,
+    decision = RadarStoryDecision(story_id=story.id, fanpage_id=fanpage_id, rule="fast", status=status,
                                   reason=reason, created_at=now)
     db.add(decision)
     db.add(Post(ig_source_id=1, ig_media_id=shortcode, media_type="image",
@@ -178,44 +178,30 @@ def radar_story(db, shortcode, now, *, status=DecisionStatus.QUEUED, reason=None
     return story, decision
 
 
-def test_radar_marks_dispatch_before_publish_job_and_excludes_it_from_page_cap(db, monkeypatch):
+def test_lane_radar_runs_the_normal_pass_and_counts_its_own_daily_max(db, monkeypatch):
     now = datetime.utcnow()
     db.add(IGSource(id=1, ig_username="source"))
+    db.add(TargetFanpage(id=2, name="Brand (groups)", radar_daily_max=1))
+    db.add(FbShareLane(brand_fanpage_id=1, lane_fanpage_id=2))
     db.commit()
     monkeypatch.setattr("app.services.radar_time.utcnow_naive", lambda: now)
     dispatch = Mock()
     monkeypatch.setattr(radar_dispatch.recreate_post_for_fanpage, "apply_async", dispatch)
-    monkeypatch.setattr(radar_dispatch, "remaining_groups_only_today", lambda *a: 1)
-    radar_story(db, "page", now, status=DecisionStatus.DISPATCHED)
-    story, group = radar_story(db, "group", now)
+    story, first = radar_story(db, "lane-1", now, fanpage_id=2)
     radar_dispatch._process_story(db, story, "shared", 0, 10)
-    assert group.reason.startswith("group_only:")
-    assert group.status == DecisionStatus.DISPATCHED and group.publish_job_id is None
-    assert dispatch.call_args.kwargs["kwargs"]["group_only"] is True
-    # Removing the Page reservation leaves a free Page slot despite the group dispatch.
-    db.query(RadarStoryDecision).filter_by(reason=None, status=DecisionStatus.DISPATCHED).update({"status": DecisionStatus.FAILED})
+    assert first.status == DecisionStatus.DISPATCHED
+    assert dispatch.call_args.kwargs["kwargs"] == {"radar_decision_id": first.id}
+    # The lane's recreate job is a viral_radar group job of the brand ...
+    job = PublishJob(fanpage_id=2, content_type=ContentType.ig_recreate, status=PublishJobStatus.pending_design)
+    db.add(job)
+    db.flush()
+    first.publish_job_id, first.status = job.id, DecisionStatus.CREATED
     db.commit()
-    story, page = radar_story(db, "next", now)
+    mark = db.query(FbShareGroupJob).filter_by(publish_job_id=job.id).one()
+    assert (mark.fanpage_id, mark.mode) == (1, "viral_radar")
+    # ... and still counts against the lane's own radar_daily_max.
+    story, second = radar_story(db, "lane-2", now, fanpage_id=2)
     radar_dispatch._process_story(db, story, "shared", 0, 10)
-    assert page.status == DecisionStatus.DISPATCHED
-    assert "group_only" not in dispatch.call_args.kwargs["kwargs"]
-
-
-def test_radar_pending_group_decisions_count_against_groups_only_cap(db, monkeypatch):
-    now = datetime.utcnow()
-    db.add(IGSource(id=1, ig_username="source"))
-    db.commit()
-    monkeypatch.setattr("app.services.radar_time.utcnow_naive", lambda: now)
-    dispatch = Mock()
-    monkeypatch.setattr(radar_dispatch.recreate_post_for_fanpage, "apply_async", dispatch)
-    # One extra group post allowed today; no marker rows exist yet (recreate has not run).
-    monkeypatch.setattr(radar_dispatch, "remaining_groups_only_today", lambda *a: 1)
-    radar_story(db, "page", now, status=DecisionStatus.DISPATCHED)
-    story, first = radar_story(db, "group-1", now)
-    radar_dispatch._process_story(db, story, "shared", 0, 10)
-    story, second = radar_story(db, "group-2", now)
-    radar_dispatch._process_story(db, story, "shared", 0, 10)
-    assert first.status == DecisionStatus.DISPATCHED and first.reason.startswith("group_only:")
     assert second.status == DecisionStatus.SKIPPED_DAILY_MAX
     assert dispatch.call_count == 1
 

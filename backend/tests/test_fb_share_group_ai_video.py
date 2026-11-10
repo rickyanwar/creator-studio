@@ -1,31 +1,21 @@
-"""SQLite regressions for the separate Mode 8 Group Share production lane."""
+"""SQLite regressions for Mode 8 on a Group Share lane (a hidden brand fanpage for groups)."""
 from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.schema import DefaultClause
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 from sqlalchemy.orm import sessionmaker
 
 from app.models.ai_video import VideoIdea, VideoJob
-from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob
-from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
+from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareLane
+from app.models.publish_jobs import PublishJob
 from app.models.settings import Settings
 from app.models.social_publishing import SocialDestination
 from app.models.target_fanpages import PublishMode, TargetFanpage
 from app.services.fb_share import group_jobs
 from app.tasks import ai_video_finalize as finalize, ai_video_plan as planner, publisher
-
-
-def pytest_configure(config):
-    """Load with -p to complete older explicit-table SQLite fixtures."""
-    def create_group_tables(target, connection, **kwargs):
-        if connection.dialect.name == "sqlite":
-            FbShareGroupJob.__table__.create(connection, checkfirst=True)
-            FbShareBrandSettings.__table__.create(connection, checkfirst=True)
-
-    event.listen(TargetFanpage.__table__, "after_create", create_group_tables)
 
 
 @pytest.fixture
@@ -55,10 +45,7 @@ def db(monkeypatch):
     monkeypatch.setattr(planner, "resolve_narration", lambda *a: {})
     monkeypatch.setattr(planner, "fill_idea", lambda *a: ({}, "Title", "Caption", [{"index": 1}], "mock"))
     monkeypatch.setattr(planner, "research_ready", lambda *a: False)
-    settings = {"sources": {"ai_video": {"source": "groups_only", "groups_only_per_day": 2}}}
-    monkeypatch.setattr(group_jobs, "get_brand_share", lambda *a: (True, settings))
-    monkeypatch.setattr(planner, "get_brand_share", lambda *a: (True, settings))
-    session.info["share"] = settings
+    monkeypatch.setattr(planner, "write_ideas", Mock(return_value=0))
     yield session
     session.rollback()
     engine.dispose()
@@ -95,91 +82,55 @@ def video(db, fp, *, group=False, **kwargs):
     return result
 
 
-def block_page_lane(db, monkeypatch, fp):
-    video(db, fp)
-    monkeypatch.setattr(planner, "video_stock", lambda *a: planner.AI_VIDEO_STOCK_DAYS)
-
-
-def test_group_branch_marks_one_per_tick_and_one_open(db, monkeypatch):
-    fp = page(db)
-    block_page_lane(db, monkeypatch, fp)
-    planner.plan_ai_videos.run()
-    assert db.query(FbShareGroupJob).count() == 1
-    marked = db.query(VideoJob).filter(VideoJob.id.in_(group_jobs.group_video_job_ids())).one()
-    assert marked.status == "queued"
-    planner.plan_ai_videos.run()
-    assert db.query(FbShareGroupJob).count() == 1
-    marked.status = "done"
+def lane_of(db, brand, **kwargs):
+    lane = page(db, name=f"{brand.name} (groups)", repliz_account_id=None, is_connected=False, **kwargs)
+    db.add(FbShareLane(brand_fanpage_id=brand.id, lane_fanpage_id=lane.id))
+    db.add(FbShareBrandSettings(fanpage_id=brand.id, enabled=True, settings={}))
     db.commit()
+    return lane
+
+
+def test_lane_gets_marked_video_from_normal_pass_and_keeps_its_daily_count(db):
+    brand = page(db, name="Brand", ai_video_enabled=False)
+    lane = lane_of(db, brand)
     planner.plan_ai_videos.run()
-    assert db.query(FbShareGroupJob).count() == 2
-    marked = db.query(VideoJob).filter_by(status="queued").one()
-    marked.status = "done"
+    job = db.query(VideoJob).one()
+    assert job.fanpage_id == lane.id
+    mark = db.query(FbShareGroupJob).one()
+    assert (mark.fanpage_id, mark.mode, mark.video_job_id) == (brand.id, "ai_video", job.id)
+    # Lane videos are handed over, never stocked: the lane's daily count alone stops the next one.
+    job.status = "done"
     db.commit()
-    planner.plan_ai_videos.run()
-    assert db.query(FbShareGroupJob).count() == 2
-
-
-@pytest.mark.parametrize("source,enabled,quota", [("follow", True, 2), ("off", True, 2),
-                                                  ("both", False, 2), ("both", True, 0)])
-def test_disabled_group_source_does_not_plan(db, monkeypatch, source, enabled, quota):
-    fp = page(db)
-    block_page_lane(db, monkeypatch, fp)
-    settings = db.info["share"]
-    settings["sources"]["ai_video"].update(source=source, groups_only_per_day=quota)
-    monkeypatch.setattr(group_jobs, "get_brand_share", lambda *a: (enabled, settings))
-    planner.plan_ai_videos.run()
-    assert db.query(FbShareGroupJob).count() == 0
-
-
-@pytest.mark.parametrize("cap,expected", [(74, 0), (75, 1)])
-def test_group_branch_respects_combined_credit_cap(db, monkeypatch, cap, expected):
-    fp = page(db, ai_video_max_credits_per_day=cap)
-    block_page_lane(db, monkeypatch, fp)
-    planner.plan_ai_videos.run()
-    assert db.query(FbShareGroupJob).count() == expected
-    assert sum(j.credits_estimate for j in db.query(VideoJob)) <= cap
-
-
-def test_group_jobs_do_not_use_page_counts_or_stock(db, monkeypatch):
-    fp = page(db)
-    job = video(db, fp, group=True, status="queued", credits_estimate=45)
-    publish = PublishJob(fanpage_id=fp.id, content_type=ContentType.ai_video,
-                         status=PublishJobStatus.pending_review)
-    db.add(publish)
-    db.flush()
-    job.publish_job_id = publish.id
-    group_jobs.link_video_publish_job(db, video_job_id=job.id, publish_job_id=publish.id)
-    db.commit()
-    assert planner.video_stock(db, fp.id) == 0
-    db.info["share"]["sources"]["ai_video"]["source"] = "follow"
-    planner.plan_ai_videos.run()
-    assert db.query(VideoJob).filter(VideoJob.id.notin_(group_jobs.group_video_job_ids())).count() == 1
-    jobs = db.query(VideoJob).filter(VideoJob.id.notin_(group_jobs.group_video_job_ids())).all()
-    assert planner._daily_counts(jobs) == (1, 45)
-
-
-def test_page_lane_also_respects_credits_spent_by_groups(db):
-    fp = page(db, ai_video_max_credits_per_day=45)
-    video(db, fp, group=True)
-    db.info["share"]["sources"]["ai_video"]["source"] = "follow"
     planner.plan_ai_videos.run()
     assert db.query(VideoJob).count() == 1
 
 
-def test_group_branch_respects_per_video_credit_limit(db, monkeypatch):
-    fp = page(db, ai_video_max_credits_per_video=29)
-    block_page_lane(db, monkeypatch, fp)
+def test_page_still_builds_stock_after_daily_count(db):
+    fp = page(db)
+    video(db, fp)
     planner.plan_ai_videos.run()
+    assert db.query(VideoJob).count() == 2
     assert db.query(FbShareGroupJob).count() == 0
 
 
-def test_group_branch_uses_separate_daily_template_budget(db, monkeypatch):
-    fp = page(db)
-    block_page_lane(db, monkeypatch, fp)
-    video(db, fp, group=True, credits_estimate=90)
+def test_lane_of_disabled_brand_does_not_plan(db):
+    brand = page(db, name="Brand", ai_video_enabled=False)
+    lane = lane_of(db, brand)
+    db.query(FbShareBrandSettings).update({"enabled": False})
+    db.commit()
     planner.plan_ai_videos.run()
-    assert db.query(FbShareGroupJob).count() == 1
+    assert db.query(VideoJob).filter_by(fanpage_id=lane.id).count() == 0
+
+
+def test_idea_writer_includes_enabled_lane(db):
+    db.add(Settings(ai_video_researcher="muse", ai_video_idea_bank_days=2))
+    brand = page(db, name="Brand", ai_video_enabled=False)
+    lane = lane_of(db, brand)
+    db.query(VideoIdea).filter_by(fanpage_id=lane.id).delete()
+    db.commit()
+    planner.top_up_ai_video_ideas.run()
+    # Lanes are hidden from Muse/Hermes, so the app's own writer fills an empty lane bank.
+    assert [call.args[1].id for call in planner.write_ideas.call_args_list] == [lane.id]
 
 
 @pytest.mark.parametrize("overlay_failure", [False, True])

@@ -738,3 +738,73 @@ def _face_feature(model, image, face: dict):
 def _face_feature_score(model, reference_feature, image, face: dict) -> float:
     import cv2
     return float(model.match(reference_feature, _face_feature(model, image, face), cv2.FaceRecognizerSF_FR_COSINE))
+
+
+# ── Edit once: reuse a sibling fanpage's speaker design ──────────────────────
+
+SPEAKER_REUSE_FORMAT = "speaker"
+
+
+def speaker_reuse_key(db, job, article, *, mode: str, speaker: str, subjects: list[str], sport: str) -> dict | None:
+    """Edit-once key of a speaker design, or None (no job id or no source id).
+
+    The design carries no title (the template adds it), so the same story gives the same image
+    when the speaker, the other subjects and the sport in the AI prompt are equal.
+    """
+    from app.services import ai_image_reuse
+
+    if not isinstance(getattr(job, "id", None), int):
+        return None
+    if mode == "facebook":
+        source_key = ai_image_reuse.facebook_source_key(db, job)
+    else:
+        article_id = getattr(article, "id", None) or getattr(job, "source_article_id", None)
+        source_key = ai_image_reuse.news_source_key(article_id) if article_id else None
+    if not source_key:
+        return None
+    names = sorted(name.strip().lower() for name in subjects if isinstance(name, str) and name.strip())
+    prompt_text = "\n".join((f"speaker:{speaker.strip().lower()}", f"subjects:{'|'.join(names)}", f"sport:{sport}"))
+    return {"source_key": source_key, "format_key": SPEAKER_REUSE_FORMAT, "prompt_text": prompt_text}
+
+
+def reuse_sibling_speaker_design(db, fanpage, job, reuse_key: dict, *, mode: str) -> SpeakerDesignResult | None:
+    """A sibling's finished speaker design, copied to this job's own file; None = compose normally."""
+    from app.services import ai_image_reuse
+
+    qa_on = qa_enabled(fanpage, qa_mode_for_content_kind(mode))
+    reusable = ai_image_reuse.find_reusable(db, job, qa_required=qa_on, **reuse_key)
+    if reusable is None:
+        return None
+    try:
+        own_path = ai_image_reuse.copy_reused(reusable.path, job)
+        image_bytes = Path(own_path).read_bytes()
+    except OSError as exc:
+        logger.warning("speaker design job=%s could not reuse job %s image: %s", job.id, reusable.job_id, exc)
+        return None
+    engine = reusable.record.get("engine")
+    ai_image_reuse.remember(job, own_path, engine=engine, qa_checked=bool(reusable.record.get("qa_checked")),
+                            reused_from=reusable, **reuse_key)
+    logger.info("speaker design job=%s reused the AI image of job %s", job.id, reusable.job_id)
+    return SpeakerDesignResult(
+        image_bytes=image_bytes,
+        engine=engine,
+        engine_note=ai_image_reuse.reused_note(None, reusable.job_id),
+    )
+
+
+def remember_speaker_design(db, fanpage, job, result: bytes, reuse_key: dict, *, mode: str) -> None:
+    """Keep a new speaker design on disk for sibling fanpages; only when siblings exist."""
+    from app.services import ai_image_reuse
+
+    fanpage_id = getattr(fanpage, "id", None)
+    if not result or fanpage_id is None or not ai_image_reuse.has_siblings(db, fanpage_id):
+        return
+    try:
+        path = ai_image_reuse.save_ai_image(job, bytes(result))
+    except OSError as exc:
+        logger.warning("speaker design job=%s could not keep the AI image for reuse: %s", job.id, exc)
+        return
+    ai_image_reuse.remember(
+        job, path, engine=getattr(result, "engine", None),
+        qa_checked=qa_enabled(fanpage, qa_mode_for_content_kind(mode)), **reuse_key,
+    )

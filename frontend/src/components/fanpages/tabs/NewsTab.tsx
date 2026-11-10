@@ -2,6 +2,7 @@
 
 import { Icon } from "@iconify/react";
 import type { FanpageDetail } from "@/lib/types";
+import { LockedField, isLocked } from "@/components/brand/group-share/laneLock";
 
 export interface NewsTabProps {
   fanpageId: number;
@@ -17,6 +18,8 @@ export interface NewsTabProps {
   newsPreviewResult: { title: string; caption: string } | null;
   newsPreviewLoading: boolean;
   handleNewsPreview: () => Promise<void>;
+  /** Group Share lane: fields owned by the brand page, shown read-only. */
+  lockedFields?: readonly string[];
 }
 
 export function NewsTab({
@@ -32,6 +35,7 @@ export function NewsTab({
   newsPreviewResult,
   newsPreviewLoading,
   handleNewsPreview,
+  lockedFields,
 }: NewsTabProps) {
   return (
     <div role="tabpanel" id="tab-panel-news" aria-labelledby="tab-news" className="space-y-8">
@@ -147,6 +151,7 @@ export function NewsTab({
             </div>
 
             {/* Gallery niches */}
+            <LockedField locked={isLocked(lockedFields, "mode2_gallery_niches")}>
             <div>
               <label className="label">Gallery Niches (for image selection)</label>
               <p className="text-[11px] text-text2 mb-2">
@@ -180,6 +185,7 @@ export function NewsTab({
                 </div>
               )}
             </div>
+            </LockedField>
 
             {/* Mode 2 caption criteria note */}
             <div className="border-t border-line pt-4 space-y-4">
@@ -199,6 +205,7 @@ export function NewsTab({
                     onChange={(e) => set("mode2_title_max_chars", parseInt(e.target.value))}
                   />
                 </div>
+                <LockedField locked={isLocked(lockedFields, "mode2_badge_text")}>
                 <div>
                   <label className="label">News Badge Text</label>
                   <input
@@ -216,6 +223,7 @@ export function NewsTab({
                     first Gallery Niche + &quot;NEWS&quot; automatically.
                   </p>
                 </div>
+                </LockedField>
               </div>
             </div>
 

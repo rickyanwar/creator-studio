@@ -11,9 +11,7 @@ from sqlalchemy import or_
 from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
 from app.models.target_fanpages import PublishMode, TargetFanpage
 from app.services.engine_router import render_queue_for
-from app.services.fb_share.group_jobs import (
-    group_publish_job_ids, is_group_only, mark_group_job, remaining_groups_only_today,
-)
+from app.services.fb_share.group_jobs import group_publish_job_ids, is_group_only
 
 logger = logging.getLogger(__name__)
 
@@ -372,11 +370,6 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             is_too_old = False
 
         if is_too_old and not job.is_breaking:
-            if remaining_groups_only_today(db, fid, "news", now_utc) > 0:
-                mark_group_job(db, fanpage_id=fid, mode="news", publish_job_id=job.id)
-                db.flush()
-                dropped_any = True
-                continue
             job.status = PublishJobStatus.skipped
             job.last_error = f"stale: news older than {hours} h, not rendered"
             dropped_any = True
@@ -443,10 +436,6 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
         except Exception:
             pass
         if not _has_news_slot(db, job, now_utc):
-            if remaining_groups_only_today(db, job.fanpage_id, "news", now_utc) > 0:
-                mark_group_job(db, fanpage_id=job.fanpage_id, mode="news", publish_job_id=job.id)
-                db.commit()
-                continue
             job.status = PublishJobStatus.skipped
             job.last_error = "stale: no News slot on the news day or within 24 h, AI poster not rendered"
             db.commit()
@@ -475,10 +464,6 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
             slot = _next_slot(db, job, now_utc)
             if slot is None:
                 if not _has_news_slot(db, job, now_utc):
-                    if remaining_groups_only_today(db, fid, "news", now_utc) > 0:
-                        mark_group_job(db, fanpage_id=fid, mode="news", publish_job_id=job.id)
-                        db.commit()
-                        continue
                     job.status = PublishJobStatus.skipped
                     job.last_error = "stale: no News slot on the news day or within 24 h, AI poster not rendered"
                     db.commit()
@@ -496,10 +481,6 @@ def pick_next_news_job(db, r, now_utc: datetime) -> PublishJob | None:
                 job._lookahead = True
 
             if not _has_news_slot(db, job, now_utc):
-                if remaining_groups_only_today(db, fid, "news", now_utc) > 0:
-                    mark_group_job(db, fanpage_id=fid, mode="news", publish_job_id=job.id)
-                    db.commit()
-                    continue
                 job.status = PublishJobStatus.skipped
                 job.last_error = "stale: no News slot on the news day or within 24 h, AI poster not rendered"
                 db.commit()

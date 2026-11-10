@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from app.api.deps import CurrentUser, DB
 from app.models.radar import RadarAccount, RadarStory, RadarStoryDecision
 from app.models.target_fanpages import TargetFanpage
+from app.services.fb_share.lanes import lane_fanpage_ids
 from app.schemas.radar import RadarAccountCreate, RadarAccountUpdate, RadarAccountOut, RadarStoryOut
 
 router = APIRouter(prefix="/radar", tags=["radar"])
@@ -199,7 +200,10 @@ def get_shadow_report(db: DB, _: CurrentUser, days: int = Query(7, ge=1, le=30))
         )
         decisions.append(dr)
         
-    cfgs_raw = db.query(TargetFanpage).filter(TargetFanpage.is_active == True, TargetFanpage.radar_enabled == True).all()
+    cfgs_raw = db.query(TargetFanpage).filter(
+        TargetFanpage.is_active == True, TargetFanpage.radar_enabled == True,
+        TargetFanpage.id.notin_(lane_fanpage_ids()),
+    ).all()
     cfgs = []
     for c in cfgs_raw:
         cfgs.append(FanpageRadarConfig(

@@ -8,6 +8,7 @@ from app.api.deps import CurrentUser, DB
 from app.models.ai_video import VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
 from app.services import ai_video_ideas, research_desk
+from app.services.fb_share.lanes import lane_fanpage_ids
 from app.services.tts_voices import TTS_VOICES, auto_voice, tts_allowed
 from app.services.video_templates import list_templates, liveries, narrator_presets, required_variables, vehicle_presets
 
@@ -48,7 +49,10 @@ def list_ideas(db: DB, _: CurrentUser, status: Optional[str] = None, fanpage_id:
             q = q.filter(VideoIdea.status.in_(("pilot", "proposed", "approved")))
         else:
             q = q.filter(VideoIdea.status == status)
-    if fanpage_id: q = q.filter(VideoIdea.fanpage_id == fanpage_id)
+    if fanpage_id is not None:
+        q = q.filter(VideoIdea.fanpage_id == fanpage_id)
+    else:
+        q = q.filter(VideoIdea.fanpage_id.notin_(lane_fanpage_ids()))
     return [_item(db, idea) for idea in q.order_by(VideoIdea.created_at.desc()).limit(limit).all()]
 
 

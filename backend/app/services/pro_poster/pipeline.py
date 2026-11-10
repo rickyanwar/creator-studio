@@ -18,7 +18,9 @@ from app.services import speaker_design
 from app.services.gptcli_client import GptcliError
 from app.services.pro_poster import art_direction, concept as concept_mod, photos, qa
 from app.services.pro_poster.brief import brief_from_dict, brief_to_dict, build_brief
-from app.services.pro_poster.types import ArtDirection, PosterBrief, PosterConcept, ProPosterResult, Subject
+from app.services.pro_poster.types import (
+    ArtDirection, PhotoSelection, PosterBrief, PosterConcept, ProPosterResult, Subject,
+)
 from app.services.qa_toggles import qa_enabled
 from app.services.visual_engine import (
     GenerationRequest,
@@ -59,7 +61,14 @@ def pro_poster_applies(db: Session, fanpage: Any) -> bool:
     allowed_ids = getattr(s, "pro_poster_fanpage_ids", None) or []
     if not allowed_ids:
         return True
-    return fanpage is not None and getattr(fanpage, "id", None) in allowed_ids
+    fanpage_id = getattr(fanpage, "id", None) if fanpage is not None else None
+    if fanpage_id is None:
+        return False
+    if fanpage_id in allowed_ids:
+        return True
+    # A group lane uses the Pro poster when its brand does.
+    from app.services.fb_share.lanes import lane_brand_id
+    return lane_brand_id(db, fanpage_id) in allowed_ids
 
 
 def _log_job_summary(job: Any, res: ProPosterResult) -> None:
@@ -165,6 +174,94 @@ def _story_for_photos(headline: str | None, story_text: str | None) -> str:
     return " — ".join(parts) if parts else ""
 
 
+_REUSE_FORMAT = "pro_poster"
+_REUSED_FROM_KEY = "pro_poster_reused_from"  # = ai_image_reuse.PRO_POSTER_REUSED_FROM_KEY
+
+
+def _article_id(job: Any, article: Any) -> int | None:
+    return getattr(article, "id", None) or getattr(job, "source_article_id", None)
+
+
+def _reuse_sibling_poster(db: Session, fanpage: Any, job: Any, article: Any) -> ProPosterResult | None:
+    """Edit once: reuse the AI poster image a sibling fanpage already made for this article.
+
+    The artwork carries no headline (the page template adds it), so the same article gives
+    the same image; only the caption and the template text differ.
+    """
+    from app.models.publish_jobs import PublishJob
+    from app.services import ai_image_reuse
+
+    article_id = _article_id(job, article)
+    if not article_id or getattr(job, "id", None) is None:
+        return None
+    analysis = dict(getattr(job, "design_analysis_json", None) or {})
+    if _REUSED_FROM_KEY in analysis:  # stale from an earlier render
+        analysis.pop(_REUSED_FROM_KEY)
+        job.design_analysis_json = analysis
+    source_key = ai_image_reuse.news_source_key(article_id)
+    reusable = ai_image_reuse.find_reusable(
+        db, job, source_key=source_key, format_key=_REUSE_FORMAT, prompt_text="",
+        qa_required=qa_enabled(fanpage, "news"),
+    )
+    if reusable is None:
+        return None
+    source = db.query(PublishJob).filter_by(id=reusable.job_id).first()
+    brief_data = (getattr(source, "design_analysis_json", None) or {}).get("pro_poster_brief")
+    if not brief_data:
+        return None
+    try:
+        image = Path(reusable.path).read_bytes()
+        own_path = ai_image_reuse.copy_reused(reusable.path, job)
+    except OSError as exc:
+        logger.warning("ProPoster job=%s could not reuse job %s image: %s", job.id, reusable.job_id, exc)
+        return None
+    brief = brief_from_dict(brief_data, job_id=job.id)
+    engine = reusable.record.get("engine")
+    layout = reusable.record.get("layout") or "hero_solo"
+    job.design_analysis_json = {
+        **(job.design_analysis_json or {}),
+        "pro_poster_brief": brief_to_dict(brief),
+        _REUSED_FROM_KEY: reusable.job_id,
+    }
+    ai_image_reuse.remember(
+        job, own_path, source_key=source_key, format_key=_REUSE_FORMAT, prompt_text="",
+        engine=engine, qa_checked=bool(reusable.record.get("qa_checked")), layout=layout, reused_from=reusable,
+    )
+    res = ProPosterResult(
+        image=image,
+        brief=brief,
+        selection=PhotoSelection(hero=None),
+        direction=ArtDirection(layout=layout, prompt="", refs=()),
+        qa=None,
+        engine=engine,
+        attempts=0,
+        fallback_reason=None,
+    )
+    logger.info("ProPoster job=%s reused the AI image of job %s", job.id, reusable.job_id)
+    return res
+
+
+def _remember_poster(db: Session, fanpage: Any, job: Any, article: Any, image: bytes,
+                     *, engine: str | None, qa_checked: bool, layout: str) -> None:
+    """Keep the raw AI poster on disk so sibling fanpages can reuse it (edit once)."""
+    from app.services import ai_image_reuse
+
+    article_id = _article_id(job, article)
+    if not article_id or getattr(job, "id", None) is None or fanpage is None:
+        return
+    if not ai_image_reuse.has_siblings(db, fanpage.id):
+        return
+    try:
+        path = ai_image_reuse.save_ai_image(job, image)
+    except OSError as exc:
+        logger.warning("ProPoster job=%s could not keep the AI image for reuse: %s", job.id, exc)
+        return
+    ai_image_reuse.remember(
+        job, path, source_key=ai_image_reuse.news_source_key(article_id), format_key=_REUSE_FORMAT,
+        prompt_text="", engine=engine, qa_checked=qa_checked, layout=layout,
+    )
+
+
 def compose_pro_poster(
     db: Session,
     fanpage: Any,
@@ -185,6 +282,12 @@ def compose_pro_poster(
     7. Log summary line and return result
     """
     settings = get_settings()
+
+    # 0. Edit once: a sibling fanpage already made the AI image for this article.
+    if not dry_run and job:
+        reused = _reuse_sibling_poster(db, fanpage, job, article)
+        if reused is not None:
+            return reused
 
     # 1. Brief
     brief_data = (
@@ -383,5 +486,8 @@ def compose_pro_poster(
         fallback_reason=None,
         attempt_log=tuple(attempt_log),
     )
+    if not dry_run and job and image:
+        _remember_poster(db, fanpage, job, article, image, engine=current_engine,
+                         qa_checked=qa_res is not None, layout=direction.layout)
     _log_job_summary(job, res)
     return res

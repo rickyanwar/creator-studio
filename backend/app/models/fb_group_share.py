@@ -21,6 +21,18 @@ class FbShareGroupJob(Base):
     handed_at = Column(DateTime)
 
 
+class FbShareLane(Base):
+    """Hidden "group lane" fanpage that produces content only for a brand's Facebook groups."""
+
+    __tablename__ = "fb_share_lanes"
+
+    id = Column(Integer, primary_key=True)
+    # No foreign keys on purpose (lock incidents on target_fanpages).
+    brand_fanpage_id = Column(Integer, nullable=False, unique=True, index=True)
+    lane_fanpage_id = Column(Integer, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class FbGroup(Base):
     __tablename__ = "fb_groups"
     __table_args__ = (

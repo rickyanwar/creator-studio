@@ -5,7 +5,9 @@ import useSWR from "swr";
 import { getGroupShare, updateGroupShare, listFbGroupNiches, listFbGroups, listGroupShareAccounts, listGroupShareMemberships, updateGroupShareMemberships, listGroupShareTasks, getGroupShareSummary } from "@/lib/api";
 import type { GroupShareConfig, GroupShareSettings, GroupShareAccount, GroupShareMembershipIn, GroupShareMembershipStatus } from "@/lib/types";
 import { DeliveryEditor } from "./DeliveryEditor";
-import { GroupModeList } from "./GroupModeList";
+import { BrandFollowTable } from "./BrandFollowTable";
+import { LaneContent } from "./LaneContent";
+import { useLaneFanpage } from "./useLaneFanpage";
 import { Field, NumberField, Toggle, TableWrap, inputClass, panelClass, buttonClass, primaryClass, errorMessage, deliveryLabels } from "./Fields";
 
 const membershipOptions: [GroupShareMembershipStatus, string][] = [["joined", "Joined"], ["not_member", "Not a member"], ["pending_approval", "Pending approval"], ["removed", "Removed"], ["unknown", "Unknown"], ["banned", "Banned"]];
@@ -17,6 +19,7 @@ export function GroupShareTab({ fanpageId }: { fanpageId: number }) {
   const memberships = useSWR(["group-share-memberships", fanpageId], () => listGroupShareMemberships(fanpageId));
   const tasks = useSWR(["group-share-tasks", fanpageId], () => listGroupShareTasks(fanpageId, { limit: 50 }), { refreshInterval: 30000 });
   const summary = useSWR(["group-share-summary", fanpageId], () => getGroupShareSummary(fanpageId), { refreshInterval: 30000 });
+  const lane = useLaneFanpage(fanpageId);
   const [draft, setDraft] = useState<GroupShareConfig | null>(null);
   const form = draft ?? config.data;
   const selectedNiches = form?.settings.niches ?? [];
@@ -46,17 +49,24 @@ export function GroupShareTab({ fanpageId }: { fanpageId: number }) {
     setNicheInput("");
   }
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
+  // Saves the group share settings and the group content (lane fanpage) together.
+  async function saveAll() {
     if (!form) return;
     setSaving(true); setError(""); setMessage("");
     try {
       const saved = await updateGroupShare(fanpageId, form);
       await config.mutate(saved, { revalidate: false });
-      setDraft(null); setMessage("Saved");
+      setDraft(null);
+      await lane.save();
+      setMessage("Saved");
       await summary.mutate();
     } catch (err) { setError(errorMessage(err)); }
     finally { setSaving(false); }
+  }
+
+  function save(event: FormEvent) {
+    event.preventDefault();
+    void saveAll();
   }
 
   async function saveMemberships(event: FormEvent) {
@@ -75,7 +85,7 @@ export function GroupShareTab({ fanpageId }: { fanpageId: number }) {
   const settings = form?.settings;
   return <div role="tabpanel" id="tab-panel-groupshare" aria-labelledby="tab-groupshare" className="min-w-0 space-y-6 pb-8">
     {loadErrors.length > 0 && <div role="alert" className="rounded-xl border border-red-500 p-4 text-sm text-red-500">{loadErrors.map(errorMessage).join("; ")}</div>}
-    {!form || !settings ? <p className="text-sm text-text2">{config.error ? "Group share settings could not be loaded." : "Loading group share…"}</p> : <form onSubmit={save} className="min-w-0 space-y-6">
+    {!form || !settings ? <p className="text-sm text-text2">{config.error ? "Group share settings could not be loaded." : "Loading group share…"}</p> : <>
       <fieldset disabled={saving} className="min-w-0 space-y-6">
         <section className={panelClass} aria-labelledby="group-share-heading">
           <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="group-share-heading" className="text-lg font-semibold text-text">Group share</h2>
@@ -97,7 +107,13 @@ export function GroupShareTab({ fanpageId }: { fanpageId: number }) {
           <div className="flex flex-wrap items-end gap-3"><div className="min-w-0 flex-1"><Field label="Add niche"><input className={inputClass} list="group-share-niche-suggestions" value={nicheInput} onChange={(e) => setNicheInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNiche(); } }} /></Field></div><button type="button" className={buttonClass} onClick={addNiche}>Add niche</button></div>
           <datalist id="group-share-niche-suggestions">{niches.data?.map((niche) => <option key={niche} value={niche} />)}</datalist>
         </section>
-        <GroupModeList fanpageId={fanpageId} settings={settings} onChange={setSettings} />
+      </fieldset>
+      {/* Outside the <form>: the Content-tab components use plain buttons that would submit it. */}
+      <LaneContent brandId={fanpageId} lane={lane} settings={settings} onSettingsChange={setSettings} onSave={() => void saveAll()} saving={saving}
+        status={<>{error && <p className="text-sm text-red-500">{error}</p>}{message && <p className="text-sm text-pri-text">{message}</p>}</>} />
+      <form onSubmit={save} className="min-w-0 space-y-6">
+      <fieldset disabled={saving} className="min-w-0 space-y-6">
+        <BrandFollowTable fanpageId={fanpageId} settings={settings} onChange={setSettings} />
         <section className={panelClass} aria-labelledby="group-muse-heading"><h3 id="group-muse-heading" className="font-semibold text-text">Muse research for groups</h3>
           <Toggle switchRole label="Enable Muse research" checked={settings.muse.enabled} onChange={(enabled) => setSettings({ ...settings, muse: { ...settings.muse, enabled } })} />
           <NumberField label="Items per day" value={settings.muse.per_day} onChange={(per_day) => setSettings({ ...settings, muse: { ...settings.muse, per_day: per_day ?? 0 } })} />
@@ -114,7 +130,8 @@ export function GroupShareTab({ fanpageId }: { fanpageId: number }) {
       </fieldset>
       {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
       <div className="flex flex-wrap items-center gap-3"><button className={primaryClass} type="submit" disabled={saving}>{saving ? "Saving…" : "Save group share"}</button><p role="status" className="text-sm text-pri-text">{message}</p></div>
-    </form>}
+      </form>
+    </>}
 
     <section className={panelClass} aria-labelledby="group-accounts-heading"><h3 id="group-accounts-heading" className="font-semibold text-text">Who shares</h3>
       <p className="text-sm text-text2">Only this brand&apos;s own Facebook account (from Channels). A Page shares through its parent profile login.</p>

@@ -5,6 +5,7 @@ import { Icon } from "@iconify/react";
 import { updateIGSource, setSourceTrigger } from "@/lib/api";
 import { setSourceFormat, setSourceEditPrompt, type IGFormat } from "@/lib/igFormatApi";
 import type { FanpageDetail, IGSourceRef } from "@/lib/types";
+import { LockedField, isLocked } from "@/components/brand/group-share/laneLock";
 
 const MAX_ALBUM = 10;
 
@@ -22,12 +23,15 @@ export function IGSourceCard({
   fanpageIgModeLabel,
   onRemove,
   onAlbumSaved,
+  followDefaultLabel = "Follow brand default",
 }: {
   source: IGSourceRef;
   fanpageId: number;
   fanpageIgModeLabel: string;
   onRemove: () => void;
   onAlbumSaved: () => void;
+  /** Text of the "follow the default format" option (Group Share lanes say "Follow group default"). */
+  followDefaultLabel?: string;
 }) {
   const [indices, setIndices] = useState<number[]>(source.album_image_indices ?? [1]);
   const [saving, setSaving] = useState(false);
@@ -170,7 +174,7 @@ export function IGSourceCard({
           className="w-full text-xs rounded-md bg-surface border border-line text-text px-2.5 py-1.5 focus:outline-none focus:border-pri disabled:opacity-50"
         >
           <option value="follow">
-            {fanpageIgModeLabel ? `Follow brand default (${fanpageIgModeLabel})` : "Follow brand default"}
+            {fanpageIgModeLabel ? `${followDefaultLabel} (${fanpageIgModeLabel})` : followDefaultLabel}
           </option>
           <option value="repost">Repost as-is</option>
           <option value="template">Recreate with template</option>
@@ -308,6 +312,12 @@ export interface IgTabProps {
   newSource: string;
   setNewSource: (v: string) => void;
   handleAddSource: () => Promise<void>;
+  /** Group Share lane: fields owned by the brand page, shown read-only. */
+  lockedFields?: readonly string[];
+  /** Label next to the IG on/off switch. */
+  toggleLabel?: string;
+  /** Text of each source card's "follow the default format" option. */
+  followDefaultLabel?: string;
 }
 
 export function IgTab({
@@ -324,6 +334,9 @@ export function IgTab({
   newSource,
   setNewSource,
   handleAddSource,
+  lockedFields,
+  toggleLabel = "IG Mode",
+  followDefaultLabel,
 }: IgTabProps) {
   return (
     <div role="tabpanel" id="tab-panel-ig" aria-labelledby="tab-ig" className="space-y-8">
@@ -338,14 +351,14 @@ export function IgTab({
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs text-text2 whitespace-nowrap">IG Mode</span>
+            <span className="text-xs text-text2 whitespace-nowrap">{toggleLabel}</span>
             <button
               onClick={() => !mode1Saving && handleMode1Toggle(!form.mode1_ig_repost_enabled)}
               disabled={mode1Saving}
               className={`relative w-11 h-6 rounded-full transition-colors ${
                 form.mode1_ig_repost_enabled ? "bg-pri" : "bg-line"
               } ${mode1Saving ? "opacity-50 cursor-not-allowed" : ""}`}
-              aria-label="Toggle IG Mode"
+              aria-label={`Toggle ${toggleLabel}`}
             >
               {mode1Saving ? (
                 <span className="absolute inset-0 flex items-center justify-center">
@@ -454,6 +467,7 @@ export function IgTab({
                 </div>
 
                 {form.ig_recreate_smart_layout && (
+                  <LockedField locked={isLocked(lockedFields, "ig_recreate_split_template_id")}>
                   <div>
                     <label className="label">Split Template (2-person news)</label>
                     <select
@@ -469,6 +483,7 @@ export function IgTab({
                       ))}
                     </select>
                   </div>
+                  </LockedField>
                 )}
               </div>
             )}
@@ -510,6 +525,7 @@ export function IgTab({
                   fanpageIgModeLabel={currentIgModeLabel}
                   onRemove={() => handleRemoveSource(src.ig_username)}
                   onAlbumSaved={mutate}
+                  followDefaultLabel={followDefaultLabel}
                 />
               ));
             })()}

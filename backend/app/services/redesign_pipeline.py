@@ -63,6 +63,212 @@ class RedesignResult:
 
 _VISUAL_REFS_DIR = Path(__file__).resolve().parent.parent / "assets" / "visual_refs"
 
+_REUSE_FORMAT = "ig_redesign"
+
+
+def _sport_for(is_f1: bool, niche: str) -> str:
+    return "Formula 1" if is_f1 else ("MotoGP" if "motogp" in niche.lower() else ("UFC" if "ufc" in niche.lower() else niche))
+
+
+def _reuse_key(db, *, post: Post, fanpage: TargetFanpage, job: PublishJob | None,
+               analysis: PostAnalysis, sport: str) -> dict | None:
+    """Edit-once key of this IG redesign, or None (preview, no IG post id, lookup error).
+
+    The AI image carries no title (the template adds it), so the same post gives the same image
+    when the per-source prompt, the content type and the sport in the AI prompt are equal.
+    """
+    from app.services import ai_image_reuse
+
+    if not isinstance(getattr(job, "id", None), int):
+        return None
+    source_key = ai_image_reuse.ig_source_key(post)
+    if not source_key:
+        return None
+    owner_prompt = ""
+    try:
+        ig_source_id = getattr(post, "ig_source_id", None)
+        if ig_source_id is not None:
+            from app.models.fanpage_sources import FanpageSource
+
+            link = db.query(FanpageSource).filter_by(fanpage_id=fanpage.id, ig_source_id=ig_source_id).first()
+            prompt = getattr(link, "chatgpt_edit_prompt", None)
+            owner_prompt = prompt.strip() if isinstance(prompt, str) else ""
+    except Exception as exc:
+        logger.warning("IG redesign job=%s: no reuse key (%s)", job.id, exc)
+        return None
+    content_type = analysis.type if isinstance(analysis.type, str) else ""
+    prompt_text = "\n".join((owner_prompt, f"type:{content_type}", f"sport:{sport}"))
+    return {"source_key": source_key, "format_key": _REUSE_FORMAT, "prompt_text": prompt_text}
+
+
+def _redesign_from_sibling(db, *, post: Post, fanpage: TargetFanpage, job: PublishJob,
+                           decision: RadarStoryDecision | None, analysis: PostAnalysis, niche: str,
+                           reuse_key: dict, notes: list, problems: list) -> RedesignResult | None:
+    """Compose this job's card over a sibling's raw AI image. None = render normally."""
+    from app.services import ai_image_reuse
+
+    reusable = ai_image_reuse.find_reusable(db, job, qa_required=qa_enabled(fanpage, "ig"), **reuse_key)
+    if reusable is None:
+        return None
+    layout = reusable.record.get("layout") or "solo"
+    try:
+        own_path = ai_image_reuse.copy_reused(reusable.path, job)
+        raw_bytes = Path(own_path).read_bytes()
+    except OSError as exc:
+        logger.warning("IG redesign job=%s could not reuse job %s image: %s", job.id, reusable.job_id, exc)
+        return None
+    notes.append(f"reused AI image from job {reusable.job_id}")
+    final_text_rendered_by = 'ai' if layout == 'team_radio' else 'template'
+    saved = _finish_card(db, fanpage=fanpage, job=job, decision=decision, analysis=analysis,
+                         layout=layout, gen_bytes=raw_bytes, niche=niche, problems=problems)
+    if saved is None:
+        Path(own_path).unlink(missing_ok=True)
+        return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by=final_text_rendered_by, notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
+    save_path, url = saved
+    engine = reusable.record.get("engine")
+    ai_image_reuse.remember(job, own_path, engine=engine, qa_checked=bool(reusable.record.get("qa_checked")),
+                            layout=layout, reused_from=reusable, **reuse_key)
+    logger.info("IG redesign job=%s reused the AI image of job %s", job.id, reusable.job_id)
+    return RedesignResult(
+        ok=True, layout=layout, image_path=save_path, image_url=url,
+        final_text_rendered_by=final_text_rendered_by, notes=notes, problems=problems,
+        content_type=analysis.type, mood=analysis.mood, engine=engine,
+        engine_note=ai_image_reuse.reused_note(None, reusable.job_id),
+    )
+
+
+def _remember_raw(db, *, fanpage: TargetFanpage, job: PublishJob, raw_bytes: bytes, reuse_key: dict,
+                  engine: str | None, qa_checked: bool, layout: str) -> None:
+    """Keep the raw AI image (no title) so sibling fanpages can reuse it; only when siblings exist."""
+    from app.services import ai_image_reuse
+
+    if not raw_bytes or not ai_image_reuse.has_siblings(db, fanpage.id):
+        return
+    try:
+        path = ai_image_reuse.save_ai_image(job, raw_bytes)
+    except OSError as exc:
+        logger.warning("IG redesign job=%s could not keep the AI image for reuse: %s", job.id, exc)
+        return
+    ai_image_reuse.remember(job, path, engine=engine, qa_checked=qa_checked, layout=layout, **reuse_key)
+
+
+def _finish_card(db, *, fanpage: TargetFanpage, job: PublishJob | None, decision: RadarStoryDecision | None,
+                 analysis: PostAnalysis, layout: str, gen_bytes: bytes, niche: str,
+                 problems: list) -> tuple[str, str] | None:
+    """Render the AI image through the fanpage's template (non-radio), upscale and save.
+
+    Returns (path, url), or None with the reason appended to ``problems``.
+    """
+    # Non-radio: render through the fanpage's own template (same as other posts).
+    # template_name is NOT hardcoded — use the job's pre-resolved template_id, or
+    # call resolve_template for preview (job=None) exactly as recreate_post_for_fanpage does.
+    if layout != 'team_radio':
+        from app.services.design_images import prepare_design_images
+        from app.models.design_templates import DesignTemplate
+        import httpx
+        from app.config import get_settings
+        from app.tasks.ig_recreate import _RENDER_TIMEOUT
+        from app.services.design_images import resolve_template as _resolve_template
+
+        if job and job.design_template_id:
+            tpl = db.query(DesignTemplate).filter_by(id=job.design_template_id).first()
+        else:
+            # Preview path (job=None): resolve same way recreate_post_for_fanpage does.
+            # team_radio→quote, other→news (mapping done before reaching here).
+            tpl_ctype = "quote" if analysis.type in ("quote", "team_radio") else (
+                "news" if analysis.type in ("news", "other") else analysis.type
+            )
+            tpl = _resolve_template(db, tpl_ctype, fanpage=fanpage)
+
+        if not tpl or not tpl.template_json:
+            problems.append(
+                f"No template for fanpage '{fanpage.name}' / type '{analysis.type}' "
+                "(set default_quote_template_id or default_news_template_id on the fanpage)"
+            )
+            return None
+
+        b64 = base64.b64encode(gen_bytes).decode()
+        image_src = f"data:image/png;base64,{b64}"
+
+        from app.tasks.design_renderer import clean_title_for_render, clear_template_text_objects
+        d_title = job.design_title if job else analysis.moment_summary
+        d_title = clean_title_for_render(d_title)
+
+        if analysis.type in ("quote", "news", "team_radio") and not d_title:
+            err = "empty design_title"
+            if job:
+                job.last_error = err
+                db.commit()
+            if decision:
+                decision.preview_status = "failed"
+                db.commit()
+            problems.append(err)
+            return None
+
+        d_subtitle = job.design_subtitle if job else ""
+        d_caption = job.design_caption if job else ""
+
+        template_json, image_srcs = prepare_design_images(
+            db, tpl.template_json, tpl.canvas_width,
+            d_title or "", niche, image_src, expand=False,
+            smart=False,  # AI-made image: one full-width picture, never a split or an added inset
+        )
+
+        # Zero baked sample text so the renderer fills from title/subtitle/caption.
+        # No colour/icon override — fanpage templates render exactly as configured.
+        template_json = clear_template_text_objects(template_json)
+
+        from app.services.design_images import watermark_datauri, focus_points_for, _safe_face_cy_ceiling
+        settings = get_settings()
+        try:
+            resp = httpx.post(
+                f"{settings.renderer_url.rstrip('/')}/render",
+                json={
+                    "template_json": template_json,
+                    "width": tpl.canvas_width,
+                    "height": tpl.canvas_height,
+                    "title": d_title,
+                    "subtitle": d_subtitle,
+                    "caption": d_caption,
+                    "watermark": fanpage.watermark_text or "",
+                    "watermark_image": watermark_datauri(fanpage),
+                    "image_srcs": image_srcs,
+                    "focus_points": focus_points_for(
+                        image_srcs,
+                        safe_cy_ceiling=_safe_face_cy_ceiling(template_json, tpl.canvas_height),
+                        keep_top=True,
+                    ),
+                    "scale": settings.design_render_scale,
+                    "accent": fanpage.accent_color,
+                    "look": brand_look(fanpage, template_json),
+                },
+                timeout=_RENDER_TIMEOUT,
+            )
+            resp.raise_for_status()
+            gen_bytes = resp.content
+        except Exception as e:
+            problems.append(f"Renderer error: {str(e)}")
+            return None
+
+    # 7. Upscale
+    gen_bytes = upscale_image_bytes(gen_bytes, target_edge=2700)
+
+    # Save
+    import hashlib
+    h = hashlib.md5(gen_bytes).hexdigest()[:8]
+    fname = f"redesign_{uuid.uuid4().hex[:8]}_{h}.png"
+    from app.config import get_settings
+    settings = get_settings()
+
+    designs_dir = Path(settings.storage_base_path) / "designs"
+    os.makedirs(designs_dir, exist_ok=True)
+    save_path = str(designs_dir / fname)
+    with open(save_path, "wb") as f:
+        f.write(gen_bytes)
+
+    url = f"{settings.storage_base_url.rstrip('/')}/designs/{fname}"
+    return save_path, url
+
 
 def redesign_card(
     db: Session,
@@ -101,6 +307,17 @@ def redesign_card(
                 allow_team_radio=is_f1
             )
             notes.append(f"Classified as {analysis.type}")
+
+        # Edit once: a sibling fanpage (brand / group lane / same profile) already made the
+        # AI image for this IG post with the same prompt; copy it and skip the engine.
+        reuse_key = _reuse_key(db, post=post, fanpage=fanpage, job=job, analysis=analysis,
+                               sport=_sport_for(is_f1, niche))
+        if reuse_key:
+            reused = _redesign_from_sibling(db, post=post, fanpage=fanpage, job=job, decision=decision,
+                                            analysis=analysis, niche=niche, reuse_key=reuse_key,
+                                            notes=notes, problems=problems)
+            if reused is not None:
+                return reused
 
         # 2. Plan photos and choose layout
         hero_label = "action" if analysis.type == "news" and analysis.secondary_kind == "none" else "face"
@@ -153,7 +370,7 @@ def redesign_card(
                 notes.append(f"No driver found for '{speaker}', falling back to quote")
                 layout = 'inset' if plan.inset else 'solo'
 
-        sport = "Formula 1" if is_f1 else ("MotoGP" if "motogp" in niche.lower() else ("UFC" if "ufc" in niche.lower() else niche))
+        sport = _sport_for(is_f1, niche)
         from app.services.visual_style import choose_accent, choose_treatment
         raw_accent, text_safe_accent, accent_formatted = choose_accent(analysis.main_subject, is_f1, db, fanpage)
         treatment = choose_treatment(analysis.type, analysis.mood, analysis.weather)
@@ -393,116 +610,15 @@ def redesign_card(
                 return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by='template', notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
 
         # 6. Non-radio: render through the fanpage's own template (same as other posts).
-        # template_name is NOT hardcoded — use the job's pre-resolved template_id, or
-        # call resolve_template for preview (job=None) exactly as recreate_post_for_fanpage does.
         final_text_rendered_by = 'ai' if layout == 'team_radio' else 'template'
-        
-        if layout != 'team_radio':
-            from app.services.design_images import prepare_design_images
-            from app.models.design_templates import DesignTemplate
-            import httpx
-            from app.config import get_settings
-            from app.tasks.ig_recreate import _RENDER_TIMEOUT
-            from app.services.design_images import resolve_template as _resolve_template
-
-            if job and job.design_template_id:
-                tpl = db.query(DesignTemplate).filter_by(id=job.design_template_id).first()
-            else:
-                # Preview path (job=None): resolve same way recreate_post_for_fanpage does.
-                # team_radio→quote, other→news (mapping done before reaching here).
-                tpl_ctype = "quote" if analysis.type in ("quote", "team_radio") else (
-                    "news" if analysis.type in ("news", "other") else analysis.type
-                )
-                tpl = _resolve_template(db, tpl_ctype, fanpage=fanpage)
-
-            if not tpl or not tpl.template_json:
-                problems.append(
-                    f"No template for fanpage '{fanpage.name}' / type '{analysis.type}' "
-                    "(set default_quote_template_id or default_news_template_id on the fanpage)"
-                )
-                return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by=final_text_rendered_by, notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
-
-            b64 = base64.b64encode(gen_bytes).decode()
-            image_src = f"data:image/png;base64,{b64}"
-            
-            from app.tasks.design_renderer import clean_title_for_render, clear_template_text_objects
-            d_title = job.design_title if job else analysis.moment_summary
-            d_title = clean_title_for_render(d_title)
-            
-            if analysis.type in ("quote", "news", "team_radio") and not d_title:
-                err = "empty design_title"
-                if job:
-                    job.last_error = err
-                    db.commit()
-                if decision:
-                    decision.preview_status = "failed"
-                    db.commit()
-                problems.append(err)
-                return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by=final_text_rendered_by, notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
-
-            d_subtitle = job.design_subtitle if job else ""
-            d_caption = job.design_caption if job else ""
-
-            template_json, image_srcs = prepare_design_images(
-                db, tpl.template_json, tpl.canvas_width,
-                d_title or "", niche, image_src, expand=False,
-                smart=False,  # AI-made image: one full-width picture, never a split or an added inset
-            )
-            
-            # Zero baked sample text so the renderer fills from title/subtitle/caption.
-            # No colour/icon override — fanpage templates render exactly as configured.
-            template_json = clear_template_text_objects(template_json)
-            
-            from app.services.design_images import watermark_datauri, focus_points_for, _safe_face_cy_ceiling
-            settings = get_settings()
-            try:
-                resp = httpx.post(
-                    f"{settings.renderer_url.rstrip('/')}/render",
-                    json={
-                        "template_json": template_json,
-                        "width": tpl.canvas_width,
-                        "height": tpl.canvas_height,
-                        "title": d_title,
-                        "subtitle": d_subtitle,
-                        "caption": d_caption,
-                        "watermark": fanpage.watermark_text or "",
-                        "watermark_image": watermark_datauri(fanpage),
-                        "image_srcs": image_srcs,
-                        "focus_points": focus_points_for(
-                            image_srcs,
-                            safe_cy_ceiling=_safe_face_cy_ceiling(template_json, tpl.canvas_height),
-                            keep_top=True,
-                        ),
-                        "scale": settings.design_render_scale,
-                        "accent": fanpage.accent_color,
-                        "look": brand_look(fanpage, template_json),
-                    },
-                    timeout=_RENDER_TIMEOUT,
-                )
-                resp.raise_for_status()
-                gen_bytes = resp.content
-            except Exception as e:
-                problems.append(f"Renderer error: {str(e)}")
-                return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by=final_text_rendered_by, notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
-
-        # 7. Upscale
-        gen_bytes = upscale_image_bytes(gen_bytes, target_edge=2700)
-
-        # Save
-        import hashlib
-        from pathlib import Path
-        h = hashlib.md5(gen_bytes).hexdigest()[:8]
-        fname = f"redesign_{uuid.uuid4().hex[:8]}_{h}.png"
-        from app.config import get_settings
-        settings = get_settings()
-        
-        designs_dir = Path(settings.storage_base_path) / "designs"
-        os.makedirs(designs_dir, exist_ok=True)
-        save_path = str(designs_dir / fname)
-        with open(save_path, "wb") as f:
-            f.write(gen_bytes)
-            
-        url = f"{settings.storage_base_url.rstrip('/')}/designs/{fname}"
+        saved = _finish_card(db, fanpage=fanpage, job=job, decision=decision, analysis=analysis,
+                             layout=layout, gen_bytes=gen_bytes, niche=niche, problems=problems)
+        if saved is None:
+            return RedesignResult(ok=False, layout=layout, image_path=None, image_url=None, final_text_rendered_by=final_text_rendered_by, notes=notes, problems=problems, content_type=analysis.type, mood=analysis.mood)
+        save_path, url = saved
+        if reuse_key:
+            _remember_raw(db, fanpage=fanpage, job=job, raw_bytes=res.image, reuse_key=reuse_key,
+                          engine=engine_label, qa_checked=qa_on, layout=layout)
 
         # 8. Record used_photo_key
         if decision:

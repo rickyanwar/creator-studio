@@ -1,6 +1,6 @@
 """Published delivery snapshot feeding contracts."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import io
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -14,7 +14,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import DefaultClause
 
-from app.models.fb_group_share import FbShareBrandSettings, FbShareItem
+from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareItem
+from app.schemas.fb_group_share import merge_settings
 from app.services.fb_share.brand_settings import set_brand_share
 from app.models.publish_jobs import ContentType, PublishJob
 from app.models.radar import RadarStoryDecision
@@ -58,10 +59,11 @@ def db_session():
     engine = create_engine("sqlite://")
     column = SocialDestination.__table__.c.supported_media
     with patch.object(column, "server_default", DefaultClause(text("'[]'"))):
-        for model in (TargetFanpage, FbShareBrandSettings, SocialDestination, PublishJob, PublishDelivery, FbShareItem, RadarStoryDecision):
+        for model in (TargetFanpage, FbShareBrandSettings, SocialDestination, PublishJob, PublishDelivery, FbShareItem,
+                      RadarStoryDecision, FbShareGroupJob):
             model.__table__.create(engine)
     with sessionmaker(bind=engine)() as db:
-        db.add_all([TargetFanpage(id=1, name="Brand"), TargetFanpage(id=2, name="Other")])
+        db.add_all([TargetFanpage(id=1, name="Brand", timezone="UTC"), TargetFanpage(id=2, name="Other")])
         db.flush()
         db.add_all([
             SocialDestination(id=1, content_project_id=1, kind="facebook_profile", name="Profile"),
@@ -74,10 +76,10 @@ def db_session():
     engine.dispose()
 
 
-def brand(db, *, niches=None, mode="ig", source="follow"):
+def brand(db, *, niches=None, mode="ig", per_day=10, source="off"):
     fanpage = db.get(TargetFanpage, 1)
     set_brand_share(db, fanpage.id, True, {"niches": ["f1"] if niches is None else niches,
-                                          "sources": {mode: {"source": source}}})
+                                          "sources": {mode: {"source": source, "follow_per_day": per_day}}})
     db.commit()
     return fanpage
 
@@ -97,10 +99,9 @@ def delivery(db, *, content_type=ContentType.ig_repost, destination_id=1, **valu
 
 
 @pytest.mark.parametrize("content_type,mode", MODES)
-@pytest.mark.parametrize("source", ["follow", "both"])
-def test_mapping_snapshots_expiry_and_rerun(db_session, content_type, mode, source):
+def test_mapping_snapshots_expiry_and_rerun(db_session, content_type, mode):
     db = db_session
-    fanpage = brand(db, mode=mode, source=source)
+    fanpage = brand(db, mode=mode)
     original = delivery(db, content_type=content_type)
     duplicate = PublishDelivery(publish_job_id=original.publish_job_id, destination_id=2,
                                 state="published", published_at=NOW, media_kind="image",
@@ -124,7 +125,8 @@ def test_mapping_snapshots_expiry_and_rerun(db_session, content_type, mode, sour
 def test_window_state_destination_and_empty_media_filters(db_session):
     db = db_session
     fanpage = brand(db)
-    delivery(db, published_at=NOW - timedelta(hours=48, seconds=1))
+    # NOW is 12:00 UTC, so the brand's local day (UTC) starts 12 h earlier.
+    delivery(db, published_at=NOW - timedelta(hours=12, seconds=1))
     delivery(db, state="scheduled")
     delivery(db, published_at=None)
     delivery(db, destination_id=3)
@@ -132,26 +134,31 @@ def test_window_state_destination_and_empty_media_filters(db_session):
     delivery(db, media_snapshot=[])
     delivery(db, media_snapshot=[{}, None, 12, " "])
     delivery(db, media_kind=None)
-    boundary = delivery(db, published_at=NOW - timedelta(hours=48))
+    boundary = delivery(db, published_at=NOW - timedelta(hours=12))
     assert collect_published_items(db, fanpage, NOW) == 1
     assert db.query(FbShareItem).one().source_ref == str(boundary.publish_job_id)
 
 
-@pytest.mark.parametrize("source", ["off", "groups_only"])
-def test_disabled_sources_not_fed(db_session, source):
-    fanpage = brand(db_session, source=source)
+@pytest.mark.parametrize("source", ["off", "follow", "groups_only", "both"])
+def test_zero_follow_per_day_not_fed_whatever_the_old_source(db_session, source):
+    fanpage = brand(db_session, per_day=0, source=source)
     delivery(db_session)
     assert collect_published_items(db_session, fanpage, NOW) == 0
 
 
-@pytest.mark.parametrize("mode,source,expected", [
-    ("viral_radar", "follow", 1), ("viral_radar", "both", 1),
-    ("viral_radar", "off", 0), ("viral_radar", "groups_only", 0),
-    ("ig", "follow", 0), ("ig", "both", 0),
+@pytest.mark.parametrize("source", ["off", "groups_only"])
+def test_old_source_value_is_ignored(db_session, source):
+    fanpage = brand(db_session, per_day=1, source=source)
+    delivery(db_session)
+    assert collect_published_items(db_session, fanpage, NOW) == 1
+
+
+@pytest.mark.parametrize("mode,per_day,expected", [
+    ("viral_radar", 1, 1), ("viral_radar", 0, 0), ("ig", 1, 0),
 ])
-def test_radar_link_overrides_ig_source(db_session, mode, source, expected):
+def test_radar_link_overrides_ig_source(db_session, mode, per_day, expected):
     db = db_session
-    fanpage = brand(db, mode=mode, source=source)
+    fanpage = brand(db, mode=mode, per_day=per_day)
     row = delivery(db, content_type=ContentType.ig_recreate)
     db.add(RadarStoryDecision(story_id=1, fanpage_id=1, rule="test", status="published",
                               publish_job_id=row.publish_job_id))
@@ -251,3 +258,112 @@ def test_http_image_loading(monkeypatch, status, data):
         with pytest.raises((ValueError, httpx.HTTPStatusError)):
             _real_load_image_bytes("https://example.test/x")
     stream.assert_called_once_with("GET", "https://example.test/x", timeout=15.0, follow_redirects=True)
+
+
+def test_merge_settings_fills_follow_per_day_for_old_json():
+    merged = merge_settings({"sources": {"ig": {"source": "follow", "groups_only_per_day": 2}}})
+    assert merged["sources"]["ig"] == {"source": "follow", "groups_only_per_day": 2, "follow_per_day": 0}
+    assert all(source["follow_per_day"] == 0 for source in merged["sources"].values())
+
+
+def test_cap_takes_newest_first_and_counts_across_runs(db_session):
+    db = db_session
+    fanpage = brand(db, per_day=2)
+    old, newest, middle = (delivery(db, published_at=NOW - timedelta(hours=hours)) for hours in (5, 1, 3))
+    assert collect_published_items(db, fanpage, NOW) == 2
+    refs = {item.source_ref for item in db.query(FbShareItem)}
+    assert refs == {str(newest.publish_job_id), str(middle.publish_job_id)}
+    later = delivery(db, published_at=NOW)
+    assert collect_published_items(db, fanpage, NOW + timedelta(minutes=5)) == 0
+    assert str(old.publish_job_id) not in {item.source_ref for item in db.query(FbShareItem)}
+    assert str(later.publish_job_id) not in {item.source_ref for item in db.query(FbShareItem)}
+
+
+def test_cap_is_per_mode(db_session):
+    db = db_session
+    fanpage = db.get(TargetFanpage, 1)
+    set_brand_share(db, 1, True, {"niches": ["f1"], "sources": {
+        "ig": {"follow_per_day": 1}, "news": {"follow_per_day": 2}}})
+    db.commit()
+    for _ in range(3):
+        delivery(db, content_type=ContentType.ig_repost)
+        delivery(db, content_type=ContentType.news_content)
+    delivery(db, content_type=ContentType.discussion)
+    assert collect_published_items(db, fanpage, NOW) == 3
+    kinds = [db.get(PublishJob, int(item.source_ref)).content_type for item in db.query(FbShareItem)]
+    assert sorted(kind.value for kind in kinds) == ["ig_repost", "news_content", "news_content"]
+
+
+def test_items_from_before_local_midnight_do_not_count(db_session):
+    db = db_session
+    fanpage = brand(db, per_day=1)
+    yesterday = delivery(db, published_at=NOW - timedelta(hours=20))
+    assert collect_published_items(db, fanpage, NOW - timedelta(hours=13)) == 1
+    assert db.query(FbShareItem).one().source_ref == str(yesterday.publish_job_id)
+    delivery(db, published_at=NOW)
+    assert collect_published_items(db, fanpage, NOW) == 1
+    assert db.query(FbShareItem).count() == 2
+
+
+@pytest.mark.parametrize("zone,expected", [("UTC", 0), ("America/New_York", 1), ("Not/AZone", 0), ("", 0)])
+def test_brand_local_day_boundary(db_session, zone, expected):
+    db = db_session
+    fanpage = brand(db, per_day=1)
+    fanpage.timezone = zone
+    db.commit()
+    # Collected at 03:00 UTC on Nov 8 = 22:00 Nov 7 in New York (a different local day than 12:00 UTC).
+    delivery(db, published_at=NOW - timedelta(hours=10))
+    assert collect_published_items(db, fanpage, NOW - timedelta(hours=9)) == 1
+    delivery(db, published_at=NOW)
+    assert collect_published_items(db, fanpage, NOW) == expected
+
+
+def test_yesterday_evening_delivery_not_collected_after_midnight(db_session):
+    db = db_session
+    fanpage = brand(db)
+    # 22:00 UTC on Nov 7, collected at 12:00 UTC on Nov 8: inside 48 h but a previous local day.
+    delivery(db, published_at=NOW - timedelta(hours=14))
+    assert collect_published_items(db, fanpage, NOW) == 0
+    assert db.query(FbShareItem).count() == 0
+
+
+@pytest.mark.parametrize("zone,expected", [("UTC", 1), ("America/New_York", 0)])
+def test_published_today_uses_brand_local_day(db_session, zone, expected):
+    db = db_session
+    fanpage = brand(db)
+    fanpage.timezone = zone
+    db.commit()
+    # 03:00 UTC on Nov 8 is today in UTC but 22:00 on Nov 7 (yesterday) in New York.
+    delivery(db, published_at=NOW - timedelta(hours=9))
+    assert collect_published_items(db, fanpage, NOW) == expected
+
+
+def test_aware_now_is_accepted(db_session):
+    db = db_session
+    fanpage = brand(db)
+    delivery(db, published_at=NOW - timedelta(hours=1))
+    assert collect_published_items(db, fanpage, NOW.replace(tzinfo=timezone.utc)) == 1
+
+
+def test_group_job_items_do_not_use_the_follow_quota(db_session):
+    db = db_session
+    fanpage = brand(db, per_day=1)
+    group_job = PublishJob(fanpage_id=1, content_type=ContentType.ig_repost, created_at=NOW)
+    db.add(group_job)
+    db.flush()
+    db.add(FbShareGroupJob(fanpage_id=1, mode="ig", publish_job_id=group_job.id, handed_at=NOW))
+    db.add(FbShareItem(fanpage_id=1, niche="f1", source_kind="publish_job", source_ref=str(group_job.id),
+                       media_kind="photo", media=["g.jpg"], status="new", created_at=NOW))
+    db.commit()
+    page_post = delivery(db)
+    assert collect_published_items(db, fanpage, NOW) == 1
+    assert db.query(FbShareItem).filter_by(source_ref=str(page_post.publish_job_id)).count() == 1
+
+
+def test_skipped_media_does_not_use_the_quota(db_session):
+    db = db_session
+    fanpage = brand(db, per_day=1)
+    delivery(db, media_snapshot=[], published_at=NOW)
+    usable = delivery(db, published_at=NOW - timedelta(hours=1))
+    assert collect_published_items(db, fanpage, NOW) == 1
+    assert db.query(FbShareItem).one().source_ref == str(usable.publish_job_id)

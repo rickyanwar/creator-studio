@@ -23,6 +23,14 @@ from app.services.news_dedup import (
 from app.tasks.news_copywriter import copywrite_article
 
 
+@pytest.fixture(autouse=True)
+def _no_group_lane(monkeypatch):
+    # These tests use a MagicMock db; no fan page here is a Group Share lane.
+    monkeypatch.setattr("app.services.fb_share.group_jobs.lane_daily_cap_reached", lambda *a: False)
+    monkeypatch.setattr("app.services.fb_share.group_jobs.reserve_lane_slot", lambda *a: "test-lane-slot")
+    monkeypatch.setattr("app.services.fb_share.group_jobs.release_lane_slot", lambda *a: None)
+
+
 # ── Test 1: parse_verdict ───────────────────────────────────────────────────
 
 def test_parse_verdict():

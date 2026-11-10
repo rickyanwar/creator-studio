@@ -110,8 +110,6 @@ def generate_caption_for_job(self, job_id: int, force_provider: str | None = Non
         job.ai_provider_used = AIProvider(provider_used)
 
         from app.services.fb_share.group_jobs import is_group_only
-        from app.tasks.ig_recreate import _publish_ig_overflow
-        _publish_ig_overflow(db, job.fanpage_id)
 
         if fanpage.publish_mode == PublishMode.auto or is_group_only(db, job.id):
             job.status = PublishJobStatus.pending_publish

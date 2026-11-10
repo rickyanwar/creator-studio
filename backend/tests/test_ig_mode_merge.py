@@ -10,6 +10,14 @@ from app.models.publish_jobs import PublishJob
 from app.models.target_fanpages import TargetFanpage
 
 
+@pytest.fixture(autouse=True)
+def _no_group_lane(monkeypatch):
+    # These tests use a MagicMock db; no fan page here is a Group Share lane.
+    monkeypatch.setattr("app.services.fb_share.group_jobs.lane_daily_cap_reached", lambda *a: False)
+    monkeypatch.setattr("app.services.fb_share.group_jobs.reserve_lane_slot", lambda *a: "test-lane-slot")
+    monkeypatch.setattr("app.services.fb_share.group_jobs.release_lane_slot", lambda *a: None)
+
+
 def test_ig_mode_round_trips():
     # 1. repost: ig_recreate_enabled=False
     fp = SimpleNamespace(ig_recreate_enabled=False, visual_engine="off")

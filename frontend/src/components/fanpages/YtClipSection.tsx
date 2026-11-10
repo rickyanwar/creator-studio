@@ -5,6 +5,7 @@ import { Icon } from "@iconify/react";
 import { addYtClipSource, updateYtClipSource, deleteYtClipSource, checkYtClipSource } from "@/lib/api";
 import type { FanpageDetail, YtClipSourceRef } from "@/lib/types";
 import { YtClipIdeaQueue, YtVideoList } from "./YtClipLists";
+import { LockedField, isLocked } from "@/components/brand/group-share/laneLock";
 
 type Props = {
   fanpageId: number;
@@ -14,6 +15,8 @@ type Props = {
   refreshSources: () => Promise<void>;
   hideIdeas?: boolean;
   onNavigateTab?: (tab: string) => void;
+  /** Group Share lane: fields owned by the brand page, shown read-only. */
+  lockedFields?: readonly string[];
 };
 
 const KIND_ICON: Record<YtClipSourceRef["kind"], string> = {
@@ -55,7 +58,7 @@ function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; labe
   );
 }
 
-function YtClipSettings({ form, set, onNavigateTab }: Pick<Props, "form" | "set" | "onNavigateTab">) {
+function YtClipSettings({ form, set, onNavigateTab, lockedFields }: Pick<Props, "form" | "set" | "onNavigateTab" | "lockedFields">) {
   const num = (key: keyof FanpageDetail, fallback: number) => (form[key] as number | undefined) ?? fallback;
   return (
     <>
@@ -107,7 +110,9 @@ function YtClipSettings({ form, set, onNavigateTab }: Pick<Props, "form" | "set"
           <label className="label">Overlays</label>
           <div className="flex flex-wrap items-center gap-5 pt-2">
             <Toggle on={form.yt_clip_captions ?? true} onClick={() => set("yt_clip_captions", !(form.yt_clip_captions ?? true))} label="Captions" />
-            <Toggle on={form.yt_clip_watermark ?? true} onClick={() => set("yt_clip_watermark", !(form.yt_clip_watermark ?? true))} label="Watermark" />
+            <LockedField locked={isLocked(lockedFields, "yt_clip_watermark")}>
+              <Toggle on={form.yt_clip_watermark ?? true} onClick={() => set("yt_clip_watermark", !(form.yt_clip_watermark ?? true))} label="Watermark" />
+            </LockedField>
             {onNavigateTab && (
               <button
                 type="button"
@@ -264,7 +269,7 @@ function YtClipSources({ fanpageId, form, refreshSources }: Omit<Props, "set">) 
 }
 
 /** Mode 7 — YouTube clips, on the fanpage edit page. */
-export function YtClipSection({ fanpageId, form, set, refreshSources, hideIdeas, onNavigateTab }: Props) {
+export function YtClipSection({ fanpageId, form, set, refreshSources, hideIdeas, onNavigateTab, lockedFields }: Props) {
   const enabled = !!form.yt_clip_enabled;
   return (
     <section className="card space-y-5">
@@ -287,7 +292,7 @@ export function YtClipSection({ fanpageId, form, set, refreshSources, hideIdeas,
       </div>
       {enabled && (
         <>
-          <YtClipSettings form={form} set={set} onNavigateTab={onNavigateTab} />
+          <YtClipSettings form={form} set={set} onNavigateTab={onNavigateTab} lockedFields={lockedFields} />
           <YtClipSources fanpageId={fanpageId} form={form} refreshSources={refreshSources} />
           {!hideIdeas && (
             <>

@@ -20,6 +20,7 @@ from app.models.social_publishing import (
     SocialDestination,
 )
 from app.models.target_fanpages import TargetFanpage
+from app.services.fb_share.lanes import lane_fanpage_ids
 from app.schemas.social_brands import (
     AIImagesTodayOut,
     AttentionOut,
@@ -498,6 +499,7 @@ def get_brands(db: DB, _: CurrentUser):
     settings = _get_or_create_settings(db)
     brands = (
         db.query(TargetFanpage)
+        .filter(TargetFanpage.id.notin_(lane_fanpage_ids()))
         .order_by(TargetFanpage.is_active.desc(), TargetFanpage.name.asc())
         .all()
     )

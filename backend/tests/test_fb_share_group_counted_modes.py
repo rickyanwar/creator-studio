@@ -1,4 +1,4 @@
-"""Counted modes keep Page production separate from extra Group Share jobs."""
+"""Counted modes on a group lane: the normal pass makes marked group jobs; group jobs skip review."""
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -12,7 +12,7 @@ from sqlalchemy.ext.compiler import compiles
 
 from app.models.target_fanpages import TargetFanpage, PublishMode
 from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType
-from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob
+from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareLane
 from app.models.discussion_content_ideas import DiscussionContentIdea
 from app.models.pinterest_content_ideas import PinterestContentIdea
 from app.models.facebook_photo_ideas import FacebookPhotoIdea
@@ -44,7 +44,7 @@ MODES = [
 @pytest.fixture
 def db(monkeypatch):
     engine = create_engine("sqlite://")
-    for model in (TargetFanpage, PublishJob, FbShareBrandSettings, FbShareGroupJob,
+    for model in (TargetFanpage, PublishJob, FbShareBrandSettings, FbShareGroupJob, FbShareLane,
                   DiscussionContentIdea, PinterestContentIdea, FacebookPhotoIdea,
                   FacebookPhotoSource, GalleryImage, YtVideo, YtClipIdea):
         model.__table__.create(engine)
@@ -61,16 +61,16 @@ def db(monkeypatch):
     engine.dispose()
 
 
-def prepare(db, monkeypatch, mode):
+def prepare(db, monkeypatch, mode, fanpage_id=1):
     module, key, content, tick, render = mode
     prefix = {"fb_recreate": "facebook_photo", "yt_clips": "yt_clip"}.get(key, key)
-    page = TargetFanpage(id=1, name="Racing", is_active=True,
+    page = TargetFanpage(id=fanpage_id, name="Racing", is_active=True,
                         **{f"{prefix}_enabled": True, f"{prefix}_daily_count": 1,
                            f"{prefix}_publish_mode": PublishMode.manual_review},
                         mode2_caption_hashtag_count=0)
     db.add(page)
     for index in range(8):
-        fields = dict(fanpage_id=1, status="pending")
+        fields = dict(fanpage_id=fanpage_id, status="pending")
         if key == "discussion":
             idea = DiscussionContentIdea(**fields, label="DISCUSSION", question=f"Question {index}?",
                                          subject_name="Driver", caption="Caption", source_type="manual")
@@ -81,7 +81,7 @@ def prepare(db, monkeypatch, mode):
             idea = FacebookPhotoIdea(**fields, gallery_image_id=index + 1, category="news", design_title=f"Title {index}")
         else:
             if index == 0:
-                db.add(YtVideo(id=1, fanpage_id=1, video_id="abcdefghijk", title="Race", status="analyzed"))
+                db.add(YtVideo(id=1, fanpage_id=fanpage_id, video_id="abcdefghijk", title="Race", status="analyzed"))
             idea = YtClipIdea(**fields, yt_video_row_id=1, video_id="abcdefghijk",
                               title=f"Driver race {index}", start_s=index * 60, end_s=index * 60 + 30)
         db.add(idea)
@@ -110,46 +110,50 @@ def prepare(db, monkeypatch, mode):
 
 
 @pytest.mark.parametrize("mode", MODES, ids=[m[1] for m in MODES])
-@pytest.mark.parametrize("enabled,source,quota", [
-    (True, "both", 2), (True, "groups_only", 7),
-    (True, "follow", 5), (True, "off", 5), (False, "both", 5),
-])
-def test_counted_passes(db, monkeypatch, mode, enabled, source, quota):
+def test_lane_gets_marked_job_from_the_normal_pass(db, monkeypatch, mode):
     module, key, content, tick, _ = mode
-    _, dispatch = prepare(db, monkeypatch, mode)
-    set_brand_share(db, 1, enabled, {"sources": {key: {"source": source, "groups_only_per_day": quota}}})
-    # An existing group job must not consume the one available Page slot.
-    prior = PublishJob(fanpage_id=1, content_type=ContentType(content), created_at=NOW,
-                       status=PublishJobStatus.skipped)
-    db.add(prior)
-    db.flush()
-    core.mark_group_job(db, fanpage_id=1, mode=key, publish_job_id=prior.id)
-    db.query(FbShareGroupJob).update({"created_at": NOW})
+    # Lane 2 belongs to brand 1; its own daily count (1) is the group target for this mode.
+    prepare(db, monkeypatch, mode, fanpage_id=2)
+    db.add(TargetFanpage(id=1, name="Brand", is_active=True))
+    db.add(FbShareLane(brand_fanpage_id=1, lane_fanpage_id=2))
     db.commit()
-    # The quota includes the prior mark.
-    expected = min(3, max(0, quota - 1)) if enabled and source in ("both", "groups_only") else 0
     getattr(module, tick).run()
-    jobs = db.query(PublishJob).all()
-    assert len(jobs) == 2 + expected
-    assert db.query(FbShareGroupJob).count() == 1 + expected
-    assert db.query(PublishJob).filter(PublishJob.id.notin_(core.group_publish_job_ids())).count() == 1
-    assert dispatch.call_count == expected
-    # A second tick does not create another Page job or exceed the group budget.
+    job = db.query(PublishJob).one()
+    assert (job.fanpage_id, job.content_type) == (2, ContentType(content))
+    mark = db.query(FbShareGroupJob).one()
+    assert (mark.fanpage_id, mark.mode, mark.publish_job_id) == (1, key, job.id)
+    # Marked lane jobs still count toward the lane's own daily count.
     getattr(module, tick).run()
-    assert db.query(PublishJob).filter(PublishJob.id.notin_(core.group_publish_job_ids())).count() == 1
-    assert db.query(FbShareGroupJob).count() <= max(1, quota)
+    assert db.query(PublishJob).count() == 1
 
 
-def test_youtube_idea_cap_includes_groups(db, monkeypatch):
-    page, _ = prepare(db, monkeypatch, MODES[-1])
-    set_brand_share(db, 1, True, {"sources": {"yt_clips": {"source": "both", "groups_only_per_day": 5}}})
-    monkeypatch.setattr("app.services.yt_downloader.blocked_until", lambda db: None)
-    monkeypatch.setattr(yt_clip, "_pending_idea_count", lambda *a: 8)
-    monkeypatch.setattr(yt_clip, "_next_video_to_analyse", lambda *a: SimpleNamespace(id=123))
-    dispatch = Mock()
-    monkeypatch.setattr(yt_clip.analyze_video, "delay", dispatch)
-    assert yt_clip._dispatch_analysis(db, page)
-    dispatch.assert_called_once_with(123)
+@pytest.mark.parametrize("mode", MODES, ids=[m[1] for m in MODES])
+def test_page_pass_ignores_group_share_settings(db, monkeypatch, mode):
+    module, key, content, tick, _ = mode
+    prepare(db, monkeypatch, mode)
+    set_brand_share(db, 1, True, {"sources": {key: {"source": "both", "groups_only_per_day": 5}}})
+    db.commit()
+    getattr(module, tick).run()
+    getattr(module, tick).run()
+    assert db.query(PublishJob).count() == 1
+    assert db.query(FbShareGroupJob).count() == 0
+
+
+def test_lane_clip_in_manual_review_is_rendered(db, monkeypatch):
+    # Group jobs are hidden from the review queue, so a lane clip renders even in manual review.
+    _, dispatch = prepare(db, monkeypatch, MODES[-1], fanpage_id=2)
+    db.add(TargetFanpage(id=1, name="Brand", is_active=True))
+    db.add(FbShareLane(brand_fanpage_id=1, lane_fanpage_id=2))
+    db.commit()
+    yt_clip.generate_yt_clip_content.run()
+    assert dispatch.call_count == 1
+
+
+def test_page_clip_in_manual_review_waits_for_review(db, monkeypatch):
+    _, dispatch = prepare(db, monkeypatch, MODES[-1])
+    yt_clip.generate_yt_clip_content.run()
+    assert db.query(PublishJob).count() == 1
+    dispatch.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", MODES, ids=[m[1] for m in MODES])

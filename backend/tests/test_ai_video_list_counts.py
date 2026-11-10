@@ -17,6 +17,13 @@ from app.models.ai_video import VideoClipQc, VideoIdea, VideoJob
 from app.models.target_fanpages import TargetFanpage
 
 _CREATE_TABLES = """
+CREATE TABLE IF NOT EXISTS fb_share_lanes (
+    id INTEGER PRIMARY KEY,
+    brand_fanpage_id INTEGER NOT NULL UNIQUE,
+    lane_fanpage_id INTEGER NOT NULL UNIQUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS target_fanpages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     repliz_account_id TEXT,

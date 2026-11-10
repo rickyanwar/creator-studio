@@ -383,12 +383,10 @@ def analyze_video(video_row_id: int):
 
 def _dispatch_analysis(db, fanpage) -> bool:
     from app.services.yt_downloader import blocked_until
-    from app.services.fb_share.group_jobs import remaining_groups_only_today
 
     if blocked_until(db):
         return False
-    group_quota = remaining_groups_only_today(db, fanpage.id, "yt_clips", _now())
-    if _pending_idea_count(db, fanpage.id) >= 2 * max(1, (fanpage.yt_clip_daily_count or 0) + group_quota):
+    if _pending_idea_count(db, fanpage.id) >= 2 * max(1, fanpage.yt_clip_daily_count or 1):
         return False
     video = _next_video_to_analyse(db, fanpage.id)
     if not video:
@@ -507,7 +505,7 @@ Caption rules:
 OUTPUT: only the final single-line caption, no explanation, no quotes around it."""
 
 
-def _consume_one(db, fanpage, *, group_only=False) -> bool:
+def _consume_one(db, fanpage) -> bool:
     from app.models.publish_jobs import PublishJob, PublishJobStatus, ContentType, AIProvider
     from app.models.target_fanpages import PublishMode
     from app.services.ai_caption import generate_caption
@@ -544,14 +542,12 @@ def _consume_one(db, fanpage, *, group_only=False) -> bool:
     )
     db.add(job)
     idea.status, idea.used_at = "used", _now()
-    if group_only:
-        from app.services.fb_share.group_jobs import mark_group_job
-        db.flush()
-        mark_group_job(db, fanpage_id=fanpage.id, mode="yt_clips", publish_job_id=job.id)
     db.commit()
     logger.info("yt_clip: fanpage %d job %d from idea %d (%s +%.0fs) %r",
                 fanpage.id, job.id, idea.id, idea.video_id, idea.end_s - idea.start_s, idea.title)
-    if group_only or fanpage.yt_clip_publish_mode == PublishMode.auto:
+    from app.services.fb_share.group_jobs import is_group_only
+    # A group lane's clip has no review queue (group jobs are hidden there): always render it.
+    if fanpage.yt_clip_publish_mode == PublishMode.auto or is_group_only(db, job.id):
         from app.tasks.yt_clip_render import render_youtube_clip
         render_youtube_clip.apply_async(args=[job.id], countdown=random.randint(5, 60))
     return True
@@ -563,7 +559,6 @@ def generate_yt_clip_content():
     from sqlalchemy import func
     from app.models.publish_jobs import PublishJob, ContentType
     from app.tasks.facebook_photo import _wib_day_bounds_utc
-    from app.services.fb_share.group_jobs import group_publish_job_ids, remaining_groups_only_today
 
     db = SessionLocal()
     try:
@@ -579,16 +574,11 @@ def generate_yt_clip_content():
             done = db.query(func.count(PublishJob.id)).filter(
                 PublishJob.fanpage_id == fp.id, PublishJob.content_type == ContentType.youtube_clip,
                 PublishJob.is_deleted == False,  # noqa: E712
-                PublishJob.id.notin_(group_publish_job_ids()),
                 PublishJob.created_at >= day_start, PublishJob.created_at < day_end,
             ).scalar() or 0
             target, budget = _target_by_now(quota, hour), _MAX_CATCHUP_PER_TICK
             while done < quota and done < target and budget > 0 and _consume_one(db, fp):
                 done, budget, created = done + 1, budget - 1, created + 1
-            for _ in range(min(_MAX_CATCHUP_PER_TICK, remaining_groups_only_today(db, fp.id, "yt_clips", now_utc))):
-                if not _consume_one(db, fp, group_only=True):
-                    break
-                created += 1
         if created:
             logger.info("yt_clip: %d clip job(s) created", created)
     finally:

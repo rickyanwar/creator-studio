@@ -1,6 +1,6 @@
-"""SQLite contracts for group-only production and hand-over."""
+"""SQLite contracts for group-job markers and hand-over."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -71,20 +71,6 @@ def test_mark_link_selects_and_validation(db_session):
     assert list(db.scalars(core.group_video_job_ids())) == [17]
 
 
-@pytest.mark.parametrize("enabled,source,expected", [
-    (False, "both", 0), (True, "follow", 0), (True, "off", 0),
-    (True, "groups_only", 1), (True, "both", 1),
-])
-def test_quota_utc_day_and_brand_settings(db_session, enabled, source, expected):
-    db = db_session
-    set_brand_share(db, 1, enabled, {"sources": {"ai_video": {
-        "source": source, "groups_only_per_day": 2}}})
-    for index, instant in enumerate((NOW, NOW - timedelta(days=1), NOW + timedelta(days=1))):
-        db.add(FbShareGroupJob(fanpage_id=1, mode="ai_video", video_job_id=index + 1, created_at=instant))
-    assert core.remaining_groups_only_today(db, 1, "ai_video", NOW.replace(tzinfo=timezone.utc)) == expected
-    assert core.remaining_groups_only_today(db, 2, "ai_video", NOW) == 0
-
-
 def test_hand_over_and_feeder_idempotent(db_session):
     db = db_session
     job = make_job(db)
@@ -126,14 +112,6 @@ def test_photo_hash_fail_closed_then_handover(db_session, monkeypatch):
     monkeypatch.setattr(radar_clustering, "compute_phash", lambda data: "abcd")
     item = core.hand_over(db_session, job, NOW)
     assert (item.media_kind, item.phash, item.media) == ("photo", "abcd", ["card.png"])
-
-
-def test_quota_never_negative_and_other_modes_do_not_count(db_session):
-    db = db_session
-    for index in range(3):
-        db.add(FbShareGroupJob(fanpage_id=1, mode="ai_video", video_job_id=index + 1, created_at=NOW))
-    db.add(FbShareGroupJob(fanpage_id=1, mode="news", video_job_id=4, created_at=NOW))
-    assert core.remaining_groups_only_today(db, 1, "ai_video", NOW) == 0
 
 
 @pytest.mark.parametrize("state", ["planned", "sent_to_pic", "publishing", "pending_admin", "uncertain"])

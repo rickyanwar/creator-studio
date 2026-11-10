@@ -135,78 +135,82 @@ def copywrite_article(self, article_id: int):
             if existing:
                 continue
 
-            if fp.mode2_editorial_gate_enabled:
-                from app.services.editorial_gate import evaluate_article
+            # Group lane: news posts per day come from the brand's Group Share settings.
+            from app.services.fb_share.group_jobs import reserve_lane_slot, release_lane_slot
+            lane_slot = reserve_lane_slot(db, fp.id, "news", datetime.now(timezone.utc))
+            if lane_slot is None:
+                logger.info("Copywriter: article %d skipped for group lane %d — daily news cap reached", article_id, fp.id)
+                continue
 
-                niche = (fp.mode2_gallery_niches or [None])[0] or fp.name
+            try:
+                if fp.mode2_editorial_gate_enabled:
+                    from app.services.editorial_gate import evaluate_article
+
+                    niche = (fp.mode2_gallery_niches or [None])[0] or fp.name
+                    try:
+                        verdict = evaluate_article(article, niche)
+                        logger.info(
+                            "Copywriter: editorial gate article %d fanpage %d — "
+                            "post_worthy=%s engagement=%s fact_check=%s (%s) reason=%s",
+                            article_id, fp.id, verdict.post_worthy, verdict.engagement,
+                            verdict.fact_check, verdict.fact_check_note, verdict.reason,
+                        )
+                        if not verdict.post_worthy:
+                            continue
+                    except Exception as exc:
+                        # Keep the normal copy/design fallback on an editorial AI error.
+                        logger.warning(
+                            "Copywriter: editorial gate failed for article %d fanpage %d — letting it through: %s",
+                            article_id, fp.id, exc,
+                        )
+
+                from app.services.news_dedup import find_duplicate_job
                 try:
-                    verdict = evaluate_article(article, niche)
-                    logger.info(
-                        "Copywriter: editorial gate article %d fanpage %d — "
-                        "post_worthy=%s engagement=%s fact_check=%s (%s) reason=%s",
-                        article_id, fp.id, verdict.post_worthy, verdict.engagement,
-                        verdict.fact_check, verdict.fact_check_note, verdict.reason,
-                    )
-                    if not verdict.post_worthy:
-                        continue
+                    duplicate = find_duplicate_job(db, fp, article)
                 except Exception as exc:
-                    # Flaky 9Router call shouldn't silently block every article —
-                    # let it through and fall back to the normal copy/design flow.
-                    logger.warning(
-                        "Copywriter: editorial gate failed for article %d fanpage %d — letting it through: %s",
-                        article_id, fp.id, exc,
-                    )
+                    # A flaky AI call must not block news; same policy as the editorial gate.
+                    logger.warning("Copywriter: same-story check failed for article %d fanpage %d — letting it through: %s",
+                                   article_id, fp.id, exc)
+                    duplicate = None
+                if duplicate is not None:
+                    logger.info("Copywriter: article %d fanpage %d skipped — same story as job %d", article_id, fp.id, duplicate.id)
+                    continue
 
-            from app.services.news_dedup import find_duplicate_job
-            try:
-                duplicate = find_duplicate_job(db, fp, article)
-            except Exception as exc:
-                # A flaky AI call must not block news; same policy as the editorial gate.
-                logger.warning("Copywriter: same-story check failed for article %d fanpage %d — letting it through: %s",
-                               article_id, fp.id, exc)
-                duplicate = None
-            if duplicate is not None:
-                logger.info("Copywriter: article %d fanpage %d skipped — same story as job %d", article_id, fp.id, duplicate.id)
-                continue
+                try:
+                    copy = generate_news_copy(fp, article)
+                except GroqRateLimitError:
+                    logger.warning("Copywriter: rate limited on article %d fanpage %d — retrying later", article_id, fp.id)
+                    raise self.retry(countdown=120)
+                except Exception as exc:
+                    failed += 1
+                    logger.error("Copywriter: article %d fanpage %d failed: %s", article_id, fp.id, exc)
+                    continue
 
-            try:
-                copy = generate_news_copy(fp, article)
-            except GroqRateLimitError:
-                # rate limited — retry the whole article later; already-created
-                # jobs are skipped by the existing-job check on the next pass
-                logger.warning("Copywriter: rate limited on article %d fanpage %d — retrying later", article_id, fp.id)
-                raise self.retry(countdown=120)
-            except Exception as exc:
-                failed += 1
-                logger.error("Copywriter: article %d fanpage %d failed: %s", article_id, fp.id, exc)
-                continue
+                from app.services.design_images import resolve_template
 
-            # copy.category ("news"/"quote") picks which template pool this job
-            # renders on — same cascade (job -> fanpage default -> shared
-            # default) that Mode 3 IG-recreate uses; see design_images.resolve_template.
-            from app.services.design_images import resolve_template
-
-            template = resolve_template(db, copy.category, fanpage=fp)
-            logger.info(
-                "Copywriter: article %d fanpage %d classified '%s' → template %s",
-                article_id, fp.id, copy.category, template.id if template else None,
-            )
-
-            job = PublishJob(
-                fanpage_id=fp.id,
-                post_id=None,
-                content_type=ContentType.news_content,
-                source_article_id=article_id,
-                design_title=copy.title,
-                design_subtitle=copy.subtitle,
-                ai_generated_caption=copy.caption,
-                ai_provider_used=copy.provider,
-                design_template_id=template.id if template else None,
-                status=PublishJobStatus.pending_design,
-                is_breaking=copy.is_breaking,
-            )
-            db.add(job)
-            db.commit()
+                template = resolve_template(db, copy.category, fanpage=fp)
+                logger.info(
+                    "Copywriter: article %d fanpage %d classified '%s' → template %s",
+                    article_id, fp.id, copy.category, template.id if template else None,
+                )
+                job = PublishJob(
+                    fanpage_id=fp.id,
+                    post_id=None,
+                    content_type=ContentType.news_content,
+                    source_article_id=article_id,
+                    design_title=copy.title,
+                    design_subtitle=copy.subtitle,
+                    ai_generated_caption=copy.caption,
+                    ai_provider_used=copy.provider,
+                    design_template_id=template.id if template else None,
+                    status=PublishJobStatus.pending_design,
+                    is_breaking=copy.is_breaking,
+                )
+                db.add(job)
+                db.commit()
+            finally:
+                # With or without a job: once committed, the job's group-job marker counts instead.
+                release_lane_slot(lane_slot)
             created += 1
             from app.services.event_days import is_event_window
             today = datetime.now(timezone.utc).date()
