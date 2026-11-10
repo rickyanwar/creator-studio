@@ -41,6 +41,15 @@ def test_constants_exact():
     assert OFF_TOPIC_TEXT == 'This number only records Group Share tasks. Reply like "1 sudah" or "2 bukan anggota".'
 
 
+def test_album_messages_in_order_and_limit():
+    media = [f"photo-{i}.jpg" for i in range(12)]
+    messages = build_task_messages("Page", media[:3], "Caption", "#f1", ["url"])
+    assert messages == [PicMessage("text", "Page"), *[
+        PicMessage("media", media_path=path) for path in media[:3]],
+        PicMessage("text", "Caption\n\n#f1"), PicMessage("text", "1. url")]
+    assert len(build_task_messages("Page", media, "Caption", "", ["url"])) == 13
+
+
 @pytest.mark.parametrize("done,not_member,removed,blocked,remaining,expected", [
     ({1}, set(), set(), False, 2, "Recorded ✅ 1"),
     ({2}, {3}, set(), False, 0, "Recorded ✅ 2 · 3 not joined. Done, thank you!"),

@@ -1,0 +1,17 @@
+{
+  "_sources": "Label/class excerpts from S3a captures: 010933-tap, 012643-tap, 012150-back, 011513-tap, 012104-tap. Bounds omitted where not required by selector tests.",
+  "switcher": [{"content-desc":"Open profile switcher","class":"android.widget.Button","clickable":"true"}],
+  "composer": [
+    {"text":"F1","content-desc":"F1","class":"android.view.ViewGroup","bounds":"[513,103][567,168]"},
+    {"text":"Public group","content-desc":"Public group","class":"android.view.View","bounds":"[455,169][673,221]"},
+    {"text":"Agung","content-desc":"Agung","class":"android.view.ViewGroup","bounds":"[252,325][424,384]"},
+    {"text":"Submit a public post for admin approval…","content-desc":"Post Title","class":"android.widget.EditText","clickable":"true","bounds":"[36,678][1044,860]"}
+  ],
+  "discard": [{"text":"Discard post","content-desc":"Discard post","class":"android.view.ViewGroup","clickable":"false","bounds":"[180,1936][431,1968]"}],
+  "picker": [{"content-desc":"Cancel","class":"android.widget.Button","clickable":"true","bounds":"[12,120][156,264]"}],
+  "feed": [{"content-desc":"Write something...","class":"android.widget.Button","clickable":"true"}],
+  "album_picker": [
+    {"content-desc":"Photo, item 12, taken on Nov 06, 2026 22:52","class":"android.widget.CompoundButton","clickable":"true"},
+    {"content-desc":"Photo, item 12, taken on Nov 06, 2026 22:52","class":"android.widget.Button","clickable":"true"}
+  ]
+}

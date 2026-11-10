@@ -244,15 +244,59 @@ def test_failure_retry_telegram_and_future_bundle(db_session, dispatch):
     dispatch.send_pic_messages.return_value = False, "x" * 600
     assert planner.dispatch_due(db_session, NOW, dispatch) == 0
     assert entry.state == "planned" and entry.error == "x" * 500
+    assert entry.pic_message_ref == f"pic-{current.id}-1"
+    first_call = dispatch.send_pic_messages.call_args
     assert dispatch.send_pic_messages.call_args.args[0] == "telegram:@operator"
     dispatch.send_pic_messages.return_value = True, "sent"
     assert planner.dispatch_due(db_session, NOW, dispatch) == 0
     assert planner.dispatch_due(db_session, NOW + timedelta(minutes=15), dispatch) == 1
+    assert dispatch.send_pic_messages.call_args == first_call
     assert entry.error is None
     future = item(db_session, "future")
     future_task = task(db_session, future, group_id=2)
     future_task.scheduled_for = NOW + timedelta(minutes=1)
     assert planner.dispatch_due(db_session, NOW, dispatch) == 0
+
+
+def test_uncertain_runner_answer_quarantines_bundle(db_session, dispatch, caplog):
+    seed(db_session, groups=2)
+    current = item(db_session)
+    first, second = task(db_session, current, group_id=1), task(db_session, current, group_id=2)
+    dispatch.send_pic_messages.return_value = False, "pic_uncertain_in_flight_3"
+    assert planner.dispatch_due(db_session, NOW, dispatch) == 0
+    assert first.state == second.state == "uncertain"
+    assert first.error == "pic_uncertain_in_flight_3" and first.next_retry_at is None and first.attempts == 0
+    assert "uncertain" in caplog.text
+    dispatch.send_pic_messages.return_value = True, "sent"
+    assert planner.dispatch_due(db_session, NOW + timedelta(days=1), dispatch) == 0
+    assert dispatch.send_pic_messages.call_count == 1
+
+
+def test_dispatch_album_preserves_media_order(db_session, dispatch):
+    seed(db_session, groups=1)
+    current = item(db_session)
+    current.media_kind = "album"
+    current.media = [f"https://example.org/{i}.jpg" for i in range(3)]
+    task(db_session, current)
+    assert planner.dispatch_due(db_session, NOW, dispatch) == 1
+    assert [message["media_url"] for message in dispatch.send_pic_messages.call_args.args[1]
+            if message["kind"] == "media"] == current.media
+    assert dispatch.send_pic_messages.call_args.kwargs == {"bundle_id": f"pic-{current.id}-1"}
+
+
+def test_retry_claim_is_quarantined_if_worker_abandons_it(db_session, dispatch):
+    seed(db_session, groups=1)
+    entry = task(db_session, item(db_session), attempts=1, pic_message_ref="pic-1-1",
+                 next_retry_at=NOW, updated_at=NOW - timedelta(hours=1))
+    def send(*args, **kwargs):
+        db_session.expire_all()
+        assert entry.next_retry_at is None
+        assert planner.dispatch_due(db_session, NOW + timedelta(minutes=31), dispatch) == 0
+        assert entry.state == "uncertain"
+        raise KeyboardInterrupt
+    dispatch.send_pic_messages.side_effect = send
+    with pytest.raises(KeyboardInterrupt):
+        planner.dispatch_due(db_session, NOW, dispatch)
 
 
 def test_bundles_separate_destinations_and_items(db_session, dispatch):
@@ -309,7 +353,7 @@ def test_bundle_claim_is_committed_before_send(db_session, dispatch):
     seed(db_session, groups=1)
     entry = task(db_session, item(db_session))
 
-    def send(*args):
+    def send(*args, **kwargs):
         db_session.expire_all()
         assert entry.state == "planned"
         assert entry.pic_message_ref == f"pic-{entry.item_id}-1"
@@ -344,7 +388,7 @@ def test_retry_backoff_and_terminal_failure(db_session, dispatch):
         for entry in entries:
             assert entry.attempts == attempt
             assert entry.next_retry_at == now + timedelta(minutes=delay)
-            assert entry.pic_message_ref is None
+            assert entry.pic_message_ref == f"pic-{current.id}-1"
             assert entry.state == ("failed" if attempt == 4 else "planned")
         assert dispatch.send_pic_messages.call_args.args[1][0]["text"] == ONBOARDING_TEXT
         assert planner.dispatch_due(db_session, now + timedelta(minutes=delay - 1), dispatch) == 0

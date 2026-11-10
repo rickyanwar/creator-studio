@@ -2335,3 +2335,32 @@ def test_per_assignment_root_verification_neutral_phone_multi_account(client, db
     assert leased_dev is not None
     assert leased_dev.id == dev.id
     assert lease_err is None
+
+
+def test_device_dry_run_finally_keeps_a_lease_taken_over_by_another_task(client, db_session):
+    """The dry-run `finally` deletes only its own lease (by acquired_at), never a Group Share lease that took over."""
+    from datetime import timedelta
+    dev = PhoneDevice(
+        name="Takeover Device",
+        adb_serial="serial_takeover_1",
+        expected_profile_actor_id="actor_takeover_1",
+        status="available",
+    )
+    db_session.add(dev)
+    db_session.commit()
+    later = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=6)
+
+    def runner_while_lease_taken_over(**kwargs):
+        # The 5-min calibration lease expired mid-run and a group post (delivery_id NULL) leased the phone.
+        lease = db_session.query(DeviceLease).filter_by(device_id=dev.id).one()
+        lease.acquired_at = later
+        lease.expires_at = later + timedelta(minutes=30)
+        db_session.commit()
+        return {"success": False, "status": "portal_unready", "detail": "Connection refused"}
+
+    with mock.patch("app.api.social_media.PhoneRunnerClient.dry_run", side_effect=runner_while_lease_taken_over):
+        assert client.post(f"/social-media/devices/{dev.id}/dry-run", json={}).status_code == 400
+
+    db_session.expire_all()
+    remaining = db_session.query(DeviceLease).filter_by(device_id=dev.id).one()
+    assert remaining.acquired_at == later
