@@ -895,6 +895,7 @@ def run_device_dry_run(
             db.query(DeviceLease).filter(
                 DeviceLease.device_id == device.id,
                 DeviceLease.delivery_id.is_(None),
+                DeviceLease.acquired_at == now,
             ).delete(synchronize_session=False)
             db.commit()
 

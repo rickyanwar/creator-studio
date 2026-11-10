@@ -416,6 +416,10 @@ Implemented in `phone_runner/publish.py`, `phone_runner/identity_proof.py`, `pho
 
 Implemented across `phone_runner/publish.py`, `phone_runner/modern_composer.py`, `phone_runner/identity_proof.py`, `phone_runner/media_staging.py`, `phone_runner/vision_verify.py`, and `phone_runner/humanize.py`.
 
+### Group posting — Refreshed 2026-11-10 (stage 2)
+
+Group Share uses separate `FbShareTask` records and `services/fb_share/phone_dispatch.py`, with `publish_group_task` / `calibrate_delivery` on the `delivery` queue and the same exclusive `DeviceLease` as Page phone deliveries. Runner `POST /group-publish` and `POST /group-calibrate` use a version-gated group draft flow; `/probe` exposes `fb_version` / `fb_version_code`. Calibration is per phone/account and must be repeated after app-version changes; uncertain tasks are never retried, and publishing claims older than 45 min become uncertain. The runner's group UI steps are still unimplemented seams, so this wiring does not establish working end-to-end group posting. See [Group Share §5](group-share.md#5-pic-transport-replies-and-phone-posting) and [phone group posting runbook](../runbooks/phone-group-posting.md). Never submit a group post while testing; no waiting period after joining is required.
+
 ### 11.1 Identity & Navigation Protocol
 - **Profile Name Identity (`own_profile_name_v1`)**:
    - Facebook Profile destinations require exact profile name, a clickable owner edit control AND `Dashboard`, plus matching proof-composer author (`identity_proof.find_own_profile_name_identity`). `Dashboard` alone is insufficient; `Messages` is not owner proof.

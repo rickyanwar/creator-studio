@@ -1407,8 +1407,23 @@ export interface GroupShareDeliveryIn {
   max_per_day: number | null;
   is_active: boolean;
 }
+export interface GroupShareCalibration {
+  fb_version?: string;
+  fb_version_code?: string;
+  android?: string;
+  screen?: string;
+  steps?: { name: string; ok: boolean; detail: string }[];
+  calibrated_by?: "rehearsal";
+  group_url?: string;
+  detail?: string;
+  ok?: boolean;
+  checked_at?: string;
+  requested_at?: string;
+  paused_reason?: string;
+  last_attempt?: { ok: boolean; detail: string; checked_at: string };
+}
 export interface GroupShareDelivery extends GroupShareDeliveryIn {
-  calibration: Record<string, { ok: boolean; at: string; note: string }> | null;
+  calibration: GroupShareCalibration | null;
   calibrated_at: string | null;
   paused_until: string | null;
   block_count: number;

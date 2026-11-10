@@ -622,6 +622,8 @@ export const listGroupShareAccounts = (id: number) =>
   api.get<import("./types").GroupShareAccount[]>(`/fanpages/${id}/group-share/accounts`).then((r) => r.data);
 export const updateGroupShareAccount = (id: number, destinationId: number, data: import("./types").GroupShareDeliveryIn) =>
   api.put<import("./types").GroupShareAccount>(`/fanpages/${id}/group-share/accounts/${destinationId}`, data).then((r) => r.data);
+export const calibrateGroupShareAccount = (id: number, destinationId: number) =>
+  api.post(`/fanpages/${id}/group-share/accounts/${destinationId}/calibrate`).then((r) => r.data);
 export const listGroupShareMemberships = (id: number) =>
   api.get<import("./types").GroupShareMembership[]>(`/fanpages/${id}/group-share/memberships`).then((r) => r.data);
 export const updateGroupShareMemberships = (id: number, items: import("./types").GroupShareMembershipIn[]) =>

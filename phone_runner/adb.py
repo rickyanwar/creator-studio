@@ -89,6 +89,25 @@ def query_package_info(serial: str, package_name: str) -> AdbResult:
     return run_adb(["shell", "dumpsys", "package", package_name], serial=serial)
 
 
+def fb_app_version(serial: str) -> tuple[str, str]:
+    result = query_package_info(serial, "com.facebook.katana")
+    if result.returncode != 0:
+        return "", ""
+    name = re.search(r"\bversionName=([^\s]+)", result.stdout)
+    code = re.search(r"\bversionCode=(\d+)\b", result.stdout)
+    return (name.group(1) if name else "", code.group(1) if code else "")
+
+
+def device_info(serial: str) -> dict[str, str]:
+    android = run_adb(["shell", "getprop", "ro.build.version.release"], serial=serial)
+    screen = query_screen_size(serial)
+    sizes = re.findall(r"(?:Physical|Override) size:\s*(\d+x\d+)", screen.stdout)
+    return {
+        "android": android.stdout.strip() if android.returncode == 0 else "",
+        "screen": sizes[-1] if screen.returncode == 0 and sizes else "",
+    }
+
+
 def ping_portal(serial: str) -> AdbResult:
     return run_adb(
         ["shell", "content", "query", "--uri", "content://com.mobilerun.portal/ping"],

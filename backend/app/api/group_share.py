@@ -38,13 +38,43 @@ def _destination(db, fanpage_id, destination_id):
     return destination
 
 
+CALIBRATION_PENDING_MINUTES = 20
+
+
+def _text(value):
+    return value if isinstance(value, str) and value else None
+
+
+def _delivery_out(delivery):
+    out = DeliveryOut.model_validate(delivery)
+    calibration = delivery.calibration if isinstance(delivery.calibration, dict) else {}
+    last = calibration.get("last_attempt") if isinstance(calibration.get("last_attempt"), dict) else {}
+    requested = _text(calibration.get("requested_at"))
+    pending = False
+    if requested:
+        try:
+            age = datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(requested)
+            pending = age < timedelta(minutes=CALIBRATION_PENDING_MINUTES)
+        except ValueError:
+            pending = False
+    ok = last.get("ok") if "ok" in last else calibration.get("ok")
+    return out.model_copy(update={
+        "calibration_fb_version": _text(calibration.get("fb_version")),
+        "calibration_ok": ok if isinstance(ok, bool) else None,
+        "calibration_detail": _text(last.get("detail")) or _text(calibration.get("detail")),
+        "calibration_checked_at": _text(last.get("checked_at")) or _text(calibration.get("checked_at")),
+        "calibration_pending": pending,
+        "paused_reason": _text(calibration.get("paused_reason")),
+    })
+
+
 def _account(db, destination, delivery):
     parent = db.get(SocialDestination, destination.parent_profile_id) if destination.parent_profile_id else None
     return {
         "destination_id": destination.id, "name": destination.name, "kind": destination.kind,
         "parent_profile_id": destination.parent_profile_id,
         "parent_profile_name": parent.name if parent else None,
-        "delivery": DeliveryOut.model_validate(delivery) if delivery else None,
+        "delivery": _delivery_out(delivery) if delivery else None,
     }
 
 
@@ -106,6 +136,8 @@ def put_delivery(fanpage_id: int, destination_id: int, body: DeliveryIn, db: DB,
     destination = _destination(db, fanpage_id, destination_id)
     delivery = db.query(FbShareDelivery).filter_by(destination_id=destination_id).first()
     if delivery is not None and (delivery.mode != body.mode or delivery.phone_device_id != body.phone_device_id):
+        if _delivery_out(delivery).calibration_pending:
+            raise HTTPException(409, "A calibration is running on the current phone; wait for it before changing phone or mode")
         delivery.calibration = None
         delivery.calibrated_at = None
     if body.mode == "phone_auto" and body.is_active and (delivery is None or delivery.calibrated_at is None):
@@ -118,6 +150,32 @@ def put_delivery(fanpage_id: int, destination_id: int, body: DeliveryIn, db: DB,
     for key, value in body.model_dump().items():
         setattr(delivery, key, value)
     db.commit()
+    db.refresh(delivery)
+    return _account(db, destination, delivery)
+
+
+@router.post("/{fanpage_id}/group-share/accounts/{destination_id}/calibrate", status_code=202, response_model=AccountOut)
+def calibrate_account(fanpage_id: int, destination_id: int, db: DB, _: CurrentUser):
+    """Queue a calibration rehearsal on the account's phone (never posts); the result lands in `calibration`."""
+    _brand(db, fanpage_id)
+    destination = _destination(db, fanpage_id, destination_id)
+    delivery = db.query(FbShareDelivery).filter_by(destination_id=destination_id).first()
+    if delivery is None or delivery.mode != "phone_auto" or delivery.phone_device_id is None:
+        raise HTTPException(422, "Choose phone posting and a phone, and save, before calibrating")
+    if _delivery_out(delivery).calibration_pending:
+        raise HTTPException(409, "Calibration is already running")
+    from app.tasks.fb_share import calibrate_delivery
+
+    previous = delivery.calibration
+    now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    delivery.calibration = {**(previous or {}), "requested_at": now.isoformat()}
+    db.commit()
+    try:
+        calibrate_delivery.delay(destination_id)
+    except Exception:
+        delivery.calibration = previous
+        db.commit()
+        raise HTTPException(503, "Could not queue the calibration; try again")
     db.refresh(delivery)
     return _account(db, destination, delivery)
 

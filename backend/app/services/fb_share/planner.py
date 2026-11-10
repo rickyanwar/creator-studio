@@ -5,6 +5,7 @@ import os
 import random
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,7 +17,8 @@ from app.models.fb_group_share import (
     FbGroup, FbGroupMembership, FbShareBrandSettings, FbShareDelivery, FbShareItem, FbShareTask,
 )
 from app.models.social_publishing import SocialDestination
-from . import caps
+from app.services.phone_runner_client import PIC_UNCERTAIN_PREFIX
+from . import caps, phone_dispatch
 from .brand_settings import get_brand_share
 from .pic_messages import ONBOARDING_TEXT, build_task_messages
 from .routing import select_groups
@@ -48,7 +50,8 @@ def _task_window(slot, delivery, zone):
     return _utc(window)
 
 
-def plan_brand(db, fanpage, now: datetime, rng: random.Random) -> int:
+def plan_brand(db, fanpage, now: datetime, rng: random.Random, *,
+               on_item_routed: Callable[[int], None] | None = None) -> int:
     enabled, settings = get_brand_share(db, fanpage.id)
     if not enabled:
         return 0
@@ -75,6 +78,7 @@ def plan_brand(db, fanpage, now: datetime, rng: random.Random) -> int:
         last_slots[task.destination_id] = max(last_slots.get(task.destination_id, task.scheduled_for), task.scheduled_for)
     groups = [GroupInfo(**{key: getattr(group, key) for key in GroupInfo.__dataclass_fields__})
               for group in db.query(FbGroup).filter(FbGroup.is_active.is_(True)).all()]
+    routed_item_ids = []
     joined = {destination.id: {row.group_id for row in db.query(FbGroupMembership).filter_by(
         destination_id=destination.id, status="joined",
     )} for _, destination in accounts}
@@ -128,8 +132,19 @@ def plan_brand(db, fanpage, now: datetime, rng: random.Random) -> int:
                 history.append(SentRecord(group.id, item.phash, item.source_ref, slot))
                 created += 1
             item.status = "routed"
+            routed_item_ids.append(item.id)
             break
     db.commit()
+    # Per-group captions run in their own task after the commit: they never delay planning or dispatch,
+    # and tasks keep the base caption until a variant is written.
+    for item_id in routed_item_ids:
+        if on_item_routed is None:
+            break
+        try:
+            on_item_routed(item_id)
+        except Exception:
+            logger.warning("Group share: queueing captions failed for item %s; tasks keep the base caption",
+                           item_id, exc_info=True)
     return created
 
 
@@ -146,7 +161,7 @@ def _public_media_url(path):
     return f"{settings.storage_base_url.rstrip('/')}/{relative}"
 
 
-def dispatch_due(db, now, client) -> int:
+def dispatch_due(db, now, client, *, enqueue_phone: Callable[[int], None] | None = None) -> int:
     global _disabled_logged
     if os.environ.get("FB_SHARE_DISPATCH_ENABLED") != "1":
         if not _disabled_logged:
@@ -156,6 +171,7 @@ def dispatch_due(db, now, client) -> int:
     now = _utc(now)
     stale_claims = db.query(FbShareTask).filter(
         FbShareTask.state == "planned", FbShareTask.pic_message_ref.isnot(None),
+        FbShareTask.next_retry_at.is_(None),
         FbShareTask.updated_at < now - timedelta(minutes=30),
     ).all()
     for task in stale_claims:
@@ -181,7 +197,7 @@ def dispatch_due(db, now, client) -> int:
         FbShareDelivery.is_active.is_(True),
         or_(FbShareDelivery.paused_until.is_(None), FbShareDelivery.paused_until < now),
         FbShareTask.state == "planned",
-        FbShareTask.pic_message_ref.is_(None),
+        or_(FbShareTask.pic_message_ref.is_(None), FbShareTask.next_retry_at.isnot(None)),
         FbShareTask.delivery_mode.in_(("pic_whatsapp", "pic_telegram")),
     ).order_by(FbShareTask.id).all()
     bundles = defaultdict(list)
@@ -204,12 +220,13 @@ def dispatch_due(db, now, client) -> int:
         already_sent = db.query(FbShareTask.id).filter(
             FbShareTask.item_id == item_id, FbShareTask.destination_id == destination_id,
             FbShareTask.pic_message_ref.isnot(None),
+            or_(FbShareTask.state != "planned", FbShareTask.next_retry_at.is_(None)),
         ).first()
         if already_sent:
             continue
         try:
             messages = build_task_messages(
-                page_name=destination.name, media_path=item.media[0], caption=item.caption or "",
+                page_name=destination.name, media_path=item.media, caption=item.caption or "",
                 hashtags=item.hashtags or "", group_urls=[row[2].url for row in bundle],
             )
             payload = [{"kind": "text", "text": message.text} if message.kind == "text" else
@@ -229,19 +246,27 @@ def dispatch_due(db, now, client) -> int:
                 raise ValueError("PIC contact is required")
             for task, *_ in bundle:
                 task.pic_message_ref = f"pic-{item_id}-{destination_id}"
+                task.next_retry_at = None
                 task.updated_at = now
             db.commit()
-            ok, detail = client.send_pic_messages(f"{channel}:{contact}", payload)
+            ok, detail = client.send_pic_messages(f"{channel}:{contact}", payload, bundle_id=f"pic-{item_id}-{destination_id}")
         except Exception as exc:
             ok, detail = False, type(exc).__name__
+        uncertain = not ok and detail.startswith(PIC_UNCERTAIN_PREFIX)
+        if uncertain:
+            logger.warning("Group share PIC bundle pic-%s-%s has an uncertain result (%s); never retried",
+                           item_id, destination_id, detail)
         for task, *_ in bundle:
             if ok:
                 task.state = "sent_to_pic"
                 task.pic_message_ref = f"pic-{item_id}-{destination_id}"
                 task.error = None
                 task.next_retry_at = None
+            elif uncertain:
+                task.state = "uncertain"
+                task.error = detail[:500]
+                task.next_retry_at = None
             else:
-                task.pic_message_ref = None
                 task.error = detail[:500]
                 task.attempts += 1
                 task.next_retry_at = now + timedelta(minutes=min(15 * 2 ** (task.attempts - 1), 240))
@@ -250,4 +275,9 @@ def dispatch_due(db, now, client) -> int:
             task.updated_at = now
         db.commit()
         sent += int(ok)
+    try:
+        sent += phone_dispatch.dispatch_phone_due(db, now, client, enqueue=enqueue_phone)
+    except Exception:
+        db.rollback()
+        logger.exception("Group share phone dispatch failed")
     return sent

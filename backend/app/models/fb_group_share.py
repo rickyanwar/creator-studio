@@ -160,3 +160,17 @@ class FbShareTask(Base):
     next_retry_at = Column(DateTime)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class FbShareTaskCaption(Base):
+    """Short caption variant written for one group task; missing row = use the item's base group caption."""
+
+    __tablename__ = "fb_share_task_captions"
+
+    id = Column(Integer, primary_key=True)
+    # No foreign key on purpose: a new table must never lock fb_share_tasks.
+    task_id = Column(Integer, nullable=False, unique=True, index=True)
+    caption = Column(Text, nullable=False)
+    hashtags = Column(JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),
+                      nullable=False, default=list, server_default="[]")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())

@@ -13,13 +13,14 @@ OFF_TOPIC_TEXT = 'This number only records Group Share tasks. Reply like "1 suda
 
 
 def build_task_messages(
-    page_name: str, media_path: str, caption: str, hashtags: str, group_urls: Sequence[str],
+    page_name: str, media_path: str | Sequence[str], caption: str, hashtags: str, group_urls: Sequence[str],
 ) -> list[PicMessage]:
-    if not group_urls or not page_name.strip() or not media_path.strip() or not (caption.strip() or hashtags.strip()):
+    media = [media_path] if isinstance(media_path, str) else list(media_path)[:10]
+    if not group_urls or not page_name.strip() or not media or any(not path.strip() for path in media) or not (caption.strip() or hashtags.strip()):
         raise ValueError("A task requires a page, media, caption or hashtags, and group links")
     return [
         PicMessage("text", page_name),
-        PicMessage("media", media_path=media_path),
+        *(PicMessage("media", media_path=path) for path in media),
         PicMessage("text", caption.strip() + ("\n\n" + hashtags.strip() if hashtags.strip() else "")),
         PicMessage("text", "\n".join(f"{i}. {url}" for i, url in enumerate(group_urls, 1))),
     ]

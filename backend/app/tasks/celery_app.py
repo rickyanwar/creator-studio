@@ -94,6 +94,9 @@ celery_app.conf.update(
         "app.tasks.social_delivery.dispatch_social_deliveries": {"queue": "delivery"},
         "app.tasks.social_delivery.follow_up_phone_posts": {"queue": "delivery"},
         "app.tasks.phone_watchdog.check_phone_devices": {"queue": "delivery"},
+        # Group Share phone posts / calibration rehearsals drive the phone too (exact names beat the fb_share.* glob).
+        "app.tasks.fb_share.publish_group_task": {"queue": "delivery"},
+        "app.tasks.fb_share.calibrate_delivery": {"queue": "delivery"},
         # Always an AI redesign; explicit apply_async(queue="visual") everywhere, this is the safety net.
         "app.tasks.ig_recreate.run_preview_redesign": {"queue": "visual"},
         # 9Router-heavy: a slow 9Router made these run 20-58 min and starve the 2-slot default

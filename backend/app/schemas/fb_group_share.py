@@ -198,6 +198,13 @@ class DeliveryOut(Contract):
     paused_until: datetime | None
     block_count: int
     is_active: bool
+    # Derived from `calibration` by api/group_share.py:_account (phone calibration status for the UI).
+    calibration_fb_version: str | None = None
+    calibration_ok: bool | None = None
+    calibration_detail: str | None = None
+    calibration_checked_at: str | None = None
+    calibration_pending: bool = False
+    paused_reason: str | None = None
 
 
 class AccountOut(Contract):

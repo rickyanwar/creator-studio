@@ -111,7 +111,7 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        if self.path not in ("/probe", "/dry-run", "/publish", "/rehearse", "/recover", "/notify", "/resolve-post", "/pic-send"):
+        if self.path not in ("/probe", "/dry-run", "/publish", "/rehearse", "/recover", "/notify", "/resolve-post", "/pic-send", "/group-publish", "/group-calibrate"):
             self.send_json(404, {"error": "not_found"})
             return
 
@@ -127,12 +127,17 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
             from phone_runner.pic_send import send_pic_messages, validate_request
 
             target, messages = body.get("target"), body.get("messages")
-            error = validate_request(target, messages)
+            bundle_id = body.get("bundle_id")
+            error = validate_request(target, messages, bundle_id)
             if error:
                 self.send_json(400, {"error": error})
                 return
-            sent, detail = send_pic_messages(target, messages)
-            self.send_json(200, {"sent": sent, "detail": detail})
+            if bundle_id is None:
+                sent, detail = send_pic_messages(target, messages)
+                result = {"sent": sent, "detail": detail}
+            else:
+                result = send_pic_messages(target, messages, bundle_id=bundle_id)
+            self.send_json(200, result)
             return
 
         if self.path == "/notify":
@@ -166,8 +171,13 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/probe":
+            from phone_runner.adb import fb_app_version
+
             wake = bool(body.get("wake", False))
             res = probe_device(serial, wake=wake)
+            # probe_device always sets adb_connected; skip the extra adb call (up to its timeout) on an offline phone.
+            connected = res.get("adb_connected") is not False
+            res["fb_version"], res["fb_version_code"] = fb_app_version(serial) if connected else ("", "")
             self.send_json(200, res)
             return
 
@@ -182,6 +192,19 @@ class PhoneRunnerRequestHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            if self.path in ("/group-publish", "/group-calibrate"):
+                from phone_runner.group_publish import execute_group_calibrate, execute_group_publish, validate_request
+
+                calibrate = self.path == "/group-calibrate"
+                error = validate_request(body, calibrate=calibrate)
+                if error:
+                    self.send_json(400, {"error": error})
+                    return
+                res = execute_group_calibrate(body) if calibrate else execute_group_publish(body)
+                res.pop("_steps", None)
+                self.send_json(200, res)
+                return
+
             if self.path == "/dry-run":
                 main_profile = body.get("main_profile")
                 if not main_profile:

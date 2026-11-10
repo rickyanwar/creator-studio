@@ -9,10 +9,11 @@ import app.services.fb_share.lanes  # noqa: F401,E402
 
 @pytest.fixture(autouse=True)
 def _idempotent_group_schema(monkeypatch):
-    from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareLane
+    from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareLane, FbShareTaskCaption
 
     # Some shared fixtures explicitly create these after the core-table listener.
-    for table in (FbShareGroupJob.__table__, FbShareBrandSettings.__table__, FbShareLane.__table__):
+    for table in (FbShareGroupJob.__table__, FbShareBrandSettings.__table__, FbShareLane.__table__,
+                  FbShareTaskCaption.__table__):
         create = table.create
         monkeypatch.setattr(table, "create", lambda bind, checkfirst=True, _create=create:
                             _create(bind, checkfirst=checkfirst))
@@ -23,11 +24,12 @@ def _create_group_share_tables(table, connection, **kwargs):
     if kwargs.get("_is_metadata_operation"):
         return
     if table.name in {"publish_jobs", "video_jobs", "target_fanpages"}:
-        from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareLane
+        from app.models.fb_group_share import FbShareBrandSettings, FbShareGroupJob, FbShareLane, FbShareTaskCaption
 
         FbShareGroupJob.__table__.create(connection, checkfirst=True)
         FbShareBrandSettings.__table__.create(connection, checkfirst=True)
         FbShareLane.__table__.create(connection, checkfirst=True)
+        FbShareTaskCaption.__table__.create(connection, checkfirst=True)
 
 
 def _after_metadata_create(metadata, connection, **kwargs):

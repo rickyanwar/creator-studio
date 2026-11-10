@@ -92,6 +92,38 @@ class PhoneRunnerDiscoveryError(Exception):
         self.message = message
 
 
+# PIC bundle timing (see send_pic_messages) and the detail prefix for a runner "uncertain" answer:
+# a message may have been delivered, so the bundle must never be retried.
+PIC_RUNNER_BASE_S = 100.0
+PIC_RUNNER_PER_EXTRA_MEDIA_S = 15.0
+PIC_CLIENT_MARGIN_S = 30.0
+PIC_UNCERTAIN_PREFIX = "pic_uncertain"
+
+# Runner /group-publish outcomes (see .notes/CONTRACT-group-publish.md).
+GROUP_OUTCOMES = frozenset({
+    "published", "pending_admin", "rehearsed", "not_member", "blocked", "version_changed",
+    "identity_failed", "uncertain", "failed",
+})
+_VERSION_RE = re.compile(r"^[A-Za-z0-9 ._:()x+-]{1,64}$")
+
+
+def _clean_version(value: Any) -> str:
+    text = str(value).strip() if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
+    return text if _VERSION_RE.match(text) else ""
+
+
+def _group_result(outcome: str, detail: str, *, stage: str = "") -> dict[str, Any]:
+    return {"ok": False, "outcome": outcome, "post_url": None, "fb_version": "",
+            "detail": sanitize_error(detail), "stage": stage}
+
+
+def _calibration_result(*, ok: bool = False, busy: bool = False, detail: str = "", steps: list | None = None,
+                        fb_version: str = "", fb_version_code: str = "", android: str = "",
+                        screen: str = "") -> dict[str, Any]:
+    return {"ok": ok, "busy": busy, "fb_version": fb_version, "fb_version_code": fb_version_code,
+            "android": android, "screen": screen, "steps": steps or [], "detail": sanitize_error(detail, 400)}
+
+
 class PhoneRunnerClient:
     """Client for authenticated communication with phone-runner host service."""
 
@@ -634,7 +666,7 @@ class PhoneRunnerClient:
         except Exception as exc:
             return False, sanitize_error(f"notification_error_{type(exc).__name__}")
 
-    def send_pic_messages(self, target: str, messages: list[dict]) -> tuple[bool, str]:
+    def send_pic_messages(self, target: str, messages: list[dict], *, bundle_id: str | None = None) -> tuple[bool, str]:
         """Send an ordered PIC bundle through the authenticated host runner."""
         if not self.base_url or not self.token:
             return False, "missing_configuration"
@@ -642,12 +674,20 @@ class PhoneRunnerClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.token}",
         }
-        timeout_cfg = httpx.Timeout(timeout=130.0, connect=self.connect_timeout)
+        # The runner bounds a whole request (lock waits + downloads + Hermes calls) by 100 s + 15 s per media
+        # message beyond the first, counted from request entry (phone_runner/pic_send.py bundle_budget_s).
+        # This read timeout stays 30 s above that bound, e.g. 1 photo = 130 s, a 10-photo album = 265 s.
+        media = sum(isinstance(m, dict) and m.get("kind") == "media" for m in messages)
+        runner_bound_s = PIC_RUNNER_BASE_S + PIC_RUNNER_PER_EXTRA_MEDIA_S * max(0, media - 1)
+        timeout_cfg = httpx.Timeout(timeout=runner_bound_s + PIC_CLIENT_MARGIN_S, connect=self.connect_timeout)
+        payload = {"target": target, "messages": messages}
+        if bundle_id is not None:
+            payload["bundle_id"] = bundle_id
         try:
             with httpx.Client(timeout=timeout_cfg) as client:
                 resp = client.post(
                     f"{self.base_url}/pic-send",
-                    json={"target": target, "messages": messages}, headers=headers,
+                    json=payload, headers=headers,
                 )
             if resp.status_code != 200:
                 return False, f"http_{resp.status_code}"
@@ -655,11 +695,104 @@ class PhoneRunnerClient:
                 data = resp.json()
             except Exception:
                 return False, "malformed_response"
+            if isinstance(data, dict) and data.get("uncertain") is True:
+                in_flight = data.get("in_flight")
+                return False, f"{PIC_UNCERTAIN_PREFIX}_in_flight_{in_flight if type(in_flight) is int else 'unknown'}"
+            if isinstance(data, dict) and isinstance(data.get("sent"), list) and type(data.get("ok")) is bool:
+                return data["ok"], sanitize_error(str(data.get("detail") or ""))
             if not isinstance(data, dict) or type(data.get("sent")) is not bool:
                 return False, "malformed_response"
             return data["sent"], sanitize_error(str(data.get("detail") or ""))
         except Exception as exc:
             return False, sanitize_error(f"pic_send_error_{type(exc).__name__}")
+
+    def group_publish(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Post one group task through runner POST /group-publish (contract: .notes/CONTRACT-group-publish.md).
+
+        Always returns {"ok", "outcome", "post_url", "fb_version", "detail", "stage"}. Never raises, never retries.
+        Extra client outcome "busy" (runner 409, the phone is running another operation) means nothing was touched.
+        Anything that may have happened after Post was tapped maps to "uncertain"; a rehearsal can never post, so
+        its transport errors map to "failed".
+        """
+        rehearse = payload.get("rehearse") is True
+        after_send = "failed" if rehearse else "uncertain"
+        if not self.base_url or not self.token:
+            return _group_result("failed", "missing_configuration", stage="client")
+        try:
+            resp = self._post_json("/group-publish", payload, self.publish_timeout)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            return _group_result("failed", f"connect_failed_{type(exc).__name__}", stage="client")
+        except Exception as exc:
+            return _group_result(after_send, f"transport_{type(exc).__name__}", stage="client")
+        if resp.status_code == 409:
+            return _group_result("busy", "device_busy", stage="client")
+        if resp.status_code >= 500:
+            return _group_result(after_send, f"http_{resp.status_code}", stage="client")
+        if resp.status_code != 200:
+            return _group_result("failed", f"http_{resp.status_code}", stage="client")
+        try:
+            data = resp.json()
+        except Exception:
+            data = None
+        if not isinstance(data, dict) or data.get("outcome") not in GROUP_OUTCOMES or type(data.get("ok")) is not bool:
+            return _group_result(after_send, "malformed_response", stage="client")
+        post_url = data.get("post_url")
+        return {
+            "ok": data["ok"],
+            "outcome": data["outcome"],
+            "post_url": post_url[:512] if isinstance(post_url, str) and post_url.startswith("https://") else None,
+            "fb_version": _clean_version(data.get("fb_version")),
+            "detail": sanitize_error(str(data.get("detail") or ""), 400),
+            "stage": sanitize_error(str(data.get("stage") or ""), 64),
+        }
+
+    def group_calibrate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run a calibration rehearsal through runner POST /group-calibrate (never posts).
+
+        Returns {"ok", "busy", "fb_version", "fb_version_code", "android", "screen", "steps", "detail"}; never raises.
+        """
+        if not self.base_url or not self.token:
+            return _calibration_result(detail="missing_configuration")
+        try:
+            resp = self._post_json("/group-calibrate", payload, self.publish_timeout)
+        except Exception as exc:
+            return _calibration_result(detail=f"transport_{type(exc).__name__}")
+        if resp.status_code == 409:
+            return _calibration_result(detail="device_busy", busy=True)
+        if resp.status_code != 200:
+            return _calibration_result(detail=f"http_{resp.status_code}")
+        try:
+            data = resp.json()
+        except Exception:
+            data = None
+        if not isinstance(data, dict) or type(data.get("ok")) is not bool:
+            return _calibration_result(detail="malformed_response")
+        steps = []
+        for step in data.get("steps") if isinstance(data.get("steps"), list) else []:
+            if isinstance(step, dict) and isinstance(step.get("name"), str):
+                steps.append({"name": sanitize_error(step["name"], 64), "ok": step.get("ok") is True,
+                              "detail": sanitize_error(str(step.get("detail") or ""), 200)})
+            if len(steps) >= 30:
+                break
+        return _calibration_result(
+            ok=data["ok"], detail=sanitize_error(str(data.get("detail") or ""), 400), steps=steps,
+            fb_version=_clean_version(data.get("fb_version")),
+            fb_version_code=_clean_version(data.get("fb_version_code")),
+            android=_clean_version(data.get("android")), screen=_clean_version(data.get("screen")),
+        )
+
+    def probe_fb_version(self, device: PhoneDevice) -> tuple[str, str]:
+        """Return (fb_version, fb_version_code) of com.facebook.katana from POST /probe; ("", "") when unknown."""
+        data = self.probe_device(device=device)
+        if not isinstance(data, dict) or data.get("success") is False:
+            return "", ""
+        return _clean_version(data.get("fb_version")), _clean_version(data.get("fb_version_code"))
+
+    def _post_json(self, path: str, payload: dict[str, Any], timeout: float) -> httpx.Response:
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"}
+        timeout_cfg = httpx.Timeout(timeout=timeout, connect=self.connect_timeout)
+        with httpx.Client(timeout=timeout_cfg) as client:
+            return client.post(f"{self.base_url}{path}", json=payload, headers=headers)
 
     def discover_devices(
         self,

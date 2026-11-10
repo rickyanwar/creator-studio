@@ -66,6 +66,7 @@ def test_failing_brand_does_not_stop_next(monkeypatch):
     assert feeder.collect_published_items.call_count == 2
     assert classify.classify_pending_items.call_args.args == (db, brands[1])
     assert plan.call_args.args[:2] == (db, brands[1])
+    assert plan.call_args.kwargs == {"on_item_routed": fb_share._queue_captions}
     assert dispatch.call_args.args[2] is client
     db.rollback.assert_called_once()
     db.close.assert_called_once()
@@ -110,3 +111,27 @@ def test_lock_release_on_failure_preserves_other_owner(monkeypatch, redis_lock, 
     with pytest.raises(RuntimeError):
         fb_share.fb_share_tick.run()
     assert redis_lock.token == ("other-owner" if replace_token else None)
+
+
+def test_caption_task_registration_and_queue():
+    from app.services.fb_share.group_captions import CAPTION_DEADLINE_S
+
+    task = celery_app.tasks["app.tasks.fb_share.enrich_task_captions"]
+    assert task.name == fb_share.enrich_task_captions.name
+    assert task.soft_time_limit == CAPTION_DEADLINE_S + 60 and task.time_limit == CAPTION_DEADLINE_S + 90
+    route = celery_app.amqp.router.route({}, "app.tasks.fb_share.enrich_task_captions", args=(1,))
+    assert route["queue"].name == "ai"
+
+
+def test_tick_queues_captions_and_task_enriches(monkeypatch):
+    delay = Mock()
+    monkeypatch.setattr(fb_share.enrich_task_captions, "delay", delay)
+    fb_share._queue_captions(7)
+    delay.assert_called_once_with(7)
+    db = Mock()
+    monkeypatch.setattr(fb_share, "SessionLocal", lambda: db)
+    enrich = Mock(return_value=2)
+    monkeypatch.setattr(fb_share, "enrich_item_captions", enrich)
+    fb_share.enrich_task_captions.run(7)
+    enrich.assert_called_once_with(db, 7)
+    db.close.assert_called_once()

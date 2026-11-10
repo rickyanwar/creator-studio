@@ -47,12 +47,15 @@ def _quotes_verbatim(caption: str, source: str) -> bool:
     return all(_squash("".join(groups)) in quotes for groups in QUOTED_RE.findall(caption))
 
 
-def _apply_group_caption(item, caption, hashtags) -> None:
-    """Validate the whole result before replacing any item fields."""
+def validate_group_caption(caption, hashtags, source: str) -> tuple[str, list[str]]:
+    """Return the cleaned short group caption and 2–3 hashtags, or raise ValueError.
+
+    Shared by classification and per-group caption variants: quotes must appear word for word in `source`.
+    """
     caption = caption.strip() if isinstance(caption, str) else ""
     if not caption or len(caption) > GROUP_CAPTION_MAX_CHARS or "#" in caption:
         raise ValueError("empty, overlong, or inline-hashtag group caption")
-    if not _quotes_verbatim(caption, item.caption or ""):
+    if not _quotes_verbatim(caption, source):
         raise ValueError("group caption quote is not verbatim")
     tags = []
     for tag in hashtags if isinstance(hashtags, list) else []:
@@ -61,6 +64,12 @@ def _apply_group_caption(item, caption, hashtags) -> None:
             tags.append(tag)
     if not 2 <= len(tags) <= GROUP_HASHTAG_MAX:
         raise ValueError("group caption requires 2–3 valid hashtags")
+    return caption, tags
+
+
+def _apply_group_caption(item, caption, hashtags) -> None:
+    """Validate the whole result before replacing any item fields."""
+    caption, tags = validate_group_caption(caption, hashtags, item.caption or "")
     item.caption = caption
     item.hashtags = " ".join(tags)
 
