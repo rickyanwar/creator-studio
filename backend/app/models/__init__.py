@@ -52,10 +52,10 @@ from app.models.social_publishing import (
 from app.models.log_handled import LogHandled
 from app.models.auth_events import AuthEvent
 from app.models.vision_check_cache import VisionCheckCache
-from app.models.fb_group_share import FbGroup, FbShareBrandSettings, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask, FbShareGroupJob
+from app.models.fb_group_share import FbGroup, FbShareBrandSettings, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask, FbShareGroupJob, FbShareLane
 
 __all__ = [
-    "FbShareGroupJob",
+    "FbShareGroupJob", "FbShareLane",
     "FbGroup", "FbShareBrandSettings", "FbShareDelivery", "FbGroupMembership", "FbShareItem", "FbShareTask",
     "User",
     "ReplizCredentials",

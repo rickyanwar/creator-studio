@@ -6,6 +6,7 @@ from sqlalchemy import func, null
 from app.api.deps import CurrentUser, DB
 from app.models.social_publishing import SocialDestination
 from app.models.target_fanpages import TargetFanpage
+from app.services.fb_share.lanes import lane_fanpage_ids
 from app.schemas.social_media import ContentProjectCreate, ContentProjectOut
 
 router = APIRouter(prefix="/content-projects", tags=["content-projects"])
@@ -17,6 +18,7 @@ def list_content_projects(db: DB, _: CurrentUser):
     results = (
         db.query(TargetFanpage, func.count(SocialDestination.id).label("dest_count"))
         .outerjoin(SocialDestination, SocialDestination.content_project_id == TargetFanpage.id)
+        .filter(TargetFanpage.id.notin_(lane_fanpage_ids()))
         .group_by(TargetFanpage.id)
         .order_by(TargetFanpage.name)
         .all()

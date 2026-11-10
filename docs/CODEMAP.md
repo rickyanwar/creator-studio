@@ -13,7 +13,7 @@ File/function names are entry points to read first, not a complete list. When th
 | Card rendering + AI recreate | [codemap/rendering-and-recreate.md](codemap/rendering-and-recreate.md) | `design_renderer`, `ig_recreate`, `redesign_pipeline`, `visual_engine`, `speaker_design`, `renderer/` payload; §5c IG/FB original-photo edits + fallback |
 | Publishing + delivery | [codemap/publishing.md](codemap/publishing.md) | ledger/status closure, slots/event news/quotas, phone identity, read-only follow-ups, watchdogs and reconciliation |
 | Mode 8 AI video | [codemap/mode8-ai-video.md](codemap/mode8-ai-video.md) | ideas/stock/credits, prompt polish, Flow recovery/keepalive, per-clip QC/history, covers, TTS/ASMR |
-| Facebook Group Share | [codemap/group-share.md](codemap/group-share.md) | catalog, brand/account settings, routing/caps, groups-only production, PIC transport/replies, setup gaps |
+| Facebook Group Share | [codemap/group-share.md](codemap/group-share.md) | catalog, brand/account settings, group lanes, routing/caps, edit once image reuse, PIC transport/replies, setup gaps |
 | Content sources + AI copy | [codemap/content-sources.md](codemap/content-sources.md) | Modes 1, 2, 4–7 sourcing, queues, prompts, model fallbacks, gallery; §6.3 FB per-source formats, provenance + retained-photo cleanup |
 | Frontend | [codemap/frontend.md](codemap/frontend.md) | current navigation/redirects, brand tabs/source cards, Group Share, video polish/QC/narration, Activity plan |
 | Tests + dev workflow | [codemap/tests-and-devflow.md](codemap/tests-and-devflow.md) | source-counted test inventory, SQLite/Postgres fixtures, new worker coverage, import checks and GHCR deploy |

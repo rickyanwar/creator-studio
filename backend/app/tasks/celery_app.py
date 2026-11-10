@@ -413,3 +413,7 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 590},
     },
 }
+
+# Group Share lanes: register the after_flush listener that marks every job created for a
+# lane fanpage as a group job, in every worker and beat process.
+import app.services.fb_share.lanes  # noqa: E402,F401

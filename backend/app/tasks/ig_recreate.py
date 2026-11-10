@@ -152,8 +152,10 @@ def _recreate_niche(ig_source, fanpage) -> str:
 
 
 @celery_app.task(name="app.tasks.ig_recreate.recreate_post_for_fanpage", bind=True, max_retries=3)
-def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decision_id: int | None = None, group_only: bool = False):
+def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decision_id: int | None = None):
     db = SessionLocal()
+    from app.services.fb_share.group_jobs import reserve_lane_slot, release_lane_slot
+    lane_slot = None
     try:
         from app.models.posts import Post
         from app.models.target_fanpages import TargetFanpage
@@ -175,6 +177,13 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
         # Idempotency: one job per (post, fanpage)
         if db.query(PublishJob).filter_by(post_id=post_id, fanpage_id=fanpage_id).first():
             return
+        # Reserve before classification, title rewriting, or caption generation.
+        if decision is None:
+            from datetime import datetime, timezone
+            lane_slot = reserve_lane_slot(db, fanpage_id, "ig", datetime.now(timezone.utc))
+            if lane_slot is None:
+                logger.info("IG-recreate: post %d skipped for group lane %d — daily IG cap reached", post_id, fanpage_id)
+                return
 
         post = db.query(Post).filter_by(id=post_id).first()
         fanpage = db.query(TargetFanpage).filter_by(id=fanpage_id).first()
@@ -367,17 +376,6 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
                 job.design_subtitle = attr
         db.add(job)
         db.flush()
-        if group_only:
-            from datetime import datetime, timezone
-            from app.services.fb_share.group_jobs import mark_group_job, remaining_groups_only_today
-            if remaining_groups_only_today(db, fanpage_id, "viral_radar", datetime.now(timezone.utc)) <= 0:
-                db.rollback()
-                if decision:
-                    decision.status = DecisionStatus.SKIPPED_DAILY_MAX
-                    decision.reason = "daily cap reached; group quota exhausted"
-                    db.commit()
-                return
-            mark_group_job(db, fanpage_id=fanpage_id, mode="viral_radar", publish_job_id=job.id)
         
         if decision:
             decision.status = DecisionStatus.CREATED
@@ -385,6 +383,9 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
             decision.caption_text = caption
 
         db.commit()
+        # The job's group-job marker counts from now on; drop the reservation right away.
+        release_lane_slot(lane_slot)
+        lane_slot = None
         logger.info("IG-recreate: post %d fp %d → %s job %d", post_id, fanpage_id, ctype, job.id)
         if effective_engine in ('chatgpt', 'auto', 'gflow'):
             render_ig_recreate.apply_async((job.id,), queue='visual')
@@ -399,6 +400,7 @@ def recreate_post_for_fanpage(self, post_id: int, fanpage_id: int, radar_decisio
         logger.error("IG-recreate error post %d fp %d: %s", post_id, fanpage_id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=120)
     finally:
+        release_lane_slot(lane_slot)
         db.close()
 
 
@@ -468,35 +470,6 @@ def run_preview_redesign(self, decision_id: int):
     finally:
         db.close()
 
-def _publish_ig_overflow(db, fanpage_id: int) -> None:
-    """IG has no capacity-expiry path: rescue undelivered ready jobs after 24 h."""
-    from datetime import datetime, timedelta, timezone
-    from app.models.publish_jobs import ContentType, PublishJob, PublishJobStatus
-    from app.models.social_publishing import PublishDelivery
-    from app.services.fb_share.group_jobs import (
-        group_publish_job_ids, mark_group_job, remaining_groups_only_today,
-    )
-    from app.tasks.publisher import publish_job
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    if remaining_groups_only_today(db, fanpage_id, "ig", now) <= 0:
-        return
-    jobs = db.query(PublishJob).filter(
-        PublishJob.fanpage_id == fanpage_id,
-        PublishJob.content_type.in_((ContentType.ig_repost, ContentType.ig_recreate)),
-        PublishJob.status == PublishJobStatus.pending_publish,
-        PublishJob.created_at < now - timedelta(hours=24),
-        PublishJob.id.notin_(group_publish_job_ids()),
-        ~db.query(PublishDelivery.id).filter(PublishDelivery.publish_job_id == PublishJob.id).exists(),
-    ).order_by(PublishJob.created_at, PublishJob.id).all()
-    for job in jobs:
-        if remaining_groups_only_today(db, fanpage_id, "ig", now) <= 0:
-            break
-        mark_group_job(db, fanpage_id=fanpage_id, mode="ig", publish_job_id=job.id)
-        db.commit()
-        publish_job.delay(job.id)
-
-
 def _try_ig_edit(db, job, post, fanpage) -> bool:
     """Owner prompt on this IG source + ChatGPT engine: edit the original photo, post it as is (no template, no title).
     Returns True when the edit path handled the job. Uses one_or_none() (pair is unique) so the template path's query order is unchanged."""
@@ -527,22 +500,44 @@ def _render_ig_edit(db, job, post, fanpage, link):
         return
     photo = post.image_local_paths[0]
     analysis = job.design_analysis_json or {}
-    try:
-        res = edit_ig_photo(
-            db, photo_path=photo, owner_prompt=link.chatgpt_edit_prompt,
-            fanpage_id=fanpage.id,
-            subject=analysis.get("main_subject") or analysis.get("speaker"),
-            qa_enabled=qa_enabled(fanpage, "ig"),
-        )
-    except VisualEngineDeferred as exc:
-        from app.tasks.design_renderer import _defer_job
-        _defer_job(db, job, exc)
-        return
+    from app.services import ai_image_reuse
+    qa_on = qa_enabled(fanpage, "ig")
+    reuse_key = dict(
+        source_key=ai_image_reuse.ig_source_key(post), format_key="ig_edit",
+        prompt_text=link.chatgpt_edit_prompt,
+    )
+    # Edit once: a sibling (brand / lane / same profile) already edited this photo the same way.
+    reusable = ai_image_reuse.find_reusable(db, job, qa_required=qa_on, **reuse_key)
+    res = None
+    if reusable:
+        try:
+            res = {"ok": True, "image_path": ai_image_reuse.copy_reused(reusable.path, job),
+                   "engine": reusable.record.get("engine"), "reason": ""}
+        except OSError as exc:
+            logger.warning("IG edit job=%s could not reuse job %s image: %s", job.id, reusable.job_id, exc)
+            reusable = None
+    if res is None:
+        try:
+            res = edit_ig_photo(
+                db, photo_path=photo, owner_prompt=link.chatgpt_edit_prompt,
+                fanpage_id=fanpage.id,
+                subject=analysis.get("main_subject") or analysis.get("speaker"),
+                qa_enabled=qa_on,
+            )
+        except VisualEngineDeferred as exc:
+            from app.tasks.design_renderer import _defer_job
+            _defer_job(db, job, exc)
+            return
 
     if res["ok"] and res["image_path"]:
         path = res["image_path"]
         job.design_engine = res["engine"]
         job.design_engine_note = "ChatGPT edit of the original photo (custom prompt)"
+        if reusable:
+            job.design_engine_note = ai_image_reuse.reused_note(job.design_engine_note, reusable.job_id)
+        ai_image_reuse.remember(job, path, engine=res["engine"],
+                                qa_checked=qa_on or bool(reusable and reusable.record.get("qa_checked")),
+                                reused_from=reusable, **reuse_key)
     else:
         designs = Path(settings.storage_base_path) / "designs"
         designs.mkdir(parents=True, exist_ok=True)
@@ -559,7 +554,6 @@ def _render_ig_edit(db, job, post, fanpage, link):
         decision.preview_status = "done"
         decision.preview_error = None
     db.commit()
-    _publish_ig_overflow(db, job.fanpage_id)
     from app.services.fb_share.group_jobs import is_group_only
     if fanpage.publish_mode == PublishMode.auto or is_group_only(db, job.id):
         from app.tasks.publisher import publish_job
@@ -681,7 +675,6 @@ def render_ig_recreate(self, job_id: int):
                 db.commit()
                 logger.info("IG-recreate: job %d AI design ready (%s)", job_id, job.design_engine)
 
-                _publish_ig_overflow(db, job.fanpage_id)
                 from app.services.fb_share.group_jobs import is_group_only
                 if fanpage.publish_mode == PublishMode.auto or is_group_only(db, job.id):
                     from app.tasks.publisher import publish_job
@@ -837,7 +830,6 @@ def render_ig_recreate(self, job_id: int):
         db.commit()
         logger.info("IG-recreate: job %d rendered → %s (%d bytes)", job_id, filename, len(png))
 
-        _publish_ig_overflow(db, job.fanpage_id)
         from app.services.fb_share.group_jobs import is_group_only
         if fanpage.publish_mode == PublishMode.auto or is_group_only(db, job.id):
             from app.tasks.publisher import publish_job

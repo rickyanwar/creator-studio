@@ -32,7 +32,8 @@ _IDEAS_PAGE_SIZE = 50
 @router.get("", response_model=list[FanpageOut])
 def list_fanpages(db: DB, _: CurrentUser):
     from app.models.target_fanpages import TargetFanpage
-    return db.query(TargetFanpage).order_by(TargetFanpage.name).all()
+    from app.services.fb_share.lanes import lane_fanpage_ids
+    return db.query(TargetFanpage).filter(TargetFanpage.id.notin_(lane_fanpage_ids())).order_by(TargetFanpage.name).all()
 
 
 @router.get("/{fanpage_id}", response_model=FanpageDetailOut)
@@ -192,6 +193,13 @@ def update_fanpage(fanpage_id: int, body: FanpageUpdate, db: DB, _: CurrentUser)
 
     if fp.ai_video_templates is not None:
         fp.ai_video_template = fp.ai_video_templates[0] if fp.ai_video_templates else None
+
+    # A brand's look (templates, colours, captions, logo) is shared with its Group Share lane.
+    from app.services.fb_share.lanes import get_lane_id, sync_lane_from_brand
+    lane_id = get_lane_id(db, fp.id)
+    lane = db.get(TargetFanpage, lane_id) if lane_id is not None else None
+    if lane is not None:
+        sync_lane_from_brand(db, fp, lane)
 
     db.commit()
     db.refresh(fp)

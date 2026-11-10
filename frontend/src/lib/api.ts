@@ -630,3 +630,8 @@ export const listGroupShareTasks = (id: number, params?: { state?: string; limit
   api.get<import("./types").GroupShareTask[]>(`/fanpages/${id}/group-share/tasks`, { params }).then((r) => r.data);
 export const getGroupShareSummary = (id: number) =>
   api.get<import("./types").GroupShareSummary>(`/fanpages/${id}/group-share/summary`).then((r) => r.data);
+export const getGroupShareLane = (brandId: number) =>
+  api.get<import("./types").GroupShareLane>(`/fanpages/${brandId}/group-share/lane`).then((r) => r.data);
+/** Creates the brand's hidden group lane fanpage on first call; returns its id. */
+export const ensureGroupShareLane = (brandId: number) =>
+  api.post<import("./types").GroupShareLaneEnsured>(`/fanpages/${brandId}/group-share/lane`).then((r) => r.data);

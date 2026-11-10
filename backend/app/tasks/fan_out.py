@@ -50,30 +50,46 @@ def fanout_link(db, post, link, countdown: int, radar_decision_id: int | None = 
         recreate = link.fanpage.ig_recreate_enabled
     if recreate:
         from app.tasks.ig_recreate import recreate_post_for_fanpage
+        from app.services.fb_share.group_jobs import reserve_lane_slot, release_lane_slot
+        lane_slot = reserve_lane_slot(db, link.fanpage_id, "ig", datetime.now(timezone.utc)) if radar_decision_id is None else False
+        if lane_slot is None:
+            return False
         # Same stagger as the plain-repost path below — without it,
         # every fanpage recreating the same source's post would render
         # and (if auto-publish) go live within seconds of each other.
-        recreate_post_for_fanpage.apply_async(args=[post.id, link.fanpage_id], kwargs={"radar_decision_id": radar_decision_id}, countdown=countdown)
+        try:
+            recreate_post_for_fanpage.apply_async(args=[post.id, link.fanpage_id], kwargs={"radar_decision_id": radar_decision_id}, countdown=countdown)
+        finally:
+            # No job exists yet; the worker reserves before its AI work.
+            release_lane_slot(lane_slot)
         return True
 
-    job = PublishJob(
-        post_id=post.id,
-        fanpage_id=link.fanpage_id,
-        status=PublishJobStatus.pending_caption,
-    )
-    db.add(job)
-    db.flush()
+    from app.services.fb_share.group_jobs import reserve_lane_slot, release_lane_slot
+    lane_slot = reserve_lane_slot(db, link.fanpage_id, "ig", datetime.now(timezone.utc)) if radar_decision_id is None else False
+    if lane_slot is None:
+        logger.info("Post %d: skipping group lane %d — daily IG cap reached", post.id, link.fanpage_id)
+        return False
+    try:
+        job = PublishJob(
+            post_id=post.id,
+            fanpage_id=link.fanpage_id,
+            status=PublishJobStatus.pending_caption,
+        )
+        db.add(job)
+        db.flush()
 
-    if radar_decision_id:
-        from app.models.radar import RadarStoryDecision, DecisionStatus
-        decision = db.query(RadarStoryDecision).filter_by(id=radar_decision_id).first()
-        if decision:
-            decision.publish_job_id = job.id
-            decision.status = DecisionStatus.CREATED
+        if radar_decision_id:
+            from app.models.radar import RadarStoryDecision, DecisionStatus
+            decision = db.query(RadarStoryDecision).filter_by(id=radar_decision_id).first()
+            if decision:
+                decision.publish_job_id = job.id
+                decision.status = DecisionStatus.CREATED
 
-    # Commit BEFORE queueing: with countdown=0 the caption worker can pick the
-    # task up immediately and must find the committed job row.
-    db.commit()
+        # Commit before queueing so the caption worker sees the job.
+        db.commit()
+    finally:
+        # With or without a job: once committed, the job's group-job marker counts instead.
+        release_lane_slot(lane_slot)
 
     # Stagger caption generation (and therefore publishing) so fanpages
     # sharing the same IG source don't all post at exactly the same time.

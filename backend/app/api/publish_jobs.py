@@ -385,6 +385,11 @@ def render_now(job_id: int, db: DB, _: CurrentUser):
         raise HTTPException(status_code=404, detail="News job not found")
     if job.status != PublishJobStatus.pending_design:
         raise HTTPException(status_code=400, detail=f"Cannot render job in status: {job.status.value}")
+    # A manual re-render must make a new image: drop the edit-once record so neither this job
+    # nor its siblings reuse the old one.
+    from app.services.ai_image_reuse import forget
+    forget(job)
+    db.commit()
 
     from app.models.target_fanpages import TargetFanpage
     from app.services.engine_router import render_queue_for
@@ -542,6 +547,10 @@ def reedit_job(job_id: int, db: DB, _: CurrentUser):
                 job_id, job.repliz_schedule_id, exc,
             )
 
+    # The owner rejected this image: siblings' copies of it lose their origin, and this job
+    # must not take it back from them (edit once).
+    from app.services.ai_image_reuse import forget
+    forget(job, reject=True)
     job.status = PublishJobStatus.pending_design
     job.repliz_schedule_id = None
     job.repliz_response_json = None

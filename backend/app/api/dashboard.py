@@ -12,6 +12,8 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DB
 from app.config import get_settings
+from app.services.fb_share.group_jobs import group_publish_job_ids
+from app.services.fb_share.lanes import lane_fanpage_ids
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 settings = get_settings()
@@ -71,6 +73,8 @@ def _failure_times_by_fanpage(db, cutoff: datetime) -> dict[int, list[datetime]]
         .filter(
             PublishJob.status == PublishJobStatus.failed,
             PublishJob.is_deleted == False,
+            PublishJob.id.notin_(group_publish_job_ids()),
+            PublishJob.fanpage_id.notin_(lane_fanpage_ids()),
             job_updated >= cutoff,
         )
         .all()
@@ -147,6 +151,7 @@ def _extract_first_url(val) -> str | None:
 def get_dashboard_stats(db: DB, _: CurrentUser):
     from app.models.publish_jobs import PublishJob, PublishJobStatus
     from app.models.target_fanpages import TargetFanpage
+    from app.services.fb_share.lanes import lane_fanpage_ids
     from app.models.posts import Post
     from app.models.ai_copy_events import AICopyEvent
     from app.models.gallery_fetch_events import GalleryFetchEvent
@@ -159,7 +164,8 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
     # Published today
     published_today = (
         db.query(PublishJob)
-        .filter(PublishJob.published_at >= today_start, PublishJob.status == PublishJobStatus.published)
+        .filter(PublishJob.published_at >= today_start, PublishJob.status == PublishJobStatus.published,
+                PublishJob.id.notin_(group_publish_job_ids()), PublishJob.fanpage_id.notin_(lane_fanpage_ids()))
         .count()
     )
 
@@ -172,7 +178,9 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
 
     # Pending review
     pending_review = (
-        db.query(PublishJob).filter(PublishJob.status == PublishJobStatus.pending_review).count()
+        db.query(PublishJob).filter(PublishJob.status == PublishJobStatus.pending_review,
+                                   PublishJob.id.notin_(group_publish_job_ids()),
+                                   PublishJob.fanpage_id.notin_(lane_fanpage_ids())).count()
     )
 
     # Burner statuses (deprecated feature: return empty list for frontend compatibility)
@@ -181,12 +189,12 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
     # Active fanpages
     active_fps = (
         db.query(TargetFanpage)
-        .filter(TargetFanpage.is_active == True)
+        .filter(TargetFanpage.is_active == True, TargetFanpage.id.notin_(lane_fanpage_ids()))
         .order_by(TargetFanpage.name.asc())
         .all()
     )
     active_fanpages = len(active_fps)
-    total_fanpages = db.query(TargetFanpage).count()
+    total_fanpages = db.query(TargetFanpage).filter(TargetFanpage.id.notin_(lane_fanpage_ids())).count()
 
     # Disk usage
     media_path = settings.storage_base_path
@@ -271,6 +279,8 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
             )
             .filter(
                 PublishJob.fanpage_id.in_(fp_ids),
+                PublishJob.id.notin_(group_publish_job_ids()),
+                PublishJob.fanpage_id.notin_(lane_fanpage_ids()),
                 PublishJob.status.in_([
                     PublishJobStatus.pending_review,
                     PublishJobStatus.pending_design,
@@ -297,6 +307,8 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
             )
             .filter(
                 PublishJob.fanpage_id.in_(fp_ids),
+                PublishJob.id.notin_(group_publish_job_ids()),
+                PublishJob.fanpage_id.notin_(lane_fanpage_ids()),
                 PublishJob.scheduled_for > now_naive,
                 PublishJob.status != PublishJobStatus.failed,
                 PublishJob.is_deleted == False,
@@ -311,7 +323,10 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
                 func.min(PublishDelivery.scheduled_for),
             )
             .join(SocialDestination, SocialDestination.id == PublishDelivery.destination_id)
+            .join(PublishJob, PublishJob.id == PublishDelivery.publish_job_id)
             .filter(
+                PublishJob.id.notin_(group_publish_job_ids()),
+                PublishJob.fanpage_id.notin_(lane_fanpage_ids()),
                 SocialDestination.content_project_id.in_(fp_ids),
                 SocialDestination.is_active == True,
                 PublishDelivery.scheduled_for > now_naive,
@@ -332,6 +347,8 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
             db.query(PublishJob.fanpage_id, PublishJob.published_at)
             .filter(
                 PublishJob.fanpage_id.in_(fp_ids),
+                PublishJob.id.notin_(group_publish_job_ids()),
+                PublishJob.fanpage_id.notin_(lane_fanpage_ids()),
                 PublishJob.status == PublishJobStatus.published,
                 PublishJob.published_at >= min_cutoff,
                 PublishJob.is_deleted == False,
@@ -396,6 +413,8 @@ def get_dashboard_stats(db: DB, _: CurrentUser):
         .options(joinedload(PublishJob.fanpage), joinedload(PublishJob.post))
         .filter(
             PublishJob.status == PublishJobStatus.published,
+            PublishJob.id.notin_(group_publish_job_ids()),
+            PublishJob.fanpage_id.notin_(lane_fanpage_ids()),
             PublishJob.is_deleted == False,
         )
         .order_by(PublishJob.published_at.desc(), PublishJob.id.desc())

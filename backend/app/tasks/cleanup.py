@@ -317,6 +317,7 @@ def cleanup_old_designs():
         from sqlalchemy import and_, or_
         from app.models.publish_jobs import PublishJob, PublishJobStatus
         from app.services.fb_share.group_jobs import group_publish_job_ids, media_cleanup_allowed
+        from app.services.ai_image_reuse import owned_reuse_file
 
         candidates = (
             db.query(PublishJob)
@@ -354,11 +355,18 @@ def cleanup_old_designs():
                         kept_not_live += 1
                         continue
 
+            raw_path = owned_reuse_file(job)
             try:
                 Path(job.design_image_path).unlink(missing_ok=True)
             except OSError as exc:
                 logger.error("Failed to delete design %s: %s", job.design_image_path, exc)
                 continue
+            if raw_path:
+                # Edit once: the raw AI image kept for sibling fanpages goes with the design.
+                try:
+                    Path(raw_path).unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.error("Failed to delete raw AI image %s: %s", raw_path, exc)
             job.design_image_path = None
             job.design_image_url = None
             cleaned += 1

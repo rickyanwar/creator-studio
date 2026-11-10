@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import case, func
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DB
 from app.models.fb_group_share import FbGroup, FbShareDelivery, FbGroupMembership, FbShareItem, FbShareTask
@@ -11,6 +12,7 @@ from app.models.social_publishing import PhoneDevice, SocialDestination
 from app.models.target_fanpages import TargetFanpage
 from app.schemas.fb_group_share import AccountOut, DeliveryIn, DeliveryOut, GroupShareIn, MembershipOut, MembershipsIn
 from app.services.fb_share.brand_settings import get_brand_share, set_brand_share
+from app.services.fb_share.lanes import ensure_lane, get_lane_id, is_lane, set_lane_active
 
 router = APIRouter(prefix="/fanpages", tags=["group-share"])
 
@@ -57,9 +59,34 @@ def get_settings(fanpage_id: int, db: DB, _: CurrentUser):
 def put_settings(fanpage_id: int, body: GroupShareIn, db: DB, _: CurrentUser):
     _brand(db, fanpage_id)
     set_brand_share(db, fanpage_id, body.enabled, body.settings.model_dump())
+    set_lane_active(db, fanpage_id, body.enabled)
     db.commit()
     enabled, settings = get_brand_share(db, fanpage_id)
     return {"enabled": enabled, "settings": settings}
+
+
+@router.get("/{fanpage_id}/group-share/lane")
+def get_lane(fanpage_id: int, db: DB, _: CurrentUser):
+    _brand(db, fanpage_id)
+    return {"lane_fanpage_id": get_lane_id(db, fanpage_id)}
+
+
+@router.post("/{fanpage_id}/group-share/lane")
+def create_lane(fanpage_id: int, db: DB, _: CurrentUser):
+    _brand(db, fanpage_id)
+    if is_lane(db, fanpage_id):
+        raise HTTPException(400, "This fanpage is a group lane, not a brand")
+    try:
+        lane = ensure_lane(db, fanpage_id)
+        db.commit()
+        return {"lane_fanpage_id": lane.id}
+    except IntegrityError:
+        # A concurrent request created the lane first.
+        db.rollback()
+        lane_id = get_lane_id(db, fanpage_id)
+        if lane_id is None:
+            raise
+        return {"lane_fanpage_id": lane_id}
 
 
 @router.get("/{fanpage_id}/group-share/accounts", response_model=list[AccountOut])

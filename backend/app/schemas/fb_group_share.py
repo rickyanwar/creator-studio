@@ -14,8 +14,12 @@ class Contract(BaseModel):
 
 
 class SourceSettings(Contract):
+    # Kept for stored-JSON compatibility; no longer used for decisions.
     source: Literal["off", "follow", "groups_only", "both"] = "off"
+    # Lane cap for modes without their own daily count (ig, news).
     groups_only_per_day: int = Field(0, ge=0, le=50)
+    # Newest brand Page posts of this mode shared to groups per brand local day; 0 = none.
+    follow_per_day: int = Field(0, ge=0, le=50)
 
 
 class Sources(Contract):

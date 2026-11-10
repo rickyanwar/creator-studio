@@ -17,6 +17,15 @@ from app.tasks.design_renderer import (
 )
 from app.api.publish_jobs import render_now, reedit_job
 
+
+@pytest.fixture(autouse=True)
+def _no_group_lane(monkeypatch):
+    # These tests use a MagicMock db; no fan page here is a Group Share lane.
+    monkeypatch.setattr("app.services.fb_share.group_jobs.lane_daily_cap_reached", lambda *a: False)
+    monkeypatch.setattr("app.services.fb_share.group_jobs.reserve_lane_slot", lambda *a: "test-lane-slot")
+    monkeypatch.setattr("app.services.fb_share.group_jobs.release_lane_slot", lambda *a: None)
+
+
 SQLiteTypeCompiler.visit_ARRAY = lambda self, type_, **kw: "TEXT"
 
 

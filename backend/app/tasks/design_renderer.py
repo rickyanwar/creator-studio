@@ -181,7 +181,10 @@ def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str, force
         return None
 
     from app.services.design_images import extract_secondary_subject, extract_two_subjects
-    from app.services.speaker_design import compose_speaker_design, pick_speaker_photos
+    from app.services.speaker_design import (
+        compose_speaker_design, pick_speaker_photos, remember_speaker_design, reuse_sibling_speaker_design,
+        speaker_reuse_key,
+    )
 
     niche = (fanpage.mode2_gallery_niches or [None])[0] or fanpage.name
     article_title = getattr(article, "scraped_title", "") or ""
@@ -224,6 +227,15 @@ def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str, force
     niche_lower = niche.lower()
     sport = "MotoGP" if any(term in niche_lower for term in ("motogp", "motorsport", "motorcycle", "bike")) else niche
 
+    # Edit once: a sibling fanpage (brand / group lane / same profile) already made this design.
+    # The key never holds the fanpage-name fallback: a brand and its lane have different names.
+    key_sport = sport if (fanpage.mode2_gallery_niches or [None])[0] else ""
+    reuse_key = speaker_reuse_key(db, job, article, mode=mode, speaker=speaker, subjects=subjects, sport=key_sport)
+    if reuse_key:
+        reused = reuse_sibling_speaker_design(db, fanpage, job, reuse_key, mode=mode)
+        if reused is not None:
+            return reused
+
     story_photo_path: str | None = None
     story_photo_desc: str | None = None
     if article is not None:
@@ -262,6 +274,8 @@ def _maybe_compose_speaker_design(db, fanpage, job, article, *, mode: str, force
             story_photo_desc=story_photo_desc,
             content_kind=mode,
         )
+        if res and reuse_key:
+            remember_speaker_design(db, fanpage, job, res, reuse_key, mode=mode)
         return res
     finally:
         if story_photo_path:
@@ -635,6 +649,10 @@ def render_design(self, job_id: int):
                     promoted = (job.design_analysis_json or {}).get("pro_poster_promoted")
                     if promoted:
                         note_text = f"pro poster (photo of {promoted['to']}, none of {promoted['from']}) · qa {scores_str}".strip()
+                    reused_from = (job.design_analysis_json or {}).get("pro_poster_reused_from")
+                    if reused_from:
+                        from app.services.ai_image_reuse import reused_note
+                        note_text = reused_note("pro poster", reused_from)
                     pro_poster_engine_note = note_text[:200]
                     pro_poster_label = pp_res.brief.badge_label
                 elif pp_res.fallback_reason in ("no verified photo", "photo check error"):
@@ -1346,21 +1364,45 @@ def _render_facebook_direct(db, job, fanpage, idea, prompt=None):
     from app.services.qa_toggles import qa_enabled
     from app.services.visual_engine import VisualEngineDeferred
 
+    from app.services import ai_image_reuse
+
     result = None
+    reusable = None
+    reuse_key = None
+    qa_on = qa_enabled(fanpage, "facebook")
     if prompt:
-        try:
-            result = edit_ig_photo(
-                db, photo_path=idea.image_local_path, owner_prompt=prompt,
-                fanpage_id=fanpage.id, subject=_name_badge(idea.design_subtitle),
-                qa_enabled=qa_enabled(fanpage, "facebook"),
-            )
-        except VisualEngineDeferred as exc:
-            _defer_job(db, job, exc)
-            return
+        source_key = ai_image_reuse.facebook_source_key(db, job)
+        if source_key:
+            reuse_key = dict(source_key=source_key, format_key="fb_edit", prompt_text=prompt)
+            # Edit once: a sibling (brand / lane / same profile) already edited this photo the same way.
+            reusable = ai_image_reuse.find_reusable(db, job, qa_required=qa_on, **reuse_key)
+        if reusable:
+            try:
+                result = {"ok": True, "image_path": ai_image_reuse.copy_reused(reusable.path, job),
+                          "engine": reusable.record.get("engine"), "reason": ""}
+            except OSError as exc:
+                logger.warning("Facebook photo: job %s could not reuse job %s image: %s", job.id, reusable.job_id, exc)
+                reusable = None
+        if not reusable:
+            try:
+                result = edit_ig_photo(
+                    db, photo_path=idea.image_local_path, owner_prompt=prompt,
+                    fanpage_id=fanpage.id, subject=_name_badge(idea.design_subtitle),
+                    qa_enabled=qa_on,
+                )
+            except VisualEngineDeferred as exc:
+                _defer_job(db, job, exc)
+                return
     if result and result["ok"] and result["image_path"]:
         path = result["image_path"]
         job.design_engine = result["engine"]
         job.design_engine_note = "ChatGPT edit of the original Facebook photo (custom prompt)"
+        if reusable:
+            job.design_engine_note = ai_image_reuse.reused_note(job.design_engine_note, reusable.job_id)
+        if reuse_key:
+            ai_image_reuse.remember(job, path, engine=result["engine"],
+                                    qa_checked=qa_on or bool(reusable and reusable.record.get("qa_checked")),
+                                    reused_from=reusable, **reuse_key)
     else:
         designs = Path(settings.storage_base_path) / "designs"
         designs.mkdir(parents=True, exist_ok=True)
@@ -1682,32 +1724,29 @@ def render_pending_designs():
             PublishJob.updated_at < retry_cutoff,
         )
 
+        from app.services.fb_share.group_jobs import group_publish_job_ids
+        # No stale news for groups either (owner rule): marked group jobs are skipped here like
+        # Page jobs, whatever the lane's publish mode. They keep every other Page bypass below.
         stale_jobs = (
             db.query(PublishJob)
             .join(TargetFanpage, TargetFanpage.id == PublishJob.fanpage_id)
             .filter(
                 PublishJob.status == PublishJobStatus.pending_design,
                 PublishJob.content_type == ContentType.news_content,
-                TargetFanpage.mode2_publish_mode == PublishMode.auto,
+                or_(
+                    TargetFanpage.mode2_publish_mode == PublishMode.auto,
+                    PublishJob.id.in_(group_publish_job_ids()),
+                ),
                 PublishJob.created_at < stale_cutoff,
             )
             .all()
         )
-        from app.services.fb_share.group_jobs import (
-            group_publish_job_ids, is_group_only, mark_group_job, remaining_groups_only_today,
-        )
         if stale_jobs:
             for sj in stale_jobs:
-                if is_group_only(db, sj.id):
-                    continue
-                if remaining_groups_only_today(db, sj.fanpage_id, "news", now_naive) > 0:
-                    mark_group_job(db, fanpage_id=sj.fanpage_id, mode="news", publish_job_id=sj.id)
-                    db.flush()
-                    continue
                 sj.status = PublishJobStatus.skipped
                 sj.last_error = "stale: news older than 24 h, not rendered"
             db.commit()
-            logger.info("Processed %d stale news jobs for Page skip or group overflow (older than %dh)", len(stale_jobs), NEWS_STALE_HOURS)
+            logger.info("Marked %d stale news jobs as skipped (older than %dh)", len(stale_jobs), NEWS_STALE_HOURS)
 
         from app.services.visual_fair_queue import visual_news_fanpage_ids
         visual_ids = visual_news_fanpage_ids(db)
@@ -1717,6 +1756,7 @@ def render_pending_designs():
             PublishJob.status == PublishJobStatus.pending_design,
             PublishJob.content_type == ContentType.news_content,
             PublishJob.id.in_(group_publish_job_ids()),
+            PublishJob.created_at >= stale_cutoff,
             not_stuck_on_missing_image, not_deferred,
         ).limit(10).all()
         from app.services.engine_router import render_queue_for

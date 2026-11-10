@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.utils.logger import setup_logging
 from app.api import fb_groups, group_share, group_share_pic
+# Registers the after_flush listener that marks lane jobs as Group Share jobs.
+import app.services.fb_share.lanes  # noqa: F401
 from app.api import auth, fanpages, publish_jobs, settings as settings_router, jobs, ig_sources, dashboard, notifications, logs, news_sources, gallery, templates, yt_clips, scraper_health, analytics, strategy, hermes, ai_video_ideas, gflow_worker, ai_video_jobs, radar, f1_drivers, labeler, media_thumb, research, content_projects, social_media, social_brands, prompt_polish
 
 

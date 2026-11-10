@@ -6,6 +6,7 @@ from sqlalchemy import func
 from app.api.deps import CurrentUser, DB
 from app.models.settings import Settings
 from app.models.target_fanpages import TargetFanpage
+from app.services.fb_share.lanes import lane_fanpage_ids
 from app.models.post_metric_snapshots import PostMetricSnapshot
 from app.services.analytics import (
     load_jobs_for_fanpages,
@@ -48,7 +49,7 @@ def get_overview(db: DB, _: CurrentUser, days: int = Query(28, ge=7, le=180)):
     trend_since = now - timedelta(days=28)
     load_since = min(since, trend_since)
     
-    fanpages = db.query(TargetFanpage).all()
+    fanpages = db.query(TargetFanpage).filter(TargetFanpage.id.notin_(lane_fanpage_ids())).all()
     fanpage_ids = [f.id for f in fanpages]
     
     jobs = load_jobs_for_fanpages(db, fanpage_ids, load_since, until)

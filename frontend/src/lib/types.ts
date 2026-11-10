@@ -1385,13 +1385,16 @@ export interface FbGroup extends FbGroupIn {
 export type ModeKey = "ig" | "news" | "discussion" | "pinterest" | "fb_recreate" | "yt_clips" | "ai_video" | "viral_radar";
 export interface GroupShareSettings {
   niches: string[];
-  sources: Record<ModeKey, { source: "off" | "follow" | "groups_only" | "both"; groups_only_per_day: number }>;
+  sources: Record<ModeKey, { source: "off" | "follow" | "groups_only" | "both"; groups_only_per_day: number; follow_per_day: number }>;
   muse: { enabled: boolean; per_day: number };
   credit: boolean;
   must_edit: boolean;
   caps: { start_per_day: number; weekly_increase: number; max_per_day: number; min_gap_minutes: number; per_group_per_day: number };
 }
 export interface GroupShareConfig { enabled: boolean; settings: GroupShareSettings }
+/** Hidden "group lane" fanpage of a brand: content made only for Facebook groups. */
+export interface GroupShareLane { lane_fanpage_id: number | null }
+export interface GroupShareLaneEnsured { lane_fanpage_id: number }
 export interface GroupShareDeliveryIn {
   mode: "phone_auto" | "pic_whatsapp" | "pic_telegram" | null;
   phone_device_id: number | null;
