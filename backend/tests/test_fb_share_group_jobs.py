@@ -114,18 +114,41 @@ def test_photo_hash_fail_closed_then_handover(db_session, monkeypatch):
     assert (item.media_kind, item.phash, item.media) == ("photo", "abcd", ["card.png"])
 
 
-@pytest.mark.parametrize("state", ["planned", "sent_to_pic", "publishing", "pending_admin", "uncertain"])
-def test_retention_blocks_open_tasks(db_session, state):
+@pytest.mark.parametrize("state", ["planned", "publishing"])
+def test_retention_blocks_tasks_that_still_need_media(db_session, state):
     job = make_job(db_session)
     item = core.hand_over(db_session, job, NOW - timedelta(days=20))
-    item.status = "done"
+    item.status = "routed"
     task = FbShareTask(item_id=item.id, group_id=1, destination_id=1,
                        delivery_mode="phone_auto", scheduled_for=NOW, state=state,
-                       updated_at=NOW - timedelta(days=8))
+                       updated_at=NOW - timedelta(days=30))
     db_session.add(task)
     assert not core.media_cleanup_allowed(db_session, job.id, NOW)
-    task.state = "published"
-    task.updated_at = NOW - timedelta(days=9)
-    assert core.media_cleanup_allowed(db_session, job.id, NOW)
-    task.updated_at = NOW - timedelta(days=7) + timedelta(seconds=1)
+
+
+@pytest.mark.parametrize("state", ["sent_to_pic", "pending_admin", "uncertain", "published", "expired", "failed"])
+@pytest.mark.parametrize("item_status", ["routed", "done", "expired"])
+def test_retention_keeps_sent_media_seven_days_for_previews(db_session, state, item_status):
+    # Owner 2026-11-10: once sent, media stays one week for previews, then it is deleted.
+    job = make_job(db_session)
+    item = core.hand_over(db_session, job, NOW - timedelta(days=20))
+    item.status = item_status
+    task = FbShareTask(item_id=item.id, group_id=1, destination_id=1,
+                       delivery_mode="pic_whatsapp", scheduled_for=NOW, state=state,
+                       updated_at=NOW - timedelta(days=7) + timedelta(seconds=1))
+    db_session.add(task)
     assert not core.media_cleanup_allowed(db_session, job.id, NOW)
+    task.updated_at = NOW - timedelta(days=7)
+    assert core.media_cleanup_allowed(db_session, job.id, NOW)
+
+
+def test_retention_keeps_unrouted_items_and_uses_expiry_without_tasks(db_session):
+    job = make_job(db_session)
+    item = core.hand_over(db_session, job, NOW - timedelta(days=20))
+    item.status = "new"
+    assert not core.media_cleanup_allowed(db_session, job.id, NOW)
+    item.status = "routed"
+    item.expires_at = NOW - timedelta(days=6)
+    assert not core.media_cleanup_allowed(db_session, job.id, NOW)
+    item.expires_at = NOW - timedelta(days=8)
+    assert core.media_cleanup_allowed(db_session, job.id, NOW)

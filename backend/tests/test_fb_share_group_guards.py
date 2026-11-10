@@ -62,7 +62,7 @@ def test_cleanup_keeps_open_media_and_deletes_after_retention(db_session, monkey
     item = core.hand_over(db, job, NOW - timedelta(days=20))
     item.status = "done"
     task = FbShareTask(item_id=item.id, group_id=1, destination_id=1,
-                       delivery_mode="phone_auto", scheduled_for=NOW, state="pending_admin",
+                       delivery_mode="phone_auto", scheduled_for=NOW, state="planned",
                        updated_at=NOW - timedelta(days=8))
     db.add(task)
     db.commit()
