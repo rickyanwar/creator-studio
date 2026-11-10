@@ -14,8 +14,9 @@ from phone_runner.server import PhoneRunnerRequestHandler
 
 
 @pytest.fixture(autouse=True)
-def no_sleep(monkeypatch):
+def no_sleep(monkeypatch, tmp_path):
     monkeypatch.setattr(pic_send.time, "sleep", Mock())
+    monkeypatch.setenv("PIC_MEDIA_DIR", str(tmp_path / "pic-media"))
     monkeypatch.setenv("HERMES_PATH", "hermes")
     monkeypatch.delenv("HERMES_OUTSIDE_SANDBOX", raising=False)
 
@@ -93,6 +94,43 @@ def test_media_download_and_bundle_cleanup():
         {"kind": "text", "text": "last"},
     ], run, download) == (True, "sent")
     assert not paths[0].parent.exists()
+
+
+def test_media_is_staged_outside_private_tmp(monkeypatch, tmp_path):
+    # The runner unit has PrivateTmp=yes and Hermes runs outside it, so media must sit in PIC_MEDIA_DIR.
+    media_root = tmp_path / "shared-media"
+    monkeypatch.setenv("PIC_MEDIA_DIR", str(media_root))
+    seen = []
+    def download(url, path):
+        Path(path).write_bytes(b"image")
+    def run(cmd, **kwargs):
+        seen.append(Path(cmd[-1][6:]))
+        return SimpleNamespace(returncode=0)
+    assert pic_send.send_pic_messages("whatsapp:+628000000000", [
+        {"kind": "media", "media_url": "https://example.test/photo.png"},
+    ], run, download) == (True, "sent")
+    assert seen[0].parent.parent == media_root
+    assert media_root.is_dir() and not any(media_root.iterdir())
+
+
+def test_hermes_gets_media_dir_allowlist(monkeypatch, tmp_path):
+    # Hermes's default media policy denies /var/lib; only the PIC media directory is allowlisted.
+    media_root = tmp_path / "shared-media"
+    monkeypatch.setenv("PIC_MEDIA_DIR", str(media_root))
+    monkeypatch.setenv("HERMES_OUTSIDE_SANDBOX", "1")
+    calls = []
+    def download(url, path):
+        Path(path).write_bytes(b"image")
+    def run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(returncode=0)
+    assert pic_send.send_pic_messages("whatsapp:+628000000000", [
+        {"kind": "media", "media_url": "https://example.test/photo.png"},
+    ], run, download) == (True, "sent")
+    cmd, kwargs = calls[0]
+    assert cmd[0] == "systemd-run" and f"--setenv=HERMES_MEDIA_ALLOW_DIRS={media_root}" in cmd
+    assert cmd.index(f"--setenv=HERMES_MEDIA_ALLOW_DIRS={media_root}") < cmd.index("hermes")
+    assert kwargs["env"]["HERMES_MEDIA_ALLOW_DIRS"] == str(media_root)
 
 
 def test_first_failure_is_sanitized_and_stops():

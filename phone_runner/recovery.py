@@ -74,15 +74,17 @@ def get_recovery_settle_seconds() -> float:
         return 8.0
 
 
-def hermes_command(args: list[str], timeout: float) -> list[str]:
+def hermes_command(args: list[str], timeout: float, setenv: dict[str, str] | None = None) -> list[str]:
     """Builds the Hermes argv. The phone-runner unit keeps /root read-only (ProtectHome=read-only), but
     Hermes must write /root/.hermes, so under the unit (HERMES_OUTSIDE_SANDBOX=1) it runs as a transient
-    systemd unit outside this sandbox. The runner's own sandbox is unchanged."""
+    systemd unit outside this sandbox. The runner's own sandbox is unchanged. `setenv` is passed to that
+    transient unit; outside the unit the caller passes the same variables to subprocess itself."""
     cmd = [get_hermes_path(), *args]
     if os.environ.get("HERMES_OUTSIDE_SANDBOX") == "1":
         return [
             "systemd-run", "--quiet", "--wait", "--pipe", "--collect",
-            f"--property=RuntimeMaxSec={int(timeout)}", *cmd,
+            f"--property=RuntimeMaxSec={int(timeout)}",
+            *(f"--setenv={key}={value}" for key, value in (setenv or {}).items()), *cmd,
         ]
     return cmd
 

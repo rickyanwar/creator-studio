@@ -242,21 +242,29 @@ def hand_over(db, job: PublishJob, now) -> FbShareItem | None:
     return item
 
 
+# Task states whose media is still needed to send or post. Anything else has already left the app (sent to the
+# PIC, posted, or never retried), so its media only stays for previews.
+MEDIA_NEEDED_TASK_STATES = ("planned", "publishing")
+MEDIA_PREVIEW_DAYS = 7
+
+
 def media_cleanup_allowed(db, publish_job_id: int, now: datetime) -> bool:
-    """Keep group media until every share has finished, plus seven days."""
+    """Keep group media while a share still needs it, then seven days for previews (owner 2026-11-10)."""
     row = db.query(FbShareGroupJob).filter_by(publish_job_id=publish_job_id).first()
     if row is None:
         return True
     item = db.query(FbShareItem).filter_by(
         fanpage_id=row.fanpage_id, source_kind="publish_job", source_ref=str(publish_job_id),
     ).first()
-    if item is None or item.status not in ("done", "expired", "skipped"):
+    # "new" items are not routed yet; routed items never change status again, so their tasks decide.
+    if item is None or item.status not in ("routed", "done", "expired", "skipped"):
         return False
     tasks = db.query(FbShareTask).filter_by(item_id=item.id).all()
-    if any(task.state in ("planned", "sent_to_pic", "publishing", "pending_admin", "uncertain") for task in tasks):
+    if any(task.state in MEDIA_NEEDED_TASK_STATES for task in tasks):
         return False
-    # ponytail: items have no finished_at; retain through expiry and task completion.
     finished = [task.updated_at for task in tasks if task.updated_at]
-    if item.expires_at:
-        finished.append(item.expires_at)
-    return bool(finished) and max(_utc_naive(value) for value in finished) + timedelta(days=7) <= _utc_naive(now)
+    if not finished and item.expires_at:
+        finished = [item.expires_at]
+    return bool(finished) and (
+        max(_utc_naive(value) for value in finished) + timedelta(days=MEDIA_PREVIEW_DAYS) <= _utc_naive(now)
+    )

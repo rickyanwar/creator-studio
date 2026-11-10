@@ -27,6 +27,9 @@ MAX_MEDIA_BYTES = 60 * 1024 * 1024
 TARGET = re.compile(r"(whatsapp:\+?[0-9]{8,20}|telegram:(@[A-Za-z0-9_]{5,32}|-?[0-9]{5,20}))")
 BUNDLE_ID = re.compile(r"[A-Za-z0-9:_-]{1,80}")
 DEFAULT_STATE_DIR = "/var/lib/phone-runner/pic-state"
+# Media must not live in /tmp: the runner unit has PrivateTmp=yes, while Hermes runs outside the sandbox
+# (HERMES_OUTSIDE_SANDBOX) and would not see the file. The state directory is visible to both.
+DEFAULT_MEDIA_DIR = "/var/lib/phone-runner/pic-media"
 # Total request budget, counted from request entry: lock waits, downloads and Hermes calls all fit inside it.
 # The backend client timeout is this budget + 30 s (backend/app/services/phone_runner_client.py).
 BUNDLE_BASE_S = 100.0
@@ -59,6 +62,10 @@ def validate_request(target, messages, bundle_id=None) -> str | None:
         else:
             return "invalid_messages"
     return None
+
+
+def _media_root() -> Path:
+    return Path(os.environ.get("PIC_MEDIA_DIR", DEFAULT_MEDIA_DIR))
 
 
 def bundle_budget_s(messages) -> float:
@@ -270,7 +277,9 @@ def _send_messages(target, messages, subprocess_runner, downloader, *, deadline,
             try:
                 if message["kind"] == "media":
                     if temp_dir is None:
-                        temp_dir = tempfile.mkdtemp(prefix="pic-send-")
+                        media_root = _media_root()
+                        media_root.mkdir(parents=True, exist_ok=True)
+                        temp_dir = tempfile.mkdtemp(prefix="pic-send-", dir=media_root)
                     extension = Path(urlsplit(message["media_url"]).path).suffix or ".jpg"
                     path = str(Path(temp_dir) / f"media-{i}{extension}")
                     if downloader is None:
@@ -288,9 +297,12 @@ def _send_messages(target, messages, subprocess_runner, downloader, *, deadline,
                 timeout = min(HERMES_CALL_MAX_S, remaining)
                 if progress is not None:
                     progress.begin(i)  # durable before Hermes runs: a crash from here on is "uncertain"
+                # Hermes denies media under system paths such as /var/lib unless the directory is allowlisted.
+                media_env = {"HERMES_MEDIA_ALLOW_DIRS": str(_media_root())}
                 proc = runner(
-                    hermes_command(["send", "-t", target, "-q", "--", text], timeout),
+                    hermes_command(["send", "-t", target, "-q", "--", text], timeout, setenv=media_env),
                     capture_output=True, text=True, timeout=timeout, check=False, shell=False,
+                    env={**os.environ, **media_env},
                 )
                 if proc.returncode != 0:
                     # Hermes may have delivered before failing: the in_flight mark stays (uncertain, never resent).

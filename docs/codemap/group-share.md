@@ -229,7 +229,7 @@ A sibling job with the same source item, same effective format, same edit prompt
 - Only `pending_publish` or `pending_review` jobs with no truthy `last_error` can hand over. Missing niches, invalid payload, or failed photo hash leave the job unhanded.
 - Payload is built by the normal `build_delivery_payload`; photos/albums require a perceptual hash, videos do not. Caption/hashtags and expiry follow feeder rules.
 - Successful hand-over sets `handed_at`, creates/reuses the item, and marks the publish job `skipped` with `last_error='group_only: handed to Group Share'`.
-- `media_cleanup_allowed` requires item status `done`, `expired`, or `skipped`; no tasks in `planned`, `sent_to_pic`, `publishing`, `pending_admin`, or `uncertain`; and seven days after the latest task update/item expiry.
+- `media_cleanup_allowed` (owner 2026-11-10: once sent, media stays one week for previews): item status `routed`, `done`, `expired` or `skipped` (`new` = not routed yet, kept; routed items never change status again); no task in `MEDIA_NEEDED_TASK_STATES` (`planned`, `publishing`); and `MEDIA_PREVIEW_DAYS` (7) after the latest task update, or after item expiry when the item has no tasks. `sent_to_pic`, `pending_admin`, `uncertain`, `published`, `failed` and `expired` tasks no longer hold media.
 - Missing/uncompleted items retain media. Normal unrelated jobs are immediately eligible for this guard.
 - `tasks/cleanup.py` and `tasks/yt_clip_render.py` consult these guards; video cleanup also protects marked video jobs. Group markers remain separate from ordinary Page cleanup/counting.
 
@@ -265,6 +265,8 @@ This endpoint belongs to `phone_runner/server.py`, not the FastAPI/nginx API.
 - Send sequentially with 1.5 s spacing and 20 s maximum per CLI call, within the media-scaled request budget (including locks/downloads). Stop on the first failure; sanitize errors.
 
 **PIC resume:** `phone_runner/pic_send.py` stores `<bundle_id>.json` under `PIC_STATE_DIR` (default `/var/lib/phone-runner/pic-state`) and serializes each bundle with a filesystem `.lock`. The first request persists an immutable target/message snapshot; changed retry payloads replay that snapshot. Atomic replacement plus file/directory fsync records one-based `sent` indexes and `in_flight` before Hermes starts. Successful indexes are skipped on resume. An unresolved `in_flight` (crash, timeout, or possibly delivered CLI failure) returns `uncertain` and sends nothing further. Failures known to precede sending can resume at the first unsent message. State is pruned after seven days, skipping locked bundles. Requests without `bundle_id` retain the legacy non-resumable behavior.
+
+**PIC media files:** media is downloaded to `PIC_MEDIA_DIR` (default `/var/lib/phone-runner/pic-media`), never `/tmp`: the runner unit has `PrivateTmp=yes` and Hermes runs outside the sandbox (`HERMES_OUTSIDE_SANDBOX`), so it would not see the file. Hermes's default media policy denies system paths such as `/var/lib`, so each send passes `HERMES_MEDIA_ALLOW_DIRS=<PIC_MEDIA_DIR>` (`recovery.hermes_command(..., setenv=...)` → `systemd-run --setenv`). The per-bundle temp folder is deleted right after the send; nothing stays on the host or in Hermes.
 
 `backend/app/services/fb_share/pic_replies.py:parse_reply` is deterministic Indonesian/English parsing, not an LLM:
 numbered done/not-member/removed/pending replies, `all`/`semua` done, blocked/restricted phrases, and Facebook group post/permalink URLs.
